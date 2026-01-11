@@ -38,6 +38,8 @@ mcpserver
 mcpservers
 mcpsession
 mcpsessionid
+mcpgateway
+mcpgateways
 mcpvirtualserver
 mcpvirtualservers
 modelcontextprotocol
@@ -212,6 +214,7 @@ randfill
 rbody
 readyz
 Readyz
+referencegrant
 regauth
 regheaders
 reghello

@@ -135,7 +135,7 @@ make update-helm-crds
 make check-crd-sync
 ```
 
-**Important:** Always run `make generate-crds-all` after modifying Go types in `pkg/apis/` to keep both locations in sync.
+**Important:** Always run `make generate-crds-all` after modifying Go types in `api/` to keep both locations in sync.
 
 ### Testing Local Changes
 
