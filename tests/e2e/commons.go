@@ -21,11 +21,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	istiov1beta1 "istio.io/api/networking/v1beta1"
 
 	"github.com/kagenti/mcp-gateway/pkg/apis/mcp/v1alpha1"
 	mcpv1alpha1 "github.com/kagenti/mcp-gateway/pkg/apis/mcp/v1alpha1"
@@ -335,6 +338,19 @@ func VerifyMCPServerNotReadyWithReason(ctx context.Context, k8sClient client.Cli
 		}
 	}
 	return fmt.Errorf("mcpserver %s has no Ready condition", name)
+}
+
+// verifies controller processed the MCPServer by checking it has a status condition
+func VerifyMCPServerHasCondition(ctx context.Context, k8sClient client.Client, name, namespace string) error {
+	mcpServer := &mcpv1alpha1.MCPServer{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, mcpServer)
+	if err != nil {
+		return fmt.Errorf("failed to get mcpserver %s: %w", name, err)
+	}
+	if len(mcpServer.Status.Conditions) == 0 {
+		return fmt.Errorf("mcpserver %s has no conditions yet", name)
+	}
+	return nil
 }
 
 // MCPServerRegistrationBuilder builds and registers MCP server resources
@@ -719,4 +735,166 @@ func WaitForDeploymentScaledDown(namespace, name string) error {
 		return fmt.Errorf("deployment %s still has replicas: %s", name, string(checkOutput))
 	}
 	return nil
+}
+
+func BuildServiceEntry(name, namespace, externalHost string, port uint32) *istionetv1beta1.ServiceEntry {
+	return &istionetv1beta1.ServiceEntry{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      UniqueName(name),
+			Namespace: namespace,
+			Labels:    map[string]string{"e2e": "test"},
+		},
+		Spec: istiov1beta1.ServiceEntry{
+			Hosts: []string{externalHost},
+			Ports: []*istiov1beta1.ServicePort{
+				{
+					Number:   port,
+					Name:     "http",
+					Protocol: "HTTP",
+				},
+			},
+			Location:   istiov1beta1.ServiceEntry_MESH_EXTERNAL,
+			Resolution: istiov1beta1.ServiceEntry_DNS,
+		},
+	}
+}
+
+func BuildDestinationRule(name, namespace, externalHost string) *istionetv1beta1.DestinationRule {
+	return &istionetv1beta1.DestinationRule{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      UniqueName(name),
+			Namespace: namespace,
+			Labels:    map[string]string{"e2e": "test"},
+		},
+		Spec: istiov1beta1.DestinationRule{
+			Host: externalHost,
+			TrafficPolicy: &istiov1beta1.TrafficPolicy{
+				Tls: &istiov1beta1.ClientTLSSettings{
+					Mode: istiov1beta1.ClientTLSSettings_DISABLE,
+				},
+			},
+		},
+	}
+}
+
+func BuildHostnameBackendHTTPRoute(name, namespace, internalHostname, externalHostname string, port int32) *gatewayapiv1.HTTPRoute {
+	gatewayNamespace := "gateway-system"
+	istioGroup := gatewayapiv1.Group("networking.istio.io")
+	hostnameKind := gatewayapiv1.Kind("Hostname")
+	portNum := gatewayapiv1.PortNumber(port)
+
+	return &gatewayapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      UniqueName(name),
+			Namespace: namespace,
+			Labels:    map[string]string{"e2e": "test"},
+		},
+		Spec: gatewayapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
+				ParentRefs: []gatewayapiv1.ParentReference{
+					{
+						Name:      "mcp-gateway",
+						Namespace: (*gatewayapiv1.Namespace)(&gatewayNamespace),
+					},
+				},
+			},
+			Hostnames: []gatewayapiv1.Hostname{
+				gatewayapiv1.Hostname(internalHostname),
+			},
+			Rules: []gatewayapiv1.HTTPRouteRule{
+				{
+					Matches: []gatewayapiv1.HTTPRouteMatch{
+						{
+							Path: &gatewayapiv1.HTTPPathMatch{
+								Type:  ptrTo(gatewayapiv1.PathMatchPathPrefix),
+								Value: ptrTo("/mcp"),
+							},
+						},
+					},
+					Filters: []gatewayapiv1.HTTPRouteFilter{
+						{
+							Type: gatewayapiv1.HTTPRouteFilterURLRewrite,
+							URLRewrite: &gatewayapiv1.HTTPURLRewriteFilter{
+								Hostname: (*gatewayapiv1.PreciseHostname)(&externalHostname),
+							},
+						},
+					},
+					BackendRefs: []gatewayapiv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayapiv1.BackendRef{
+								BackendObjectReference: gatewayapiv1.BackendObjectReference{
+									Group: &istioGroup,
+									Kind:  &hostnameKind,
+									Name:  gatewayapiv1.ObjectName(externalHostname),
+									Port:  &portNum,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func ptrTo[T any](v T) *T {
+	return &v
+}
+
+type ExternalMCPServerRegistrationBuilder struct {
+	k8sClient        client.Client
+	serviceEntry     *istionetv1beta1.ServiceEntry
+	destinationRule  *istionetv1beta1.DestinationRule
+	httpRoute        *gatewayapiv1.HTTPRoute
+	mcpServer        *mcpv1alpha1.MCPServer
+	internalHostname string
+	externalHostname string
+}
+
+func NewExternalMCPServerRegistration(testName string, k8sClient client.Client, externalHost string, port int32) *ExternalMCPServerRegistrationBuilder {
+	internalHostname := fmt.Sprintf("e2e-external-%s.mcp.local", testName)
+
+	serviceEntry := BuildServiceEntry("e2e-se-"+testName, TestNamespace, externalHost, uint32(port))
+	destinationRule := BuildDestinationRule("e2e-dr-"+testName, TestNamespace, externalHost)
+	httpRoute := BuildHostnameBackendHTTPRoute("e2e-ext-route-"+testName, TestNamespace, internalHostname, externalHost, port)
+
+	mcpServer := NewMCPServerBuilder("e2e-ext-mcp-"+testName, TestNamespace).
+		WithTargetHTTPRoute(httpRoute.Name).
+		WithToolPrefix(httpRoute.Name).
+		Build()
+
+	return &ExternalMCPServerRegistrationBuilder{
+		k8sClient:        k8sClient,
+		serviceEntry:     serviceEntry,
+		destinationRule:  destinationRule,
+		httpRoute:        httpRoute,
+		mcpServer:        mcpServer,
+		internalHostname: internalHostname,
+		externalHostname: externalHost,
+	}
+}
+
+func (b *ExternalMCPServerRegistrationBuilder) Register(ctx context.Context) *v1alpha1.MCPServer {
+	GinkgoWriter.Println("creating ServiceEntry", b.serviceEntry.Name)
+	Expect(b.k8sClient.Create(ctx, b.serviceEntry)).To(Succeed())
+
+	GinkgoWriter.Println("creating DestinationRule", b.destinationRule.Name)
+	Expect(b.k8sClient.Create(ctx, b.destinationRule)).To(Succeed())
+
+	GinkgoWriter.Println("creating HTTPRoute with Hostname backendRef", b.httpRoute.Name)
+	Expect(b.k8sClient.Create(ctx, b.httpRoute)).To(Succeed())
+
+	GinkgoWriter.Println("creating MCPServer", b.mcpServer.Name)
+	Expect(b.k8sClient.Create(ctx, b.mcpServer)).To(Succeed())
+
+	return b.mcpServer
+}
+
+func (b *ExternalMCPServerRegistrationBuilder) GetObjects() []client.Object {
+	return []client.Object{
+		b.serviceEntry,
+		b.destinationRule,
+		b.httpRoute,
+		b.mcpServer,
+	}
 }

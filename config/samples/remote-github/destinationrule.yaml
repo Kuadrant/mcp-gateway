@@ -6,12 +6,6 @@ metadata:
 spec:
   host: api.githubcopilot.com
   trafficPolicy:
-    connectionPool:
-      tcp:
-        maxConnections: 10
-      http:
-        http1MaxPendingRequests: 10
-        h2UpgradePolicy: UPGRADE
     tls:
       mode: SIMPLE
       sni: api.githubcopilot.com

@@ -218,9 +218,9 @@ kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- \
 - Verify ServiceEntry `hosts` matches external hostname exactly
 - Ensure DestinationRule `host` matches ServiceEntry host
 - Check network egress policies allow external traffic
-- Verify ExternalName service points to correct hostname
+- Verify HTTPRoute uses Hostname backendRef with correct external hostname
 - Check TLS configuration in DestinationRule (mode, SNI)
-- Ensure Gateway listener hostname matches external hostname
+- Ensure HTTPRoute has URLRewrite filter to rewrite to external hostname
 
 ### External Server Authentication Failing
 

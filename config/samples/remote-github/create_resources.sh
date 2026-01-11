@@ -27,51 +27,27 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Step 1: Patching Gateway to add GitHub external listener..."
-kubectl patch gateway mcp-gateway -n gateway-system --type json -p='[
-  {
-    "op": "add",
-    "path": "/spec/listeners/-",
-    "value": {
-      "name": "github-external",
-      "hostname": "api.githubcopilot.com",
-      "port": 8080,
-      "protocol": "HTTP",
-      "allowedRoutes": {
-        "namespaces": {
-          "from": "All"
-        }
-      }
-    }
-  }
-]' || echo "Note: Listener may already exist, continuing..."
-
-echo ""
-echo "==> Step 2: Creating HTTPRoute for External Service..."
-kubectl apply -f "$SCRIPT_DIR/httproute.yaml"
-
-echo ""
-echo "==> Step 3: Creating ExternalName Service..."
-kubectl apply -f "$SCRIPT_DIR/service.yaml"
-
-echo ""
-echo "==> Step 4: Creating ServiceEntry for GitHub MCP API..."
+echo "==> Step 1: Creating ServiceEntry for GitHub MCP API..."
 kubectl apply -f "$SCRIPT_DIR/serviceentry.yaml"
 
 echo ""
-echo "==> Step 5: Creating DestinationRule..."
+echo "==> Step 2: Creating DestinationRule..."
 kubectl apply -f "$SCRIPT_DIR/destinationrule.yaml"
 
 echo ""
-echo "==> Step 6: Creating Secret with Authentication..."
+echo "==> Step 3: Creating HTTPRoute..."
+kubectl apply -f "$SCRIPT_DIR/httproute.yaml"
+
+echo ""
+echo "==> Step 4: Creating Secret with Authentication..."
 envsubst < "$SCRIPT_DIR/secret.yaml" | kubectl apply -f -
 
 echo ""
-echo "==> Step 7: Creating MCPServer Resource..."
+echo "==> Step 5: Creating MCPServer Resource..."
 kubectl apply -f "$SCRIPT_DIR/mcpserver.yaml"
 
 echo ""
-echo "==> Step 8: Applying AuthPolicy..."
+echo "==> Step 6: Applying AuthPolicy..."
 kubectl apply -f "$SCRIPT_DIR/authpolicy.yaml"
 
 echo ""

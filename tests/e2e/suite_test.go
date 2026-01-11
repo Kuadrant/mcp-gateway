@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,6 +52,7 @@ var _ = BeforeSuite(func() {
 	Expect(scheme.AddToScheme(testScheme)).To(Succeed())
 	Expect(mcpv1alpha1.AddToScheme(testScheme)).To(Succeed())
 	Expect(gatewayapiv1.Install(testScheme)).To(Succeed())
+	Expect(istionetv1beta1.AddToScheme(testScheme)).To(Succeed())
 
 	By("Getting kubeconfig")
 	var err error

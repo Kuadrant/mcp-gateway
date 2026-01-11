@@ -139,11 +139,11 @@ This prevents resource waste during rapid development/force-pushing.
 - Tool call forwarding to upstream servers
 - E2E tests validate full flow
 - toolPrefix field immutability enforced via CEL validation
-- External service detection via ExternalName Services
+- External MCP servers via Hostname backendRef + ServiceEntry/DestinationRule
 - Tool discovery from external MCP servers (GitHub MCP: 94 tools discovered)
 - Controller correctly generates HTTPS URLs for external services
 - Router (ext_proc) properly sets routing headers:
-  - `:authority` header changed to external hostname
+  - `:authority` header set to HTTPRoute hostname (URLRewrite filter handles external rewrite)
   - `:path` header set to custom path (e.g., `/v1/special/mcp`) when specified
   - `x-mcp-api-key` header for backend API keys (to avoid OAuth conflicts)
   - Authorization header added with Bearer token
@@ -327,54 +327,26 @@ The make targets now handle URL parameters automatically:
 
 ## External MCP Server Support (Issue #166)
 
-Successfully implemented external MCP server support (e.g., GitHub Copilot MCP) following the Kuadrant pattern without sidecars.
-
-### Key Fixes That Made It Work
-
-1. **Gateway Listener Configuration (Critical)**
-   - Added external hostname as a listener in the Gateway spec
-   - Example: Added `api.githubcopilot.com` as a listener on port 8080
-   - This allows the gateway to accept traffic for external hostnames
-
-2. **HTTPRoute with Matching Hostname**
-   - Created HTTPRoute with `hostnames: ["api.githubcopilot.com"]`
-   - Routes to ExternalName Service pointing to the external host
-   - Must match the Gateway listener hostname exactly
-
-3. **Correct Token Format**
-   - GitHub MCP requires a PAT (Personal Access Token) starting with `ghp_`
-   - Token must be prefixed with "Bearer " in the secret
-   - Format: `Bearer ghp_YOUR_TOKEN_HERE`
-   - App tokens (`ghu_` prefix) don't work with GitHub Copilot MCP
-
-4. **Credential Environment Variable**
-   - Controller generates env var name: `KAGENTI_{MCP_NAME}_CRED`
-   - Router reads this env var to add Authorization header
-   - Broker uses same env var for tool discovery
-
-5. **ServiceEntry and DestinationRule**
-   - ServiceEntry tells Istio about the external service
-   - DestinationRule configures TLS mode: SIMPLE
-   - Both should be in same namespace as the Service
+External MCP server support (e.g., GitHub Copilot MCP). Clients call your Gateway's hostname, Gateway rewrites and routes to external service.
 
 ### Architecture Flow
 ```
-Client → Gateway (w/ external listener) → Router (adds auth header) → External MCP Server
-                                            ↑
-                                     Config from Controller
+Client → Gateway (*.mcp.local listener) → URLRewrite → External MCP Server
+                    ↑
+             Router (adds auth header)
 ```
+
+### How It Works
+
+1. **ServiceEntry + DestinationRule** - registers external host in Istio's service registry with TLS settings
+2. **HTTPRoute with Hostname backendRef** - uses `kind: Hostname, group: networking.istio.io` to reference external host directly (no ExternalName Service needed)
+3. **URLRewrite filter** - rewrites `:authority` header to external hostname
+4. **Credentials** - Controller aggregates credentials, Router adds auth headers
 
 ### Working Example Configuration
 
 ```yaml
-# 1. Gateway with external listener (in gateway-system namespace)
-listeners:
-- name: github-external
-  hostname: api.githubcopilot.com
-  port: 8080
-  protocol: HTTP
-
-# 2. HTTPRoute (in mcp-test namespace)
+# HTTPRoute with Hostname backendRef (no ExternalName Service needed)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -385,45 +357,27 @@ spec:
   - name: mcp-gateway
     namespace: gateway-system
   hostnames:
-  - api.githubcopilot.com
+  - github.mcp.local  # matches *.mcp.local listener
   rules:
   - matches:
     - path:
         type: PathPrefix
         value: /mcp
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        hostname: api.githubcopilot.com
     backendRefs:
-    - name: api-githubcopilot-com
+    - name: api.githubcopilot.com
+      kind: Hostname
+      group: networking.istio.io
       port: 443
-
-# 3. ExternalName Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-githubcopilot-com
-  namespace: mcp-test
-spec:
-  type: ExternalName
-  externalName: api.githubcopilot.com
-  ports:
-  - name: https
-    port: 443
-    protocol: TCP
 ```
 
 ### Common Issues and Solutions
 
-- **404 Route Not Found**: Gateway needs a listener for the external hostname
-- **401 Unauthorized**: Wrong token format (use PAT with `ghp_` prefix)
-- **Session creation fails**: Router's session cache needs auth; fixed by router adding auth header
+- **401 Unauthorized**: Wrong token format (use PAT with `ghp_` prefix, include "Bearer " prefix)
 - **No tools discovered**: Token invalid or missing "Bearer " prefix
+- **Connection refused**: Missing ServiceEntry or DestinationRule for external host
 
-### Testing
-```bash
-# Verify tools are discovered
-kubectl logs -n mcp-system deploy/mcp-broker-router | grep "Discovered.*tools"
-# Should show: "Discovered tools mcpURL=https://api.githubcopilot.com:443/mcp #tools=94"
-
-# Check auth header is added
-kubectl logs -n mcp-system deploy/mcp-broker-router | grep "Adding Authorization header"
-# Should show: "Adding Authorization header for routing server=mcp-test/github-mcp"
-```
+See `docs/guides/external-mcp-server.md` for complete setup instructions.

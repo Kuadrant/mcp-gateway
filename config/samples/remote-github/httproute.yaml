@@ -10,15 +10,18 @@ spec:
     name: mcp-gateway
     namespace: gateway-system
   hostnames:
-  - api.githubcopilot.com  # must match the Gateway listener hostname
+  - github.mcp.local  # matches *.mcp.local wildcard listener
   rules:
   - matches:
     - path:
         type: PathPrefix
         value: /mcp
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        hostname: api.githubcopilot.com
     backendRefs:
-    - group: ""
-      kind: Service
-      name: api-githubcopilot-com
-      namespace: mcp-test
+    - name: api.githubcopilot.com
+      kind: Hostname
+      group: networking.istio.io
       port: 443

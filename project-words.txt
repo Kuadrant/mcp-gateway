@@ -1,6 +1,9 @@
 # New Words
 Agentic
 apikey
+dotdot
+istionetv
+istiov
 authorino
 Authorino
 clientcmd

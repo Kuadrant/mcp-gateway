@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -443,6 +445,16 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 		kind = string(*backendRef.Kind)
 	}
 
+	group := ""
+	if backendRef.Group != nil {
+		group = string(*backendRef.Group)
+	}
+
+	// handle Istio Hostname backendRef for external services
+	if kind == "Hostname" && group == "networking.istio.io" {
+		return r.buildServerInfoForHostnameBackend(httpRoute, mcpServer, backendRef, namespace, targetRef.Name)
+	}
+
 	if kind != "Service" {
 		return nil, fmt.Errorf("backend reference is not a Service: %s", kind)
 	}
@@ -527,7 +539,6 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 	path := mcpServer.Spec.Path
 	endpoint := fmt.Sprintf("%s://%s%s", protocol, nameAndEndpoint, path)
 
-	// external services need actual hostname for routing
 	routingHostname := hostname
 	if isExternal {
 		// extract hostname without port
@@ -548,6 +559,55 @@ func (r *MCPReconciler) discoverServersFromHTTPRoutes(
 		Credential:         "",
 	}
 	return &serverInfo, nil
+}
+
+// buildServerInfoForHostnameBackend handles Istio Hostname backendRef for external services
+func (r *MCPReconciler) buildServerInfoForHostnameBackend(
+	httpRoute *gatewayv1.HTTPRoute,
+	mcpServer *mcpv1alpha1.MCPServer,
+	backendRef gatewayv1.HTTPBackendRef,
+	namespace string,
+	httpRouteName string,
+) (*ServerInfo, error) {
+	if len(httpRoute.Spec.Hostnames) == 0 {
+		return nil, fmt.Errorf("HTTPRoute %s/%s must have at least one hostname", namespace, httpRouteName)
+	}
+
+	externalHost := string(backendRef.Name)
+	if !isValidHostname(externalHost) {
+		return nil, fmt.Errorf("invalid hostname in backendRef: %s", externalHost)
+	}
+
+	port := "443"
+	if backendRef.Port != nil {
+		port = fmt.Sprintf("%d", *backendRef.Port)
+	}
+
+	path := mcpServer.Spec.Path
+	endpoint := fmt.Sprintf("https://%s%s", net.JoinHostPort(externalHost, port), path)
+	routingHostname := string(httpRoute.Spec.Hostnames[0])
+
+	return &ServerInfo{
+		ID:                 serverID(httpRoute, mcpServer, endpoint),
+		Endpoint:           endpoint,
+		Hostname:           routingHostname,
+		ToolPrefix:         mcpServer.Spec.ToolPrefix,
+		HTTPRouteName:      httpRouteName,
+		HTTPRouteNamespace: namespace,
+		Credential:         "",
+	}, nil
+}
+
+// validates hostname can't contain path injection
+func isValidHostname(hostname string) bool {
+	if hostname == "" {
+		return false
+	}
+	u, err := url.Parse("//" + hostname)
+	if err != nil {
+		return false
+	}
+	return u.Host == hostname
 }
 
 func (r *MCPReconciler) cleanupOrphanedHTTPRoutes(
