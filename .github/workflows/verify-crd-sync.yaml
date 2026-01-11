@@ -4,13 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'pkg/apis/**'
+      - 'api/**'
       - 'config/crd/**'
       - 'charts/mcp-gateway/crds/**'
   push:
     branches: [main]
     paths:
-      - 'pkg/apis/**'
+      - 'api/**'
       - 'config/crd/**'
       - 'charts/mcp-gateway/crds/**'
   workflow_dispatch:
@@ -33,9 +33,15 @@ jobs:
       with:
         go-version: '1.22'
 
-    - name: Install controller-gen
+    - name: Verify generated code is up-to-date
       run: |
-        go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+        make generate
+        if ! git diff --quiet api/; then
+          echo "❌ Generated code is out of date. Run 'make generate' and commit the changes."
+          git diff api/
+          exit 1
+        fi
+        echo "✅ Generated code is up-to-date"
 
     - name: Generate CRDs
       run: |
@@ -64,17 +70,18 @@ jobs:
     - name: Generate sync instructions on failure
       if: failure()
       run: |
-        echo "## CRD Synchronization Failed" >> $GITHUB_STEP_SUMMARY
+        echo "## CRD or Generated Code Synchronization Failed" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "The CRDs in \`config/crd/\` and \`charts/mcp-gateway/crds/\` are out of sync." >> $GITHUB_STEP_SUMMARY
+        echo "The generated code or CRDs are out of sync." >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### To fix this issue:" >> $GITHUB_STEP_SUMMARY
-        echo "1. If you modified Go types, run:" >> $GITHUB_STEP_SUMMARY
+        echo "1. If you modified Go types in \`api/\`, run:" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
         echo "   make generate-crds-all" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "   This regenerates deepcopy code and CRDs, then syncs to Helm charts." >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "2. If you only need to sync existing CRDs:" >> $GITHUB_STEP_SUMMARY
+        echo "2. If you only need to sync existing CRDs to Helm:" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
         echo "   make update-helm-crds" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
