@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-tunnel-service
+  namespace: mcp-system
+spec:
+  type: ExternalName
+  externalName: topological-uninimically-erlene.ngrok-free.dev
+  ports:
+  - name: https
+    port: 443
+    targetPort: 443
+    protocol: TCP
+    appProtocol: https
+  - name: http-fallback
+    port: 80
+    targetPort: 443
+    protocol: TCP
+    appProtocol: https
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: local-tunnel-route
+  namespace: mcp-system
+spec:
+  parentRefs:
+  - name: mcp-gateway
+    namespace: gateway-system
+  hostnames:
+  - 'local-dev.mcp.local'
+  - 'topological-uninimically-erlene.ngrok-free.dev'
+  rules:
+  - filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+          - name: ngrok-skip-browser-warning
+            value: "true"
+    - type: URLRewrite
+      urlRewrite:
+        hostname: topological-uninimically-erlene.ngrok-free.dev
+    backendRefs:
+    - name: local-tunnel-service
+      port: 443
+
+---
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPServer
+metadata:
+  name: local-dev-server
+  namespace: mcp-system
+spec:
+  toolPrefix: "local_"
+  path: "/mcp"
+  targetRef:
+    group: "gateway.networking.k8s.io"
+    kind: "HTTPRoute"
+    name: "local-tunnel-route"

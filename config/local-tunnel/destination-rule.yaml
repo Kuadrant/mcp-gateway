@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: local-tunnel-tls
+  namespace: gateway-system
+spec:
+  exportTo:
+  - "*"
+  host: topological-uninimically-erlene.ngrok-free.dev
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      sni: topological-uninimically-erlene.ngrok-free.dev

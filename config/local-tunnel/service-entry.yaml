@@ -1,0 +1,23 @@
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: local-tunnel-entry
+  namespace: gateway-system
+spec:
+  exportTo:
+  - "*"
+  hosts:
+  - topological-uninimically-erlene.ngrok-free.dev
+  location: MESH_EXTERNAL
+  ports:
+  - name: https
+    number: 443
+    protocol: HTTPS
+  - name: http
+    number: 80
+    protocol: HTTP
+  resolution: DNS
+  endpoints:
+  - address: topological-uninimically-erlene.ngrok-free.dev
+    ports:
+      http: 443
