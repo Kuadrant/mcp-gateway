@@ -785,4 +785,138 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Echo: e2e"))
 	})
+
+	It("should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
+		// server1 has: greet, time, slow, headers, add_tool
+		// server2 has: hello_world, time, headers, auth1234, slow, set_time, pour_chocolate_into_mold
+		// Both have time, headers, slow - these will conflict
+
+		By("Creating first MCPServer without prefix pointing to server1")
+		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp.local", "mcp-test-server1", 9090, k8sClient).
+			WithToolPrefix("")
+		testResources = append(testResources, registration1.GetObjects()...)
+		server1 := registration1.Register(ctx)
+
+		By("Waiting for first server to become ready before creating second server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying first server's unique tool (greet) is available")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			// greet is unique to server1
+			g.Expect(verifyMCPServerRegistrationToolPresent("greet", toolsList)).To(BeTrueBecause("greet from server1 should exist"))
+			// time is shared but available from server1
+			g.Expect(verifyMCPServerRegistrationToolPresent("time", toolsList)).To(BeTrueBecause("time from server1 should exist"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating second MCPServer without prefix pointing to server2 (also has time, headers, slow)")
+		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp.local", "mcp-test-server2", 9090, k8sClient).
+			WithToolPrefix("")
+		testResources = append(testResources, registration2.GetObjects()...)
+		server2 := registration2.Register(ctx)
+
+		By("Verifying second server reports conflict in status")
+		Eventually(func(g Gomega) {
+			msg, err := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server2.Name, server2.Namespace)
+			g.Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Println("Server2 status:", msg)
+			g.Expect(strings.Contains(msg, "conflict") || strings.Contains(msg, "conflicts")).To(BeTrue(), "expected conflict message")
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Modifying second MCPServer to add a prefix to resolve conflict")
+		patch := client.MergeFrom(server2.DeepCopy())
+		server2.Spec.ToolPrefix = "server2_"
+		Expect(k8sClient.Patch(ctx, server2, patch)).To(Succeed())
+
+		By("Waiting for second server to become ready with new prefix")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		By("Verifying both servers' tools are now available")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			// greet from server1 (no prefix) - unique to server1
+			g.Expect(verifyMCPServerRegistrationToolPresent("greet", toolsList)).To(BeTrueBecause("greet from server1 should exist"))
+			// time from server1 (no prefix)
+			g.Expect(verifyMCPServerRegistrationToolPresent("time", toolsList)).To(BeTrueBecause("time from server1 should exist"))
+			// server2_hello_world from server2 (with prefix) - unique to server2
+			g.Expect(verifyMCPServerRegistrationToolPresent("server2_hello_world", toolsList)).To(BeTrueBecause("server2_hello_world from server2 should exist"))
+			// server2_time from server2 (with prefix)
+			g.Expect(verifyMCPServerRegistrationToolPresent("server2_time", toolsList)).To(BeTrueBecause("server2_time from server2 should exist"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Invoking same tools from both servers")
+		// Call server1's time (no prefix)
+		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "time"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+		Expect(len(res.Content)).To(BeNumerically(">=", 1))
+
+		// Call server2's prefixed headers tool
+		res, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "server2_headers"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+		Expect(len(res.Content)).To(BeNumerically(">=", 1))
+	})
+
+	It("should expose tool annotations to the client", func() {
+		By("Creating an MCPServer pointing to server1 which has tools with annotations")
+		registration := NewMCPServerResourcesWithDefaults("annotations-test", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090)
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools are present")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tool annotations are visible for the 'time' tool")
+		toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+		Expect(err).NotTo(HaveOccurred())
+
+		timeToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "time")
+		var timeTool *mcp.Tool
+		for i, t := range toolsList.Tools {
+			if t.Name == timeToolName {
+				timeTool = &toolsList.Tools[i]
+				break
+			}
+		}
+		Expect(timeTool).NotTo(BeNil(), "time tool should exist")
+		GinkgoWriter.Printf("time tool annotations: %+v\n", timeTool.Annotations)
+		Expect(timeTool.Annotations.Title).To(Equal("time"), "time tool should have Title annotation set to 'time'")
+
+		By("Verifying tool annotations are visible for the 'add_tool' tool")
+		addToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "add_tool")
+		var addTool *mcp.Tool
+		for i, t := range toolsList.Tools {
+			if t.Name == addToolName {
+				addTool = &toolsList.Tools[i]
+				break
+			}
+		}
+		Expect(addTool).NotTo(BeNil(), "add_tool should exist")
+		GinkgoWriter.Printf("add_tool annotations: %+v\n", addTool.Annotations)
+		Expect(addTool.Annotations.Title).To(Equal("add"), "add_tool should have Title annotation set to 'add'")
+	})
 })
