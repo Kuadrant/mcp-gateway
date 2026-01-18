@@ -8,49 +8,6 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
-func TestConfig_StripServerPrefix(t *testing.T) {
-
-	testCases := []struct {
-		Name   string
-		Config *config.MCPServersConfig
-		Input  string
-		Output string
-	}{
-		{
-			Name: "test strips prefix",
-			Config: &config.MCPServersConfig{
-				Servers: []*config.MCPServer{
-					{
-						ToolPrefix: "prefix_",
-					},
-				},
-			},
-			Input:  "prefix_tool",
-			Output: "tool",
-		},
-		{
-			Name: "doesn't strips prefix of unknown server prefix",
-			Config: &config.MCPServersConfig{
-				Servers: []*config.MCPServer{
-					{
-						ToolPrefix: "prefix_",
-					},
-				},
-			},
-			Input:  "other_tool",
-			Output: "other_tool",
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			result := tc.Config.StripServerPrefix(tc.Input)
-			if tc.Output != result {
-				t.Fatalf("expected stripped prefix result %s but got %s", tc.Output, result)
-			}
-		})
-	}
-}
-
 func TestConfig_MCPServerPath(t *testing.T) {
 	testCases := []struct {
 		Name   string

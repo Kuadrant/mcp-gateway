@@ -4,9 +4,7 @@ package config
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/url"
-	"strings"
 )
 
 // UpstreamMCPID is used as type for identifying individual upstreams
@@ -33,22 +31,6 @@ func (config *MCPServersConfig) Notify(ctx context.Context) {
 	for _, observer := range config.observers {
 		go observer.OnConfigChange(ctx, config)
 	}
-}
-
-// StripServerPrefix returns the stripped tool name and whether stripping was needed
-func (config *MCPServersConfig) StripServerPrefix(toolName string) string {
-	if config == nil {
-		return toolName
-	}
-
-	// strip matching prefix
-	for _, server := range config.Servers {
-		if strippedToolName, ok := strings.CutPrefix(toolName, server.ToolPrefix); ok {
-			slog.Info("Stripped tool name", "tool", strippedToolName, "originalPrefix", server.ToolPrefix)
-			return strippedToolName
-		}
-	}
-	return toolName
 }
 
 // GetServerConfigByName get the routing config by server name
