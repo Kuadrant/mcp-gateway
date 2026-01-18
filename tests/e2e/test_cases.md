@@ -71,3 +71,4 @@
 ### [Happy] Multiple MCP Servers without prefix
 
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
+- When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked

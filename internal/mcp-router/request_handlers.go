@@ -236,7 +236,7 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 
 	headers.WithMCPMethod(mcpReq.Method)
 	mcpReq.serverName = serverInfo.Name
-	upstreamToolName := s.RoutingConfig.StripServerPrefix(toolName)
+	upstreamToolName, _ := strings.CutPrefix(toolName, serverInfo.ToolPrefix)
 	headers.WithMCPToolName(upstreamToolName)
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
