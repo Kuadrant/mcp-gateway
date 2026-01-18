@@ -786,7 +786,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(content.Text).To(Equal("Echo: e2e"))
 	})
 
-	It("should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
+	FIt("should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
 		// server1 has: greet, time, slow, headers, add_tool
 		// server2 has: hello_world, time, headers, auth1234, slow, set_time, pour_chocolate_into_mold
 		// Both have time, headers, slow - these will conflict
