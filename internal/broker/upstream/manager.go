@@ -215,18 +215,21 @@ func (man *MCPManager) manage(ctx context.Context) {
 		man.setStatus(err, numberOfTools)
 		return
 	}
-	man.logger.Debug("updating gateway tools", "upstream mcp server", man.MCP.ID(), "adding", len(toAdd), "removing", len(toRemove))
-	man.gatewayServer.DeleteTools(toRemove...)
-	man.gatewayServer.AddTools(toAdd...)
 	man.toolsLock.Lock()
 	man.tools = fetched
 	numberOfTools = len(fetched)
 	// set a tools map for quick look up by other functions
+	man.toolsMap = map[string]mcp.Tool{}
+	man.servedToolsMap = map[string]mcp.Tool{}
 	for _, newTool := range fetched {
 		man.toolsMap[newTool.Name] = newTool
-		man.servedToolsMap[prefixedName(man.MCP.GetPrefix(), newTool.Name)] = newTool
+		toolName := prefixedName(man.MCP.GetPrefix(), newTool.Name)
+		man.servedToolsMap[toolName] = newTool
 	}
 	// serverTools will have the prefix if one is set
+	man.logger.Debug("updating gateway tools", "upstream mcp server", man.MCP.ID(), "adding", len(toAdd), "removing", len(toRemove))
+	man.gatewayServer.DeleteTools(toRemove...)
+	man.gatewayServer.AddTools(toAdd...)
 	man.serverTools = toAdd
 	man.toolsLock.Unlock()
 	man.setStatus(nil, numberOfTools)

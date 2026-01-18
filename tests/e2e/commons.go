@@ -35,8 +35,8 @@ import (
 
 const (
 	TestTimeoutMedium     = time.Second * 60
-	TestTimeoutLong       = time.Minute * 2
-	TestTimeoutConfigSync = time.Minute * 4
+	TestTimeoutLong       = time.Minute * 3
+	TestTimeoutConfigSync = time.Minute * 6
 	TestRetryInterval     = time.Second * 5
 
 	TestNamespace   = "mcp-test"

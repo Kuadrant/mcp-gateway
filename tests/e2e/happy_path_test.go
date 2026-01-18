@@ -824,7 +824,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			msg, err := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server2.Name, server2.Namespace)
 			g.Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Println("Server2 status:", msg)
-			g.Expect(strings.Contains(msg, "conflict") || strings.Contains(msg, "conflicts")).To(BeTrue(), "expected conflict message")
+			g.Expect(strings.Contains(msg, "conflict")).To(BeTrue(), "expected conflict message")
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Modifying second MCPServer to add a prefix to resolve conflict")
