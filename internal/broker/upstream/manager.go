@@ -176,6 +176,7 @@ func (man *MCPManager) manage(ctx context.Context) {
 	var numberOfTools = 0
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.MCP.ID())
+	man.logger.Debug("==01==> "+man.MCP.GetConfig().URL, "upstream mcp server", man.MCP.ID())
 	if err := man.MCP.Connect(ctx, man.registerCallbacks(ctx)); err != nil {
 		err = fmt.Errorf("failed to connect to upstream mcp %s removing tools : %w", man.MCP.ID(), err)
 		man.removeTools()

@@ -58,7 +58,7 @@ jobs:
         run: make deploy-conformance-server
 
       - name: Wait for conformance server to get ready
-        run: sleep 10
+        run: sleep 20
 
       - name: Run MCP conformance tests
         run: |

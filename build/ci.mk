@@ -49,7 +49,7 @@ ci-debug-logs: ## Collect logs for debugging CI failures
 	@echo "=== Broker logs ==="
 	-$(KUBECTL) logs -n mcp-system deployment/mcp-broker-router --tail=100
 	@echo "=== MCPServerRegistrations ==="
-	-$(KUBECTL) get mcpserverregistrations -A
+	-$(KUBECTL) get mcpserverregistrations -A -o yaml
 	@echo "=== HTTPRoutes ==="
 	-$(KUBECTL) get httproutes -A
 	@echo "=== Secret ==="

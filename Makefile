@@ -251,10 +251,11 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 	kubectl apply -k config/test-servers/conformance-server/
 	@echo "Waiting for conformance server to be ready..."
 	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=conformance-server --timeout=60s
+	@kubectl wait --for=condition=Ready pod -l app=conformance-server -n mcp-test --timeout=120s
 	@echo "Conformance server ready, deploying MCPServerRegistration resource..."
 	kubectl apply -f config/samples/mcpserverregistration-conformance-server.yaml
 	@echo "Waiting for MCPServerRegistration to be Ready..."
-	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=120s
+	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=360s
 
 # Build and push container image TODO we have this and build-image lets just use one
 docker-build: ## Build container image locally
