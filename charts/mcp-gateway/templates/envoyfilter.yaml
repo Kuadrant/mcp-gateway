@@ -9,13 +9,13 @@ metadata:
 spec:
   workloadSelector:
     labels:
-      istio: ingressgateway
+      gateway.io/name: {{ .Values.envoyFilter.name }}
   configPatches:
     - applyTo: HTTP_FILTER
       match:
         context: GATEWAY
         listener:
-          portNumber: 8080
+          portNumber: {{ .Values.envoyFilter.port }}
           filterChain:
             filter:
               name: 'envoy.filters.network.http_connection_manager'

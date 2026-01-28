@@ -2,30 +2,35 @@
 
 # Enable debug logging for Envoy
 debug-envoy-impl:
-	@echo "Enabling debug logging for Istio gateway..."
-	@GATEWAY_POD=$$(kubectl get pods -A -l istio=ingressgateway -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
-	GATEWAY_NS=$$(kubectl get pods -A -l istio=ingressgateway -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null); \
-	if [ -z "$$GATEWAY_POD" ]; then \
-		echo "Error: No Istio gateway pod found"; \
+	@echo "Enabling debug logging for all Istio gateways..."
+	@PODS=$$(kubectl get pods -A -l gateway.istio.io/managed=istio.io-gateway-controller -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); \
+	if [ -z "$$PODS" ]; then \
+		echo "Error: No Istio gateway pods found"; \
 		exit 1; \
 	fi; \
-	echo "Found gateway pod: $$GATEWAY_POD in namespace: $$GATEWAY_NS"; \
-	kubectl exec -n $$GATEWAY_NS $$GATEWAY_POD -- \
-		curl -X POST http://localhost:15000/logging?level=debug
-	@echo "Debug logging enabled. Use 'make debug-envoy-off' to disable."
+	for POD_INFO in $$PODS; do \
+		NS=$$(echo $$POD_INFO | cut -d'/' -f1); \
+		POD=$$(echo $$POD_INFO | cut -d'/' -f2); \
+		echo "Enabling debug on pod: $$POD in namespace: $$NS"; \
+		kubectl exec -n $$NS $$POD -- curl -s -X POST http://localhost:15000/logging?level=debug > /dev/null; \
+	done
+	@echo "Debug logging enabled on all gateways. Use 'make debug-envoy-off' to disable."
 
 # Disable debug logging for Envoy
 debug-envoy-off-impl:
-	@echo "Setting Istio gateway logging to info level..."
-	@GATEWAY_POD=$$(kubectl get pods -A -l istio=ingressgateway -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
-	GATEWAY_NS=$$(kubectl get pods -A -l istio=ingressgateway -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null); \
-	if [ -z "$$GATEWAY_POD" ]; then \
-		echo "Error: No Istio gateway pod found"; \
+	@echo "Setting Istio gateway logging to info level on all gateways..."
+	@PODS=$$(kubectl get pods -A -l istio=ingressgateway -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); \
+	if [ -z "$$PODS" ]; then \
+		echo "Error: No Istio gateway pods found"; \
 		exit 1; \
 	fi; \
-	kubectl exec -n $$GATEWAY_NS $$GATEWAY_POD -- \
-		curl -X POST http://localhost:15000/logging?level=info
-	@echo "Debug logging disabled."
+	for POD_INFO in $$PODS; do \
+		NS=$$(echo $$POD_INFO | cut -d'/' -f1); \
+		POD=$$(echo $$POD_INFO | cut -d'/' -f2); \
+		echo "Disabling debug on pod: $$POD in namespace: $$NS"; \
+		kubectl exec -n $$NS $$POD -- curl -s -X POST http://localhost:15000/logging?level=info > /dev/null; \
+	done
+	@echo "Debug logging disabled on all gateways."
 
 # Show Envoy configuration
 .PHONY: debug-envoy-config

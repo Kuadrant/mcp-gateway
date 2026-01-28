@@ -79,11 +79,12 @@ Deploy the broker and router into the team's namespace. The Helm chart automatic
 helm install mcp-gateway ./charts/mcp-gateway \
   --namespace team-alpha \
   --set envoyFilter.create=true \
-  --set controller.enabled=false \  
+  --set controller.enabled=false \
   --set envoyFilter.namespace=istio-system \
-  --set envoyFilter.name=team-alpha-gateway \  
-  --set gateway.publicHost=team-alpha.mcp.example.com \
-  --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
+  --set envoyFilter.name=team-alpha-gateway \
+  --set envoyFilter.port=8081 \
+  --set gateway.publicHost=alpha.127-0-0-1.sslip.io \
+  --set mcpGatewayExtension.gatewayRef.name=team-alpha-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
@@ -163,14 +164,14 @@ spec:
           from: All
       hostname: mcp.alpha.127-0-0-1.sslip.io
       name: mcp
-      port: 8080
+      port: 8081
       protocol: HTTP
     - allowedRoutes:
         namespaces:
           from: All
       hostname: '*.alpha.mcp.local'
       name: mcps
-      port: 8080
+      port: 8081
       protocol: HTTP
 EOF
 
@@ -180,6 +181,7 @@ helm install mcp-gateway ./charts/mcp-gateway \
   --set envoyFilter.create=true \
   --set envoyFilter.namespace=istio-system \
   --set envoyFilter.name=team-beta-gateway \
+  --set envoyFilter.port=8081 \  
   --set controller.enabled=false \
   --set gateway.publicHost=alpha.127-0-0-1.sslip.io \
   --set mcpGatewayExtension.gatewayRef.name=team-beta-gateway \

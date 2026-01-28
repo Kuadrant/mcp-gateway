@@ -32,3 +32,6 @@ nodes:
   - containerPort: 30089 # keycloak port
     hostPort: 8002
     protocol: TCP
+  - containerPort: 30471
+    hostPort: 8003 # team-alpha (second) mcp gateway
+    protocol: TCP
