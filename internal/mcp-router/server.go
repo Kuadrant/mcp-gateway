@@ -85,12 +85,20 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			// default response
 			responses := responseBuilder.WithDoNothingResponse(streaming).Build()
 			if localRequestHeaders == nil || localRequestHeaders.Headers == nil {
-				s.Logger.Error("Error no request headers present. Exiting ")
+				s.Logger.Error("Error no request headers present. Exiting")
 				for _, response := range responses {
 					if err := stream.Send(response); err != nil {
 						s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
-						return fmt.Errorf("no request headers present")
+						return fmt.Errorf("error sending response")
 					}
+				}
+				if localRequestHeaders == nil {
+					s.Logger.Debug("Body process requested before headers arrived")
+					return fmt.Errorf("protocol error: no request headers")
+				}
+				if mcpRequest == nil {
+					s.Logger.Debug("Body process did not receive body")
+					return fmt.Errorf("protocol error: no body")
 				}
 			}
 			s.Logger.Debug("[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)

@@ -330,3 +330,5 @@ objs
 Serverconfig
 upserted
 kuberenetes
+procv
+typev
