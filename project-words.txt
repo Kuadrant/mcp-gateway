@@ -332,3 +332,4 @@ upserted
 kuberenetes
 dnsutils
 dig
+getent
