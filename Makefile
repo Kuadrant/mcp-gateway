@@ -247,7 +247,22 @@ deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local
 	@echo "Patching OIDC-enabled MCP server to be able to connect to Keycloak..."
 	@kubectl create configmap mcp-gateway-keycloak-cert -n mcp-test --from-file=keycloak.crt=./out/certs/ca.crt 2>/dev/null || true
 	@kubectl wait --for=condition=Programmed gateway/mcp-gateway -n gateway-system --timeout=${WAIT_TIME}
-	@export GATEWAY_IP=$$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'); \
+	@export GATEWAY_ADDRESS=$$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'); \
+	  if echo "$$GATEWAY_ADDRESS" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+	      export GATEWAY_IP=$$GATEWAY_ADDRESS; \
+	  else \
+	      if ! command -v dig >/dev/null 2>&1; then \
+	          echo "❌ 'dig' is required for DNS resolution but not installed. Please install 'dnsutils' or equivalent."; \
+	          exit 1; \
+	      fi; \
+	      echo "Resolving Gateway Address $$GATEWAY_ADDRESS..."; \
+	      export GATEWAY_IP=$$(dig +short $$GATEWAY_ADDRESS | head -n 1); \
+	      if [ -z "$$GATEWAY_IP" ]; then \
+	          echo "❌ Could not resolve IP for $$GATEWAY_ADDRESS"; \
+	          exit 1; \
+	      fi; \
+	      echo "Resolved to $$GATEWAY_IP"; \
+	  fi; \
 	  kubectl patch deployment mcp-oidc-server -n mcp-test --type='json' -p="$$(cat config/keycloak/patch-hostaliases.json | envsubst)"
 
 # Deploy conformance server

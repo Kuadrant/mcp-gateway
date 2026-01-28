@@ -329,6 +329,8 @@ namespacename
 objs
 Serverconfig
 upserted
+dig
+dnsutils
 kuberenetes
 procv
 typev
