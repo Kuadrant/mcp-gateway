@@ -360,6 +360,12 @@ func (man *MCPManager) removeAllTools() {
 	man.logger.Debug("removed all tools", "upstream mcp server", man.MCP.ID(), "count", len(toolsToRemove))
 }
 
+func (man *MCPManager) hasTools() bool {
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
+	return len(man.serverTools) > 0
+}
+
 func (man *MCPManager) toolToServerTool(newTool mcp.Tool) server.ServerTool {
 	newTool.Name = prefixedName(man.MCP.GetPrefix(), newTool.Name)
 	newTool.Meta = mcp.NewMetaFromMap(map[string]any{
