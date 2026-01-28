@@ -333,3 +333,6 @@ kuberenetes
 dnsutils
 dig
 getent
+python3
+socket
+gethostbyname
