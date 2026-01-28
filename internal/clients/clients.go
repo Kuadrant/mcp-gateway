@@ -14,7 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// Initialize will create a new initialize and initialized request and return the associated http client for connection  management
+// Initialize will create a new initialize and initialized request and return the associated http client for connection management
 // This method makes a request back to the gateway setting the target mcp server to initialize. We hairpin through the gateway to ensure any Auth applied to that host is triggered for the call.
 func Initialize(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string) (*client.Client, error) {
 	//mcp-gateway-istio
