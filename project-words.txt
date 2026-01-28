@@ -331,6 +331,7 @@ Serverconfig
 upserted
 dig
 dnsutils
+getent
 kuberenetes
 procv
 typev
