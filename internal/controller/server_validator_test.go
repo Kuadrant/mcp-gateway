@@ -115,7 +115,7 @@ func TestServerValidator_ValidateServers(t *testing.T) {
 			namespace:  "mcp-system",
 		}
 
-		_, err := validator.ValidateServers(context.Background())
+		_, err := validator.ValidateServers(context.Background(), "mcp-system")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no broker endpoints available")
 	})
@@ -151,7 +151,7 @@ func TestServerValidator_ValidateServers(t *testing.T) {
 			namespace:  "mcp-system",
 		}
 
-		_, err := validator.ValidateServers(context.Background())
+		_, err := validator.ValidateServers(context.Background(), "mcp-system")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no broker endpoints available")
 	})

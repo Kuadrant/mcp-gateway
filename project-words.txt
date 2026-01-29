@@ -329,6 +329,12 @@ namespacename
 objs
 Serverconfig
 upserted
+dig
+dnsutils
+getent
+gethostbyname
 kuberenetes
 procv
+python3
+socket
 typev
