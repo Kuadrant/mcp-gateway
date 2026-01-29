@@ -28,31 +28,31 @@ data:
           ]
         },
         {
-          "clientId": "mcp-test/mcp-server1-route",
+          "clientId": "mcp-test/test-server1",
           "publicClient": true,
           "standardFlowEnabled": false,
           "fullScopeAllowed": false
         },
         {
-          "clientId": "mcp-test/mcp-server2-route",
+          "clientId": "mcp-test/test-server2",
           "publicClient": true,
           "standardFlowEnabled": false,
           "fullScopeAllowed": false
         },
         {
-          "clientId": "mcp-test/mcp-server3-route",
+          "clientId": "mcp-test/test-server3",
           "publicClient": true,
           "standardFlowEnabled": false,
           "fullScopeAllowed": false
         },
         {
-          "clientId": "mcp-test/mcp-oidc-server-route",
+          "clientId": "mcp-test/oidc-server",
           "publicClient": true,
           "standardFlowEnabled": false,
           "fullScopeAllowed": false
         },
         {
-          "clientId": "mcp-test/kubernetes-mcp",
+          "clientId": "mcp-test/kubernetes-mcp-server",
           "publicClient": true,
           "standardFlowEnabled": false,
           "fullScopeAllowed": false
@@ -65,7 +65,7 @@ data:
               "name": "impersonator"
             }
           ],
-          "mcp-test/mcp-server1-route": [
+          "mcp-test/test-server1": [
             {
               "name": "greet"
             },
@@ -79,7 +79,7 @@ data:
               "name": "time"
             }
           ],
-          "mcp-test/mcp-server2-route": [
+          "mcp-test/test-server2": [
             {
               "name": "auth1234"
             },
@@ -96,7 +96,7 @@ data:
               "name": "time"
             }
           ],
-          "mcp-test/mcp-server3-route": [
+          "mcp-test/test-server3": [
             {
               "name": "time"
             },
@@ -110,12 +110,12 @@ data:
               "name": "pi"
             }
           ],
-          "mcp-test/mcp-oidc-server-route": [
+          "mcp-test/oidc-server": [
             {
               "name": "hello_world"
             }
           ],
-          "mcp-test/kubernetes-mcp": [
+          "mcp-test/kubernetes-mcp-server": [
             {
               "name": "configuration_contexts_list"
             },
@@ -197,13 +197,13 @@ data:
         {
           "name": "accounting",
           "clientRoles": {
-            "mcp-test/mcp-server1-route": [
+            "mcp-test/test-server1": [
               "greet"
             ],
-            "mcp-test/mcp-server3-route": [
+            "mcp-test/test-server3": [
               "add"
             ],
-            "mcp-test/mcp-oidc-server-route": [
+            "mcp-test/oidc-server": [
               "hello_world"
             ]
           }
@@ -211,7 +211,7 @@ data:
         {
           "name": "engineering",
           "clientRoles": {
-            "mcp-test/kubernetes-mcp": [
+            "mcp-test/kubernetes-mcp-server": [
               "configuration_contexts_list",
               "configuration_view",
               "events_list",

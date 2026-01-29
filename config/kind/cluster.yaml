@@ -21,7 +21,7 @@ nodes:
     apiServer:
       extraArgs:
         oidc-issuer-url: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
-        oidc-client-id: mcp-test/kubernetes-mcp
+        oidc-client-id: mcp-test/kubernetes-mcp-server
         oidc-username-claim: preferred_username
         oidc-groups-claim: groups
         oidc-ca-file: /etc/kubernetes/pki/keycloak-ca.crt
