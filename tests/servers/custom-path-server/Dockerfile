@@ -9,6 +9,6 @@ COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o custom-path-server .
 
 FROM alpine:latest
-WORKDIR /root/
+WORKDIR /app
 COPY --from=builder /app/custom-path-server .
-ENTRYPOINT ["./custom-path-server", "-http", ":8080"]
+ENTRYPOINT ["/app/custom-path-server", "-http", ":8080"]

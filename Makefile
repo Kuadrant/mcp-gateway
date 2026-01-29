@@ -29,6 +29,9 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 # Gateway API version for CRDs
 GATEWAY_API_VERSION ?= v1.4.1
 
+# The KIND cluster name must match ./build/kind.mk
+KIND_CLUSTER_NAME ?= mcp-gateway
+
 .PHONY: help
 help: ## Display this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
@@ -154,7 +157,7 @@ define load-image
 	echo "Loading image $(1) into Kind cluster..."
 	$(eval TMP_DIR := $(shell mktemp -d))
 	$(CONTAINER_ENGINE) save -o $(TMP_DIR)/image.tar $(1) \
-	   && KIND_EXPERIMENTAL_PROVIDER=$(CONTAINER_ENGINE) $(KIND) load image-archive $(TMP_DIR)/image.tar --name mcp-gateway ; \
+	   && KIND_EXPERIMENTAL_PROVIDER=$(CONTAINER_ENGINE) $(KIND) load image-archive $(TMP_DIR)/image.tar --name $(KIND_CLUSTER_NAME) ; \
 	   EXITVAL=$$? ; \
 	   rm -rf $(TMP_DIR) ;\
 	   exit $${EXITVAL}
@@ -210,7 +213,7 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/custom-path-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-custom-path-server:latest .
 	cd tests/servers/oidc-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-oidc-server:latest .
 	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-everything-server:latest .
-	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/custom-response-server:latest .	
+	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .	
 
 # Build conformance server Docker image
 .PHONY: build-conformance-server
@@ -229,7 +232,7 @@ kind-load-test-servers: kind build-test-servers ## Load test server images into 
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-custom-path-server:latest)
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-oidc-server:latest)
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-everything-server:latest)
-	$(call load-image,ghcr.io/kagenti/mcp-gateway/custom-response-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
 
 # Load conformance server image into Kind cluster
 .PHONY: kind-load-conformance-server
