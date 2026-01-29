@@ -244,7 +244,10 @@ deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local
 	@echo "Patching OIDC-enabled MCP server to be able to connect to Keycloak..."
 	@kubectl create configmap mcp-gateway-keycloak-cert -n mcp-test --from-file=keycloak.crt=./out/certs/ca.crt 2>/dev/null || true
 	@kubectl wait --for=condition=Programmed gateway/mcp-gateway -n gateway-system --timeout=${WAIT_TIME}
-	@export GATEWAY_IP=$$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'); \
+	@export GATEWAY_ADDRESS=$$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'); \
+	  export GATEWAY_IP=$$(./utils/resolve_ip.sh $$GATEWAY_ADDRESS); \
+	  if [ -z "$$GATEWAY_IP" ]; then exit 1; fi; \
+	  echo "Gateway IP: $$GATEWAY_IP"; \
 	  kubectl patch deployment mcp-oidc-server -n mcp-test --type='json' -p="$$(cat config/keycloak/patch-hostaliases.json | envsubst)"
 
 # Deploy conformance server
