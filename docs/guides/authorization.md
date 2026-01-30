@@ -79,7 +79,6 @@ spec:
                 request.headers['x-mcp-toolname'] in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
     response:
       unauthenticated:
-        code: 401
         headers:
           'WWW-Authenticate':
             value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
@@ -87,15 +86,14 @@ spec:
           value: |
             {
               "error": "Unauthorized",
-              "message": "MCP Tool Access denied. Authentication required."
+              "message": "MCP Tool Access denied: Authentication required."
             }
       unauthorized:
-        code: 403
         body:
           value: |
             {
               "error": "Forbidden",
-              "message": "MCP Tool Access denied. Insufficient permissions for this tool."
+              "message": "MCP Tool Access denied: Insufficient permissions for this tool."
             }
 EOF
 ```

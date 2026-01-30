@@ -41,6 +41,16 @@ spec:
               signingKeyRefs:
                 - name: trusted-headers-private-key
                   algorithm: ES256
+      unauthenticated:
+        headers:
+          'WWW-Authenticate':
+            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
+        body:
+          value: |
+            {
+              "error": "Unauthorized",
+              "message": "Access denied: Authentication required."
+            }
       unauthorized:
         code: 401
         headers:
@@ -50,16 +60,5 @@ spec:
           value: |
             {
               "error": "Forbidden",
-              "message": "Access denied."
-            }
-      unauthenticated:
-        code: 401
-        headers:
-          'WWW-Authenticate':
-            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
-        body:
-          value: |
-            {
-              "error": "Forbidden",
-              "message": "Access denied."
+              "message": "Access denied: Unsupported method. New authentication required (401)."
             }

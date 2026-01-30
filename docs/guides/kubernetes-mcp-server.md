@@ -264,23 +264,21 @@ spec:
               expression: |
                 "Bearer " + auth.authorization.token.jwt
       unauthenticated:
-        code: 401
         headers:
           'WWW-Authenticate':
             value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8888/.well-known/oauth-protected-resource/mcp
         body:
           value: |
             {
-              "error": "Forbidden",
-              "message": "MCP Tool Access denied. Unauthenticated."
+              "error": "Unauthorized",
+              "message": "MCP Tool Access denied: Authentication required."
             }
       unauthorized:
-        code: 403
         body:
           value: |
             {
               "error": "Forbidden",
-              "message": "MCP Tool Access denied. Insufficient permissions for this tool."
+              "message": "MCP Tool Access denied: Insufficient permissions for this tool."
             }
 EOF
 ```
