@@ -1,0 +1,37 @@
+{{- if .Values.gateway.nodePort.create }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.gateway.name | default (include "mcp-gateway.fullname" .) }}-nodeport
+  namespace: {{ .Values.gateway.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: {{ .Values.gateway.name | default (include "mcp-gateway.fullname" .) }}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  selector:
+    gateway.networking.k8s.io/gateway-name: {{ .Values.gateway.name | default (include "mcp-gateway.fullname" .) }}
+  sessionAffinity: None
+  ports:
+    {{- if .Values.gateway.nodePort.statusPort.enabled }}
+    - name: status-port
+      appProtocol: tcp
+      port: 15021
+      targetPort: 15021
+      protocol: TCP
+      {{- if .Values.gateway.nodePort.statusPort.nodePort }}
+      nodePort: {{ .Values.gateway.nodePort.statusPort.nodePort }}
+      {{- end }}
+    {{- end }}
+    - name: mcp
+      appProtocol: http
+      port: {{ .Values.gateway.port }}
+      targetPort: {{ .Values.gateway.port }}
+      protocol: TCP
+      {{- if .Values.gateway.nodePort.mcpPort }}
+      nodePort: {{ .Values.gateway.nodePort.mcpPort }}
+      {{- end }}
+{{- end }}

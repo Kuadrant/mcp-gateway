@@ -1,49 +1,17 @@
 ##@ Auth Examples
 
-.PHONY: oauth-acl-example-setup
-oauth-acl-example-setup: cert-manager-install kuadrant-install keycloak-install ## Setup auth example based on OAuth2 - permissions managed with an external Access Control List provider (requires: make local-env-setup)
+.PHONY: auth-example-setup
+auth-example-setup: cert-manager-install kuadrant-install keycloak-install ## Setup auth example of OAuth2 authentication using Kuadrant, tool list filtering based on RBAC permissions configured in Keycloak, OAuth2 Token Exchange, and integration with Vault (requires: make local-env-setup)
 	@echo "========================================="
 	@echo "Setting up OAuth Example"
 	@echo "========================================="
-	@echo "Prerequisites: make local-env-setup should be completed"
 	@echo ""
-	@echo "Step 1/4: Configuring OAuth environment variables..."
-	@kubectl set env deployment/mcp-broker-router \
-		OAUTH_RESOURCE_NAME="MCP Server" \
-		OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
-		OAUTH_AUTHORIZATION_SERVERS="https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
-		OAUTH_BEARER_METHODS_SUPPORTED="header" \
-		OAUTH_SCOPES_SUPPORTED="basic,groups" \
-		-n mcp-system
-	@echo "✅ OAuth environment variables configured"
+	@echo "This setup activates configuration in the MCP Gateway to test the following use cases:"
+	@echo "  - OAuth2 authentication using Keycloak as Identity Provider"
+	@echo "  - Tool list filtering based on RBAC permissions configured in Keycloak"
+	@echo "  - OAuth2 Token Exchange to obtain access tokens for backend services"
+	@echo "  - Integration with HashiCorp Vault (alternative to OAuth2 Token Exchange)"
 	@echo ""
-	@echo "Step 2/4: Applying AuthPolicy configurations..."
-	@kubectl apply -f ./config/samples/oauth-acl/tools-list-auth.yaml
-	@kubectl apply -f ./config/samples/oauth-acl/tools-call-auth.yaml
-	@echo "✅ AuthPolicy configurations applied"
-	@echo ""
-	@echo "Step 3/4: Configuring CORS rules for the OpenID Connect Client Registration endpoint..."
-	@kubectl apply -f ./config/keycloak/preflight_envoyfilter.yaml
-	@kubectl -n mcp-system apply -k ./config/example-access-control/
-	@echo "✅ CORS configured"
-	@echo ""
-	@echo "Step 4/4: Patch Authorino deployment to be able to connect to Keycloak..."
-	@./utils/patch-authorino-to-keycloak.sh
-	@echo "✅ Authorino deployment patched"
-	@echo ""
-	@echo "🎉 OAuth example setup complete!"
-	@echo ""
-	@echo "The mcp-broker now serves OAuth discovery information at:"
-	@echo "  /.well-known/oauth-protected-resource"
-	@echo ""
-	@echo "Next step: Open MCP Inspector with 'make inspect-gateway'"
-	@echo "and go through the OAuth flow with credentials: mcp/mcp"
-
-.PHONY: oauth-token-exchange-example-setup
-oauth-token-exchange-example-setup: cert-manager-install kuadrant-install keycloak-install ## Setup auth example of enabling OAuth2 authentication using Kuadrant, with Vault access and OAuth2 Token Exchange automatically handled for the tools/call request – permissions stored in the Keycloak server (requires: make local-env-setup)
-	@echo "========================================="
-	@echo "Setting up OAuth Example"
-	@echo "========================================="
 	@echo "Prerequisites: make local-env-setup should be completed"
 	@echo ""
 	@echo "Step 1/5: Configuring OAuth environment variables..."

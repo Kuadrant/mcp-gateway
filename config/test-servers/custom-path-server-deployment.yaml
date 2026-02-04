@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
       - name: mcp-custom-path-server
-        image: ghcr.io/kagenti/mcp-gateway/test-custom-path-server:latest
+        image: ghcr.io/kuadrant/mcp-gateway/test-custom-path-server:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080

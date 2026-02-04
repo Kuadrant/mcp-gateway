@@ -188,7 +188,7 @@ The accessible Kubernetes API servers accept same-domain OIDC access tokens, whi
 ### ❶ Enable auth for `tool/list` and `tool/call` requests in the MCP Gateway
 
 ```sh
-make oauth-token-exchange-example-setup
+make auth-example-setup
 ```
 
 ### ❷ Create an AuthPolicy for the Kubernetes MCP server route
@@ -264,23 +264,21 @@ spec:
               expression: |
                 "Bearer " + auth.authorization.token.jwt
       unauthenticated:
-        code: 401
         headers:
           'WWW-Authenticate':
             value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8888/.well-known/oauth-protected-resource/mcp
         body:
           value: |
             {
-              "error": "Forbidden",
-              "message": "MCP Tool Access denied. Unauthenticated."
+              "error": "Unauthorized",
+              "message": "MCP Tool Access denied: Authentication required."
             }
       unauthorized:
-        code: 403
         body:
           value: |
             {
               "error": "Forbidden",
-              "message": "MCP Tool Access denied. Insufficient permissions for this tool."
+              "message": "MCP Tool Access denied: Insufficient permissions for this tool."
             }
 EOF
 ```

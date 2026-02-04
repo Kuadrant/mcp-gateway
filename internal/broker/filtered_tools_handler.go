@@ -23,14 +23,22 @@ const allowedToolsClaimKey = "allowed-tools"
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
 func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 
 	// step 1: apply x-authorized-tools filtering (JWT-based)
 	tools = broker.applyAuthorizedToolsFilter(mcpReq.Header, tools)
+	broker.logger.Debug("FilterTools authorized tools result", "output_tools_count", len(tools))
 
 	// step 2: apply virtual server filtering
 	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
 
+	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+
+	// ensure we never return nil (would serialize as null instead of [])
+	if tools == nil {
+		tools = []mcp.Tool{}
+	}
 	mcpRes.Tools = tools
 }
 

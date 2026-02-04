@@ -33,6 +33,13 @@ const (
 	notificationToolsListChanged = "notifications/tools/list_changed"
 )
 
+type eventType int
+
+const (
+	eventTypeNotification eventType = iota
+	eventTypeTimer
+)
+
 // ServerValidationStatus contains the validation results for an upstream MCP server
 type ServerValidationStatus struct {
 	ID            string    `json:"id"`
@@ -119,7 +126,7 @@ func (man *MCPManager) MCPName() string {
 // until Stop is called or the context is cancelled.
 func (man *MCPManager) Start(ctx context.Context) {
 	man.ticker.Reset(man.tickerInterval)
-	man.manage(ctx)
+	man.manage(ctx, eventTypeTimer)
 
 	for {
 		select {
@@ -127,7 +134,7 @@ func (man *MCPManager) Start(ctx context.Context) {
 			man.Stop()
 		case <-man.ticker.C:
 			man.logger.Debug("health check tick", "upstream mcp server", man.MCP.ID())
-			man.manage(ctx)
+			man.manage(ctx, eventTypeTimer)
 		case <-man.done:
 			man.logger.Debug("shutting down manager", "upstream mcp server", man.MCP.ID())
 			return
@@ -156,7 +163,7 @@ func (man *MCPManager) registerCallbacks(ctx context.Context) func() {
 		man.MCP.OnNotification(func(notification mcp.JSONRPCNotification) {
 			if notification.Method == notificationToolsListChanged {
 				man.logger.Debug("received notification", "upstream mcp server", man.MCP.ID(), "notification", notification)
-				man.manage(ctx)
+				man.manage(ctx, eventTypeNotification)
 				return
 			}
 		})
@@ -169,8 +176,8 @@ func (man *MCPManager) registerCallbacks(ctx context.Context) func() {
 }
 
 // manage should be the only entry point that triggers changes to tools
-func (man *MCPManager) manage(ctx context.Context) {
-	man.logger.Debug("managing connection", "upstream mcp server", man.MCP.ID())
+func (man *MCPManager) manage(ctx context.Context, event eventType) {
+	man.logger.Debug("managing connection", "upstream mcp server", man.MCP.ID(), "event type", event)
 	var numberOfTools = 0
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.MCP.ID())
@@ -184,6 +191,7 @@ func (man *MCPManager) manage(ctx context.Context) {
 	}
 	// there may be an active client so we also ping
 	if err := man.MCP.Ping(ctx); err != nil {
+		// if we fail to ping we disconnect to ensure a fresh connection next time around
 		err = fmt.Errorf("upstream mcp failed to ping server %s removing tools : %w", man.MCP.ID(), err)
 		man.logger.Error("ping failed", "upstream mcp server", man.MCP.ID(), "error", err)
 		man.removeAllTools()
@@ -192,7 +200,12 @@ func (man *MCPManager) manage(ctx context.Context) {
 		return
 	}
 
-	man.logger.Debug("syncing tools", "upstream mcp server", man.MCP.ID())
+	if !man.shouldFetchTools(event) {
+		man.logger.Debug("not fetching tools", "event", event, "upstream mcp server", man.MCP.ID(), "waiting for notification", notificationToolsListChanged)
+		return
+	}
+
+	man.logger.Debug("fetching tools", "upstream mcp server", man.MCP.ID())
 	current, fetched, err := man.getTools(ctx)
 	if err != nil {
 		err = fmt.Errorf("upstream mcp failed to list tools server %s : %w", man.MCP.ID(), err)
@@ -222,8 +235,12 @@ func (man *MCPManager) manage(ctx context.Context) {
 	}
 	// serverTools will have the prefix if one is set
 	man.logger.Debug("updating gateway tools", "upstream mcp server", man.MCP.ID(), "adding", len(toAdd), "removing", len(toRemove))
-	man.gatewayServer.DeleteTools(toRemove...)
-	man.gatewayServer.AddTools(toAdd...)
+	if len(toRemove) > 0 {
+		man.gatewayServer.DeleteTools(toRemove...)
+	}
+	if len(toAdd) > 0 {
+		man.gatewayServer.AddTools(toAdd...)
+	}
 
 	// rebuild our internal tools
 	man.serverTools = slices.DeleteFunc(man.serverTools, func(tool server.ServerTool) bool {
@@ -234,6 +251,19 @@ func (man *MCPManager) manage(ctx context.Context) {
 	man.logger.Debug("internal tools", "upstream mcp server", man.MCP.ID(), "total", len(man.serverTools))
 	man.toolsLock.Unlock()
 	man.setStatus(nil, numberOfTools)
+}
+
+func (man *MCPManager) shouldFetchTools(event eventType) bool {
+	// fetch if no support for tools list change notifications
+	if !man.MCP.SupportsToolsListChanged() {
+		return true
+	}
+	// fetch if it is a notification
+	if event == eventTypeNotification {
+		return true
+	}
+	// fetch if timer and we have no tools
+	return event == eventTypeTimer && len(man.serverTools) == 0
 }
 
 // GetStatus returns the current status of the MCP Server

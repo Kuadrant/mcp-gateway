@@ -216,3 +216,77 @@ func TestGetServerInfo(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svr)
 }
+
+func TestToolAnnotations(t *testing.T) {
+	b := NewBroker(logger,
+		WithEnforceToolFilter(true),
+		WithManagerTickerInterval(time.Microsecond),
+		WithTrustedHeadersPublicKey("abc"))
+	require.NotNil(t, b)
+	require.NotNil(t, b.MCPServer())
+
+	// Attach phony tools to the upstreams
+	bImpl, ok := b.(*mcpBrokerImpl)
+	require.True(t, ok)
+	bImpl.mcpServers["test1"] = createTestManager(t, "test1", "", []mcp.Tool{
+		mcp.NewTool("get_status", mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			ReadOnlyHint:   mcp.ToBoolPtr(true),
+			IdempotentHint: mcp.ToBoolPtr(true),
+		})),
+		mcp.NewTool("pour_chocolate", mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			ReadOnlyHint:   mcp.ToBoolPtr(false),
+			IdempotentHint: mcp.ToBoolPtr(false),
+		})),
+	})
+
+	testCases := []struct {
+		name       string
+		serverName config.UpstreamMCPID
+		toolName   string
+		shouldFail bool
+		readOnly   bool
+		idempotent bool
+	}{
+		{
+			name:       "status tool",
+			serverName: "test1",
+			toolName:   "get_status",
+			shouldFail: false,
+			readOnly:   true,
+			idempotent: true,
+		},
+		{
+			name:       "pour tool",
+			serverName: "test1",
+			toolName:   "pour_chocolate",
+			shouldFail: false,
+			readOnly:   false,
+			idempotent: false,
+		},
+		{
+			name:       "invalid tool",
+			serverName: "test1",
+			toolName:   "plant_rutabaga",
+			shouldFail: true,
+		},
+		{
+			name:       "invalid server",
+			serverName: "miami",
+			toolName:   "get_status",
+			shouldFail: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			annotation, exists := b.ToolAnnotations(tc.serverName, tc.toolName)
+			if tc.shouldFail {
+				require.False(t, exists, "expected no annotation to be found")
+				return
+			}
+			require.True(t, exists, "expected annotation to be found")
+			require.Equal(t, tc.readOnly, *annotation.ReadOnlyHint, "readOnly mismatch: %#v", annotation)
+			require.Equal(t, tc.idempotent, *annotation.IdempotentHint, "idempotent mismatch: %#v", annotation)
+		})
+	}
+}

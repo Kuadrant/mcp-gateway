@@ -33,7 +33,7 @@ func TestUpsertMCPServer(t *testing.T) {
 		name           string
 		serversToAdd   []MCPServer
 		expectedCount  int
-		expectedServer MCPServer // checks first server if expectedCount == 1
+		expectedServer MCPServer // checks first server expectedCount == 1
 	}{
 		{
 			name: "creates secret if not exists",

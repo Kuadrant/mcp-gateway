@@ -1,86 +1,87 @@
 # Installing and Configuring MCP Gateway
 
-This guide demonstrates how to install and configure MCP Gateway to aggregate multiple Model Context Protocol (MCP) servers behind a single endpoint.
+This guide demonstrates how to install and configure the MCP Gateway to aggregate multiple Model Context Protocol (MCP) servers behind a single endpoint.
 
 ## Prerequisites
-
-### Kubernetes Cluster Options
 
 MCP Gateway runs on Kubernetes and integrates with Gateway API and Istio. You should be familiar with:
 - **Kubernetes** - Basic kubectl and YAML knowledge
 - **Gateway API** - Kubernetes standard for traffic routing
-- **Istio** - Service mesh and Gateway API provider
+- **Istio** - Gateway API provider
 
 **Choose your setup approach:**
 
-**Option A: Quick Start (5 minutes)**
+**Option A: Local Setup Start (5 minutes)**
 - Want to try MCP Gateway immediately with minimal setup
 - Automated script handles everything for you
 - Perfect for evaluation and testing
 - **[Quick Start Guide](./quick-start.md)**
 
 **Option B: Existing Cluster**
-- You have a Kubernetes cluster with Gateway API CRDs and Istio installed
-- Ready to deploy MCP Gateway immediately
+- You have a Kubernetes cluster with Gateway API CRDs and Istio already installed
+- Are ready to deploy MCP Gateway immediately
+- If you want to deploy isolated MCP Gateway instances for different teams there is a specific guide for that **[Isolated Gateway Deployment Guide](./isolated-gateway-deployment.md)** which goes into more detail.
 
-<!-- **Option C: Local Development Cluster**
-- Set up a local Kind cluster with all prerequisites
-- See: [Kind Cluster Setup Guide](./kind-cluster-setup.md) -->
+## Installation
 
-### MCP Servers
+### Step 1: Install CRDs
 
-You'll need at least one MCP server to route through the gateway. This can be:
-- Internal services running in your cluster
-- External MCP servers (like GitHub's MCP API)
-- Test servers for evaluation
+```bash
+export MCP_GATEWAY_VERSION=main  # or a specific version tag
+kubectl apply -k "https://github.com/kuadrant/mcp-gateway/config/crd?ref=${MCP_GATEWAY_VERSION}"
+```
 
-## Installation Methods
+Verify CRDs are installed:
 
-### Method 1: Helm (Recommended)
+```bash
+kubectl get crd | grep mcp.kagenti.com
+```
+
+Note: CRDs are also installed automatically when deploying via Helm.
+
+### Step 2: Install MCP Gateway
 
 Install from GitHub Container Registry:
 
 ```bash
-helm install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
-  --create-namespace \
+helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+  --version ${MCP_GATEWAY_VERSION} \
   --namespace mcp-system \
-  --set gateway.publicHost=your-hostname.example.com
+  --create-namespace \
+  --set controller.enabled=true \
+  --set broker.create=true \
+  --set gateway.publicHost=your-hostname.example.com \
+  --set envoyFilter.create=true \
+  --set envoyFilter.namespace=istio-system \
+  --set envoyFilter.name=your-gateway \
+  --set mcpGatewayExtension.gatewayRef.name=your-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
+> **Note:** The `envoyFilter.name` must match the Gateway name. The EnvoyFilter uses this as a label selector (`gateway.io/name`) to target the correct Gateway pods.
 
 This automatically installs:
-- MCP Gateway components (broker, router, controller)
-- Required CRDs and RBAC
-- EnvoyFilter for Istio integration
+- MCP Controller (watches MCPGatewayExtension and MCPServerRegistration resources)
+- MCP Broker/Router (aggregates tools from upstream MCP servers)
+- MCPGatewayExtension resource targeting your Gateway
+- EnvoyFilter for Istio integration (routes requests through the external processor)
+- Required CRDs, RBAC, and Secrets
+
 
 > **Note:** The `gateway.publicHost` value must match the hostname configured in your Gateway listener (see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md)).
-
-<!-- ### Method 2: Kustomize
-
-Install using Kubernetes manifests:
-
-```bash
-kubectl apply -k 'https://github.com/Kuadrant/mcp-gateway/config/install?ref=main'
-```
-
-This provides the same components as Helm but with less configuration flexibility.
-
-### Method 3: Standalone Installation (Advanced)
-
-For non-Kubernetes deployments or advanced use cases, see [Standalone Installation Guide](./binary-install.md).
-
-**Note:** This method is not fully supported and requires manual configuration of routing and service discovery. Most guides in this documentation use Kubernetes-based setup, leveraging CRDs and kubectl commands. -->
 
 ## Post-Installation Configuration
 
 After installation, you'll need to configure the gateway and connect your MCP servers:
 
 1. **[Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md)** - Set up traffic routing
-2. **[Configure MCP Servers](./configure-mcp-servers.md)** - Connect internal MCP servers
-3. **[Connect External MCP Servers](./external-mcp-server.md)** - Connect to external APIs
+2. **[Register MCP Servers](./register-mcp-servers.md)** - Connect internal MCP servers
+3. **[Connect to External MCP Servers](./external-mcp-server.md)** - Connect to external APIs
 
 ## Optional Configuration
 
 - **[Authentication](./authentication.md)** - Configure OAuth-based authentication
 - **[Authorization](./authorization.md)** - Set up fine-grained access control
+- **[User Based Tool Filtering](./user-based-tool-filter.md)** - Define what tools a client is allowed to see.
 - **[Virtual MCP Servers](./virtual-mcp-servers.md)** - Create focused tool collections
+- **[Isolated Gateway Deployment](./isolated-gateway-deployment.md)** - Multi-instance deployments for team isolation

@@ -27,8 +27,11 @@ Deploy Keycloak as your OAuth 2.1 authorization server:
 
 ```bash
 # Install Keycloak
+kubectl create namespace keycloak
+kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/keycloak/realm-import.yaml
 kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/keycloak/deployment.yaml
 kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/keycloak/httproute.yaml
+kubectl set env deployment/keycloak -n keycloak KC_HOSTNAME-
 
 # Wait for Keycloak to be ready
 kubectl wait --for=condition=ready pod -l app=keycloak -n keycloak --timeout=120s
@@ -36,105 +39,44 @@ kubectl wait --for=condition=ready pod -l app=keycloak -n keycloak --timeout=120
 # Apply CORS preflight fix for Keycloak OIDC client registration
 # This works around a known Keycloak bug: https://github.com/keycloak/keycloak/issues/39629
 kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/refs/heads/main/config/keycloak/preflight_envoyfilter.yaml
-```
 
-Create the MCP realm and test user. This sets up a dedicated OAuth realm for MCP Gateway with proper OIDC configuration and dynamic client registration support:
-
-```bash
-# Get admin access token from Keycloak
-TOKEN=$(curl -s -X POST "https://keycloak.127-0-0-1.sslip.io:8002/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin" \
-  -d "password=admin" \
-  -d "grant_type=password" \
-  -d "client_id=admin-cli" | jq -r '.access_token')
-
-# Create MCP realm
-curl -X POST "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"realm":"mcp","enabled":true}'
-
-# Update MCP realm token settings
-curl -X PUT "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"realm":"mcp","enabled":true,"ssoSessionIdleTimeout":1800,"accessTokenLifespan":1800}'
-
-# Create test user 'mcp' with password 'mcp'
-curl -X POST "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/users" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"mcp","email":"mcp@example.com","firstName":"mcp","lastName":"mcp","enabled":true,"emailVerified":true,"credentials":[{"type":"password","value":"mcp","temporary":false}]}'
-
-# Create accounting group
-curl -X POST "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/groups" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"accounting"}'
-
-# Add mcp user to accounting group
-# First get the user ID
-USER_ID=$(curl -s -X GET "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/users?username=mcp" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" | jq -r '.[0].id')
-
-# Get the group ID
-GROUP_ID=$(curl -s -X GET "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/groups" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" | jq -r '.[] | select(.name == "accounting") | .id')
-
-# Add user to group
-curl -X PUT "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/users/$USER_ID/groups/$GROUP_ID" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Create groups client scope
-curl -X POST "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/client-scopes" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"groups","protocol":"openid-connect","attributes":{"display.on.consent.screen":"false","include.in.token.scope":"true"}}'
-
-# Get the client scope ID
-SCOPE_ID=$(curl -s -X GET "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/client-scopes" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" | jq -r '.[] | select(.name == "groups") | .id')
-
-# Add groups mapper to client scope
-curl -X POST "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/client-scopes/$SCOPE_ID/protocol-mappers/models" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
-
-# Add groups client scope to realm's optional client scopes
-curl -X PUT "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/default-optional-client-scopes/$SCOPE_ID" \
-  -H "Authorization: Bearer $TOKEN"
-
-# (FOR DEVELOPMENT ONLY) Remove trusted hosts policy for anonymous client registration
-COMPONENT_ID=$(curl -s -X GET "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/components?name=Trusted%20Hosts" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" | jq -r '.[0].id // empty' 2>/dev/null)
-
-if [ -n "$COMPONENT_ID" ] && [ "$COMPONENT_ID" != "null" ]; then
-  curl -X DELETE "https://keycloak.127-0-0-1.sslip.io:8002/admin/realms/mcp/components/$COMPONENT_ID" \
-    -H "Authorization: Bearer $TOKEN"
-  echo "Trusted hosts policy removed"
-else
-  echo "No trusted hosts policy found (already removed or not present)"
-fi
+# Add a listener to the gateway for Keycloak
+kubectl patch gateway mcp-gateway -n gateway-system --type json -p '[
+  {
+    "op": "add",
+    "path": "/spec/listeners/-",
+    "value": {
+      "name": "keycloak",
+      "hostname": "keycloak.127-0-0-1.sslip.io",
+      "port": 8002,
+      "protocol": "HTTP",
+      "allowedRoutes": {
+        "namespaces": {
+          "from": "Selector",
+          "selector": {
+            "matchLabels": {
+              "kubernetes.io/metadata.name": "keycloak"
+            }
+          }
+        }
+      }
+    }
+  }
+]'
 ```
 
 **What this setup creates:**
 - **MCP Realm**: Dedicated realm for MCP Gateway authentication
+- **Test MCP Resource Server Clients**: OAuth resource server clients to model role-based access control for MCP tools
 - **Test User**: User 'mcp' with password 'mcp' for testing
-- **Accounting Group**: Group for authorization testing (user is added to this group)
-- **Groups Client Scope**: Enables group membership claims in JWT tokens
+- **Accounting Group**: Group for authorization testing (test 'mcp' user and selected tools are added to this group)
 - **Token Settings**: 30-minute session timeout and access token lifetime
 - **Anonymous Client Registration**: Removes trusted hosts policy to allow dynamic client registration from any host (For development only. Not recommended for production)
 
 **Why this setup is needed:**
 - **Dedicated Realm**: Isolates MCP authentication from other applications
 - **Dynamic Client Registration**: Allows MCP clients to automatically register without manual setup
-- **Group Membership**: Enables authorization based on user groups (used in authorization guide)
+- **RBAC**: Enables Role-Based Access Control (used in authorization guide)
 - **OIDC Configuration**: Enables proper JWT token issuance with required claims
 
 ## Step 2: Configure MCP Gateway OAuth Environment
@@ -142,12 +84,12 @@ fi
 Configure the MCP Gateway broker to respond with OAuth discovery information:
 
 ```bash
-kubectl set env deployment/mcp-gateway-broker-router \
+kubectl set env deployment/mcp-broker-router \
   OAUTH_RESOURCE_NAME="MCP Server" \
   OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
-  OAUTH_AUTHORIZATION_SERVERS="https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
+  OAUTH_AUTHORIZATION_SERVERS="http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
   OAUTH_BEARER_METHODS_SUPPORTED="header" \
-  OAUTH_SCOPES_SUPPORTED="basic,groups" \
+  OAUTH_SCOPES_SUPPORTED="basic,groups,roles,profile" \
   -n mcp-system
 ```
 
@@ -160,6 +102,37 @@ kubectl set env deployment/mcp-gateway-broker-router \
 - `OAUTH_SCOPES_SUPPORTED`: OAuth scopes this resource server understands
 
 ## Step 3: Configure AuthPolicy for Authentication
+
+Install Kuadrant:
+
+```sh
+helm repo add kuadrant https://kuadrant.io/helm-charts 2>/dev/null || true
+helm repo update
+helm install kuadrant-operator kuadrant/kuadrant-operator \
+  --create-namespace \
+	--wait \
+	--timeout=600s \
+	--namespace kuadrant-system;
+
+kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/kuadrant/kuadrant.yaml
+
+kubectl wait --for=condition=available --timeout=90s deployment/authorino -n kuadrant-system
+
+# Patch Authorino deployment to resolve Keycloak's host name to MCP gateway IP (Development environment only):
+export GATEWAY_IP=$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+kubectl patch deployment authorino -n kuadrant-system --type='json' -p="[
+  {
+    \"op\": \"add\",
+    \"path\": \"/spec/template/spec/hostAliases\",
+    \"value\": [
+      {
+        \"ip\": \"${GATEWAY_IP}\",
+        \"hostnames\": [\"keycloak.127-0-0-1.sslip.io\"]
+      }
+    ]
+  }
+]"
+```
 
 Apply the authentication policy that validates JWT tokens:
 
@@ -183,7 +156,7 @@ spec:
       authentication:
         'keycloak':
           jwt:
-            issuerUrl: https://keycloak.keycloak.svc.cluster.local/realms/mcp
+            issuerUrl: http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
       response:
         unauthenticated:
           code: 401
@@ -219,7 +192,7 @@ curl http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource
 #   "resource_name": "MCP Server",
 #   "resource": "http://mcp.127-0-0-1.sslip.io:8001/mcp",
 #   "authorization_servers": [
-#     "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"
+#     "http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"
 #   ],
 #   "bearer_methods_supported": [
 #     "header"

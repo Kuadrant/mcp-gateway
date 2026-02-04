@@ -247,6 +247,291 @@ func TestHandleRequestBody(t *testing.T) {
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
 }
 
+func TestMCPRequest_isNotificationRequest(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   string
+		expected bool
+	}{
+		{
+			name:     "notifications/initialized is notification",
+			method:   "notifications/initialized",
+			expected: true,
+		},
+		{
+			name:     "notifications/cancelled is notification",
+			method:   "notifications/cancelled",
+			expected: true,
+		},
+		{
+			name:     "notifications/progress is notification",
+			method:   "notifications/progress",
+			expected: true,
+		},
+		{
+			name:     "tools/call is not notification",
+			method:   "tools/call",
+			expected: false,
+		},
+		{
+			name:     "initialize is not notification",
+			method:   "initialize",
+			expected: false,
+		},
+		{
+			name:     "tools/list is not notification",
+			method:   "tools/list",
+			expected: false,
+		},
+		{
+			name:     "empty method is not notification",
+			method:   "",
+			expected: false,
+		},
+		{
+			name:     "partial notification prefix is not notification",
+			method:   "notification",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{Method: tc.method}
+			result := req.isNotificationRequest()
+			require.Equal(t, tc.expected, result, "method %q should return %v", tc.method, tc.expected)
+		})
+	}
+}
+
+func TestMCPRequest_isToolCall(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   string
+		expected bool
+	}{
+		{
+			name:     "tools/call is tool call",
+			method:   "tools/call",
+			expected: true,
+		},
+		{
+			name:     "tools/list is not tool call",
+			method:   "tools/list",
+			expected: false,
+		},
+		{
+			name:     "initialize is not tool call",
+			method:   "initialize",
+			expected: false,
+		},
+		{
+			name:     "empty method is not tool call",
+			method:   "",
+			expected: false,
+		},
+		{
+			name:     "TOOLS/CALL uppercase is not tool call",
+			method:   "TOOLS/CALL",
+			expected: false,
+		},
+		{
+			name:     "tools/call with extra chars is not tool call",
+			method:   "tools/call/extra",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{Method: tc.method}
+			result := req.isToolCall()
+			require.Equal(t, tc.expected, result, "method %q should return %v", tc.method, tc.expected)
+		})
+	}
+}
+
+func TestMCPRequest_isInitializeRequest(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   string
+		expected bool
+	}{
+		{
+			name:     "initialize is init request",
+			method:   "initialize",
+			expected: true,
+		},
+		{
+			name:     "notifications/initialized is init request",
+			method:   "notifications/initialized",
+			expected: true,
+		},
+		{
+			name:     "tools/call is not init request",
+			method:   "tools/call",
+			expected: false,
+		},
+		{
+			name:     "tools/list is not init request",
+			method:   "tools/list",
+			expected: false,
+		},
+		{
+			name:     "empty method is not init request",
+			method:   "",
+			expected: false,
+		},
+		{
+			name:     "INITIALIZE uppercase is not init request",
+			method:   "INITIALIZE",
+			expected: false,
+		},
+		{
+			name:     "initialized alone is not init request",
+			method:   "initialized",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{Method: tc.method}
+			result := req.isInitializeRequest()
+			require.Equal(t, tc.expected, result, "method %q should return %v", tc.method, tc.expected)
+		})
+	}
+}
+
+func TestMCPRequest_GetSessionID(t *testing.T) {
+	testCases := []struct {
+		name       string
+		headers    *corev3.HeaderMap
+		presetID   string
+		expectedID string
+	}{
+		{
+			name:       "returns cached session ID",
+			headers:    nil,
+			presetID:   "cached-session-id",
+			expectedID: "cached-session-id",
+		},
+		{
+			name: "extracts session ID from headers",
+			headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte("header-session-id")},
+				},
+			},
+			presetID:   "",
+			expectedID: "header-session-id",
+		},
+		{
+			name:       "returns empty when no headers and no cached ID",
+			headers:    nil,
+			presetID:   "",
+			expectedID: "",
+		},
+		{
+			name: "returns empty when header not present",
+			headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "other-header", RawValue: []byte("value")},
+				},
+			},
+			presetID:   "",
+			expectedID: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{
+				Headers:   tc.headers,
+				sessionID: tc.presetID,
+			}
+			result := req.GetSessionID()
+			require.Equal(t, tc.expectedID, result)
+		})
+	}
+}
+
+func TestMCPRequest_ReWriteToolName(t *testing.T) {
+	req := &MCPRequest{
+		Params: map[string]any{
+			"name":      "prefix_original_tool",
+			"arguments": map[string]any{"key": "value"},
+		},
+	}
+
+	req.ReWriteToolName("original_tool")
+
+	require.Equal(t, "original_tool", req.Params["name"])
+	// other params should be unchanged
+	require.Equal(t, map[string]any{"key": "value"}, req.Params["arguments"])
+}
+
+func TestMCPRequest_ToBytes(t *testing.T) {
+	req := &MCPRequest{
+		ID:      ptr.To(1),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params: map[string]any{
+			"name": "test_tool",
+		},
+	}
+
+	bytes, err := req.ToBytes()
+	require.NoError(t, err)
+	require.Contains(t, string(bytes), `"jsonrpc":"2.0"`)
+	require.Contains(t, string(bytes), `"method":"tools/call"`)
+	require.Contains(t, string(bytes), `"name":"test_tool"`)
+}
+
+func TestMCPRequest_GetSingleHeaderValue(t *testing.T) {
+	req := &MCPRequest{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "content-type", RawValue: []byte("application/json")},
+				{Key: "x-custom-header", RawValue: []byte("custom-value")},
+			},
+		},
+	}
+
+	require.Equal(t, "application/json", req.GetSingleHeaderValue("content-type"))
+	require.Equal(t, "custom-value", req.GetSingleHeaderValue("x-custom-header"))
+	require.Equal(t, "", req.GetSingleHeaderValue("nonexistent"))
+}
+
+func TestRouterError(t *testing.T) {
+	t.Run("Error returns message", func(t *testing.T) {
+		err := NewRouterError(500, fmt.Errorf("internal error"))
+		require.Equal(t, "internal error", err.Error())
+	})
+
+	t.Run("Error returns status when no error", func(t *testing.T) {
+		err := &RouterError{StatusCode: 404, Err: nil}
+		require.Equal(t, "router error: status 404", err.Error())
+	})
+
+	t.Run("Code returns status code", func(t *testing.T) {
+		err := NewRouterError(400, fmt.Errorf("bad request"))
+		require.Equal(t, int32(400), err.Code())
+	})
+
+	t.Run("Unwrap returns underlying error", func(t *testing.T) {
+		underlying := fmt.Errorf("underlying error")
+		err := NewRouterError(500, underlying)
+		require.Equal(t, underlying, err.Unwrap())
+	})
+
+	t.Run("NewRouterErrorf formats message", func(t *testing.T) {
+		err := NewRouterErrorf(400, "invalid %s: %d", "value", 42)
+		require.Equal(t, "invalid value: 42", err.Error())
+		require.Equal(t, int32(400), err.Code())
+	})
+}
+
 func TestHandleRequestHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 

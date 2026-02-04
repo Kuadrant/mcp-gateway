@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: mcp-custom-response
-          image: ghcr.io/kagenti/mcp-gateway/custom-response-server:latest
+          image: ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest
           imagePullPolicy: IfNotPresent
           command: ['/mcp-test-server']
           args: ['--http', '0.0.0.0:9090']

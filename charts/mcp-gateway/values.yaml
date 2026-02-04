@@ -28,19 +28,73 @@ envoyFilter:
   # Namespace where EnvoyFilter should be created (usually istio-system)
   namespace: istio-system
   # Name of the envoy filter to create
-  name: mcp-ext-proc
+  name: "mcp-gateway"
+  ## port the port number to apply the filter to
+  port: 8080
 
-# Gateway flag configuration
+# Gateway configuration
 gateway:
   # publicHost set the value for --mcp-gateway-public-host flag
   publicHost: mcp.127-0-0-1.sslip.io
+  # Create a Gateway resource
+  create: false
+  # Name of the Gateway (defaults to release fullname)
+  name: "mcp-gateway"
+  # Namespace for the Gateway (defaults to release namespace)
+  namespace: "gateway-system"
+  # Gateway class name (e.g., istio, nginx)
+  gatewayClassName: istio
+  # Port for listeners
+  port: 8080
+  # Internal wildcard hostname pattern for MCP server routes
+  internalHostPattern: "*.mcp.local"
+  # Allowed routes configuration
+  allowedRoutes:
+    # Which namespaces can attach routes (All, Same, or Selector)
+    from: All
+  # Additional listeners to add to the Gateway
+  additionalListeners: []
+  # Example:
+  # - name: custom-listener
+  #   hostname: "custom.example.com"
+  #   port: 8080
+  #   protocol: HTTP
+  #   allowedRoutes:
+  #     namespaces:
+  #       from: All
+  # NodePort service for the Gateway (for local development/Kind clusters)
+  nodePort:
+    # Create a NodePort service for the Gateway
+    create: false
+    # NodePort for the MCP port
+    mcpPort: 30471
+    # Status port configuration (Istio health check port)
+    statusPort:
+      enabled: false
+      # NodePort for the status port (leave empty for auto-assignment)
+      nodePort: null
 
 # Broker configuration
 broker:
+  # Create the broker/router deployment and services
+  create: false
   # writeTimeoutSeconds sets the HTTP write timeout for the broker in seconds.
   # Default 0 (disabled) is required for SSE notification support via GET /mcp.
   # Set > 0 to enable a timeout (will break SSE notifications).
   writeTimeoutSeconds: 0
+  ## checkInterval sets in seconds how often the broker checks the health of backend MCPServers
+  checkInterval: 60
+
+# HTTPRoute configuration
+httpRoute:
+  # Create an HTTPRoute resource for the MCP Gateway
+  create: false
+  # Gateway reference - the Gateway this HTTPRoute attaches to
+  gatewayRef:
+    # Name of the Gateway
+    name: mcp-gateway
+    # Namespace of the Gateway
+    namespace: gateway-system
 
 # MCPGatewayExtension configuration
 mcpGatewayExtension:

@@ -6,4 +6,3 @@ resources:
   - mcp.kagenti.com_mcpgatewayextensions.yaml
   - mcp.kagenti.com_mcpserverregistrations.yaml
   - mcp.kagenti.com_mcpvirtualservers.yaml
-  - mcp.kagenti.com_mcpgatewayextensions.yaml

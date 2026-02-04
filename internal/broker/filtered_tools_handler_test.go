@@ -297,6 +297,48 @@ func TestVirtualServerFiltering(t *testing.T) {
 	}
 }
 
+func TestFilterToolsSerializesAsEmptyArray(t *testing.T) {
+	mcpBroker := &mcpBrokerImpl{
+		enforceToolFilter: true, // will return empty when no header
+		logger:            slog.Default(),
+	}
+
+	// nil tools input
+	result := &mcp.ListToolsResult{Tools: nil}
+	request := &mcp.ListToolsRequest{Header: http.Header{}}
+
+	mcpBroker.FilterTools(context.TODO(), 1, request, result)
+
+	// tools should be non-nil empty slice
+	if result.Tools == nil {
+		t.Fatal("expected Tools to be non-nil empty slice, got nil")
+	}
+	if len(result.Tools) != 0 {
+		t.Fatalf("expected 0 tools, got %d", len(result.Tools))
+	}
+
+	// verify JSON serialization produces [] not null
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	if string(data) == `{"tools":null}` {
+		t.Fatal("tools serialized as null, expected empty array")
+	}
+	// should contain "tools":[]
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	tools, ok := parsed["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools is not an array: %T", parsed["tools"])
+	}
+	if len(tools) != 0 {
+		t.Fatalf("expected empty array, got %v", tools)
+	}
+}
+
 func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 	testCases := []struct {
 		Name             string

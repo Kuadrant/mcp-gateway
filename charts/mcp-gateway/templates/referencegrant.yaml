@@ -3,7 +3,7 @@
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
-  name: allow-{{ include "mcp-gateway.fullname" . }}
+  name: allow-{{ .Values.mcpGatewayExtension.gatewayRef.name }}
   namespace: {{ .Values.mcpGatewayExtension.gatewayRef.namespace }}
   labels:
     {{- include "mcp-gateway.labels" . | nindent 4 }}

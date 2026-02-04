@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: mcp-test-broken-server
-          image: ghcr.io/kagenti/mcp-gateway/test-broken-server:latest
+          image: ghcr.io/kuadrant/mcp-gateway/test-broken-server:latest
           imagePullPolicy: IfNotPresent
           command:
             [

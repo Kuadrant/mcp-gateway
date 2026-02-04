@@ -162,5 +162,5 @@ You should get a response like this:
 
 Now that you have MCP Gateway routing configured, you can connect your MCP servers:
 
-- **[Configure MCP Servers](./configure-mcp-servers.md)** - Connect internal MCP servers to the gateway
+- **[Configure MCP Servers](./register-mcp-servers.md)** - Connect internal MCP servers to the gateway
 

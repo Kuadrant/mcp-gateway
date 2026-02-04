@@ -18,7 +18,7 @@ Virtual servers work by filtering the complete tool list based on a curated sele
 ## Prerequisites
 
 - MCP Gateway installed and configured
-- [MCP servers configured](./configure-mcp-servers.md) with tools available
+- [MCP servers configured](./register-mcp-servers.md) with tools available
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
 
 ## Understanding Virtual Servers

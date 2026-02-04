@@ -1,9 +1,0 @@
-namespace: mcp-system
-resources:
-  - deployment.yaml
-  - service.yaml
-
-configMapGenerator:
-  - name: acl-config
-    files:
-      - config.json

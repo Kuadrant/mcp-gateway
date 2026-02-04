@@ -44,9 +44,10 @@ helm repo update
 helm install istio-base istio/base -n istio-system --create-namespace --wait
 helm install istiod istio/istiod -n istio-system --wait
 
-kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/namespace.yaml
-kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/gateway.yaml -n gateway-system
-kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/nodeport.yaml -n gateway-system
+# Create gateway namespace for the Gateway resource
+kubectl create namespace gateway-system --dry-run=client -o yaml | kubectl apply -f -
+
+# Deploy test servers
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/namespace.yaml
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-deployment.yaml -n mcp-test
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-service.yaml -n mcp-test
@@ -58,64 +59,51 @@ kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRAN
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-httproute-ext.yaml -n mcp-test
 
 # Install MCP Gateway using either local chart or remote OCI chart
+# The chart creates: Gateway, HTTPRoute, NodePort service, Broker, Controller, EnvoyFilter
 if [ "$USE_LOCAL_CHART" = "true" ]; then
     echo "Installing from local chart: ./charts/mcp-gateway/"
-    helm install mcp-gateway ./charts/mcp-gateway/ --create-namespace --namespace mcp-system
+    helm install mcp-gateway ./charts/mcp-gateway/ \
+        --create-namespace \
+        --namespace mcp-system \
+        --set broker.create=true \
+        --set gateway.create=true \
+        --set gateway.name=mcp-gateway \
+        --set gateway.namespace=gateway-system \
+        --set gateway.publicHost=mcp.127-0-0-1.sslip.io \
+        --set gateway.nodePort.create=true \
+        --set gateway.nodePort.mcpPort=30080 \
+        --set envoyFilter.name=mcp-gateway \
+        --set httpRoute.create=true \
+        --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
+        --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 else
     echo "Installing from remote OCI chart: oci://ghcr.io/kuadrant/charts/mcp-gateway"
-    helm install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway --create-namespace --namespace mcp-system --version 0.5.0-rc1
+    helm install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+        --create-namespace \
+        --namespace mcp-system \
+        --version 0.5.0-rc1 \
+        --set broker.create=true \
+        --set gateway.create=true \
+        --set gateway.name=mcp-gateway \
+        --set gateway.namespace=gateway-system \
+        --set gateway.publicHost=mcp.127-0-0-1.sslip.io \
+        --set gateway.nodePort.create=true \
+        --set gateway.nodePort.mcpPort=30080 \
+        --set envoyFilter.name=mcp-gateway \        
+        --set httpRoute.create=true \
+        --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
+        --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 fi
-kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/samples/mcpserverregistration-test-servers-base.yaml
 
-cat <<EOF | kubectl apply -f -
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: mcp-route
-  namespace: mcp-system
-spec:
-  parentRefs:
-    - name: mcp-gateway
-      namespace: gateway-system
-  hostnames:
-    - 'mcp.127-0-0-1.sslip.io'
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /mcp
-      filters:
-        - type: ResponseHeaderModifier
-          responseHeaderModifier:
-            add:
-              - name: Access-Control-Allow-Origin
-                value: "*"
-              - name: Access-Control-Allow-Methods
-                value: "GET, POST, PUT, DELETE, OPTIONS, HEAD"
-              - name: Access-Control-Allow-Headers
-                value: "Content-Type, Authorization, Accept, Origin, X-Requested-With"
-              - name: Access-Control-Max-Age
-                value: "3600"
-              - name: Access-Control-Allow-Credentials
-                value: "true"
-      backendRefs:
-        - name: mcp-gateway-broker
-          port: 8080
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /.well-known/oauth-protected-resource
-      backendRefs:
-        - name: mcp-gateway-broker
-          port: 8080
-EOF
+# Apply MCPServerRegistration samples
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/samples/mcpserverregistration-test-servers-base.yaml
 
 echo "Waiting for MCP Gateway pods to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/mcp-gateway-broker-router -n mcp-system
 kubectl wait --for=condition=available --timeout=300s deployment/mcp-gateway-controller -n mcp-system
 
 echo "Waiting for Istio gateway pod to be ready..."
-kubectl wait --for=condition=ready --timeout=300s pod -l istio=ingressgateway -n gateway-system
+kubectl wait --for=condition=ready --timeout=300s pod -l gateway.networking.k8s.io/gateway-name=mcp-gateway -n gateway-system
 
 echo "Starting MCP inspector..."
 MCP_AUTO_OPEN_ENABLED=false DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest &
@@ -124,14 +112,15 @@ INSPECTOR_PID=$!
 sleep 3
 
 echo "================================================================"
-echo "Setup complete! 🎉"
+echo "Setup complete!"
 echo "================================================================"
 echo "MCP Inspector: http://localhost:6274"
 echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:7001/mcp"
 echo ""
 echo "Check status:"
 echo "  kubectl get pods -n mcp-system"
-echo "  kubectl get pods -n istio-system"
+echo "  kubectl get pods -n gateway-system"
+echo "  kubectl get gateway -n gateway-system"
 echo "  kubectl get httproute -n mcp-system"
 echo ""
 echo "Press Ctrl+C to stop and cleanup."
@@ -148,4 +137,3 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 wait
-

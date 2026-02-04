@@ -1,8 +1,8 @@
 # Isolated MCP Gateway Deployment
 
-This guide demonstrates how to deploy MCP Gateway instances for your environment. Each deployment is given its own configuration for MCP Servers to manage based on the MCPGatewayExtension resource that defines which Gateway it expects request from. This allows for multiple MCP Gateway instances to be deployed within a single cluster.
+This guide demonstrates how to deploy MCP Gateway instances for your environment. Each deployment is given its own configuration for MCP Servers to manage based on the MCPGatewayExtension resource. This allows for multiple MCP Gateway instances to be deployed within a single cluster and to isolate traffic.
 
-This guide assumes some knowledge about exposing MCP servers via a HTTPRoute. You can find more info in the following guide [configure-mcp-gateway-listener](./configure-mcp-gateway-listener-and-router.md)
+This guide assumes some knowledge about exposing MCP servers via an HTTPRoute. You can find more info in the following guide [configure-mcp-gateway-listener](./configure-mcp-gateway-listener-and-router.md).
 
 This guide assumes some knowledge about configuring an MCPServerRegistration. You can find more information in the following guide [register-mcp-servers](./register-mcp-servers.md).
 
@@ -14,23 +14,45 @@ The MCP Gateway requires an `MCPGatewayExtension` resource to operate. This reso
 - Determines where configuration secrets are created (same namespace as the MCPGatewayExtension)
 - Enables isolation by allowing multiple MCP Gateway instances (in different namespaces) to target different Gateways
 
-MCPServerRegistration resources are only processed when a valid MCPGatewayExtension exists for the Gateway their HTTPRoute is attached to. Without a matching MCPGatewayExtension, registrations will show a NotReady status.
 
 ## Prerequisites
 
-- Kubernetes cluster with Gateway API support
+- Cluster with Gateway API support
 - Istio installed as the Gateway API provider
-- MCP Gateway CRDs installed
 - Helm 3.x
+
+
+> Note: The guide expects you have cloned the repo locally. This allows using the latest code. If you want to make use of a specific release, use the following in the helm commands and then there is no need for the repo locally:
+
+```bash
+helm upgrade -i mcp-controller oci://ghcr.io/kuadrant/charts/mcp-gateway \
+    --version ${MCP_GATEWAY_VERSION} \
+
+```
+
+## Step 1: Install MCP Gateway CRDs
+
+```bash
+export MCP_GATEWAY_VERSION=main #change this to the version you want
+kubectl apply -k "https://github.com/kuadrant/mcp-gateway/config/crd?ref=${MCP_GATEWAY_VERSION}"
+```
+
+Verify the CRDs are installed:
+
+```bash
+kubectl get crd | grep mcp.kagenti.com
+```
+
+Note: CRDs are also installed automatically when deploying the controller via Helm in Step 3.
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│                        MCP System Namespace                           │
-├───────────────────────────────────────────────────────────────────────┤
-│                    MCP Controller (cluster-wide)                      │
-└───────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        MCP System Namespace                          │
+├──────────────────────────────────────────────────────────────────────┤
+│                    MCP Controller (cluster-wide)                     │
+└──────────────────────────────────────────────────────────────────────┘
                                     │
               ┌─────────────────────┴─────────────────────┐
               ▼                                           ▼
@@ -45,169 +67,212 @@ MCPServerRegistration resources are only processed when a valid MCPGatewayExtens
 └───────────────────────────────┘     └───────────────────────────────┘
 ```
 
-Each MCPGatewayExtension targets a different Gateway. The controller creates configuration secrets in the same namespace(s) as valid MCPGatewayExtension(s), which are mounted into the broker/router deployments.
+Each MCPGatewayExtension must target a different Gateway. The controller creates configuration secrets in the same namespace(s) as valid MCPGatewayExtension(s), which are mounted into the broker/router deployments.
 
 For cross-namespace Gateway references with a MCPGatewayExtension, a ReferenceGrant must exist in the target Gateway's namespace.
 
-## Step 1: Deploy the MCP Controller
+## Step 2: Set Environment Variables
+
+### OpenShift
+
+```bash
+export TEAM_A_HOST="team-a.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')"
+export TEAM_B_HOST="team-b.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')"
+```
+
+### Kind/Kubernetes
+
+What is shown below is just an example and what is used locally via Kind.
+
+```bash
+export TEAM_A_HOST="team-a.127-0-0-1.sslip.io"
+export TEAM_B_HOST="team-b.127-0-0-1.sslip.io"
+```
+
+## Step 3: Deploy the MCP Controller
 
 The MCP Controller runs cluster-wide and reconciles MCPGatewayExtension and MCPServerRegistration resources. Deploy it once in a central namespace:
 
 ```bash
-helm install mcp-controller ./charts/mcp-gateway \
+helm upgrade -i mcp-controller ./charts/mcp-gateway \
   --namespace mcp-system \
   --create-namespace \
-  --set envoyFilter.create=false \
-  --set mcpGatewayExtension.create=false
+  --set controller.enabled=true \
+  --set gateway.create=false \
+  --set httpRoute.create=false \
+  --set mcpGatewayExtension.create=false \
+  --set envoyFilter.create=false
 ```
 
-## Step 2: Create the Team Namespace
-
-Create a namespace for the isolated MCP Gateway deployment:
+Verify the controller is running:
 
 ```bash
-kubectl create namespace team-alpha
+kubectl get pods -n mcp-system
 ```
 
-## Step 3: Deploy MCP Gateway Instance
+## Step 4: Deploy Team A Gateway Instance
 
-> **Note**: To skip automatic MCPGatewayExtension creation (e.g., for manual control), set `--set mcpGatewayExtension.create=false` and create the resources manually as shown in the [Manual Resource Creation](#manual-resource-creation) section.
-
-Deploy the broker and router into the team's namespace. The Helm chart automatically creates the MCPGatewayExtension and ReferenceGrant (for cross-namespace references):
+Deploy an MCP Gateway instance for Team A with its own Gateway resource:
 
 ```bash
-helm install mcp-gateway ./charts/mcp-gateway \
-  --namespace team-alpha \
+helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
+  --namespace team-a \
+  --create-namespace \
+  --set controller.enabled=false \
+  --set broker.create=true \
+  --set gateway.create=true \
+  --set gateway.name=team-a-gateway \
+  --set gateway.namespace=gateway-system \
+  --set gateway.publicHost="$TEAM_A_HOST" \
+  --set gateway.internalHostPattern="*.team-a.mcp.local" \
+  --set httpRoute.create=true \
+  --set mcpGatewayExtension.create=true \
+  --set mcpGatewayExtension.gatewayRef.name=team-a-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
   --set envoyFilter.create=true \
-  --set controller.enabled=false \  
-  --set envoyFilter.namespace=istio-system \
-  --set envoyFilter.name=team-alpha-gateway \  
-  --set gateway.publicHost=team-alpha.mcp.example.com \
-  --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
-  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
+  --set envoyFilter.name=team-a-gateway
 ```
 
 The Helm chart creates:
-- MCPGatewayExtension targeting the specified Gateway
+- Gateway resource in gateway-system namespace
+- HTTPRoute for the MCP endpoint
+- MCPGatewayExtension targeting the Gateway
 - ReferenceGrant in the Gateway namespace (for cross-namespace references)
 - Broker/Router deployment
 - Service for the broker
-- EnvoyFilter to route traffic to this instance
+- EnvoyFilter to route traffic through the external processor
 - ServiceAccount and RBAC
 - Config Secret for MCP server configuration
 
-Wait for the MCPGatewayExtension to become ready:
+## Step 5: Verify Team A Deployment
 
 ```bash
-kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway -n team-alpha --timeout=60s
+# Check Gateway is created
+kubectl get gateway team-a-gateway -n gateway-system
+
+# Check MCPGatewayExtension is ready
+kubectl wait --for=condition=Ready mcpgatewayextension/team-a-mcp-gateway -n team-a --timeout=60s
+
+# Check pods are running
+kubectl get pods -n team-a
 ```
 
-## Step 4: Register MCP Servers
+## Step 6: Deploy Team B Gateway Instance
 
-> Note: this assumes you have created a HTTPRoute name `alpha-server-route`
-
-Create MCPServerRegistration resources in the team's namespace. The controller will automatically add their configuration to the team's config secret:
+Deploy a second isolated gateway for Team B:
 
 ```bash
-kubectl apply -f - <<EOF
-apiVersion: mcp.kagenti.com/v1alpha1
-kind: MCPServerRegistration
+helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
+  --namespace team-b \
+  --create-namespace \
+  --set controller.enabled=false \
+  --set broker.create=true \
+  --set gateway.create=true \
+  --set gateway.name=team-b-gateway \
+  --set gateway.namespace=gateway-system \
+  --set gateway.publicHost="$TEAM_B_HOST" \
+  --set gateway.internalHostPattern="*.team-b.mcp.local" \
+  --set httpRoute.create=true \
+  --set mcpGatewayExtension.create=true \
+  --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
+  --set envoyFilter.create=true \
+  --set envoyFilter.name=team-b-gateway
+```
+
+## Step 7: Verify Team B Deployment
+
+```bash
+# Check Gateway is created
+kubectl get gateway team-b-gateway -n gateway-system
+
+# Check MCPGatewayExtension is ready
+kubectl wait --for=condition=Ready mcpgatewayextension/team-b-mcp-gateway -n team-b --timeout=60s
+
+# Check broker pod is running
+kubectl get pods -n team-b
+```
+
+## Step 8: Expose Gateways Externally
+
+### OpenShift (Routes)
+
+OpenShift Routes expose the Gateways externally with TLS termination.
+
+**Team A gateway route:**
+```bash
+oc apply -f - <<EOF
+apiVersion: route.openshift.io/v1
+kind: Route
 metadata:
-  name: team-alpha-server
-  namespace: team-alpha
-spec:
-  toolPrefix: alpha_
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: alpha-server-route
-EOF
-```
-
-The MCPServerRegistration must target an HTTPRoute that is attached to a Gateway with a valid MCPGatewayExtension in the same namespace. Otherwise, the registration will show a NotReady status.
-
-## Verification
-
-Wait for the MCPServerRegistration to become ready:
-
-```bash
-kubectl wait --for=condition=Ready mcpserverregistration/team-alpha-server -n team-alpha --timeout=60s
-```
-
-Check that the configuration secret was created:
-
-```bash
-kubectl get secret mcp-gateway-config -n team-alpha
-```
-
-## Multiple Teams Example
-
-To deploy a second isolated gateway for another team targeting a different Gateway:
-
-```bash
-# Create namespace
-kubectl create namespace team-beta
-
-# Create a second Gateway for team-beta (or use an existing one)
-kubectl apply -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: team-beta-gateway
+  name: team-a-gateway
   namespace: gateway-system
 spec:
-  gatewayClassName: istio
-  listeners:
-    - allowedRoutes:
-        namespaces:
-          from: All
-      hostname: mcp.alpha.127-0-0-1.sslip.io
-      name: mcp
-      port: 8080
-      protocol: HTTP
-    - allowedRoutes:
-        namespaces:
-          from: All
-      hostname: '*.alpha.mcp.local'
-      name: mcps
-      port: 8080
-      protocol: HTTP
+  host: $TEAM_A_HOST
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  port:
+    targetPort: mcp
+  to:
+    kind: Service
+    name: team-a-gateway-istio
+    weight: 100
+  wildcardPolicy: None
 EOF
-
-# Deploy broker/router (Helm automatically creates MCPGatewayExtension and ReferenceGrant)
-helm install mcp-gateway ./charts/mcp-gateway \
-  --namespace team-beta \
-  --set envoyFilter.create=true \
-  --set envoyFilter.namespace=istio-system \
-  --set envoyFilter.name=team-beta-gateway \
-  --set controller.enabled=false \
-  --set gateway.publicHost=alpha.127-0-0-1.sslip.io \
-  --set mcpGatewayExtension.gatewayRef.name=team-beta-gateway \
-  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
-## Verification
+**Team B gateway route:**
+```bash
+oc apply -f - <<EOF
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: team-b-gateway
+  namespace: gateway-system
+spec:
+  host: $TEAM_B_HOST
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  port:
+    targetPort: mcp
+  to:
+    kind: Service
+    name: team-b-gateway-istio
+    weight: 100
+  wildcardPolicy: None
+EOF
+```
 
-Wait for the MCPGatewayExtension to become ready:
+Verify routes are created:
+```bash
+oc get routes -n gateway-system
+```
+
+## Exposing via NodePort
+
+For a local kind or kubernetes setup you can configure helm to setup the NodePort service. Re-run the commands with the following flags set
 
 ```bash
-kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway -n team-beta --timeout=60s
+# Team A gateway
+--set gateway.nodePort.create=true \
+--set gateway.nodePort.mcpPort=30080 \
 ```
-
-Check that the configuration secret was created:
 
 ```bash
-kubectl get secret mcp-gateway-config -n team-beta -o jsonpath='{.data.config\.yaml}' | base64 -d
+# Team B gateway
+--set gateway.nodePort.create=true \
+--set gateway.nodePort.mcpPort=30471 \
 ```
 
-Expected Output:
+## Next Steps: Register MCP Servers
 
-```yaml
-servers: []
-virtualServers: []
-```
+Once your gateway instances are deployed, register MCP servers with each instance. See the [Register MCP Servers](./register-mcp-servers.md) guide for detailed instructions.
 
-Each team now has their own isolated MCP Gateway instance targeting separate Gateways. You can now create MCPServerRegistrations resources targeting HTTPRoute for your MCP backends.
+When registering servers, ensure the HTTPRoute's `parentRef` targets the correct Gateway:
+- Team A instance: `team-a-gateway` in `gateway-system`
+- Team B instance: `team-b-gateway` in `gateway-system`
 
 ## Limitations
 
@@ -224,7 +289,7 @@ Each team now has their own isolated MCP Gateway instance targeting separate Gat
 The MCPGatewayExtension is targeting a Gateway in a different namespace, but no ReferenceGrant exists:
 
 ```bash
-kubectl get mcpgatewayextension -n team-alpha -o yaml
+kubectl get mcpgatewayextension -n team-a -o yaml
 ```
 
 Look for the condition:
@@ -236,20 +301,22 @@ conditions:
     message: "ReferenceGrant required in namespace gateway-system to allow cross-namespace reference"
 ```
 
-Create the ReferenceGrant in the Gateway's namespace as shown in Step 3.
+The Helm chart should create the ReferenceGrant automatically. If not, create it manually as shown in the [Manual Resource Creation](#manual-resource-creation) section.
 
 ### MCPGatewayExtension shows InvalidMCPGatewayExtension
 
 The target Gateway doesn't exist or there's a conflict.
 
-check if there is another MCPGatewayExtension that is older that is also targeting the Gateway.
+Check if there is another MCPGatewayExtension that is older that is also targeting the Gateway.
 
 ### MCPServerRegistration shows NotReady
 
 The registration can't find a valid MCPGatewayExtension for the Gateway its HTTPRoute is attached to:
 
+MCPServerRegistration resources are only processed when a valid MCPGatewayExtension exists for the Gateway their HTTPRoute is attached to. Without a matching MCPGatewayExtension, registrations will show a NotReady status.
+
 ```bash
-kubectl get mcpserverregistration -n team-alpha -o yaml
+kubectl get mcpserverregistration -n team-a -o yaml
 ```
 
 Check that:
@@ -262,28 +329,52 @@ Check that:
 The config secret exists but has no servers:
 
 ```bash
-kubectl get secret mcp-gateway-config -n team-alpha -o jsonpath='{.data.config\.yaml}' | base64 -d
+kubectl get secret mcp-gateway-config -n team-a -o jsonpath='{.data.config\.yaml}' | base64 -d
 ```
 
 Check that MCPServerRegistration resources exist and are Ready:
 
 ```bash
-kubectl get mcpserverregistration -n team-alpha
+kubectl get mcpserverregistration -n team-a
 ```
 
 ## Cleanup
 
-To remove an isolated deployment:
+To remove the deployments:
+
+### OpenShift
 
 ```bash
-# Delete MCP server registrations
-kubectl delete mcpserverregistration --all -n team-alpha
+# Delete routes
+oc delete route team-a-gateway team-b-gateway -n gateway-system
 
-# Uninstall Helm release (removes MCPGatewayExtension and ReferenceGrant)
-helm uninstall mcp-gateway -n team-alpha
+# Uninstall gateway Helm releases
+helm uninstall team-b-mcp-gateway -n team-b
+helm uninstall team-a-mcp-gateway -n team-a
 
-# Delete namespace
-kubectl delete namespace team-alpha
+# Uninstall controller
+helm uninstall mcp-controller -n mcp-system
+
+# Delete namespaces
+oc delete namespace team-b
+oc delete namespace team-a
+oc delete namespace mcp-system
+```
+
+### Kind/Kubernetes
+
+```bash
+# Uninstall gateway Helm releases
+helm uninstall team-b-mcp-gateway -n team-b
+helm uninstall team-a-mcp-gateway -n team-a
+
+# Uninstall controller
+helm uninstall mcp-controller -n mcp-system
+
+# Delete namespaces
+kubectl delete namespace team-b
+kubectl delete namespace team-a
+kubectl delete namespace mcp-system
 ```
 
 ## Manual Resource Creation
@@ -299,13 +390,13 @@ kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
-  name: allow-team-alpha
+  name: allow-team-a
   namespace: gateway-system
 spec:
   from:
     - group: mcp.kagenti.com
       kind: MCPGatewayExtension
-      namespace: team-alpha
+      namespace: team-a
   to:
     - group: gateway.networking.k8s.io
       kind: Gateway
@@ -321,13 +412,13 @@ kubectl apply -f - <<EOF
 apiVersion: mcp.kagenti.com/v1alpha1
 kind: MCPGatewayExtension
 metadata:
-  name: team-alpha-gateway
-  namespace: team-alpha
+  name: team-a-gateway
+  namespace: team-a
 spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
-    name: mcp-gateway
+    name: team-a-gateway
     namespace: gateway-system
 EOF
 ```
@@ -335,10 +426,15 @@ EOF
 ### Deploy without automatic resource creation
 
 ```bash
-helm install mcp-gateway ./charts/mcp-gateway \
-  --namespace team-alpha \
+helm install team-a-mcp-gateway ./charts/mcp-gateway \
+  --namespace team-a \
+  --set controller.enabled=false \
+  --set gateway.create=true \
+  --set gateway.name=team-a-gateway \
+  --set gateway.namespace=gateway-system \
+  --set gateway.publicHost="$TEAM_A_HOST" \
+  --set httpRoute.create=true \
   --set envoyFilter.create=true \
-  --set envoyFilter.namespace=istio-system \
-  --set gateway.publicHost=team-alpha.mcp.example.com \
+  --set envoyFilter.name=team-a-gateway \
   --set mcpGatewayExtension.create=false
 ```

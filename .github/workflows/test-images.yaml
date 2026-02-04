@@ -55,6 +55,10 @@ jobs:
             context: tests/servers/custom-path-server
             dockerfile: Dockerfile
             image-name: test-custom-path-server
+          - server: custom-response-server
+            context: tests/servers/custom-response-server
+            dockerfile: Dockerfile
+            image-name: test-custom-response-server
           - server: oidc-server
             context: tests/servers/oidc-server
             dockerfile: Dockerfile

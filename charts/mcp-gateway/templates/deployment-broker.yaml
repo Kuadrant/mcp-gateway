@@ -1,3 +1,4 @@
+{{- if .Values.broker.create }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,6 +37,8 @@ spec:
             - --mcp-gateway-public-host={{ .Values.gateway.publicHost }}
             - --mcp-broker-write-timeout={{ .Values.broker.writeTimeoutSeconds | default 0 }}
             - --log-level=-4
+            - --mcp-gateway-private-host={{ .Values.gateway.name}}-istio.{{ .Values.gateway.namespace}}.svc.cluster.local:{{ .Values.gateway.port}}
+            - --mcp-check-interval={{ .Values.broker.checkInterval}}
           env:
             - name: NAMESPACE
               valueFrom:
@@ -73,3 +76,4 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+{{- end }}

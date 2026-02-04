@@ -86,7 +86,7 @@ Now that you have a cluster with the prerequisites, choose your installation met
 After installation, continue with configuration:
 
 - **[Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md)** - Set up traffic routing
-- **[Configure MCP Servers](./configure-mcp-servers.md)** - Connect your MCP servers
+- **[Configure MCP Servers](./register-mcp-servers.md)** - Connect your MCP servers
 - **[Authentication Setup](./authentication.md)** - Optional: Add OAuth authentication
 - **[Authorization Setup](./authorization.md)** - Optional: Add access control
 

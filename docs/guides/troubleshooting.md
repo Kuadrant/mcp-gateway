@@ -208,7 +208,7 @@ kubectl logs -n mcp-system -l app=mcp-broker-router | grep "Discovered tools"
 
 ```bash
 # Test backend server directly
-# NOTE: You may need a valid mcp-session-id header set 
+# NOTE: You may need a valid mcp-session-id header set
 kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- \
   curl -X POST http://<service-name>.<namespace>.svc.cluster.local:<port>/mcp \
   -H "mcp-session-id: SESSION_ID" \
@@ -365,20 +365,13 @@ curl -v http://<mcp-hostname>/mcp \
 # Check AuthPolicy authorization rules
 kubectl get authpolicy <policy-name> -n <namespace> -o yaml | grep -A 20 authorization
 
-# If using the example acl service, check the config
-kubectl get svc -n mcp-system acl-config
-kubectl exec -n mcp-system deploy/acl-config -- cat /usr/share/nginx/html/config.json
-
 # Check Authorino logs for CEL evaluation
 kubectl logs -n kuadrant-system -l authorino-resource=authorino | grep -i authz
 ```
 
 **Solutions**:
-- Verify ACL service is running and accessible
-- Check ACL configuration has entries for your server hostname
-- Ensure user's groups match groups in ACL
-- Verify JWT token includes group claims: decode token and check `groups` field
-- Test ACL endpoint directly: `curl http://acl-config.mcp-system.svc.cluster.local:8181/config/<hostname>`
+- Ensure Authorino can communicate with the Keycloak server
+- Verify JWT token includes `resource_access[server-name].roles` claims
 
 ### Authorization Policy Not Applied
 

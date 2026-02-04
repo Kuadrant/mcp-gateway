@@ -4,7 +4,9 @@ kind: Gateway
 metadata:
   labels:
     istio: ingressgateway
+    gateway.io/name: mcp-gateway
   name: mcp-gateway
+  namespace: gateway-system  
 spec:
   gatewayClassName: istio
   listeners:

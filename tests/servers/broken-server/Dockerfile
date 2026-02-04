@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /mcp-test-server
 # Runtime stage
 FROM alpine:latest
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /mcp-test-server .
@@ -25,4 +25,4 @@ COPY --from=builder /mcp-test-server .
 EXPOSE 9090
 
 # Set default command  
-CMD ["./mcp-test-server", "--http", "0.0.0.0:9090"]
+CMD ["/app/mcp-test-server", "--http", "0.0.0.0:9090"]

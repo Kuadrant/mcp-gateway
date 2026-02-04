@@ -1,0 +1,31 @@
+{{- if .Values.gateway.create }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name | default (include "mcp-gateway.fullname" .) }}
+  namespace: {{ .Values.gateway.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    istio: ingressgateway
+    gateway.io/name: {{ .Values.gateway.name | default (include "mcp-gateway.fullname" .) }}
+spec:
+  gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+  listeners:
+    - name: mcp
+      hostname: {{ .Values.gateway.publicHost | quote }}
+      port: {{ .Values.gateway.port }}
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: {{ .Values.gateway.allowedRoutes.from }}
+    - name: mcps
+      hostname: {{ .Values.gateway.internalHostPattern | quote }}
+      port: {{ .Values.gateway.port }}
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: {{ .Values.gateway.allowedRoutes.from }}
+{{- with .Values.gateway.additionalListeners }}
+{{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}

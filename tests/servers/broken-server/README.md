@@ -69,13 +69,13 @@ FAILURE_MODE=tool-conflicts ./mcp-test-server --http 0.0.0.0:9090
 
 ```bash
 # Protocol failure (default)
-docker run -p 9090:9090 ghcr.io/kagenti/mcp-gateway/test-Broken-server:latest
+docker run -p 9090:9090 ghcr.io/kuadrant/mcp-gateway/test-broken-server:latest
 
 # No tools capability
-docker run -p 9090:9090 -e FAILURE_MODE=no-tools ghcr.io/kagenti/mcp-gateway/test-Broken-server:latest
+docker run -p 9090:9090 -e FAILURE_MODE=no-tools ghcr.io/kuadrant/mcp-gateway/test-broken-server:latest
 
 # Tool conflicts
-docker run -p 9090:9090 -e FAILURE_MODE=tool-conflicts ghcr.io/kagenti/mcp-gateway/test-Broken-server:latest
+docker run -p 9090:9090 -e FAILURE_MODE=tool-conflicts ghcr.io/kuadrant/mcp-gateway/test-broken-server:latest
 ```
 
 ## Testing with MCP Gateway

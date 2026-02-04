@@ -1,0 +1,44 @@
+{{- if .Values.httpRoute.create }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+  hostnames:
+    - {{ .Values.gateway.publicHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            add:
+              - name: Access-Control-Allow-Origin
+                value: '*'
+              - name: Access-Control-Allow-Methods
+                value: 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
+              - name: Access-Control-Allow-Headers
+                value: 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+              - name: Access-Control-Max-Age
+                value: '3600'
+              - name: Access-Control-Allow-Credentials
+                value: 'true'
+      backendRefs:
+        - name: {{ include "mcp-gateway.fullname" . }}-broker
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /.well-known/oauth-protected-resource
+      backendRefs:
+        - name: {{ include "mcp-gateway.fullname" . }}-broker
+          port: 8080
+{{- end }}

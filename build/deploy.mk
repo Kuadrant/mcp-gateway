@@ -14,11 +14,3 @@ undeploy-gateway: $(KUSTOMIZE) # Remove the MCP gateway
 deploy-namespaces: # Create MCP namespaces
 	kubectl apply -f config/mcp-system/namespace.yaml
 	kubectl apply -f config/istio/gateway/namespace.yaml
-
-.PHONY: deploy-mcp-router
-deploy-mcp-router: # Deploy MCP router to cluster
-	@echo "TODO: Add deployment manifest for mcp-router"
-
-.PHONY: deploy-mcp-broker
-deploy-mcp-broker: # Deploy MCP broker to cluster
-	@echo "TODO: Add deployment manifest for mcp-broker"

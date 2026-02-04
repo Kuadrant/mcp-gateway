@@ -5,7 +5,7 @@ RUN apk add --no-cache git
 
 # Clone conformance repository and extract MCP conformance server
 WORKDIR /tmp
-RUN git clone --depth 1 https://github.com/modelcontextprotocol/conformance.git && \
+RUN git clone --branch v0.1.9 --depth 1 https://github.com/modelcontextprotocol/conformance.git && \
     mkdir -p /app && \
     cp -r conformance/examples/servers/typescript/* /app
 

@@ -3,25 +3,20 @@
 set -e
 
 MCP_GATEWAY_HELM_VERSION="${MCP_GATEWAY_HELM_VERSION:-0.5.0-rc1}"
-
 MCP_GATEWAY_HOST="${MCP_GATEWAY_HOST:-mcp.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')}"
-
 MCP_GATEWAY_NAMESPACE="${MCP_GATEWAY_NAMESPACE:-mcp-system}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateway-system}"
 
 SCRIPT_BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-# Check if OpenShift cli tool is installed
-command -v oc >/dev/null 2>&1 || { echo >&2 "OpenShift CLI is required but not installed.  Aborting."; exit 1; } 
-
-# Check if Helm is installed
-command -v helm >/dev/null 2>&1 || { echo >&2 "Helm is required but not installed.  Aborting."; exit 1; } 
+# Check prerequisites
+command -v oc >/dev/null 2>&1 || { echo >&2 "OpenShift CLI is required but not installed. Aborting."; exit 1; }
+command -v helm >/dev/null 2>&1 || { echo >&2 "Helm is required but not installed. Aborting."; exit 1; }
 
 # Install Service Mesh Operator
 echo "Installing Service Mesh Operator..."
 oc apply -k "$SCRIPT_BASE_DIR/kustomize/service-mesh/operator/base"
 
-# Wait for the Service Mesh Operator to be ready
 echo "Waiting for Service Mesh Operator to be ready..."
 until kubectl wait crd/istios.sailoperator.io --for condition=established &>/dev/null; do sleep 5; done
 until kubectl wait crd/istiocnis.sailoperator.io --for condition=established &>/dev/null; do sleep 5; done
@@ -34,7 +29,6 @@ oc apply -k "$SCRIPT_BASE_DIR/kustomize/service-mesh/instance/base"
 echo "Installing Connectivity Link Operator..."
 oc apply -k "$SCRIPT_BASE_DIR/kustomize/connectivity-link/operator/base"
 
-# Wait for the Connectivity Link Operator to be ready
 echo "Waiting for Connectivity Link Operator to be ready..."
 until kubectl wait crd/kuadrants.kuadrant.io --for condition=established &>/dev/null; do sleep 5; done
 
@@ -42,20 +36,48 @@ until kubectl wait crd/kuadrants.kuadrant.io --for condition=established &>/dev/
 echo "Installing Connectivity Link Instance..."
 oc apply -k "$SCRIPT_BASE_DIR/kustomize/connectivity-link/instance/base"
 
-# Install MCP Gateway using Helm
-echo "Installing MCP Gateway using Helm..."
-helm upgrade -i mcp-gateway -n $MCP_GATEWAY_NAMESPACE --create-namespace oci://ghcr.io/kuadrant/charts/mcp-gateway --version $MCP_GATEWAY_HELM_VERSION \
-  --set gateway.publicHost="$MCP_GATEWAY_HOST"
+# Create gateway namespace
+kubectl create ns $GATEWAY_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
-# Configure MCP Gateway Ingress using Helm
-echo "Configuring MCP Gateway Ingress using Helm..."
-helm upgrade -i mcp-gateway-ingress -n $GATEWAY_NAMESPACE --create-namespace "$SCRIPT_BASE_DIR/charts/mcp-gateway-ingress" \
+# Install MCP Gateway Controller (cluster-wide, no broker)
+echo "Installing MCP Gateway Controller..."
+helm upgrade -i mcp-controller oci://ghcr.io/kuadrant/charts/mcp-gateway \
+  --version $MCP_GATEWAY_HELM_VERSION \
+  --namespace $MCP_GATEWAY_NAMESPACE \
+  --create-namespace \
+  --set controller.enabled=true \
+  --set broker.create=false \
+  --set gateway.create=false \
+  --set httpRoute.create=false \
+  --set mcpGatewayExtension.create=false \
+  --set envoyFilter.create=false
+
+# Install MCP Gateway Instance (broker + gateway + routes)
+echo "Installing MCP Gateway Instance..."
+helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+  --version $MCP_GATEWAY_HELM_VERSION \
+  --namespace $MCP_GATEWAY_NAMESPACE \
+  --set controller.enabled=false \
+  --set broker.create=true \
+  --set gateway.create=true \
+  --set gateway.name=mcp-gateway \
+  --set gateway.namespace=$GATEWAY_NAMESPACE \
+  --set gateway.publicHost="$MCP_GATEWAY_HOST" \
+  --set gateway.internalHostPattern="*.mcp.local" \
+  --set httpRoute.create=true \
+  --set mcpGatewayExtension.create=true \
+  --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=$GATEWAY_NAMESPACE \
+  --set envoyFilter.create=true \
+  --set envoyFilter.name=mcp-gateway
+
+# Create OpenShift Route (still using ingress chart for Route only)
+echo "Creating OpenShift Route..."
+helm upgrade -i mcp-gateway-ingress "$SCRIPT_BASE_DIR/charts/mcp-gateway-ingress" \
+  --namespace $GATEWAY_NAMESPACE \
   --set mcpGateway.host="$MCP_GATEWAY_HOST" \
-  --set 'extraGatewayListeners[0].name=mcp-local' \
-  --set 'extraGatewayListeners[0].hostname=*.mcp.local' \
-  --set 'extraGatewayListeners[0].port=8080' \
-  --set 'extraGatewayListeners[0].protocol=HTTP' \
-  --set 'extraGatewayListeners[0].allowedRoutes.namespaces.from=All'
+  --set gateway.name=mcp-gateway \
+  --set route.create=true
 
 echo
 echo "MCP Gateway deployment completed successfully."

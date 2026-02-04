@@ -330,3 +330,11 @@ objs
 Serverconfig
 upserted
 kuberenetes
+procv
+typev
+ecparam
+genkey
+nodeport
+noout
+nsunday
+pubout
