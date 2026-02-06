@@ -19,6 +19,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
+	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	goenv "github.com/caitlinelfring/go-env-default"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -29,6 +30,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+)
+
+// build info set via ldflags
+var (
+	version = "dev"
+	gitSHA  = "unknown"
+	dirty   = ""
 )
 
 var (
@@ -148,6 +156,12 @@ func main() {
 
 	ctx := context.Background()
 
+	// initialize OpenTelemetry SDK
+	otelShutdown, err := mcpotel.SetupOTelSDK(ctx, gitSHA, dirty, version, logger)
+	if err != nil {
+		logger.Error("failed to setup OpenTelemetry", "error", err)
+	}
+
 	sessionCache, err := session.NewCache(ctx)
 	if err != nil {
 		panic("failed to setup session cache" + err.Error())
@@ -232,6 +246,12 @@ func main() {
 
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownRelease()
+
+	// shutdown OpenTelemetry first to flush pending telemetry
+	if err := otelShutdown(shutdownCtx); err != nil {
+		logger.Error("OpenTelemetry shutdown error", "error", err)
+	}
+
 	if err := brokerServer.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("HTTP shutdown error: %v", err)
 	}
