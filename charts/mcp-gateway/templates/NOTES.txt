@@ -52,14 +52,14 @@
                 - name: Access-Control-Allow-Credentials
                   value: "true"
         backendRefs:
-          - name: {{ include "mcp-gateway.fullname" . }}-broker
+          - name: mcp-broker-router
             port: 8080
       - matches:
           - path:
               type: PathPrefix
               value: /.well-known/oauth-protected-resource
         backendRefs:
-          - name: {{ include "mcp-gateway.fullname" . }}-broker
+          - name: mcp-broker-router
             port: 8080
   EOF
 
@@ -82,10 +82,10 @@
    (Adjust hostname/port based on your Gateway configuration)
 
 7. View logs for troubleshooting:
-  # Broker/Router logs
-  kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "mcp-gateway.fullname" . }}-broker-router
-  
-  # Controller logs  
+  # Broker/Router logs (created by controller when MCPGatewayExtension is ready)
+  kubectl logs -n {{ .Release.Namespace }} deployment/mcp-broker-router
+
+  # Controller logs
   kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "mcp-gateway.fullname" . }}-controller
 
 For more information, visit: https://github.com/Kuadrant/mcp-gateway

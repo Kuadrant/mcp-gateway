@@ -43,7 +43,10 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
@@ -71,38 +74,5 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "mcp-gateway.controllerServiceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
-{{- end }}
-{{- if .Values.broker.create }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "mcp-gateway.fullname" . }}-broker-router
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "mcp-gateway.labels" . | nindent 4 }}
-    component: broker-router
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["mcp-gateway-config"]
-    verbs: ["get", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "mcp-gateway.fullname" . }}-broker-router
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "mcp-gateway.labels" . | nindent 4 }}
-    component: broker-router
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "mcp-gateway.fullname" . }}-broker-router
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "mcp-gateway.brokerServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

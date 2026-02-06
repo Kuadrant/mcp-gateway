@@ -32,6 +32,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: RELATED_IMAGE_ROUTER_BROKER
+              value: {{ include "mcp-gateway.image" . }}
+            - name: BROKER_POLL_INTERVAL
+              value: {{ .Values.broker.pollInterval | quote }}
           ports:
             - name: health
               containerPort: 8081

@@ -14,6 +14,8 @@ const (
 	ConditionReasonInvalid = "InvalidMCPGatewayExtension"
 	// ConditionReasonRefGrantRequired is the reason users will see when a ReferenceGrant is missing
 	ConditionReasonRefGrantRequired = "ReferenceGrantRequired"
+	// ConditionReasonDeploymentNotReady is the reason when the broker-router deployment is not ready
+	ConditionReasonDeploymentNotReady = "DeploymentNotReady"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!

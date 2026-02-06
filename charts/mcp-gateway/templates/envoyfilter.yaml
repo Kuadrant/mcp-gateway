@@ -40,5 +40,5 @@ spec:
               response_trailer_mode: 'SKIP'
             grpc_service:
               envoy_grpc:
-                cluster_name: outbound|50051||{{ include "mcp-gateway.fullname" . }}-broker.{{ .Release.Namespace }}.svc.cluster.local
+                cluster_name: outbound|50051||mcp-broker-router.{{ .Release.Namespace }}.svc.cluster.local
 {{- end }}

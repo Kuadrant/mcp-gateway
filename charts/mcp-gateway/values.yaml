@@ -1,12 +1,11 @@
 # Default values for mcp-gateway.
 # This is a YAML-formatted file.
 
-# Image configuration for mcp-gateway (broker/router)
+# Image configuration for mcp-gateway broker-router (deployed by controller)
 image:
   repository: ghcr.io/kuadrant/mcp-gateway
   # tag defaults to Chart.appVersion if empty
   tag: ""
-  pullPolicy: IfNotPresent
 
 # Image configuration for mcp-controller
 imageController:
@@ -17,9 +16,13 @@ imageController:
 
 # Controller configuration
 controller:
-  # Enable/disable controller deployment. Set to false for broker-only instances
-  # when running multiple MCP Gateway instances (only one controller is needed cluster-wide)
+  # Enable/disable controller deployment
   enabled: true
+
+# Broker configuration (applied to broker-router deployed by controller)
+broker:
+  # Poll interval in seconds for MCP server health checks
+  pollInterval: 60
 
 # EnvoyFilter for Istio integration
 envoyFilter:
@@ -73,17 +76,6 @@ gateway:
       enabled: false
       # NodePort for the status port (leave empty for auto-assignment)
       nodePort: null
-
-# Broker configuration
-broker:
-  # Create the broker/router deployment and services
-  create: false
-  # writeTimeoutSeconds sets the HTTP write timeout for the broker in seconds.
-  # Default 0 (disabled) is required for SSE notification support via GET /mcp.
-  # Set > 0 to enable a timeout (will break SSE notifications).
-  writeTimeoutSeconds: 0
-  ## checkInterval sets in seconds how often the broker checks the health of backend MCPServers
-  checkInterval: 60
 
 # HTTPRoute configuration
 httpRoute:

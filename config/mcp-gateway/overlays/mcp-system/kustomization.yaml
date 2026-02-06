@@ -24,17 +24,6 @@ patches:
         path: /subjects/0/namespace
         value: mcp-system
 
-  # patch broker deployment with correct gateway host
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: mcp-broker-router
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/env/0/value
-        value: mcp.127-0-0-1.sslip.io
-
   # patch HTTPRoute with correct hostname
   - target:
       group: gateway.networking.k8s.io

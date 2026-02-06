@@ -80,9 +80,10 @@ controller-gen: ## Install controller-gen to ./bin/
 		GOBIN=$(shell pwd)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
 	fi
 
-# Generate code (deepcopy, etc.)
+# Generate code (deepcopy, RBAC, etc.)
 generate: controller-gen ## Generate code including deepcopy functions
 	bin/controller-gen object paths="./api/..."
+	bin/controller-gen rbac:roleName=mcp-gateway-role paths="./internal/controller/..." output:dir=config/rbac
 
 # Generate CRDs from Go types
 generate-crds: generate ## Generate CRD manifests from Go types
@@ -132,14 +133,8 @@ install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpvirtualservers.yaml
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpgatewayextensions.yaml
 
-# Deploy mcp-gateway components
-deploy: install-crd deploy-namespaces  deploy-controller deploy-broker ## Deploy broker/router and controller to mcp-system namespace
-
-
-# Deploy only the broker/router
-deploy-broker: install-crd ## Deploy only the broker/router (without controller)
-	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
-	kubectl patch deployment mcp-broker-router -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/poll-interval-patch.yaml
+# Deploy mcp-gateway components (controller deploys broker-router via MCPGatewayExtension)
+deploy: install-crd deploy-namespaces deploy-controller ## Deploy controller to mcp-system namespace
 
 # Deploy a new gateway httproute and broker instance configured to work with the new gateway
 deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (without controller)
@@ -170,6 +165,11 @@ configure-redis:  ## patch deployment with redis connection
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
 	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
+	@echo "Waiting for controller to be ready..."
+	@kubectl wait --for=condition=Available deployment/mcp-controller -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for MCPGatewayExtension to be ready..."
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Controller and broker-router are ready"
 
 define load-image
 	echo "Loading image $(1) into Kind cluster..."
@@ -214,11 +214,8 @@ deploy-example: install-crd ## Deploy example MCPServerRegistration resource
 	@echo "All test servers ready, deploying MCPServerRegistration resources..."
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-base.yaml
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-extended.yaml
-	@echo "Waiting for controller to process MCPServerRegistration..."
-	@sleep 3
-	@echo "Restarting broker to ensure all connections..."
-	kubectl rollout restart deployment/mcp-broker-router -n mcp-system
-	@kubectl rollout status deployment/mcp-broker-router -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for broker-router to be ready..."
+	@kubectl wait --for=condition=Available deployment/mcp-broker-router -n mcp-system --timeout=$(WAIT_TIME)
 
 # Build test server Docker images
 build-test-servers: ## Build test server Docker images locally

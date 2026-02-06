@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -21,6 +23,7 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/go-logr/logr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
@@ -30,6 +33,15 @@ const (
 	// gatewayIndexKey is the index used to improve look up of mcpgatewayextensions related to a gateway
 	gatewayIndexKey  = "spec.targetRef.gateway"
 	refGrantIndexKey = "spec.from.ref"
+
+	// broker-router deployment constants
+	brokerRouterName    = "mcp-broker-router"
+	labelAppName        = "app.kubernetes.io/name"
+	labelManagedBy      = "app.kubernetes.io/managed-by"
+	labelManagedByValue = "mcp-gateway-controller"
+
+	// DefaultBrokerRouterImage is the default image for the broker-router deployment
+	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
 )
 
 // ConfigWriterDeleter writes and deletes config
@@ -47,6 +59,8 @@ type MCPGatewayExtensionReconciler struct {
 	log                   *slog.Logger
 	ConfigWriterDeleter   ConfigWriterDeleter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
+	BrokerRouterImage     string
+	BrokerPollInterval    string // optional poll interval in seconds for broker health checks
 }
 
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions,verbs=get;list;watch;create;update;patch;delete
@@ -54,6 +68,8 @@ type MCPGatewayExtensionReconciler struct {
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -149,16 +165,31 @@ func (r *MCPGatewayExtensionReconciler) Reconcile(ctx context.Context, req ctrl.
 			return ctrl.Result{}, nil
 		}
 	}
-	// valid configuration
+	// ensure config secret exists before deploying broker-router
+	// this prevents the broker-router from failing to start if it expects the config to be mounted
+	if err := r.ConfigWriterDeleter.EnsureConfigExists(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// valid configuration - reconcile broker-router deployment and service
+	deploymentReady, err := r.reconcileBrokerRouter(ctx, mcpExt)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if !deploymentReady {
+		err = r.setReadyConditionAndUpdateStatus(ctx, metav1.ConditionFalse, mcpv1alpha1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready", mcpExt)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	err = r.setReadyConditionAndUpdateStatus(ctx, metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "successfully verified and configured", mcpExt)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	// create an empty config if a config doesn't exist
-	if err := r.ConfigWriterDeleter.EnsureConfigExists(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, err
+	return ctrl.Result{}, nil
 }
 
 func (r *MCPGatewayExtensionReconciler) setReadyConditionAndUpdateStatus(ctx context.Context, conditionStatus metav1.ConditionStatus, conditionReason, message string, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
@@ -306,6 +337,149 @@ func (r *MCPGatewayExtensionReconciler) findMCPGatewayExtForReferenceGrant(ctx c
 	return requests
 }
 
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension) *appsv1.Deployment {
+	labels := map[string]string{
+		labelAppName:   brokerRouterName,
+		labelManagedBy: labelManagedByValue,
+	}
+
+	replicas := int32(1)
+
+	var command = []string{"- ./mcp_gateway",
+		"- --mcp-broker-public-address=0.0.0.0:8080"}
+	if r.BrokerPollInterval != "" {
+		command = append(command, "--mcp-check-interval="+r.BrokerPollInterval)
+	}
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brokerRouterName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:    brokerRouterName,
+							Image:   r.BrokerRouterImage,
+							Command: command,
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "http",
+									ContainerPort: 8080,
+								},
+								{
+									Name:          "grpc",
+									ContainerPort: 50051,
+								},
+								{
+									Name:          "config",
+									ContainerPort: 8181,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.Service {
+	labels := map[string]string{
+		labelAppName:   brokerRouterName,
+		labelManagedBy: labelManagedByValue,
+	}
+
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brokerRouterName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				labelAppName: brokerRouterName,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+				},
+				{
+					Name:       "grpc",
+					Port:       50051,
+					TargetPort: intstr.FromInt(50051),
+				},
+			},
+		},
+	}
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+	logger := logf.FromContext(ctx)
+
+	// reconcile deployment
+	deployment := r.buildBrokerRouterDeployment(mcpExt)
+	if err := controllerutil.SetControllerReference(mcpExt, deployment, r.Scheme); err != nil {
+		return false, fmt.Errorf("failed to set controller reference on deployment: %w", err)
+	}
+
+	existingDeployment := &appsv1.Deployment{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("creating broker-router deployment", "namespace", mcpExt.Namespace)
+			if err := r.Create(ctx, deployment); err != nil {
+				return false, fmt.Errorf("failed to create deployment: %w", err)
+			}
+			return false, nil // deployment just created, not ready yet
+		}
+		return false, fmt.Errorf("failed to get deployment: %w", err)
+	}
+
+	if !equality.Semantic.DeepEqual(existingDeployment.Spec, deployment) {
+		if err := r.Update(ctx, existingDeployment); err != nil {
+			return false, fmt.Errorf("failed to update deployment: %w", err)
+		}
+	}
+
+	// reconcile service
+	service := r.buildBrokerRouterService(mcpExt)
+	if err := controllerutil.SetControllerReference(mcpExt, service, r.Scheme); err != nil {
+		return false, fmt.Errorf("failed to set controller reference on service: %w", err)
+	}
+
+	existingService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(service), existingService)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("creating broker-router service", "namespace", mcpExt.Namespace)
+			if err := r.Create(ctx, service); err != nil {
+				return false, fmt.Errorf("failed to create service: %w", err)
+			}
+		} else {
+			return false, fmt.Errorf("failed to get service: %w", err)
+		}
+	}
+
+	// check deployment readiness
+	deploymentReady := existingDeployment.Status.ReadyReplicas > 0 &&
+		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
+
+	return deploymentReady, nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
@@ -321,6 +495,8 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 	// enqueue when reference grants change
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPGatewayExtension{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.findMCPGatewayExtForGateway)).
 		Watches(&gatewayv1beta1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.findMCPGatewayExtForReferenceGrant)).
 		Named("mcpgatewayextension").

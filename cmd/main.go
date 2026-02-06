@@ -24,6 +24,8 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+
+	goenv "github.com/caitlinelfring/go-env-default"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -113,12 +115,17 @@ func main() {
 		panic("unable to start manager : " + err.Error())
 	}
 
+	brokerRouterImage := goenv.GetDefault("RELATED_IMAGE_ROUTER_BROKER", controller.DefaultBrokerRouterImage)
+	brokerPollInterval := os.Getenv("BROKER_POLL_INTERVAL")
+
 	if err = (&controller.MCPGatewayExtensionReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		DirectAPIReader:       mgr.GetAPIReader(),
 		ConfigWriterDeleter:   &configReaderWriter,
 		MCPExtFinderValidator: mcpExtFinderValidator,
+		BrokerRouterImage:     brokerRouterImage,
+		BrokerPollInterval:    brokerPollInterval,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}

@@ -25,6 +25,11 @@ spec:
           command:
             - ./mcp_controller
             - --log-level=0 # info level
+          env:
+            - name: RELATED_IMAGE_ROUTER_BROKER
+              value: ghcr.io/kuadrant/mcp-gateway:latest
+            - name: BROKER_POLL_INTERVAL
+              value: "60"
           ports:
             - name: health
               containerPort: 8081

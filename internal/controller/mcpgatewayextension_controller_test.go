@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -176,6 +177,10 @@ func newTestReconciler() *MCPGatewayExtensionReconciler {
 		Client:              testIndexedClient,
 		Scheme:              testK8sClient.Scheme(),
 		ConfigWriterDeleter: &mockConfigWriterDeleter{},
+		BrokerRouterImage:   DefaultBrokerRouterImage,
+		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
+			Client: testIndexedClient,
+		},
 	}
 }
 
@@ -185,6 +190,19 @@ func waitForCacheSync(ctx context.Context, nn types.NamespacedName) {
 		cached := &mcpv1alpha1.MCPGatewayExtension{}
 		g.Expect(testIndexedClient.Get(ctx, nn, cached)).To(Succeed())
 	}, testTimeout, testRetryInterval).Should(Succeed())
+}
+
+// setDeploymentStatus updates the broker-router deployment status to simulate readiness in envtest
+func setDeploymentStatus(ctx context.Context, namespace string, replicas, readyReplicas int32) {
+	deployment := &appsv1.Deployment{}
+	deploymentNN := types.NamespacedName{Name: brokerRouterName, Namespace: namespace}
+	Eventually(func(g Gomega) {
+		g.Expect(testK8sClient.Get(ctx, deploymentNN, deployment)).To(Succeed())
+	}, testTimeout, testRetryInterval).Should(Succeed())
+
+	deployment.Status.Replicas = replicas
+	deployment.Status.ReadyReplicas = readyReplicas
+	Expect(testK8sClient.Status().Update(ctx, deployment)).To(Succeed())
 }
 
 var _ = Describe("MCPGatewayExtension Controller", func() {
@@ -332,17 +350,26 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName1)
 
+			// first reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: mcpExtNamespacedName1,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			// second reconcile creates deployment and sets status
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpExtNamespacedName1,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// in envtest, deployments don't become ready so we expect DeploymentNotReady
 			Eventually(func(g Gomega) {
 				updated1 := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName1, updated1)).To(Succeed())
 				condition := meta.FindStatusCondition(updated1.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
-				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonDeploymentNotReady))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// ensure distinct CreationTimestamp for second extension
@@ -408,7 +435,14 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
+			// first reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpExtNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// second reconcile checks for ReferenceGrant and sets status
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: mcpExtNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -466,6 +500,16 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
+				// simulate deployment readiness
+				var replicas, readyReplicas int32 = 1, 1
+				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+
+				// reconcile again to pick up deployment readiness
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
 				Eventually(func(g Gomega) {
 					updated := &mcpv1alpha1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
@@ -495,12 +539,23 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
+				// simulate deployment readiness
+				var replicas, readyReplicas int32 = 1, 1
+				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+
+				// reconcile again to pick up deployment readiness
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
 				Eventually(func(g Gomega) {
 					updated := &mcpv1alpha1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
 					g.Expect(condition).NotTo(BeNil())
 					g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+					g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSuccess))
 				}, testTimeout, testRetryInterval).Should(Succeed())
 			})
 		})
@@ -530,7 +585,14 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
+			// first reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpExtNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// second reconcile checks gateway and sets status
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: mcpExtNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -580,12 +642,23 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			// simulate deployment readiness
+			var replicas, readyReplicas int32 = 1, 1
+			setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+
+			// reconcile again to pick up deployment readiness
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpExtNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSuccess))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			Expect(testK8sClient.Delete(ctx, gateway)).To(Succeed())
@@ -602,6 +675,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				Client:              testK8sClient,
 				Scheme:              testK8sClient.Scheme(),
 				ConfigWriterDeleter: &mockConfigWriterDeleter{},
+				BrokerRouterImage:   DefaultBrokerRouterImage,
 			}
 
 			_, err = directReconciler.Reconcile(ctx, reconcile.Request{

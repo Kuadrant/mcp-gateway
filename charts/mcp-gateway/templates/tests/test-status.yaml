@@ -21,7 +21,7 @@ spec:
         echo "Testing MCP Gateway status endpoint..."
         
         # Test status endpoint returns valid JSON
-        response=$(curl -s http://{{ include "mcp-gateway.fullname" . }}-broker.{{ .Release.Namespace }}.svc.cluster.local:8080/status)
+        response=$(curl -s http://mcp-broker-router.{{ .Release.Namespace }}.svc.cluster.local:8080/status)
         echo "Status response: $response"
         
         # Check if response contains expected fields

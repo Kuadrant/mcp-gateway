@@ -18,10 +18,10 @@ spec:
     args:
       - |
         set -e
-        echo "Testing MCP Gateway broker connection..."
-        
-        # Test broker health endpoint
-        echo "Checking broker health endpoint..."
-        curl -f http://{{ include "mcp-gateway.fullname" . }}-broker.{{ .Release.Namespace }}.svc.cluster.local:8080/healthz
+        echo "Testing MCP Gateway broker-router connection..."
+
+        # Test broker-router health endpoint
+        echo "Checking broker-router health endpoint..."
+        curl -f http://mcp-broker-router.{{ .Release.Namespace }}.svc.cluster.local:8080/healthz
         
         echo "All tests passed!"

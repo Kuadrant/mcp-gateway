@@ -4,77 +4,99 @@ kind: ClusterRole
 metadata:
   name: mcp-gateway-role
 rules:
-  - apiGroups:
-      - ''
-    resources:
-      - endpoints
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ''
-    resources:
-      - secrets
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-      - update
-      - watch
-      - delete
-  - apiGroups:
-      - discovery.k8s.io
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - gateway.networking.k8s.io
-    resources:
-      - httproutes
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - gateway.networking.k8s.io
-    resources:
-      - httproutes/status
-    verbs:
-      - get
-      - patch
-      - update
-  - apiGroups:
-      - mcp.kagenti.com
-    resources:
-      - mcpgatewayextensions
-      - mcpserverregistrations
-      - mcpvirtualservers
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - mcp.kagenti.com
-    resources:
-      - mcpgatewayextensions/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - mcp.kagenti.com
-    resources:
-      - mcpgatewayextensions/status
-      - mcpserverregistrations/status
-    verbs:
-      - get
-      - patch
-      - update
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways
+  - httproutes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - referencegrants
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - mcp.kagenti.com
+  resources:
+  - mcpgatewayextensions
+  - mcpserverregistrations
+  - mcpvirtualservers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mcp.kagenti.com
+  resources:
+  - mcpgatewayextensions/finalizers
+  - mcpvirtualservers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - mcp.kagenti.com
+  resources:
+  - mcpgatewayextensions/status
+  - mcpserverregistrations/status
+  - mcpvirtualservers/status
+  verbs:
+  - get
+  - patch
+  - update
