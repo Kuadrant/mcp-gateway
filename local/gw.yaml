@@ -1,0 +1,11 @@
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway-extension
+  namespace: mcp-system
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    namespace: gateway-system

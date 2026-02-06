@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    networking.istio.io/service-type: NodePort
+  creationTimestamp: "2026-01-28T10:30:05Z"
+  labels:
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: team-beta-gateway
+  name: team-beta-gateway-istio
+  namespace: gateway-system
+  ownerReferences:
+  - apiVersion: gateway.networking.k8s.io/v1beta1
+    kind: Gateway
+    name: team-beta-gateway
+    uid: e67b7f49-f81f-46a5-8969-35fdb87d28bb
+  resourceVersion: "8563"
+  uid: b030ed92-858e-472c-996e-52987ae97052
+spec:
+  clusterIP: 10.96.21.56
+  clusterIPs:
+  - 10.96.21.56
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: PreferDualStack
+  ports:
+  - appProtocol: tcp
+    name: status-port
+    nodePort: 32767
+    port: 15021
+    protocol: TCP
+    targetPort: 15021
+  - appProtocol: http
+    name: mcp
+    nodePort: 30471
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    gateway.networking.k8s.io/gateway-name: team-beta-gateway
+  sessionAffinity: None
+  type: NodePort
+status:
+  loadBalancer: {}

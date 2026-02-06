@@ -1,0 +1,11 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  namespace: mcp-system
+  name: deny-from-other-namespaces
+spec:
+  podSelector:
+    matchLabels:
+  ingress:
+  - from:
+    - podSelector: {}

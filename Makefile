@@ -140,7 +140,7 @@ install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpgatewayextensions.yaml
 
 # Deploy mcp-gateway components (controller deploys broker-router via MCPGatewayExtension)
-deploy: install-crd deploy-controller ## Deploy controller to mcp-system namespace
+deploy: install-crd deploy-namespaces deploy-controller ## Deploy controller to mcp-system namespace
 
 # Deploy a new gateway httproute and broker instance configured to work with the new gateway
 deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (without controller)

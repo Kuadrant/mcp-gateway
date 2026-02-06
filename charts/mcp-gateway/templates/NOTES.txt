@@ -1,11 +1,13 @@
 1. Check the status of your deployment:
   kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }}"
 
-2. Verify MCPGatewayExtension is ready:
-  kubectl get mcpgatewayextension -n {{ .Release.Namespace }}
+{{- if .Values.envoyFilter.create }}
+2. Verify EnvoyFilter is installed:
+  kubectl get envoyfilter mcp-ext-proc -n {{ .Values.envoyFilter.namespace }}
+{{- end }}
 
-3. Once the MCPGatewayExtension is ready, verify the broker-router deployment:
-  kubectl get deployment mcp-gateway -n {{ .Release.Namespace }}
+3. Configure your Gateway with an MCP listener:
+  Add this listener to your Gateway resource:
 
   spec:
     listeners:
@@ -50,18 +52,16 @@
                 - name: Access-Control-Allow-Credentials
                   value: "true"
         backendRefs:
-          - name: {{ include "mcp-gateway.fullname" . }}
+          - name: mcp-broker-router
             port: 8080
       - matches:
           - path:
               type: PathPrefix
               value: /.well-known/oauth-protected-resource
         backendRefs:
-          - name: {{ include "mcp-gateway.fullname" . }}
+          - name: mcp-broker-router
             port: 8080
   EOF
-4. Verify EnvoyFilter was created (in the Gateway namespace):
-  kubectl get envoyfilter -n {{ .Values.mcpGatewayExtension.gatewayRef.namespace }} -l app.kubernetes.io/managed-by=mcp-gateway-controller
 
 5. Connect MCP servers by creating MCPServerRegistration resources:
   kubectl apply -f - <<EOF
@@ -78,14 +78,14 @@
       name: "my-server-route"
   EOF
 
-6. Access your MCP Gateway at: http://{{ .Values.gateway.publicHost }}/mcp
+6. Access your MCP Gateway at: http://mcp.127-0-0-1.sslip.io:8080/mcp
    (Adjust hostname/port based on your Gateway configuration)
 
 7. View logs for troubleshooting:
-  # Broker/Router logs
-  kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "mcp-gateway.fullname" . }}
-  
-  # Controller logs  
+  # Broker/Router logs (created by controller when MCPGatewayExtension is ready)
+  kubectl logs -n {{ .Release.Namespace }} deployment/mcp-broker-router
+
+  # Controller logs
   kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "mcp-gateway.fullname" . }}-controller
 
 For more information, visit: https://github.com/Kuadrant/mcp-gateway

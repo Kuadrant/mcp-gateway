@@ -1,0 +1,13 @@
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-gateway-extension
+  namespace: gateway-system
+spec:
+  from:
+    - group: mcp.kagenti.com
+      kind: MCPGatewayExtension
+      namespace: mcp-system
+  to:
+    - group: gateway.networking.k8s.io
+      kind: Gateway

@@ -1,0 +1,12 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: curl-pod
+  namespace: mcp-test
+spec:
+  containers:
+    - name: curl-pod
+      image: nsunday/curl-pod:latest
+      command: ["/bin/bash"]
+      args: ["-c", "while :; do echo '.'; sleep 5 ; done"]
+  restartPolicy: OnFailure

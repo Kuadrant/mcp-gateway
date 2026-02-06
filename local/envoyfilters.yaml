@@ -1,0 +1,104 @@
+
+  apiVersion: networking.istio.io/v1alpha3
+  kind: EnvoyFilter
+  metadata:
+    creationTimestamp: "2026-02-17T08:43:32Z"
+    generation: 1
+    labels:
+      app.kubernetes.io/managed-by: mcp-gateway-controller
+      app.kubernetes.io/name: mcp-gateway
+      istio.io/rev: default
+      mcp.kagenti.com/extension-name: e2e-1-ext
+      mcp.kagenti.com/extension-namespace: e2e-deletion-test
+    name: mcp-ext-proc-e2e-deletion-test-gateway
+    namespace: gateway-system
+    resourceVersion: "3842"
+    uid: 5e006de1-3cb9-4d71-ac93-9ab6d86df3b4
+  spec:
+    configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+          portNumber: 8080
+      patch:
+        operation: INSERT_FIRST
+        value:
+          name: envoy.filters.http.ext_proc
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+            failure_mode_allow: false
+            grpc_service:
+              envoy_grpc:
+                cluster_name: outbound|50051||mcp-gateway.e2e-deletion-test.svc.cluster.local
+            message_timeout: 10s
+            mutation_rules:
+              allow_all_routing: true
+            processing_mode:
+              request_body_mode: BUFFERED
+              request_header_mode: SEND
+              request_trailer_mode: SKIP
+              response_body_mode: NONE
+              response_header_mode: SEND
+              response_trailer_mode: SKIP
+    targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: e2e-1
+---  
+  apiVersion: networking.istio.io/v1alpha3
+  kind: EnvoyFilter
+  metadata:
+    creationTimestamp: "2026-02-17T08:43:02Z"
+    generation: 1
+    labels:
+      app.kubernetes.io/managed-by: mcp-gateway-controller
+      app.kubernetes.io/name: mcp-gateway
+      istio.io/rev: default
+      mcp.kagenti.com/extension-name: mcp-gateway
+      mcp.kagenti.com/extension-namespace: mcp-system
+    name: mcp-ext-proc-mcp-system-gateway
+    namespace: gateway-system
+    resourceVersion: "3689"
+    uid: e84a34ba-f52f-44ab-94ee-6a2fe576e88e
+  spec:
+    configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+          portNumber: 8080
+      patch:
+        operation: INSERT_FIRST
+        value:
+          name: envoy.filters.http.ext_proc
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+            failure_mode_allow: false
+            grpc_service:
+              envoy_grpc:
+                cluster_name: outbound|50051||mcp-gateway.mcp-system.svc.cluster.local
+            message_timeout: 10s
+            mutation_rules:
+              allow_all_routing: true
+            processing_mode:
+              request_body_mode: BUFFERED
+              request_header_mode: SEND
+              request_trailer_mode: SKIP
+              response_body_mode: NONE
+              response_header_mode: SEND
+              response_trailer_mode: SKIP
+    targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway

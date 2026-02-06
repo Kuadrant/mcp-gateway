@@ -1,0 +1,14 @@
+apiVersion: mcp.kagenti.com/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  labels:
+    kagenti/mcp: "true"
+  name: test-b-server3
+  namespace: mcp-test
+spec:
+  path: /mcp
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server3-b-route
+  toolPrefix: team_b_
