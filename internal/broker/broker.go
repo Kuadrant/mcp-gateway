@@ -14,6 +14,8 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var _ config.Observer = &mcpBrokerImpl{}
@@ -113,25 +115,50 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 	hooks := &server.Hooks{}
 
 	// Enhanced session registration to log gateway session assignment
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
 		// Note that AddOnRegisterSession is for GET, not POST, for a session.
 		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+		_, span := startSpan(ctx, "mcp-broker.session-register",
+			attribute.String("mcp.session_id", session.SessionID()),
+		)
+		defer span.End()
 		slog.Info("Broker: Gateway client session connected with session", "gatewaySessionID", session.SessionID())
 	})
 
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+		_, span := startSpan(ctx, "mcp-broker.session-unregister",
+			attribute.String("mcp.session_id", session.SessionID()),
+		)
+		defer span.End()
 		slog.Info("Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
 	})
 
-	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
+		_, span := startSpan(ctx, "mcp-broker.handle-request",
+			attribute.String("mcp.method", string(method)),
+		)
+		// store span in context for AfterAny to end it
+		if sessionID, ok := id.(string); ok {
+			span.SetAttributes(attribute.String("mcp.session_id", sessionID))
+		}
 		slog.Info("Processing request", "method", method)
+		// span will be ended by AfterAny or OnError
+		span.End()
 	})
 
-	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, _ any, err error) {
+		span := trace.SpanFromContext(ctx)
+		if span.IsRecording() {
+			recordError(span, err, "broker")
+		}
 		slog.Info("MCP server error", "method", method, "error", err)
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		span := trace.SpanFromContext(ctx)
+		if span.IsRecording() && result != nil {
+			span.SetAttributes(attribute.Int("mcp.tools_count", len(result.Tools)))
+		}
 		mcpBkr.FilterTools(ctx, id, message, result)
 	})
 

@@ -309,7 +309,7 @@ func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWT
 	}
 	mux.HandleFunc("/status", mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
-	mux.Handle("/mcp", streamableHTTPServer)
+	mux.Handle("/mcp", broker.TracingMiddleware(streamableHTTPServer))
 
 	return httpSrv, mcpBroker, streamableHTTPServer
 }
