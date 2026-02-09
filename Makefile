@@ -585,6 +585,59 @@ logs: ## Tail Istio gateway logs
 
 -include build/*.mk
 
+##@ OpenTelemetry Observability Stack
+
+.PHONY: otel
+otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prometheus, Grafana)
+	@echo "Deploying OpenTelemetry observability stack..."
+	kubectl apply -f examples/otel/namespace.yaml
+	kubectl apply -f examples/otel/tempo.yaml
+	kubectl apply -f examples/otel/loki.yaml
+	kubectl apply -f examples/otel/prometheus.yaml
+	kubectl apply -f examples/otel/otel-collector.yaml
+	kubectl apply -f examples/otel/grafana.yaml
+	@echo "Waiting for observability stack to be ready..."
+	@kubectl wait --for=condition=Available deployment -n observability -l app=tempo --timeout=120s
+	@kubectl wait --for=condition=Available deployment -n observability -l app=loki --timeout=120s
+	@kubectl wait --for=condition=Available deployment -n observability -l app=prometheus --timeout=120s
+	@kubectl wait --for=condition=Available deployment -n observability -l app=otel-collector --timeout=120s
+	@kubectl wait --for=condition=Available deployment -n observability -l app=grafana --timeout=120s
+	@echo "Configuring mcp-broker-router with OTEL..."
+	kubectl patch deployment mcp-broker-router -n mcp-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://otel-collector.observability.svc.cluster.local:4318"}},{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_INSECURE", "value": "true"}}]'
+	@kubectl rollout status deployment/mcp-broker-router -n mcp-system --timeout=120s
+	@echo ""
+	@echo "OpenTelemetry stack deployed and mcp-broker-router configured!"
+	@echo "Run 'make otel-forward' to start port-forwards"
+
+.PHONY: otel-delete
+otel-delete: ## Delete OpenTelemetry observability stack
+	@echo "Deleting OpenTelemetry observability stack..."
+	kubectl delete -f examples/otel/grafana.yaml --ignore-not-found
+	kubectl delete -f examples/otel/otel-collector.yaml --ignore-not-found
+	kubectl delete -f examples/otel/prometheus.yaml --ignore-not-found
+	kubectl delete -f examples/otel/loki.yaml --ignore-not-found
+	kubectl delete -f examples/otel/tempo.yaml --ignore-not-found
+	kubectl delete -f examples/otel/namespace.yaml --ignore-not-found
+	@echo "OpenTelemetry stack deleted."
+
+.PHONY: otel-status
+otel-status: ## Show status of OpenTelemetry observability stack
+	@echo "OpenTelemetry Stack Status:"
+	@echo "==========================="
+	@kubectl get pods -n observability 2>/dev/null || echo "Namespace 'observability' not found. Run 'make otel' to deploy."
+
+.PHONY: otel-forward
+otel-forward: ## Port-forward Grafana (3000), Prometheus (9090), and MCP Gateway (8001)
+	@echo "Starting port-forwards (Ctrl+C to stop)..."
+	@echo "  Grafana:     http://localhost:3000"
+	@echo "  Prometheus:  http://localhost:9090"
+	@echo "  MCP Gateway: http://localhost:8001"
+	@kubectl port-forward -n observability svc/grafana 3000:3000 &
+	@kubectl port-forward -n observability svc/prometheus 9090:9090 &
+	@kubectl port-forward -n gateway-system svc/mcp-gateway-istio 8001:8080
+
+##@ Testing
+
 .PHONY: testwithcoverage
 testwithcoverage:
 	go test -race ./... -coverprofile=coverage.out
