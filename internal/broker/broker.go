@@ -122,7 +122,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 			attribute.String("mcp.session_id", session.SessionID()),
 		)
 		defer span.End()
-		slog.Info("Broker: Gateway client session connected with session", "gatewaySessionID", session.SessionID())
+		mcpBkr.logger.InfoContext(ctx, "Broker: Gateway client session connected with session", "gatewaySessionID", session.SessionID())
 	})
 
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
@@ -130,7 +130,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 			attribute.String("mcp.session_id", session.SessionID()),
 		)
 		defer span.End()
-		slog.Info("Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
+		mcpBkr.logger.InfoContext(ctx, "Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
@@ -141,7 +141,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 		if sessionID, ok := id.(string); ok {
 			span.SetAttributes(attribute.String("mcp.session_id", sessionID))
 		}
-		slog.Info("Processing request", "method", method)
+		mcpBkr.logger.InfoContext(ctx, "Processing request", "method", method)
 		// span will be ended by AfterAny or OnError
 		span.End()
 	})
@@ -151,7 +151,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 		if span.IsRecording() {
 			recordError(span, err, "broker")
 		}
-		slog.Info("MCP server error", "method", method, "error", err)
+		mcpBkr.logger.ErrorContext(ctx, "MCP server error", "method", method, "error", err)
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
@@ -172,7 +172,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 }
 
 func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServersConfig) {
-	m.logger.Debug("Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+	m.logger.DebugContext(ctx, "Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
 	// unregister decommissioned servers
 	m.mcpLock.Lock()
 	defer m.mcpLock.Unlock()
@@ -181,9 +181,9 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		if !slices.ContainsFunc(conf.Servers, func(s *config.MCPServer) bool {
 			return serverID == s.ID()
 		}) {
-			m.logger.Info("un-register upstream server", "server id", serverID)
+			m.logger.InfoContext(ctx, "un-register upstream server", "server id", serverID)
 			if man, ok := m.mcpServers[serverID]; ok {
-				m.logger.Info("stopping manager for unregistered server", "server id", serverID)
+				m.logger.InfoContext(ctx, "stopping manager for unregistered server", "server id", serverID)
 				man.Stop()
 				delete(m.mcpServers, serverID)
 			}
@@ -194,22 +194,22 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	for _, mcpServer := range conf.Servers {
 		man, ok := m.mcpServers[mcpServer.ID()]
 		if ok {
-			m.logger.Info("Server is registered", "mcpID", mcpServer.ID())
+			m.logger.InfoContext(ctx, "Server is registered", "mcpID", mcpServer.ID())
 			// already have a manger
 			if mcpServer.ConfigChanged(man.MCP.GetConfig()) {
 				// todo prob could look at just updating the config
-				m.logger.Info("Server Config Changed removing manager", "mcpID", mcpServer.ID())
+				m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 				man.Stop()
 				delete(m.mcpServers, mcpServer.ID())
 			}
 		}
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
-			m.logger.Info("starting new manager", "server id", mcpServer.ID())
+			m.logger.InfoContext(ctx, "starting new manager", "server id", mcpServer.ID())
 			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
-				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
+				m.logger.InfoContext(ctx, "Starting manager for", "mcpID", mcpServer.ID())
 				manager.Start(ctx)
 			}()
 		}
@@ -220,7 +220,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		m.virtualServers[vs.Name] = vs
 	}
 	m.vsLock.Unlock()
-	m.logger.Debug("Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+	m.logger.DebugContext(ctx, "Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
@@ -265,7 +265,7 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	for _, upstream := range m.mcpServers {
 		t := upstream.GetServedManagedTool(tool)
 		if t != nil {
-			slog.Info("[EXT-PROC] Found matching server",
+			m.logger.Info("[EXT-PROC] Found matching server",
 				"toolName", tool,
 				"serverPrefix", upstream.MCP.GetPrefix(),
 				"serverName", upstream.MCP.GetName())

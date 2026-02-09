@@ -7,11 +7,11 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
 // SetupOTelSDK initializes the OpenTelemetry SDK with tracing, metrics, and logs support.
-// Returns a shutdown function that should be called on application exit to flush
-// pending telemetry and release resources.
+// Returns a shutdown function and an optional LoggerProvider for slog integration.
 //
 // The SDK is configured via environment variables:
 //   - OTEL_EXPORTER_OTLP_ENDPOINT: Base OTLP endpoint for all signals
@@ -23,7 +23,8 @@ import (
 //   - OTEL_SERVICE_VERSION: Service version (default: build version)
 //
 // If no endpoint is configured for a signal, that signal is disabled.
-func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *slog.Logger) (shutdown func(context.Context) error, err error) {
+// The returned LoggerProvider is nil if logs are not enabled.
+func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *slog.Logger) (shutdown func(context.Context) error, loggerProvider *sdklog.LoggerProvider, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	// shutdown combines all cleanup functions into one
@@ -48,7 +49,7 @@ func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *sl
 	if config.TracesEnabled() {
 		traceProvider, err := NewProvider(ctx, config)
 		if err != nil {
-			return shutdown, err
+			return shutdown, nil, err
 		}
 		shutdownFuncs = append(shutdownFuncs, traceProvider.Shutdown)
 		otel.SetTracerProvider(traceProvider.TracerProvider())
@@ -59,7 +60,7 @@ func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *sl
 	if config.MetricsEnabled() {
 		metricsProvider, err := NewMetricsProvider(ctx, config)
 		if err != nil {
-			return shutdown, err
+			return shutdown, nil, err
 		}
 		shutdownFuncs = append(shutdownFuncs, metricsProvider.Shutdown)
 		otel.SetMeterProvider(metricsProvider.MeterProvider())
@@ -70,14 +71,12 @@ func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *sl
 	if config.LogsEnabled() {
 		logsProvider, err := NewLogsProvider(ctx, config)
 		if err != nil {
-			return shutdown, err
+			return shutdown, nil, err
 		}
 		shutdownFuncs = append(shutdownFuncs, logsProvider.Shutdown)
-		// Note: LoggerProvider is not set globally via otel package.
-		// It needs to be integrated with slog via a bridge (Story 3).
-		_ = logsProvider.LoggerProvider()
+		loggerProvider = logsProvider.LoggerProvider()
 		logger.Info("OpenTelemetry logs enabled", "endpoint", config.LogsEndpoint())
 	}
 
-	return shutdown, nil
+	return shutdown, loggerProvider, nil
 }

@@ -51,7 +51,7 @@ func TracingMiddleware(next http.Handler) http.Handler {
 		defer span.End()
 
 		// extract session ID from header if present
-		if sessionID := r.Header.Get("mcp-session-id"); sessionID != "" {
+		if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {
 			span.SetAttributes(attribute.String("mcp.session_id", sessionID))
 		}
 
