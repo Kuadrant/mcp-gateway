@@ -10,6 +10,9 @@ import (
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrInvalidRequest is an error for an invalid request
@@ -153,27 +156,50 @@ func (s *ExtProcServer) HandleRequestHeaders(_ *eppb.HttpHeaders) ([]*eppb.Proce
 
 // RouteMCPRequest handles request bodies for MCP requests.
 func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
+	ctx, span := tracer().Start(ctx, "mcp-router.route-decision",
+		trace.WithAttributes(
+			attribute.String("mcp.method", mcpReq.Method),
+		),
+	)
+	defer span.End()
+
 	s.Logger.Debug("HandleMCPRequest ", "session id", mcpReq.GetSessionID())
 	switch mcpReq.Method {
 	case methodToolCall:
+		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
 	default:
+		span.SetAttributes(attribute.String("mcp.route", "broker"))
 		return s.HandleNoneToolCall(mcpReq)
 	}
 }
 
 // HandleToolCall will handle an MCP Tool Call
 func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
+	toolName := mcpReq.ToolName()
+
+	ctx, span := tracer().Start(ctx, "mcp-router.tool-call",
+		trace.WithAttributes(
+			attribute.String("mcp.tool", toolName),
+			attribute.String("mcp.session_id", mcpReq.GetSessionID()),
+		),
+	)
+	defer span.End()
+
 	calculatedResponse := NewResponse()
 	// handle tools call
 	toolName := mcpReq.ToolName()
 	if toolName == "" {
 		s.Logger.Error("[EXT-PROC] HandleRequestBody no tool name set in tools/call")
+		span.SetStatus(codes.Error, "no tool name set")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(400, "no tool name set")
 		return calculatedResponse.Build()
 	}
 	if mcpReq.GetSessionID() == "" {
 		s.Logger.Info("No mcp-session-id found in headers")
+		span.SetStatus(codes.Error, "no session ID found")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(400, "no session ID found")
 		return calculatedResponse.Build()
 	}
@@ -181,11 +207,16 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 	isInvalidSession, err := s.JWTManager.Validate(mcpReq.GetSessionID())
 	if err != nil {
 		s.Logger.Error("failed to validate session", "session", mcpReq.GetSessionID(), "error ", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "session validation failed")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(404, "session no longer valid")
 		return calculatedResponse.Build()
 	}
 	if isInvalidSession {
 		s.Logger.Debug("invalid session ", "session", mcpReq.GetSessionID())
+		span.SetStatus(codes.Error, "invalid session")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(404, "session no longer valid")
 		return calculatedResponse.Build()
 	}
@@ -198,6 +229,9 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 		// and the error is not an HTTP error, so we return a 200 status code.
 		// See https://modelcontextprotocol.io/specification/2025-06-18/server/tools#error-handling
 		s.Logger.Debug("no server for tool", "toolName", toolName)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "tool not found")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateJSONRPCResponse(200,
 			[]*corev3.HeaderValueOption{
 				{
@@ -212,6 +246,12 @@ event: message
 data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not found"}],"isError":true},"jsonrpc":"2.0"}`)
 		return calculatedResponse.Build()
 	}
+
+	// add server info to span
+	span.SetAttributes(
+		attribute.String("mcp.server", serverInfo.Name),
+		attribute.String("mcp.server.hostname", serverInfo.Hostname),
+	)
 	if annotations, hasAnnotations := s.Broker.ToolAnnotations(serverInfo.ID(), toolName); hasAnnotations {
 		// build header value (e.g. readOnly=true,destructive=false,openWorld=true)
 		var parts []string
@@ -245,6 +285,9 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	exists, err := s.SessionCache.GetSession(ctx, mcpReq.GetSessionID())
 	if err != nil {
 		s.Logger.Error("failed to get session from cache", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "session cache error")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}
@@ -263,6 +306,9 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 				calculatedResponse.WithImmediateResponse(500, "internal error")
 			}
 			s.Logger.Error("failed to get remote mcp server session id ", "error ", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "session initialization failed")
+			span.SetAttributes(attribute.String("error_source", "backend"))
 			return calculatedResponse.Build()
 		}
 		remoteMCPSeverSession = id
@@ -274,12 +320,18 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	body, err := mcpReq.ToBytes()
 	if err != nil {
 		s.Logger.Error("failed to marshal body to bytes ", "error ", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "body marshal failed")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}
 	path, err := serverInfo.Path()
 	if err != nil {
 		s.Logger.Error("failed to parse url for backend ", "error ", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "path parse failed")
+		span.SetAttributes(attribute.String("error_source", "ext-proc"))
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}

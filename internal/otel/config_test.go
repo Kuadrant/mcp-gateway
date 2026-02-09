@@ -7,15 +7,15 @@ import (
 
 func TestNewConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		envVars        map[string]string
-		gitSHA         string
-		dirty          string
-		version        string
-		wantService    string
-		wantVersion    string
-		wantEndpoint   string
-		wantInsecure   bool
+		name         string
+		envVars      map[string]string
+		gitSHA       string
+		dirty        string
+		version      string
+		wantService  string
+		wantVersion  string
+		wantEndpoint string
+		wantInsecure bool
 	}{
 		{
 			name:         "defaults when no env vars set",
@@ -93,8 +93,8 @@ func TestNewConfig(t *testing.T) {
 
 func TestTracesEndpoint(t *testing.T) {
 	tests := []struct {
-		name     string
-		envVars  map[string]string
+		name         string
+		envVars      map[string]string
 		wantEndpoint string
 	}{
 		{
