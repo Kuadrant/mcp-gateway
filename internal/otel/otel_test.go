@@ -14,9 +14,14 @@ func TestSetupOTelSDK_Disabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	shutdown, loggerProvider, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// loggerProvider should be nil when logs are disabled
+	if loggerProvider != nil {
+		t.Error("expected loggerProvider to be nil when disabled")
 	}
 
 	// shutdown should work even when nothing was set up
@@ -33,7 +38,7 @@ func TestSetupOTelSDK_TracesEnabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, err := SetupOTelSDK(context.Background(), "abc123", "false", "v1.0.0", logger)
+	shutdown, _, err := SetupOTelSDK(context.Background(), "abc123", "false", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +78,7 @@ func TestSetupOTelSDK_MetricsEnabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	shutdown, _, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,9 +106,14 @@ func TestSetupOTelSDK_LogsEnabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	shutdown, loggerProvider, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// loggerProvider should be non-nil when logs are enabled
+	if loggerProvider == nil {
+		t.Error("expected loggerProvider to be non-nil when logs are enabled")
 	}
 
 	// cleanup - logs exporter may fail but that's expected without a collector
@@ -115,7 +125,7 @@ func TestSetupOTelSDK_PropagatorSet(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	_, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	_, _, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

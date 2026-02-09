@@ -2,7 +2,6 @@ package mcprouter
 
 import (
 	"context"
-	"log/slog"
 
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
@@ -11,9 +10,9 @@ import (
 func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeaders *eppb.HttpHeaders, requestHeaders *eppb.HttpHeaders, req *MCPRequest) ([]*eppb.ProcessingResponse, error) {
 	response := NewResponse()
 	responseHeaderBuilder := NewHeaders()
-	slog.Debug("[EXT-PROC] HandleResponseHeaders response headers for session mapping...", "responseHeaders", responseHeaders)
+	s.Logger.DebugContext(ctx, "[EXT-PROC] HandleResponseHeaders response headers for session mapping...", "responseHeaders", responseHeaders)
 
-	slog.Debug("[EXT-PROC] HandleResponseHeaders ", "mcp-session-id", getSingleValueHeader(responseHeaders.Headers, "mcp-sessionid"))
+	s.Logger.DebugContext(ctx, "[EXT-PROC] HandleResponseHeaders ", "mcp-session-id", getSingleValueHeader(responseHeaders.Headers, "mcp-sessionid"))
 	//"gateway session id"
 	gatewaySessionID := getSingleValueHeader(requestHeaders.Headers, sessionHeader)
 	// we always want to respond with the original mcp-session-id to the client
@@ -25,10 +24,10 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 	status := getSingleValueHeader(responseHeaders.Headers, ":status")
 
 	if status == "404" && req != nil {
-		slog.Info("received 404 from backend MCP ", "method", req.Method, "server", req.serverName)
+		s.Logger.InfoContext(ctx, "received 404 from backend MCP ", "method", req.Method, "server", req.serverName)
 		if err := s.SessionCache.RemoveServerSession(ctx, req.GetSessionID(), req.serverName); err != nil {
 			// not much we can do here log and continue
-			s.Logger.Error("failed to remove server session ", "server", req.serverName, "session", req.GetSessionID())
+			s.Logger.ErrorContext(ctx, "failed to remove server session ", "server", req.serverName, "session", req.GetSessionID())
 		}
 	}
 

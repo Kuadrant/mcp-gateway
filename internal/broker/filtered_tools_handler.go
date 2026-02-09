@@ -22,18 +22,18 @@ const allowedToolsClaimKey = "allowed-tools"
 
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
-	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+	broker.logger.DebugContext(ctx, "FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 
 	// step 1: apply x-authorized-tools filtering (JWT-based)
-	tools = broker.applyAuthorizedToolsFilter(mcpReq.Header, tools)
-	broker.logger.Debug("FilterTools authorized tools result", "output_tools_count", len(tools))
+	tools = broker.applyAuthorizedToolsFilter(ctx, mcpReq.Header, tools)
+	broker.logger.DebugContext(ctx, "FilterTools authorized tools result", "output_tools_count", len(tools))
 
 	// step 2: apply virtual server filtering
-	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
+	tools = broker.applyVirtualServerFilter(ctx, mcpReq.Header, tools)
 
-	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+	broker.logger.DebugContext(ctx, "FilterTools virtual server result", "output_tools_count", len(tools))
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {
@@ -45,28 +45,28 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 // applyAuthorizedToolsFilter filters tools based on x-authorized-tools JWT header.
 // Returns original tools if header not present and enforcement is off.
 // Returns empty slice if header validation fails or enforcement is on without header.
-func (broker *mcpBrokerImpl) applyAuthorizedToolsFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
+func (broker *mcpBrokerImpl) applyAuthorizedToolsFilter(ctx context.Context, headers http.Header, tools []mcp.Tool) []mcp.Tool {
 	headerValues, present := headers[authorizedToolsHeader]
 
 	if !present {
-		broker.logger.Debug("no x-authorized-tools header", "enforced", broker.enforceToolFilter)
+		broker.logger.DebugContext(ctx, "no x-authorized-tools header", "enforced", broker.enforceToolFilter)
 		if broker.enforceToolFilter {
 			return []mcp.Tool{}
 		}
 		return tools
 	}
 
-	allowedTools, err := broker.parseAuthorizedToolsJWT(headerValues)
+	allowedTools, err := broker.parseAuthorizedToolsJWT(ctx, headerValues)
 	if err != nil {
-		broker.logger.Error("failed to parse x-authorized-tools header", "error", err)
+		broker.logger.ErrorContext(ctx, "failed to parse x-authorized-tools header", "error", err)
 		return []mcp.Tool{}
 	}
 
-	return broker.filterToolsByServerMap(allowedTools)
+	return broker.filterToolsByServerMap(ctx, allowedTools)
 }
 
 // parseAuthorizedToolsJWT validates and extracts allowed tools from the JWT header.
-func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map[string][]string, error) {
+func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(ctx context.Context, headerValues []string) (map[string][]string, error) {
 	if len(headerValues) != 1 {
 		return nil, fmt.Errorf("expected exactly 1 header value, got %d", len(headerValues))
 	}
@@ -105,7 +105,7 @@ func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map
 		return nil, fmt.Errorf("failed to unmarshal allowed-tools JSON: %w", err)
 	}
 
-	broker.logger.Debug("parsed authorized tools", "tools", allowedTools)
+	broker.logger.DebugContext(ctx, "parsed authorized tools", "tools", allowedTools)
 	return allowedTools, nil
 }
 
@@ -119,25 +119,25 @@ func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager 
 }
 
 // filterToolsByServerMap filters tools based on a map of server name to allowed tool names.
-func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]string) []mcp.Tool {
+func (broker *mcpBrokerImpl) filterToolsByServerMap(ctx context.Context, allowedTools map[string][]string) []mcp.Tool {
 	var filtered []mcp.Tool
 
 	for serverName, toolNames := range allowedTools {
 		upstream := broker.findServerByName(serverName)
 		if upstream == nil {
-			broker.logger.Error("upstream not found", "server", serverName)
+			broker.logger.ErrorContext(ctx, "upstream not found", "server", serverName)
 			continue
 		}
 		tools := upstream.GetManagedTools()
 		if tools == nil {
-			broker.logger.Debug("no tools registered for upstream server", "server", upstream.MCPName)
+			broker.logger.DebugContext(ctx, "no tools registered for upstream server", "server", upstream.MCPName)
 			continue
 		}
 
 		for _, tool := range tools {
-			broker.logger.Debug("checking access", "tool", tool.Name, "against", toolNames)
+			broker.logger.DebugContext(ctx, "checking access", "tool", tool.Name, "against", toolNames)
 			if slices.Contains(toolNames, tool.Name) {
-				broker.logger.Debug("access granted", "tool", tool.Name)
+				broker.logger.DebugContext(ctx, "access granted", "tool", tool.Name)
 				tool.Name = fmt.Sprintf("%s%s", upstream.MCP.GetPrefix(), tool.Name)
 				filtered = append(filtered, tool)
 			}
@@ -148,18 +148,18 @@ func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]st
 }
 
 // applyVirtualServerFilter filters tools to only those specified in the virtual server.
-func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
+func (broker *mcpBrokerImpl) applyVirtualServerFilter(ctx context.Context, headers http.Header, tools []mcp.Tool) []mcp.Tool {
 	headerValues, ok := headers[virtualMCPHeader]
 	if !ok || len(headerValues) != 1 {
 		return tools
 	}
 
 	virtualServerID := headerValues[0]
-	broker.logger.Debug("applying virtual server filter", "virtualServer", virtualServerID)
+	broker.logger.DebugContext(ctx, "applying virtual server filter", "virtualServer", virtualServerID)
 
 	vs, err := broker.GetVirtualSeverByHeader(virtualServerID)
 	if err != nil {
-		broker.logger.Error("failed to get virtual server", "error", err)
+		broker.logger.ErrorContext(ctx, "failed to get virtual server", "error", err)
 		return tools
 	}
 

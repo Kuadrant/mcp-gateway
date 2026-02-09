@@ -148,18 +148,22 @@ func main() {
 		loggerOpts.Level = slog.LevelDebug
 	}
 
-	logger = slog.New(slog.NewTextHandler(os.Stdout, loggerOpts))
-
-	if logFormat == "json" {
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, loggerOpts))
-	}
+	// Phase 1: Create basic logger for startup (before OTEL is initialized)
+	jsonFormat := logFormat == "json"
+	logger = mcpotel.NewTracingLogger(os.Stdout, loggerOpts, jsonFormat, nil)
 
 	ctx := context.Background()
 
-	// initialize OpenTelemetry SDK
-	otelShutdown, err := mcpotel.SetupOTelSDK(ctx, gitSHA, dirty, version, logger)
+	// Phase 2: Initialize OpenTelemetry SDK and get LoggerProvider
+	otelShutdown, loggerProvider, err := mcpotel.SetupOTelSDK(ctx, gitSHA, dirty, version, logger)
 	if err != nil {
 		logger.Error("failed to setup OpenTelemetry", "error", err)
+	}
+
+	// Phase 3: Upgrade logger to include OTLP export if logs are enabled
+	if loggerProvider != nil {
+		logger = mcpotel.NewTracingLogger(os.Stdout, loggerOpts, jsonFormat, loggerProvider)
+		logger.Info("Logger upgraded with OTLP export")
 	}
 
 	sessionCache, err := session.NewCache(ctx)

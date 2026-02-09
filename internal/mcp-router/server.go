@@ -60,7 +60,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		req, err := stream.Recv()
 
 		if err != nil {
-			s.Logger.Error("[ext_proc] Process: Error receiving request", "error", err)
+			s.Logger.ErrorContext(ctx, "[ext_proc] Process: Error receiving request", "error", err)
 			if span != nil {
 				recordError(span, err, 500)
 				span.End()
@@ -95,11 +95,11 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			)
 
 			responses, _ := s.HandleRequestHeaders(r.RequestHeaders)
-			s.Logger.Debug("[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", path, "method", method)
+			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", path, "method", method)
 			for _, response := range responses {
-				s.Logger.Debug(fmt.Sprintf("Sending header processing instructions to Envoy: %+v", response))
+				s.Logger.DebugContext(ctx, fmt.Sprintf("Sending header processing instructions to Envoy: %+v", response))
 				if err := stream.Send(response); err != nil {
-					s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 					recordError(span, err, 500)
 					span.End()
 					return err
@@ -111,15 +111,15 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			// default response
 			responses := responseBuilder.WithDoNothingResponse(streaming).Build()
 			if localRequestHeaders == nil || localRequestHeaders.Headers == nil {
-				s.Logger.Error("Error no request headers present. Exiting")
+				s.Logger.ErrorContext(ctx, "Error no request headers present. Exiting")
 				for _, response := range responses {
 					if err := stream.Send(response); err != nil {
-						s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 						return fmt.Errorf("error sending response")
 					}
 				}
 				if localRequestHeaders == nil {
-					s.Logger.Debug("Body process requested before headers arrived")
+					s.Logger.DebugContext(ctx, "Body process requested before headers arrived")
 					err := fmt.Errorf("protocol error: no request headers")
 					if span != nil {
 						recordError(span, err, 400)
@@ -128,7 +128,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 				if mcpRequest == nil {
-					s.Logger.Debug("Body process did not receive body")
+					s.Logger.DebugContext(ctx, "Body process did not receive body")
 					err := fmt.Errorf("protocol error: no body")
 					if span != nil {
 						recordError(span, err, 400)
@@ -137,29 +137,29 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 			}
-			s.Logger.Debug("[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
+			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
 			if len(r.RequestBody.Body) > 0 {
 				if err := json.Unmarshal(r.RequestBody.Body, &mcpRequest); err != nil {
-					s.Logger.Error(fmt.Sprintf("Error unmarshalling request body: %v", err))
+					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error unmarshalling request body: %v", err))
 					if span != nil {
 						recordError(span, err, 400)
 					}
 					for _, response := range responses {
 						if err := stream.Send(response); err != nil {
-							s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+							s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 							return err
 						}
 					}
 				}
 				if _, err := mcpRequest.Validate(); err != nil {
-					s.Logger.Error("Invalid MCPRequest", "error", err)
+					s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
 					if span != nil {
 						recordError(span, err, 400)
 					}
 					resp := responseBuilder.WithImmediateResponse(400, "invalid mcp request").Build()
 					for _, res := range resp {
 						if err := stream.Send(res); err != nil {
-							s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+							s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 							return err
 						}
 					}
@@ -177,9 +177,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 
 			responses = s.RouteMCPRequest(ctx, mcpRequest)
 			for _, response := range responses {
-				s.Logger.Debug(fmt.Sprintf("Sending MCP body routing instructions to Envoy: %+v", response))
+				s.Logger.DebugContext(ctx, fmt.Sprintf("Sending MCP body routing instructions to Envoy: %+v", response))
 				if err := stream.Send(response); err != nil {
-					s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 					if span != nil {
 						recordError(span, err, 500)
 						span.End()
@@ -198,7 +198,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				return err
 			}
-			s.Logger.Debug("[ext_proc ] Process: ProcessingRequest_ResponseHeaders", "request id:", requestID)
+			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_ResponseHeaders", "request id:", requestID)
 
 			// extract response status code for span
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
@@ -208,9 +208,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 
 			responses, _ := s.HandleResponseHeaders(ctx, r.ResponseHeaders, localRequestHeaders, mcpRequest)
 			for _, response := range responses {
-				s.Logger.Debug(fmt.Sprintf("Sending response header processing instructions to Envoy: %+v", response))
+				s.Logger.DebugContext(ctx, fmt.Sprintf("Sending response header processing instructions to Envoy: %+v", response))
 				if err := stream.Send(response); err != nil {
-					s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 					if span != nil {
 						recordError(span, err, 500)
 						span.End()
@@ -227,7 +227,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		case *extProcV3.ProcessingRequest_ResponseBody:
 			// This should never be called as response_body_mode is set to NONE in the EnvoyFilter.
 			// If this is called, it indicates a configuration issue or Envoy bug.
-			s.Logger.Error("[EXT-PROC] Unexpected response body processing request received",
+			s.Logger.ErrorContext(ctx, "[EXT-PROC] Unexpected response body processing request received",
 				"size", len(r.ResponseBody.GetBody()),
 				"end_of_stream", r.ResponseBody.GetEndOfStream(),
 				"note", "response_body_mode is set to NONE in EnvoyFilter - this should not occur",
@@ -239,7 +239,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				},
 			}
 			if err := stream.Send(response); err != nil {
-				s.Logger.Error(fmt.Sprintf("Error sending response: %v", err))
+				s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
 				return err
 			}
 			continue
