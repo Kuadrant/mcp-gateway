@@ -30,6 +30,9 @@ jobs:
   run-evaluation:
     name: Run MCP Evaluation
     runs-on: ubuntu-latest
+    env:
+      MODEL_KEY: ${{ secrets.MODEL_KEY }}
+      MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL }}
 
     steps:
       - name: Checkout
@@ -65,29 +68,19 @@ jobs:
           timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
           echo "Gateway is ready!"
 
-      - name: Setup Credentials
-        env:
-          MODEL_KEY: ${{ secrets.MODEL_KEY }}
-          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL }}
-        run: |
-          if [ -n "$MODEL_KEY" ]; then
-            echo "MODEL_KEY=$MODEL_KEY" >> $GITHUB_ENV
-            echo "MODEL_BASE_URL=$MODEL_BASE_URL" >> $GITHUB_ENV
-          fi
-
       - name: Setup Fallback LLM (Ollama)
-        if: ${{ secrets.MODEL_KEY == '' }}
+        if: env.MODEL_KEY == ''
         uses: ai-action/setup-ollama@v2
 
       - name: Cache Ollama Models
-        if: ${{ secrets.MODEL_KEY == '' }}
+        if: env.MODEL_KEY == ''
         uses: actions/cache@v4
         with:
           path: ~/.ollama
           key: ${{ runner.os }}-ollama-qwen2.5-1.5b
 
       - name: Run Agent (Fallback)
-        if: ${{ secrets.MODEL_KEY == '' }}
+        if: env.MODEL_KEY == ''
         run: |
           echo "No MODEL_KEY secret found. Starting Ollama..."
           
