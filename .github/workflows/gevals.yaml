@@ -40,5 +40,31 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Test Echo
-        run: echo "Minimal workflow works"
+      - name: Test Echo (Replaced)
+        run: echo "Restoring steps..."
+
+      - name: Setup Kind cluster
+        run: |
+          # Install Kind if not present
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          
+          # Create cluster
+          make tools
+          make kind-create-cluster KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+
+      - name: Deploy Local Environment
+        run: |
+          # Ensure we use the right cluster name
+          export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+          
+          # Run setup
+          make local-env-setup
+
+      - name: Wait for Gateway Readiness
+        run: |
+          echo "Waiting for MCP Gateway..."
+          timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
+          echo "Gateway is ready!"
+
