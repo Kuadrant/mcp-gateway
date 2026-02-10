@@ -68,40 +68,9 @@ jobs:
           timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
           echo "Gateway is ready!"
 
-#       - name: Setup Fallback LLM (Ollama)
-#         if: ${{ secrets.MODEL_KEY == '' }}
-#         uses: ai-action/setup-ollama@v2
-#
-#       - name: Cache Ollama Models
-#         if: ${{ secrets.MODEL_KEY == '' }}
-#         uses: actions/cache@v4
-#         with:
-#           path: ~/.ollama
-#           key: ${{ runner.os }}-ollama-qwen2.5-1.5b
-#
-#       - name: Run Agent (Fallback)
-#         if: ${{ secrets.MODEL_KEY == '' }}
-#         run: |
-#           echo "No MODEL_KEY secret found. Starting Ollama..."
-#           # ...
-#           exit 0 # Placeholder
-
-      - name: Run mcpchecker (Manual)
-        run: |
-          echo "Installing mcpchecker..."
-          go install github.com/mcpchecker/mcpchecker@latest
-          
-          echo "Running mcpchecker..."
-          # Ensure GOBIN is in PATH if not already (github actions usually has it)
-          export PATH=$PATH:$(go env GOPATH)/bin
-          mcpchecker check --config evals/gemini-agent/eval.yaml
-        env:
-          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
-          MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
-
       - name: Setup Fallback LLM (Ollama)
         if: ${{ secrets.MODEL_KEY == '' }}
-        run: curl -fsSL https://ollama.com/install.sh | sh
+        uses: ai-action/setup-ollama@v2
 
       - name: Cache Ollama Models
         if: ${{ secrets.MODEL_KEY == '' }}
