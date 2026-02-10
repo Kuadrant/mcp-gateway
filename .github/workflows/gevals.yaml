@@ -109,7 +109,7 @@ jobs:
       - name: Run mcpchecker (Manual)
         run: |
           echo "Installing mcpchecker..."
-          go install github.com/mcpchecker/mcpchecker@latest
+          go install github.com/mcpchecker/mcpchecker/cmd/mcpchecker@latest
           
           echo "Running mcpchecker..."
           # Ensure GOBIN is in PATH if not already (github actions usually has it)
