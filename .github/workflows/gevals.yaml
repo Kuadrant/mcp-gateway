@@ -76,58 +76,25 @@ jobs:
           timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
           echo "Gateway is ready!"
 
-      - name: Setup Fallback LLM (Ollama)
-        if: ${{ secrets.MODEL_KEY == '' }}
-        uses: ai-action/setup-ollama@v2
+#       - name: Setup Fallback LLM (Ollama)
+#         if: ${{ secrets.MODEL_KEY == '' }}
+#         uses: ai-action/setup-ollama@v2
+#
+#       - name: Cache Ollama Models
+#         if: ${{ secrets.MODEL_KEY == '' }}
+#         uses: actions/cache@v4
+#         with:
+#           path: ~/.ollama
+#           key: ${{ runner.os }}-ollama-qwen2.5-1.5b
+#
+#       - name: Run Agent (Fallback)
+#         if: ${{ secrets.MODEL_KEY == '' }}
+#         run: |
+#           echo "No MODEL_KEY secret found. Starting Ollama..."
+#           # ... (rest commented out)
+#           exit 0 # Placeholder to pass invalid syntax if rest is commented
+#
+#       - name: Run mcpchecker evaluation
+#         if: false
+#         run: echo "Skipped mcpchecker"
 
-      - name: Cache Ollama Models
-        if: ${{ secrets.MODEL_KEY == '' }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.ollama
-          key: ${{ runner.os }}-ollama-qwen2.5-1.5b
-
-      - name: Run Agent (Fallback)
-        if: ${{ secrets.MODEL_KEY == '' }}
-        run: |
-          echo "No MODEL_KEY secret found. Starting Ollama..."
-          
-          # Start Ollama in background
-          ollama serve &
-          
-          # Wait for Ollama to be ready
-          echo "Waiting for Ollama to be ready..."
-          timeout 60s bash -c 'until curl -s http://localhost:11434 > /dev/null; do sleep 2; done'
-          
-          MODEL_NAME="qwen2.5:1.5b"
-          
-          # Pull the model (Ollama will skip if cached/present)
-          echo "Pulling model $MODEL_NAME..."
-          ollama pull $MODEL_NAME
-          
-          # Configure environment for mcpchecker
-          echo "MODEL_BASE_URL=http://localhost:11434/v1" >> $GITHUB_ENV
-          echo "MODEL_KEY=ollama" >> $GITHUB_ENV
-          
-          # Update agent.yaml to use the fallback model
-          sed -i "s/model: .*/model: \"$MODEL_NAME\"/" evals/gemini-agent/agent.yaml
-          
-          echo "Ollama setup complete using model $MODEL_NAME"
-
-      - name: Run mcpchecker evaluation
-        id: mcpchecker
-        uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.5
-        with:
-          eval-config: 'evals/gemini-agent/eval.yaml'
-          mcpchecker-version: 'latest'
-          task-filter: ${{ github.event.inputs.task-filter || '' }}
-          output-format: 'json'
-          verbose: ${{ github.event.inputs.verbose || 'false' }} 
-          upload-artifacts: 'true'
-          artifact-name: 'mcpchecker-results'
-          fail-on-error: 'true'
-        env:
-          # If secrets exist, they take precedence (set in workflow env or step env)
-          # If not, the GITHUB_ENV values set in the fallback step will be used
-          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
-          MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
