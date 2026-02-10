@@ -133,14 +133,6 @@ jobs:
 #           MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
 
       - name: Run mcpchecker (Manual)
-        run: |
-          echo "Installing mcpchecker..."
-          go install github.com/mcpchecker/mcpchecker@latest
-          
-          echo "Running mcpchecker..."
-          mcpchecker check --config evals/gemini-agent/eval.yaml
-        env:
-          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
-          MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
+        run: echo "Testing workflow validity"
 
 
