@@ -158,7 +158,7 @@ func (s *ExtProcServer) HandleRequestHeaders(_ *eppb.HttpHeaders) ([]*eppb.Proce
 func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
 	ctx, span := tracer().Start(ctx, "mcp-router.route-decision",
 		trace.WithAttributes(
-			attribute.String("mcp.method", mcpReq.Method),
+			attribute.String("mcp.method.name", mcpReq.Method),
 		),
 	)
 	defer span.End()
@@ -181,7 +181,7 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 	ctx, span := tracer().Start(ctx, "mcp-router.tool-call",
 		trace.WithAttributes(
 			attribute.String("mcp.tool", toolName),
-			attribute.String("mcp.session_id", mcpReq.GetSessionID()),
+			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
 		),
 	)
 	defer span.End()

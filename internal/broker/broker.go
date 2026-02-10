@@ -119,7 +119,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 		// Note that AddOnRegisterSession is for GET, not POST, for a session.
 		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 		_, span := startSpan(ctx, "mcp-broker.session-register",
-			attribute.String("mcp.session_id", session.SessionID()),
+			attribute.String("mcp.session.id", session.SessionID()),
 		)
 		defer span.End()
 		mcpBkr.logger.InfoContext(ctx, "Broker: Gateway client session connected with session", "gatewaySessionID", session.SessionID())
@@ -127,7 +127,7 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
 		_, span := startSpan(ctx, "mcp-broker.session-unregister",
-			attribute.String("mcp.session_id", session.SessionID()),
+			attribute.String("mcp.session.id", session.SessionID()),
 		)
 		defer span.End()
 		mcpBkr.logger.InfoContext(ctx, "Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
@@ -135,11 +135,11 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 
 	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
 		_, span := startSpan(ctx, "mcp-broker.handle-request",
-			attribute.String("mcp.method", string(method)),
+			attribute.String("mcp.method.name", string(method)),
 		)
 		// store span in context for AfterAny to end it
 		if sessionID, ok := id.(string); ok {
-			span.SetAttributes(attribute.String("mcp.session_id", sessionID))
+			span.SetAttributes(attribute.String("mcp.session.id", sessionID))
 		}
 		mcpBkr.logger.InfoContext(ctx, "Processing request", "method", method)
 		// span will be ended by AfterAny or OnError

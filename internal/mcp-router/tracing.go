@@ -56,11 +56,11 @@ func extractTraceContext(ctx context.Context, headers *corev3.HeaderMap) context
 // spanAttributes returns common span attributes for MCP requests
 func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
-		attribute.String("mcp.method", mcpReq.Method),
+		attribute.String("mcp.method.name", mcpReq.Method),
 	}
 
 	if mcpReq.GetSessionID() != "" {
-		attrs = append(attrs, attribute.String("mcp.session_id", mcpReq.GetSessionID()))
+		attrs = append(attrs, attribute.String("mcp.session.id", mcpReq.GetSessionID()))
 	}
 
 	if mcpReq.serverName != "" {
