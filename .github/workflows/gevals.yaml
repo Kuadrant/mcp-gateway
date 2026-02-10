@@ -68,6 +68,13 @@ jobs:
           timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
           echo "Gateway is ready!"
 
+      - name: Setup Credentials
+        run: |
+          if [ -n "${{ secrets.MODEL_KEY }}" ]; then
+            echo "MODEL_KEY=${{ secrets.MODEL_KEY }}" >> $GITHUB_ENV
+            echo "MODEL_BASE_URL=${{ secrets.MODEL_BASE_URL }}" >> $GITHUB_ENV
+          fi
+
       - name: Setup Fallback LLM (Ollama)
         if: ${{ secrets.MODEL_KEY == '' }}
         run: curl -fsSL https://ollama.com/install.sh | sh
@@ -115,7 +122,4 @@ jobs:
           # Ensure GOBIN is in PATH if not already (github actions usually has it)
           export PATH=$PATH:$(go env GOPATH)/bin
           mcpchecker check --config evals/gemini-agent/eval.yaml
-        env:
-          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
-          MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
 
