@@ -114,21 +114,32 @@ jobs:
           
           echo "Ollama setup complete using model $MODEL_NAME"
 
-      - name: Run mcpchecker evaluation
-        id: mcpchecker
-        uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.5
-        with:
-          eval-config: 'evals/gemini-agent/eval.yaml'
-          mcpchecker-version: 'latest'
-          task-filter: ${{ github.event.inputs.task-filter || '' }}
-          output-format: 'json'
-          verbose: ${{ github.event.inputs.verbose || 'false' }} 
-          upload-artifacts: 'true'
-          artifact-name: 'mcpchecker-results'
-          fail-on-error: 'true'
+#       - name: Run mcpchecker evaluation
+#         id: mcpchecker
+#         uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.5
+#         with:
+#           eval-config: 'evals/gemini-agent/eval.yaml'
+#           mcpchecker-version: 'latest'
+#           task-filter: ${{ github.event.inputs.task-filter || '' }}
+#           output-format: 'json'
+#           verbose: ${{ github.event.inputs.verbose || 'false' }} 
+#           upload-artifacts: 'true'
+#           artifact-name: 'mcpchecker-results'
+#           fail-on-error: 'true'
+#         env:
+#           # If secrets exist, they take precedence (set in workflow env or step env)
+#           # If not, the GITHUB_ENV values set in the fallback step will be used
+#           MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
+#           MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
+
+      - name: Run mcpchecker (Manual)
+        run: |
+          echo "Installing mcpchecker..."
+          go install github.com/mcpchecker/mcpchecker@latest
+          
+          echo "Running mcpchecker..."
+          mcpchecker check --config evals/gemini-agent/eval.yaml
         env:
-          # If secrets exist, they take precedence (set in workflow env or step env)
-          # If not, the GITHUB_ENV values set in the fallback step will be used
           MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
           MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
 
