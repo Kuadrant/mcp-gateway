@@ -1,0 +1,133 @@
+name: Gevals Integration Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      task-filter:
+        description: 'Regular expression to filter tasks (optional)'
+        required: false
+        default: ''
+      verbose:
+        description: 'Enable verbose output'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: 1.23
+  KIND_CLUSTER_NAME: mcp-eval-cluster
+
+jobs:
+  run-evaluation:
+    name: Run MCP Evaluation
+    runs-on: ubuntu-latest
+    if: false # Disable until ready to merge, or use 'contains(github.event.pull_request.labels.*.name, 'ok-to-test')'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Kind cluster
+        run: |
+          # Install Kind if not present
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          
+          # Create cluster reusing Makefile logic if possible, or direct kind create
+          # But make local-env-setup uses make kind-create-cluster which uses make build-image...
+          # mcp-gateway Makefile is robust
+          make tools
+          make kind-create-cluster KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+
+      - name: Deploy Local Environment
+        run: |
+          # Build and load images, deploy gateway and test servers
+          # We can use make local-env-setup but skip kind-create-cluster since we did it (or let make handle idempotency if it has it)
+          # Actually make local-env-setup calls make kind-create-cluster.
+          # Let's just run make local-env-setup and override KIND_CLUSTER_NAME if needed
+          
+          # Ensure we use the right cluster name
+          export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
+          
+          # Run setup
+          make local-env-setup
+
+      - name: Wait for Gateway Readiness
+        run: |
+          # Wait for the gateway to be ready and accessible on localhost:8001 (default port mapping)
+          # The local-env-setup maps 8001 -> 30080 -> 8080 (broker)
+          
+          echo "Waiting for MCP Gateway..."
+          timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
+          echo "Gateway is ready!"
+
+      - name: Setup Fallback LLM (Ollama)
+        if: ${{ secrets.MODEL_KEY == '' }}
+        uses: ai-action/setup-ollama@v2
+
+      - name: Cache Ollama Models
+        if: ${{ secrets.MODEL_KEY == '' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ${{ runner.os }}-ollama-qwen2.5-1.5b
+
+      - name: Run Agent (Fallback)
+        if: ${{ secrets.MODEL_KEY == '' }}
+        run: |
+          echo "No MODEL_KEY secret found. Starting Ollama..."
+          
+          # Start Ollama in background
+          ollama serve &
+          
+          # Wait for Ollama to be ready
+          echo "Waiting for Ollama to be ready..."
+          timeout 60s bash -c 'until curl -s http://localhost:11434 > /dev/null; do sleep 2; done'
+          
+          MODEL_NAME="qwen2.5:1.5b"
+          
+          # Pull the model (Ollama will skip if cached/present)
+          echo "Pulling model $MODEL_NAME..."
+          ollama pull $MODEL_NAME
+          
+          # Configure environment for mcpchecker
+          echo "MODEL_BASE_URL=http://localhost:11434/v1" >> $GITHUB_ENV
+          echo "MODEL_KEY=ollama" >> $GITHUB_ENV
+          
+          # Update agent.yaml to use the fallback model
+          sed -i "s/model: .*/model: \"$MODEL_NAME\"/" evals/gemini-agent/agent.yaml
+          
+          echo "Ollama setup complete using model $MODEL_NAME"
+
+      - name: Run mcpchecker evaluation
+        id: mcpchecker
+        uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.3
+        with:
+          eval-config: 'evals/gemini-agent/eval.yaml'
+          mcpchecker-version: 'latest'
+          task-filter: ${{ github.event.inputs.task-filter || '' }}
+          output-format: 'json'
+          verbose: ${{ github.event.inputs.verbose || 'false' }} 
+          upload-artifacts: 'true'
+          artifact-name: 'mcpchecker-results'
+          fail-on-error: 'true'
+        env:
+          # If secrets exist, they take precedence (set in workflow env or step env)
+          # If not, the GITHUB_ENV values set in the fallback step will be used
+          MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL || env.MODEL_BASE_URL }}
+          MODEL_KEY: ${{ secrets.MODEL_KEY || env.MODEL_KEY }}
