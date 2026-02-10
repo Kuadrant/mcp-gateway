@@ -70,7 +70,7 @@ jobs:
 
       - name: Setup Fallback LLM (Ollama)
         if: ${{ secrets.MODEL_KEY == '' }}
-        uses: ai-action/setup-ollama@v2
+        run: curl -fsSL https://ollama.com/install.sh | sh
 
       - name: Cache Ollama Models
         if: ${{ secrets.MODEL_KEY == '' }}
