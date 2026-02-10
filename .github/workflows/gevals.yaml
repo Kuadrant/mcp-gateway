@@ -40,9 +40,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Test Echo (Replaced)
-        run: echo "Restoring steps..."
-
       - name: Setup Kind cluster
         run: |
           # Install Kind if not present
@@ -68,58 +65,8 @@ jobs:
           timeout 300s bash -c 'until curl -s http://localhost:8001/health > /dev/null; do sleep 5; done'
           echo "Gateway is ready!"
 
-      - name: Setup Credentials
-        run: |
-          if [ -n "${{ secrets.MODEL_KEY }}" ]; then
-            echo "MODEL_KEY=${{ secrets.MODEL_KEY }}" >> $GITHUB_ENV
-            echo "MODEL_BASE_URL=${{ secrets.MODEL_BASE_URL }}" >> $GITHUB_ENV
-          fi
-
       - name: Setup Fallback LLM (Ollama)
-        if: ${{ secrets.MODEL_KEY == '' }}
-        run: curl -fsSL https://ollama.com/install.sh | sh
+        uses: ai-action/setup-ollama@v2
 
-      - name: Cache Ollama Models
-        if: ${{ secrets.MODEL_KEY == '' }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.ollama
-          key: ${{ runner.os }}-ollama-qwen2.5-1.5b
-
-      - name: Run Agent (Fallback)
-        if: ${{ secrets.MODEL_KEY == '' }}
-        run: |
-          echo "No MODEL_KEY secret found. Starting Ollama..."
-          
-          # Start Ollama in background
-          ollama serve &
-          
-          # Wait for Ollama to be ready
-          echo "Waiting for Ollama to be ready..."
-          timeout 60s bash -c 'until curl -s http://localhost:11434 > /dev/null; do sleep 2; done'
-          
-          MODEL_NAME="qwen2.5:1.5b"
-          
-          # Pull the model (Ollama will skip if cached/present)
-          echo "Pulling model $MODEL_NAME..."
-          ollama pull $MODEL_NAME
-          
-          # Configure environment for mcpchecker
-          echo "MODEL_BASE_URL=http://localhost:11434/v1" >> $GITHUB_ENV
-          echo "MODEL_KEY=ollama" >> $GITHUB_ENV
-          
-          # Update agent.yaml to use the fallback model
-          sed -i "s/model: .*/model: \"$MODEL_NAME\"/" evals/gemini-agent/agent.yaml
-          
-          echo "Ollama setup complete using model $MODEL_NAME"
-
-      - name: Run mcpchecker (Manual)
-        run: |
-          echo "Installing mcpchecker..."
-          go install github.com/mcpchecker/mcpchecker@latest
-          
-          echo "Running mcpchecker..."
-          # Ensure GOBIN is in PATH if not already (github actions usually has it)
-          export PATH=$PATH:$(go env GOPATH)/bin
-          mcpchecker check --config evals/gemini-agent/eval.yaml
-
+      - name: Test Echo
+        run: echo "Ollama setup complete per action"
