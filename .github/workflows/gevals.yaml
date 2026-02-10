@@ -31,7 +31,7 @@ jobs:
   run-evaluation:
     name: Run MCP Evaluation
     runs-on: ubuntu-latest
-    if: false # Disable until ready to merge, or use 'contains(github.event.pull_request.labels.*.name, 'ok-to-test')'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,7 +116,7 @@ jobs:
 
       - name: Run mcpchecker evaluation
         id: mcpchecker
-        uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.3
+        uses: mcpchecker/mcpchecker/.github/actions/mcpchecker-action@v0.0.5
         with:
           eval-config: 'evals/gemini-agent/eval.yaml'
           mcpchecker-version: 'latest'
