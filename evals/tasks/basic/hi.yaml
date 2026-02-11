@@ -1,10 +1,7 @@
-description: "Verify basic tool execution through the gateway"
-tools:
-  - test1_hi
+kind: Task
+metadata:
+  name: basic-hi
+  difficulty: easy
 steps:
-  - instruction: "Call the 'hi' tool with name 'World'"
-    expectedTool: "test1_hi"
-    expectedArguments:
-      name: "World"
-  - instruction: "Verify the output is 'Hi World'"
-    expectedOutput: "Hi World"
+  prompt:
+    inline: "Call the 'test1_hi' tool with name 'World'. Verify it replies with 'Hi World'."
