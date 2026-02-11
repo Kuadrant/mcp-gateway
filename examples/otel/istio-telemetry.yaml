@@ -1,0 +1,53 @@
+# Istio Telemetry configuration for distributed tracing
+# This configures Envoy proxies to send traces to Tempo via OTLP
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: gateway-system
+spec:
+  tracing:
+  - providers:
+    - name: tempo-otlp
+    randomSamplingPercentage: 100
+---
+# DestinationRule to disable mTLS and enable HTTP/2 for OTEL Collector
+# (observability namespace has no sidecars, and gRPC requires HTTP/2)
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: otel-collector-disable-mtls
+  namespace: gateway-system
+spec:
+  host: otel-collector.observability.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE
+    connectionPool:
+      http:
+        h2UpgradePolicy: UPGRADE
+---
+# Patch the Istio resource to add the otel-collector extension provider
+# Note: This assumes Sail operator is used. For other installations,
+# the meshConfig should be updated in the IstioOperator or Helm values.
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  namespace: istio-system
+  updateStrategy:
+    type: InPlace
+  version: v1.26.3
+  values:
+    pilot:
+      autoscaleEnabled: false
+    meshConfig:
+      defaultConfig:
+        tracing: {}
+      enableTracing: true
+      extensionProviders:
+      - name: tempo-otlp
+        opentelemetry:
+          port: 4317
+          service: otel-collector.observability.svc.cluster.local

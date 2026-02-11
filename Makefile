@@ -587,8 +587,11 @@ logs: ## Tail Istio gateway logs
 
 ##@ OpenTelemetry Observability Stack
 
+# Set ISTIO_TRACING=1 to enable Istio/Envoy distributed tracing to Tempo
+ISTIO_TRACING ?= 0
+
 .PHONY: otel
-otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prometheus, Grafana)
+otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prometheus, Grafana). Use ISTIO_TRACING=1 to enable Istio tracing.
 	@echo "Deploying OpenTelemetry observability stack..."
 	kubectl apply -f examples/otel/namespace.yaml
 	kubectl apply -f examples/otel/tempo.yaml
@@ -602,16 +605,26 @@ otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prome
 	@kubectl wait --for=condition=Available deployment -n observability -l app=prometheus --timeout=120s
 	@kubectl wait --for=condition=Available deployment -n observability -l app=otel-collector --timeout=120s
 	@kubectl wait --for=condition=Available deployment -n observability -l app=grafana --timeout=120s
+ifeq ($(ISTIO_TRACING),1)
+	@echo "Enabling Istio distributed tracing to Tempo..."
+	kubectl apply -f examples/otel/istio-telemetry.yaml
+	@echo "Waiting for Istio to reconcile..."
+	@sleep 5
+endif
 	@echo "Configuring mcp-broker-router with OTEL..."
 	kubectl patch deployment mcp-broker-router -n mcp-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://otel-collector.observability.svc.cluster.local:4318"}},{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_INSECURE", "value": "true"}}]'
 	@kubectl rollout status deployment/mcp-broker-router -n mcp-system --timeout=120s
 	@echo ""
 	@echo "OpenTelemetry stack deployed and mcp-broker-router configured!"
+ifeq ($(ISTIO_TRACING),1)
+	@echo "Istio distributed tracing enabled - Envoy spans will appear in Tempo"
+endif
 	@echo "Run 'make otel-forward' to start port-forwards"
 
 .PHONY: otel-delete
 otel-delete: ## Delete OpenTelemetry observability stack
 	@echo "Deleting OpenTelemetry observability stack..."
+	kubectl delete -f examples/otel/istio-telemetry.yaml --ignore-not-found
 	kubectl delete -f examples/otel/grafana.yaml --ignore-not-found
 	kubectl delete -f examples/otel/otel-collector.yaml --ignore-not-found
 	kubectl delete -f examples/otel/prometheus.yaml --ignore-not-found

@@ -26,6 +26,9 @@ make local-env-setup
 # Deploy the stack
 make otel
 
+# Deploy with Istio/Envoy distributed tracing enabled
+make otel ISTIO_TRACING=1
+
 # Check status
 make otel-status
 
@@ -147,3 +150,4 @@ make otel-delete
 | `loki.yaml` | Loki deployment, service, and config |
 | `prometheus.yaml` | Prometheus deployment, service, and config |
 | `grafana.yaml` | Grafana deployment with preconfigured datasources |
+| `istio-telemetry.yaml` | Istio Telemetry and Sail operator config for distributed tracing |
