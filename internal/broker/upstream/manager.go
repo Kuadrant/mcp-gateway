@@ -31,6 +31,7 @@ type ToolsAdderDeleter interface {
 
 const (
 	notificationToolsListChanged = "notifications/tools/list_changed"
+	gatewayServerID              = "kuadrant/id"
 )
 
 type eventType int
@@ -293,7 +294,7 @@ func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
 		for existingToolName, existingToolInfo := range gatewayServerTools {
 			existingTool := existingToolInfo.Tool
 			// TODO revisit as this is in the tool definition
-			existingToolID, ok := existingTool.Meta.AdditionalFields["id"]
+			existingToolID, ok := existingTool.Meta.AdditionalFields[gatewayServerID]
 			if !ok {
 				// should never happen as we are adding every time
 				man.logger.Error("unable to check conflict, tool id is missing", "upstream mcp server", man.MCP.ID())
@@ -393,7 +394,7 @@ func (man *MCPManager) removeAllTools() {
 func (man *MCPManager) toolToServerTool(newTool mcp.Tool) server.ServerTool {
 	newTool.Name = prefixedName(man.MCP.GetPrefix(), newTool.Name)
 	newTool.Meta = mcp.NewMetaFromMap(map[string]any{
-		"id": string(man.MCP.ID()),
+		gatewayServerID: string(man.MCP.ID()),
 	})
 	return server.ServerTool{
 		Tool: newTool,
