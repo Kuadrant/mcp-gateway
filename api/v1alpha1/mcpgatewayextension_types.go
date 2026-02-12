@@ -16,6 +16,11 @@ const (
 	ConditionReasonRefGrantRequired = "ReferenceGrantRequired"
 	// ConditionReasonDeploymentNotReady is the reason when the broker-router deployment is not ready
 	ConditionReasonDeploymentNotReady = "DeploymentNotReady"
+
+	// AnnotationPublicHost overrides the public host for the MCP Gateway broker-router
+	AnnotationPublicHost = "kuadrant.io/alpha-gateway-public-host"
+	// AnnotationPollInterval overrides the broker poll interval for config changes
+	AnnotationPollInterval = "kuadrant.io/alpha-gateway-poll-interval"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -120,4 +125,29 @@ func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, r
 		Reason:             reason,
 		Message:            message,
 	})
+}
+
+// PublicHost returns the public host override from annotations, or empty string if not set
+func (m *MCPGatewayExtension) PublicHost() string {
+	if m.Annotations == nil {
+		return ""
+	}
+	return m.Annotations[AnnotationPublicHost]
+}
+
+// InternalHost returns the internal/private host computed from the targetRef
+func (m *MCPGatewayExtension) InternalHost() string {
+	gatewayNamespace := m.Spec.TargetRef.Namespace
+	if gatewayNamespace == "" {
+		gatewayNamespace = m.Namespace
+	}
+	return m.Spec.TargetRef.Name + "-istio." + gatewayNamespace + ".svc.cluster.local:8080"
+}
+
+// PollInterval returns the poll interval override from annotations, or empty string if not set
+func (m *MCPGatewayExtension) PollInterval() string {
+	if m.Annotations == nil {
+		return ""
+	}
+	return m.Annotations[AnnotationPollInterval]
 }

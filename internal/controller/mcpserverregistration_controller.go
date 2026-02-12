@@ -79,8 +79,7 @@ type MCPReconciler struct {
 // +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
-// TODOS
-// - should we make target ref immutable we need to handle this changing (it doesn't currently)
+// TODO: consider making targetRef immutable since changing it is not currently handled
 
 // Reconcile reconciles both MCPServerRegistration and MCPVirtualServer resources
 func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -131,7 +130,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	logger.Info("main reconcile logic starting for", "mcpregistrationname", mcpsr.Name)
 
-	//get the httproute and gateway(s) this mcpserverregistration is targeting
+	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
 		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
@@ -158,7 +157,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 	}
 
-	// no valid gateways found. Unexpected lets exit
+	// no valid gateways found, exit with error
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
@@ -172,7 +171,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 	}
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
-	// is there a valid mcpgatewayextension
+	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
@@ -236,7 +235,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			logger.Error(err, "failed to set mcpserverregistration status", "mcpserverregistration", mcpsr.Name)
-			// TODO handle case where this keep failing forever we can prob requeue on specific err type
+			// TODO: handle persistent failures with specific error types
 			return reconcile.Result{}, err
 		}
 	}
@@ -245,7 +244,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 
 }
 
-// todo this should be shared with the broker
+// TODO: share this format with the broker package
 func mcpServerName(mcp *mcpv1alpha1.MCPServerRegistration) string {
 	return fmt.Sprintf(
 		"%s/%s",
@@ -306,7 +305,7 @@ func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, pare
 	return g, nil
 }
 
-// reconcileMCPServerRegistration handles MCPServerRegistration reconciliation (existing logic)
+// setMCPServerRegistrationStatus polls the broker to check registration status and updates the MCPServerRegistration status
 func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpGatewayExtNS string, mcpsr *mcpv1alpha1.MCPServerRegistration, serverID string) error {
 	log := logf.FromContext(ctx)
 	log.V(1).Info("setMCPServerRegistrationStatus", "mcpregistrationname", mcpsr.Name, "valid gateway extension namespace", mcpGatewayExtNS)
@@ -402,7 +401,7 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 		val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
 		if !ok {
-			return nil, fmt.Errorf("the secret no credentialref key field %s present %w", mcpsr.Spec.CredentialRef.Key, err)
+			return nil, fmt.Errorf("credential secret %s missing key %s", mcpsr.Spec.CredentialRef.Name, mcpsr.Spec.CredentialRef.Key)
 		}
 		serverConfig.Credential = string(val)
 
@@ -509,7 +508,7 @@ func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *core
 	return "http"
 }
 
-// validates hostname can't contain path injection
+// isValidHostname validates the hostname to prevent path injection
 func isValidHostname(hostname string) bool {
 	if hostname == "" {
 		return false
@@ -730,7 +729,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Conte
 	return requests
 }
 
-// finds mcpservers referencing the given secret
+// findMCPServerRegistrationsForSecret finds MCPServerRegistrations referencing the given secret
 func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
 	log := logf.FromContext(ctx).WithValues("Secret", secret.Name, "namespace", secret.Namespace)

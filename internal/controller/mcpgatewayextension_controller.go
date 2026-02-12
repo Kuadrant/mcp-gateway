@@ -15,12 +15,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
@@ -41,35 +39,32 @@ const (
 	gatewayIndexKey  = "spec.targetRef.gateway"
 	refGrantIndexKey = "spec.from.ref"
 
-	// broker-router deployment constants
-	brokerRouterName    = "mcp-gateway"
+	// common labels
 	labelAppName        = "app.kubernetes.io/name"
 	labelManagedBy      = "app.kubernetes.io/managed-by"
 	labelManagedByValue = "mcp-gateway-controller"
 
-	// DefaultBrokerRouterImage is the default image for the broker-router deployment
-	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
-
 	// envoy filter labels
 	labelExtensionName      = "mcp.kagenti.com/extension-name"
 	labelExtensionNamespace = "mcp.kagenti.com/extension-namespace"
-	labelIstioRev           = "istio.io/rev"
+	// used to ensure a specific control plane reconciles this resource based on the gateway value
+	labelIstioRev = "istio.io/rev"
 )
 
-func brokerRouterLabels() map[string]string {
-	return map[string]string{
-		labelAppName:   brokerRouterName,
-		labelManagedBy: labelManagedByValue,
+func envoyFilterLabels(mcpExt *mcpv1alpha1.MCPGatewayExtension, gateway *gatewayv1.Gateway) map[string]string {
+	// inherit istio.io/rev from gateway, default to "default" if not set
+	istioRev := "default"
+	if gateway != nil && gateway.Labels != nil {
+		if rev, ok := gateway.Labels[labelIstioRev]; ok && rev != "" {
+			istioRev = rev
+		}
 	}
-}
-
-func envoyFilterLabels(mcpExt *mcpv1alpha1.MCPGatewayExtension) map[string]string {
 	return map[string]string{
 		labelAppName:            brokerRouterName,
 		labelManagedBy:          labelManagedByValue,
 		labelExtensionName:      mcpExt.Name,
 		labelExtensionNamespace: mcpExt.Namespace,
-		labelIstioRev:           "default",
+		labelIstioRev:           istioRev,
 	}
 }
 
@@ -88,6 +83,7 @@ type validationError struct {
 	message string
 }
 
+// Error is the validation error message
 func (e *validationError) Error() string {
 	return e.message
 }
@@ -112,7 +108,7 @@ type MCPGatewayExtensionReconciler struct {
 	ConfigWriterDeleter   ConfigWriterDeleter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 	BrokerRouterImage     string
-	BrokerPollInterval    string // optional poll interval in seconds for broker health checks
+	BrokerPollInterval    string // default poll interval for broker config changes
 }
 
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions,verbs=get;list;watch;create;update;patch;delete
@@ -388,6 +384,8 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 		return nil
 	}
 
+	r.log.Debug("processing reference grant change", "name", ref.Name, "namespace", ref.Namespace)
+
 	mcpGatewayExtList := &mcpv1alpha1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, mcpGatewayExtList,
 		client.MatchingFields{refGrantIndexKey: refGrantToMCPExtIndexValue(*ref)},
@@ -396,224 +394,13 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 		return nil
 	}
 
+	r.log.Debug("found mcpgatewayextensions for reference grant", "count", len(mcpGatewayExtList.Items), "refgrant", ref.Name)
+
 	requests := make([]reconcile.Request, 0, len(mcpGatewayExtList.Items))
 	for _, ext := range mcpGatewayExtList.Items {
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&ext)})
 	}
 	return requests
-}
-
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension) *appsv1.Deployment {
-	labels := brokerRouterLabels()
-	replicas := int32(1)
-	gatewayNamespace := mcpExt.Spec.TargetRef.Namespace
-	if gatewayNamespace == "" {
-		gatewayNamespace = mcpExt.Namespace
-	}
-	internalHost := fmt.Sprintf("%s-istio.%s.svc.cluster.local:8080", mcpExt.Spec.TargetRef.Name, gatewayNamespace)
-	command := []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080",
-		"--mcp-gateway-private-host=" + internalHost,
-		"--mcp-gateway-config=/config/config.yaml"}
-	if r.BrokerPollInterval != "" {
-		command = append(command, "--mcp-check-interval="+r.BrokerPollInterval)
-	}
-	// TODO add publicHost to the spec of the MCPGatewayExtension
-	command = append(command, "--mcp-gateway-public-host=mcp.127-0-0-1.sslip.io")
-	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      brokerRouterName,
-			Namespace: mcpExt.Namespace,
-			Labels:    labels,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:            brokerRouterName,
-							Image:           r.BrokerRouterImage,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         command,
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: 8080,
-								},
-								{
-									Name:          "grpc",
-									ContainerPort: 50051,
-								},
-								// TODO is this config port still used?
-								{
-									Name:          "config",
-									ContainerPort: 8181,
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "config-volume",
-									MountPath: "/config",
-									ReadOnly:  true,
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "config-volume",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName: "mcp-gateway-config",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.Service {
-	labels := brokerRouterLabels()
-
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      brokerRouterName,
-			Namespace: mcpExt.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				labelAppName: brokerRouterName,
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       8080,
-					TargetPort: intstr.FromInt(8080),
-				},
-				{
-					Name:       "grpc",
-					Port:       50051,
-					TargetPort: intstr.FromInt(50051),
-				},
-			},
-		},
-	}
-}
-
-func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
-	logger := logf.FromContext(ctx)
-
-	// reconcile deployment
-	deployment := r.buildBrokerRouterDeployment(mcpExt)
-	if err := controllerutil.SetControllerReference(mcpExt, deployment, r.Scheme); err != nil {
-		return false, fmt.Errorf("failed to set controller reference on deployment: %w", err)
-	}
-
-	existingDeployment := &appsv1.Deployment{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("creating broker-router deployment", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, deployment); err != nil {
-				return false, fmt.Errorf("failed to create deployment: %w", err)
-			}
-			return false, nil // deployment just created, not ready yet
-		}
-		return false, fmt.Errorf("failed to get deployment: %w", err)
-	}
-
-	if deploymentNeedsUpdate(deployment, existingDeployment) {
-		logger.Info("updating broker-router deployment", "namespace", mcpExt.Namespace)
-		existingDeployment.Spec.Template.Spec.Containers = deployment.Spec.Template.Spec.Containers
-		existingDeployment.Spec.Template.Spec.Volumes = deployment.Spec.Template.Spec.Volumes
-		if err := r.Update(ctx, existingDeployment); err != nil {
-			return false, fmt.Errorf("failed to update deployment: %w", err)
-		}
-	}
-
-	// reconcile service
-	service := r.buildBrokerRouterService(mcpExt)
-	if err := controllerutil.SetControllerReference(mcpExt, service, r.Scheme); err != nil {
-		return false, fmt.Errorf("failed to set controller reference on service: %w", err)
-	}
-
-	existingService := &corev1.Service{}
-	err = r.Get(ctx, client.ObjectKeyFromObject(service), existingService)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("creating broker-router service", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, service); err != nil {
-				return false, fmt.Errorf("failed to create service: %w", err)
-			}
-		} else {
-			return false, fmt.Errorf("failed to get service: %w", err)
-		}
-	} else if serviceNeedsUpdate(service, existingService) {
-		logger.Info("updating broker-router service", "namespace", mcpExt.Namespace)
-		existingService.Spec.Ports = service.Spec.Ports
-		existingService.Spec.Selector = service.Spec.Selector
-		if err := r.Update(ctx, existingService); err != nil {
-			return false, fmt.Errorf("failed to update service: %w", err)
-		}
-	}
-
-	// check deployment readiness
-	deploymentReady := existingDeployment.Status.ReadyReplicas > 0 &&
-		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
-
-	return deploymentReady, nil
-}
-
-func serviceNeedsUpdate(desired, existing *corev1.Service) bool {
-	// check ports
-	if !equality.Semantic.DeepEqual(desired.Spec.Ports, existing.Spec.Ports) {
-		return true
-	}
-	// check selector
-	if !equality.Semantic.DeepEqual(desired.Spec.Selector, existing.Spec.Selector) {
-		return true
-	}
-	return false
-}
-
-func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) bool {
-	if len(desired.Spec.Template.Spec.Containers) == 0 || len(existing.Spec.Template.Spec.Containers) == 0 {
-		return false
-	}
-	desiredContainer := desired.Spec.Template.Spec.Containers[0]
-	existingContainer := existing.Spec.Template.Spec.Containers[0]
-
-	// check image
-	if desiredContainer.Image != existingContainer.Image {
-		return true
-	}
-	// check command
-	if !equality.Semantic.DeepEqual(desiredContainer.Command, existingContainer.Command) {
-		return true
-	}
-	// check ports
-	if !equality.Semantic.DeepEqual(desiredContainer.Ports, existingContainer.Ports) {
-		return true
-	}
-	// check volume mounts
-	if !equality.Semantic.DeepEqual(desiredContainer.VolumeMounts, existingContainer.VolumeMounts) {
-		return true
-	}
-	// check volumes
-	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
-		return true
-	}
-	return false
 }
 
 func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway) (*istionetv1alpha3.EnvoyFilter, error) {
@@ -637,7 +424,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 			},
 			"grpc_service": map[string]any{
 				"envoy_grpc": map[string]any{
-					"cluster_name": fmt.Sprintf("outbound|50051||%s.%s.svc.cluster.local", brokerRouterName, mcpExt.Namespace),
+					"cluster_name": fmt.Sprintf("outbound|%d||%s.%s.svc.cluster.local", brokerGRPCPort, brokerRouterName, mcpExt.Namespace),
 				},
 			},
 		},
@@ -653,7 +440,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      envoyFilterName,
 			Namespace: targetGateway.Namespace,
-			Labels:    envoyFilterLabels(mcpExt),
+			Labels:    envoyFilterLabels(mcpExt, targetGateway),
 		},
 		Spec: istiov1alpha3.EnvoyFilter{
 			TargetRefs: []*istiotypev1beta1.PolicyTargetReference{

@@ -3,9 +3,11 @@ package controller
 import (
 	"testing"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	istiov1alpha3 "istio.io/api/networking/v1alpha3"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func TestManagedLabelsMatch(t *testing.T) {
@@ -200,6 +202,66 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 			result := envoyFilterNeedsUpdate(desired, existing)
 			if result != tt.expected {
 				t.Errorf("envoyFilterNeedsUpdate() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+	}
+
+	tests := []struct {
+		name          string
+		gatewayLabels map[string]string
+		expectedRev   string
+	}{
+		{
+			name:          "nil gateway uses default",
+			gatewayLabels: nil,
+			expectedRev:   "default",
+		},
+		{
+			name:          "gateway without istio.io/rev uses default",
+			gatewayLabels: map[string]string{"other-label": "value"},
+			expectedRev:   "default",
+		},
+		{
+			name:          "gateway with empty istio.io/rev uses default",
+			gatewayLabels: map[string]string{labelIstioRev: ""},
+			expectedRev:   "default",
+		},
+		{
+			name:          "gateway with istio.io/rev inherits value",
+			gatewayLabels: map[string]string{labelIstioRev: "1-20"},
+			expectedRev:   "1-20",
+		},
+		{
+			name:          "gateway with custom revision",
+			gatewayLabels: map[string]string{labelIstioRev: "canary"},
+			expectedRev:   "canary",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gateway *gatewayv1.Gateway
+			if tt.gatewayLabels != nil {
+				gateway = &gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   "test-gateway",
+						Labels: tt.gatewayLabels,
+					},
+				}
+			}
+
+			labels := envoyFilterLabels(mcpExt, gateway)
+			if labels[labelIstioRev] != tt.expectedRev {
+				t.Errorf("envoyFilterLabels() istio.io/rev = %q, expected %q", labels[labelIstioRev], tt.expectedRev)
 			}
 		})
 	}

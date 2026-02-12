@@ -15,7 +15,7 @@ import (
 // MCPGatewayExtensionValidator finds and validates MCPGatewayExtensions
 type MCPGatewayExtensionValidator struct {
 	client.Client
-	DirectAPIReader client.Reader // uncached reader,
+	DirectAPIReader client.Reader // uncached reader
 }
 
 // HasValidReferenceGrant checks if a valid ReferenceGrant exists that allows the MCPGatewayExtension
@@ -102,8 +102,6 @@ func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx con
 			validExtensions = append(validExtensions, &mg)
 		}
 	}
-	// next we need to check is this mcpgateway in the same namespace as the gateway if it is it is valid
-	// we also need to check if there is a reference grant in the namespace
 	return validExtensions, nil
 }
 

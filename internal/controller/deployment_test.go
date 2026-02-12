@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -126,6 +129,56 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			name: "volume secret name changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Volumes[0].Secret.SecretName = "new-secret"
+			},
+			expected: true,
+		},
+		{
+			name: "ignored flag cache-connection-string changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--cache-connection-string=redis://localhost:6379",
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "ignored flag log-level changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--log-level=debug",
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "ignored flag log-format changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--log-format=json",
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "ignored flag session-length changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--session-length=3600",
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "non-ignored flag still triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--some-other-flag=value",
+				)
 			},
 			expected: true,
 		},
@@ -279,5 +332,268 @@ func TestServiceNeedsUpdate(t *testing.T) {
 				t.Errorf("serviceNeedsUpdate() = %v, expected %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestBuildBrokerRouterDeployment_PublicHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		wantFlag    string
+	}{
+		{
+			name:        "public host from annotation",
+			annotations: map[string]string{mcpv1alpha1.AnnotationPublicHost: "mcp.example.com"},
+			wantFlag:    "--mcp-gateway-public-host=mcp.example.com",
+		},
+		{
+			name:        "empty public host when no annotation",
+			annotations: nil,
+			wantFlag:    "--mcp-gateway-public-host=",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &MCPGatewayExtensionReconciler{
+				BrokerRouterImage: "test-image:v1",
+			}
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-ext",
+					Namespace:   "test-ns",
+					Annotations: tt.annotations,
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:      "my-gateway",
+						Namespace: "gateway-system",
+					},
+				},
+			}
+
+			deployment := r.buildBrokerRouterDeployment(mcpExt)
+			command := deployment.Spec.Template.Spec.Containers[0].Command
+
+			found := false
+			for _, arg := range command {
+				if arg == tt.wantFlag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected command to contain %q, got %v", tt.wantFlag, command)
+			}
+		})
+	}
+}
+
+func TestBuildBrokerRouterDeployment_InternalHost(t *testing.T) {
+	tests := []struct {
+		name             string
+		extNamespace     string
+		targetRefName    string
+		targetRefNS      string
+		wantInternalHost string
+	}{
+		{
+			name:             "uses targetRef namespace when specified",
+			extNamespace:     "team-a",
+			targetRefName:    "my-gateway",
+			targetRefNS:      "gateway-system",
+			wantInternalHost: "my-gateway-istio.gateway-system.svc.cluster.local:8080",
+		},
+		{
+			name:             "falls back to extension namespace when targetRef namespace empty",
+			extNamespace:     "team-a",
+			targetRefName:    "my-gateway",
+			targetRefNS:      "",
+			wantInternalHost: "my-gateway-istio.team-a.svc.cluster.local:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &MCPGatewayExtensionReconciler{
+				BrokerRouterImage: "test-image:v1",
+			}
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ext",
+					Namespace: tt.extNamespace,
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:      tt.targetRefName,
+						Namespace: tt.targetRefNS,
+					},
+				},
+			}
+
+			deployment := r.buildBrokerRouterDeployment(mcpExt)
+			command := deployment.Spec.Template.Spec.Containers[0].Command
+
+			wantFlag := "--mcp-gateway-private-host=" + tt.wantInternalHost
+			found := false
+			for _, arg := range command {
+				if arg == wantFlag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected command to contain %q, got %v", wantFlag, command)
+			}
+		})
+	}
+}
+
+func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
+	tests := []struct {
+		name               string
+		annotations        map[string]string
+		reconcilerInterval string
+		wantFlag           string
+		wantAbsent         bool
+	}{
+		{
+			name:               "poll interval from annotation",
+			annotations:        map[string]string{mcpv1alpha1.AnnotationPollInterval: "30s"},
+			reconcilerInterval: "",
+			wantFlag:           "--mcp-check-interval=30s",
+		},
+		{
+			name:               "poll interval from reconciler when no annotation",
+			annotations:        nil,
+			reconcilerInterval: "60s",
+			wantFlag:           "--mcp-check-interval=60s",
+		},
+		{
+			name:               "no poll interval flag when both empty",
+			annotations:        nil,
+			reconcilerInterval: "",
+			wantAbsent:         true,
+		},
+		{
+			name:               "annotation takes precedence over reconciler",
+			annotations:        map[string]string{mcpv1alpha1.AnnotationPollInterval: "15s"},
+			reconcilerInterval: "60s",
+			wantFlag:           "--mcp-check-interval=15s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &MCPGatewayExtensionReconciler{
+				BrokerRouterImage:  "test-image:v1",
+				BrokerPollInterval: tt.reconcilerInterval,
+			}
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-ext",
+					Namespace:   "test-ns",
+					Annotations: tt.annotations,
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:      "my-gateway",
+						Namespace: "gateway-system",
+					},
+				},
+			}
+
+			deployment := r.buildBrokerRouterDeployment(mcpExt)
+			command := deployment.Spec.Template.Spec.Containers[0].Command
+
+			if tt.wantAbsent {
+				for _, arg := range command {
+					if strings.HasPrefix(arg, "--mcp-check-interval=") {
+						t.Errorf("expected no --mcp-check-interval flag, but found %q", arg)
+					}
+				}
+				return
+			}
+
+			found := false
+			for _, arg := range command {
+				if arg == tt.wantFlag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected command to contain %q, got %v", tt.wantFlag, command)
+			}
+		})
+	}
+}
+
+func TestBuildBrokerRouterDeployment_RouterKey(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+			UID:       types.UID("test-uid-12345"),
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt)
+	command := deployment.Spec.Template.Spec.Containers[0].Command
+
+	// verify router key flag is present
+	found := false
+	var keyValue string
+	for _, arg := range command {
+		if strings.HasPrefix(arg, "--mcp-router-key=") {
+			found = true
+			keyValue = strings.TrimPrefix(arg, "--mcp-router-key=")
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected command to contain --mcp-router-key flag, got %v", command)
+	}
+	if keyValue == "" {
+		t.Error("expected router key to have a non-empty value")
+	}
+
+	// verify key is deterministic for same UID
+	deployment2 := r.buildBrokerRouterDeployment(mcpExt)
+	command2 := deployment2.Spec.Template.Spec.Containers[0].Command
+	var keyValue2 string
+	for _, arg := range command2 {
+		if strings.HasPrefix(arg, "--mcp-router-key=") {
+			keyValue2 = strings.TrimPrefix(arg, "--mcp-router-key=")
+			break
+		}
+	}
+	if keyValue != keyValue2 {
+		t.Errorf("expected same key for same UID, got %q and %q", keyValue, keyValue2)
+	}
+
+	// verify different UID produces different key
+	mcpExt2 := mcpExt.DeepCopy()
+	mcpExt2.UID = types.UID("different-uid-67890")
+	deployment3 := r.buildBrokerRouterDeployment(mcpExt2)
+	command3 := deployment3.Spec.Template.Spec.Containers[0].Command
+	var keyValue3 string
+	for _, arg := range command3 {
+		if strings.HasPrefix(arg, "--mcp-router-key=") {
+			keyValue3 = strings.TrimPrefix(arg, "--mcp-router-key=")
+			break
+		}
+	}
+	if keyValue == keyValue3 {
+		t.Errorf("expected different key for different UID, both got %q", keyValue)
 	}
 }

@@ -1,4 +1,4 @@
-// Package controller holds the code for the kuberenetes controllers
+// Package controller holds the code for the kubernetes controllers
 package controller
 
 import (
