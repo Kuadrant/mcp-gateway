@@ -1,4 +1,6 @@
 # New Words
+CONNLINK
+customfield
 Agentic
 apikey
 dotdot
