@@ -5,10 +5,12 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -181,6 +183,7 @@ func newTestReconciler() *MCPGatewayExtensionReconciler {
 		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
 			Client: testIndexedClient,
 		},
+		log: slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
 }
 
@@ -350,20 +353,14 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName1)
 
-			// first reconcile adds finalizer
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName1,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// second reconcile creates deployment and sets status
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName1,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
+			// reconcile until status is set (handles finalizer add + cache sync)
 			// in envtest, deployments don't become ready so we expect DeploymentNotReady
 			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName1,
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+
 				updated1 := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName1, updated1)).To(Succeed())
 				condition := meta.FindStatusCondition(updated1.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
@@ -384,7 +381,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				g.Expect(testIndexedClient.Get(ctx, mcpExtNamespacedName2, cached)).To(Succeed())
 				extList := &mcpv1alpha1.MCPGatewayExtensionList{}
 				g.Expect(testIndexedClient.List(ctx, extList,
-					client.MatchingFields{gatewayIndexKey: fmt.Sprintf("%s%s", gatewayName, "default")},
+					client.MatchingFields{gatewayIndexKey: fmt.Sprintf("%s/%s", "default", gatewayName)},
 				)).To(Succeed())
 				g.Expect(len(extList.Items)).To(Equal(2), "both extensions should be indexed")
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -435,19 +432,13 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
-			// first reconcile adds finalizer
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// second reconcile checks for ReferenceGrant and sets status
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
+			// reconcile until status is set (handles finalizer add + cache sync)
 			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+
 				updated := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
@@ -495,22 +486,28 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				reconciler := newTestReconciler()
 				waitForCacheSync(ctx, mcpExtNamespacedName)
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpExtNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
+				// reconcile until deployment is created
+				Eventually(func(g Gomega) {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: mcpExtNamespacedName,
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+
+					deployment := &appsv1.Deployment{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
 
 				// simulate deployment readiness
 				var replicas, readyReplicas int32 = 1, 1
 				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
 
 				// reconcile again to pick up deployment readiness
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpExtNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
-
 				Eventually(func(g Gomega) {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: mcpExtNamespacedName,
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+
 					updated := &mcpv1alpha1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
@@ -534,22 +531,28 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				reconciler := newTestReconciler()
 				waitForCacheSync(ctx, mcpExtNamespacedName)
 
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpExtNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
+				// reconcile until deployment is created
+				Eventually(func(g Gomega) {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: mcpExtNamespacedName,
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+
+					deployment := &appsv1.Deployment{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
 
 				// simulate deployment readiness
 				var replicas, readyReplicas int32 = 1, 1
 				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
 
 				// reconcile again to pick up deployment readiness
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpExtNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
-
 				Eventually(func(g Gomega) {
+					_, err := reconciler.Reconcile(ctx, reconcile.Request{
+						NamespacedName: mcpExtNamespacedName,
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+
 					updated := &mcpv1alpha1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
@@ -585,19 +588,13 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
-			// first reconcile adds finalizer
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			// second reconcile checks gateway and sets status
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
+			// reconcile until status is set (handles finalizer add + cache sync)
 			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+
 				updated := &mcpv1alpha1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
@@ -637,20 +634,28 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
+			// reconcile until deployment is created (handles finalizer add + cache sync)
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// simulate deployment readiness
 			var replicas, readyReplicas int32 = 1, 1
 			setDeploymentStatus(ctx, "default", replicas, readyReplicas)
 
 			// reconcile again to pick up deployment readiness
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: mcpExtNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpExtNamespacedName,
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPGatewayExtension{}
@@ -676,9 +681,10 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				Scheme:              testK8sClient.Scheme(),
 				ConfigWriterDeleter: &mockConfigWriterDeleter{},
 				BrokerRouterImage:   DefaultBrokerRouterImage,
+				log:                 slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
 			}
 
-			_, err = directReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := directReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: mcpExtNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -690,6 +696,275 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonInvalid))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
+	Context("When reconciling broker-router resources", func() {
+		const resourceName = "test-broker-router-resource"
+		const gatewayName = "test-broker-router-gateway"
+
+		ctx := context.Background()
+
+		mcpExtNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			gw := createTestGateway(gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+			ext := createTestMCPGatewayExtension(resourceName, "default", gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+			// clean up deployment and service
+			deployment := &appsv1.Deployment{}
+			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment); err == nil {
+				_ = testK8sClient.Delete(ctx, deployment)
+			}
+			service := &corev1.Service{}
+			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, service); err == nil {
+				_ = testK8sClient.Delete(ctx, service)
+			}
+		})
+
+		It("should create broker-router deployment and service", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			// reconcile until deployment and service are created
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				// check if deployment and service exist
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+				service := &corev1.Service{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, service)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// verify deployment details
+			deployment := &appsv1.Deployment{}
+			Expect(testK8sClient.Get(ctx, types.NamespacedName{
+				Name:      brokerRouterName,
+				Namespace: "default",
+			}, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(DefaultBrokerRouterImage))
+
+			// verify service details
+			service := &corev1.Service{}
+			Expect(testK8sClient.Get(ctx, types.NamespacedName{
+				Name:      brokerRouterName,
+				Namespace: "default",
+			}, service)).To(Succeed())
+			Expect(service.Spec.Ports).To(HaveLen(2))
+		})
+
+		It("should set owner reference on deployment and service", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			// reconcile until deployment and service are created
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				// check if deployment and service exist
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+				service := &corev1.Service{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, service)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// get the MCPGatewayExtension to check UID
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{}
+			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, mcpExt)).To(Succeed())
+
+			// verify deployment owner reference
+			deployment := &appsv1.Deployment{}
+			Expect(testK8sClient.Get(ctx, types.NamespacedName{
+				Name:      brokerRouterName,
+				Namespace: "default",
+			}, deployment)).To(Succeed())
+			Expect(deployment.OwnerReferences).To(HaveLen(1))
+			Expect(deployment.OwnerReferences[0].UID).To(Equal(mcpExt.UID))
+
+			// verify service owner reference
+			service := &corev1.Service{}
+			Expect(testK8sClient.Get(ctx, types.NamespacedName{
+				Name:      brokerRouterName,
+				Namespace: "default",
+			}, service)).To(Succeed())
+			Expect(service.OwnerReferences).To(HaveLen(1))
+			Expect(service.OwnerReferences[0].UID).To(Equal(mcpExt.UID))
+		})
+	})
+
+	Context("When reconciling EnvoyFilter for cross-namespace Gateway", func() {
+		const resourceName = "test-envoyfilter-resource"
+		const gatewayName = "test-envoyfilter-gateway"
+		const gatewayNamespace = "envoyfilter-gateway-ns"
+		const refGrantName = "allow-mcp-extension-envoyfilter"
+
+		ctx := context.Background()
+
+		mcpExtNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			createTestNamespace(ctx, gatewayNamespace)
+			gw := createTestGateway(gatewayName, gatewayNamespace)
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+			refGrant := createTestReferenceGrant(refGrantName, gatewayNamespace, "default", nil)
+			Expect(testK8sClient.Create(ctx, refGrant)).To(Succeed())
+			ext := createTestMCPGatewayExtension(resourceName, "default", gatewayName, gatewayNamespace)
+			Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
+			_ = deleteTestReferenceGrant(ctx, refGrantName, gatewayNamespace)
+			deleteTestGateway(ctx, gatewayName, gatewayNamespace)
+			// clean up EnvoyFilter
+			envoyFilterList := &istionetv1alpha3.EnvoyFilterList{}
+			if err := testK8sClient.List(ctx, envoyFilterList, client.InNamespace(gatewayNamespace)); err == nil {
+				for _, ef := range envoyFilterList.Items {
+					_ = testK8sClient.Delete(ctx, ef)
+				}
+			}
+			// clean up deployment and service
+			deployment := &appsv1.Deployment{}
+			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment); err == nil {
+				_ = testK8sClient.Delete(ctx, deployment)
+			}
+			service := &corev1.Service{}
+			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, service); err == nil {
+				_ = testK8sClient.Delete(ctx, service)
+			}
+		})
+
+		It("should create EnvoyFilter in the Gateway namespace", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			// reconcile until deployment is created
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				// check if deployment exists
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// simulate deployment readiness
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			// reconcile again to create EnvoyFilter
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// verify EnvoyFilter was created in gateway namespace
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)).To(Succeed())
+				g.Expect(envoyFilter.Labels[labelManagedBy]).To(Equal(labelManagedByValue))
+				g.Expect(envoyFilter.Labels["mcp.kagenti.com/extension-name"]).To(Equal(resourceName))
+				g.Expect(envoyFilter.Labels["mcp.kagenti.com/extension-namespace"]).To(Equal("default"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should delete EnvoyFilter when MCPGatewayExtension is deleted", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			// reconcile until deployment is created
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				// check if deployment exists
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// simulate deployment readiness
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			// reconcile to create EnvoyFilter
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// verify EnvoyFilter exists
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// trigger deletion
+			resource := &mcpv1alpha1.MCPGatewayExtension{}
+			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, resource)).To(Succeed())
+			Expect(testK8sClient.Delete(ctx, resource)).To(Succeed())
+
+			// wait for cache to see deletion timestamp
+			Eventually(func(g Gomega) {
+				cached := &mcpv1alpha1.MCPGatewayExtension{}
+				err := testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)
+				if errors.IsNotFound(err) {
+					return
+				}
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(cached.DeletionTimestamp).NotTo(BeNil())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// reconcile to handle deletion (retry in case of conflict)
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// verify EnvoyFilter was deleted
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				err := testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})

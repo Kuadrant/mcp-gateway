@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 
 	goenv "github.com/caitlinelfring/go-env-default"
+	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,6 +44,7 @@ func init() {
 	runtime.Must(v1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
 	runtime.Must(gatewayv1beta1.Install(scheme.Scheme))
+	runtime.Must(istionetv1alpha3.AddToScheme(scheme.Scheme))
 }
 
 func main() {
