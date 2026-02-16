@@ -107,6 +107,8 @@ spec:
           mountPath: /etc/grafana/provisioning/datasources
         - name: dashboards-provider
           mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards
         resources:
           requests:
             memory: "128Mi"
@@ -121,6 +123,8 @@ spec:
       - name: dashboards-provider
         configMap:
           name: grafana-dashboards-provider
+      - name: dashboards
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

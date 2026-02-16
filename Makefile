@@ -590,8 +590,14 @@ logs: ## Tail Istio gateway logs
 # Set ISTIO_TRACING=1 to enable Istio/Envoy distributed tracing to Tempo
 ISTIO_TRACING ?= 0
 
+# Set AUTH_TRACING=1 to deploy auth stack and enable Authorino tracing
+AUTH_TRACING ?= 0
+
+# Set WASM_TRACING=1 to enable Kuadrant wasm-shim tracing (requires AUTH_TRACING=1)
+WASM_TRACING ?= 0
+
 .PHONY: otel
-otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prometheus, Grafana). Use ISTIO_TRACING=1 to enable Istio tracing.
+otel: ## Deploy OpenTelemetry observability stack. Use ISTIO_TRACING=1, AUTH_TRACING=1, WASM_TRACING=1.
 	@echo "Deploying OpenTelemetry observability stack..."
 	kubectl apply -f examples/otel/namespace.yaml
 	kubectl apply -f examples/otel/tempo.yaml
@@ -608,16 +614,59 @@ otel: ## Deploy OpenTelemetry observability stack (Collector, Tempo, Loki, Prome
 ifeq ($(ISTIO_TRACING),1)
 	@echo "Enabling Istio distributed tracing to Tempo..."
 	kubectl apply -f examples/otel/istio-telemetry.yaml
+	kubectl patch istio default --type='merge' \
+		-p='{"spec":{"values":{"meshConfig":{"enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"otel-collector.observability.svc.cluster.local"}}]}}}}'
 	@echo "Waiting for Istio to reconcile..."
 	@sleep 5
 endif
 	@echo "Configuring mcp-broker-router with OTEL..."
-	kubectl patch deployment mcp-broker-router -n mcp-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://otel-collector.observability.svc.cluster.local:4318"}},{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "OTEL_EXPORTER_OTLP_INSECURE", "value": "true"}}]'
+	kubectl set env deployment/mcp-broker-router -n mcp-system \
+		OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector.observability.svc.cluster.local:4318" \
+		OTEL_EXPORTER_OTLP_INSECURE="true"
 	@kubectl rollout status deployment/mcp-broker-router -n mcp-system --timeout=120s
+ifeq ($(AUTH_TRACING),1)
+	@echo "Setting up auth stack with tracing..."
+	@if ! kubectl get authorino -n kuadrant-system 2>/dev/null | grep -q authorino; then \
+		echo "Installing auth stack (cert-manager + Kuadrant + Keycloak)..."; \
+		$(MAKE) auth-example-setup; \
+	else \
+		echo "Auth stack already installed"; \
+	fi
+	@echo "Enabling Authorino distributed tracing..."
+	@AUTHORINO_NAME=$$(kubectl get authorino -n kuadrant-system -o jsonpath='{.items[0].metadata.name}'); \
+	if [ -z "$$AUTHORINO_NAME" ]; then \
+		echo "Error: No Authorino CR found in kuadrant-system"; \
+		exit 1; \
+	fi; \
+	kubectl patch authorino "$$AUTHORINO_NAME" -n kuadrant-system --type='merge' -p='{"spec":{"tracing":{"endpoint":"rpc://otel-collector.observability.svc.cluster.local:4317","insecure":true}}}'
+	@kubectl rollout status deployment/authorino -n kuadrant-system --timeout=120s
+endif
+ifeq ($(WASM_TRACING),1)
+	@echo "Installing Prometheus Operator CRDs (required by kuadrant-operator ObservabilityReconciler)..."
+	kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+	kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
+	@echo "Patching Kuadrant CR to enable wasm-shim tracing..."
+	kubectl patch kuadrant kuadrant -n kuadrant-system --type='merge' \
+		-p='{"spec":{"observability":{"enable":true,"tracing":{"defaultEndpoint":"rpc://otel-collector.observability.svc.cluster.local:4317","insecure":true}}}}'
+	@echo "Restarting kuadrant-operator to pick up new CRDs..."
+	kubectl rollout restart deployment/kuadrant-operator-controller-manager -n kuadrant-system
+	@kubectl rollout status deployment/kuadrant-operator-controller-manager -n kuadrant-system --timeout=120s
+	@echo "Waiting for operator reconciliation..."
+	@sleep 30
+	@echo "Verifying wasm-shim tracing resources..."
+	@kubectl get envoyfilter -n gateway-system | grep -q tracing && echo "EnvoyFilter for tracing cluster: OK" || echo "WARNING: tracing EnvoyFilter not found"
+	@kubectl get wasmplugin kuadrant-mcp-gateway -n gateway-system -o jsonpath='{.spec.pluginConfig.services.tracing-service}' 2>/dev/null | grep -q tracing && echo "WasmPlugin tracing-service: OK" || echo "WARNING: tracing-service not found in WasmPlugin"
+endif
 	@echo ""
 	@echo "OpenTelemetry stack deployed and mcp-broker-router configured!"
 ifeq ($(ISTIO_TRACING),1)
 	@echo "Istio distributed tracing enabled - Envoy spans will appear in Tempo"
+endif
+ifeq ($(AUTH_TRACING),1)
+	@echo "Auth stack deployed with Authorino tracing enabled"
+endif
+ifeq ($(WASM_TRACING),1)
+	@echo "Kuadrant wasm-shim tracing enabled - rate limit and auth policy spans will appear in Tempo"
 endif
 	@echo "Run 'make otel-forward' to start port-forwards"
 
@@ -625,6 +674,8 @@ endif
 otel-delete: ## Delete OpenTelemetry observability stack
 	@echo "Deleting OpenTelemetry observability stack..."
 	kubectl delete -f examples/otel/istio-telemetry.yaml --ignore-not-found
+	-kubectl patch istio default --type='merge' \
+		-p='{"spec":{"values":{"meshConfig":{"enableTracing":false,"defaultConfig":{"tracing":null},"extensionProviders":null}}}}'
 	kubectl delete -f examples/otel/grafana.yaml --ignore-not-found
 	kubectl delete -f examples/otel/otel-collector.yaml --ignore-not-found
 	kubectl delete -f examples/otel/prometheus.yaml --ignore-not-found
