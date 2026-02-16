@@ -49,24 +49,20 @@ helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
   --namespace mcp-system \
   --create-namespace \
   --set controller.enabled=true \
-  --set broker.create=true \
   --set gateway.publicHost=your-hostname.example.com \
-  --set envoyFilter.create=true \
-  --set envoyFilter.namespace=istio-system \
-  --set envoyFilter.name=your-gateway \
+  --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=your-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
-> **Note:** The `envoyFilter.name` must match the Gateway name. The EnvoyFilter uses this as a label selector (`gateway.io/name`) to target the correct Gateway pods.
-
 This automatically installs:
-- MCP Controller (watches MCPGatewayExtension and MCPServerRegistration resources)
-- MCP Broker/Router (aggregates tools from upstream MCP servers)
-- MCPGatewayExtension resource targeting your Gateway
-- EnvoyFilter for Istio integration (routes requests through the external processor)
-- Required CRDs, RBAC, and Secrets
+- **MCP Controller** - Watches MCPGatewayExtension and MCPServerRegistration resources
+- **MCPGatewayExtension** - Custom resource targeting your Gateway
 
+When the MCPGatewayExtension becomes ready, the controller automatically creates:
+- **MCP Broker/Router Deployment** - Aggregates tools from upstream MCP servers
+- **MCP Broker/Router Service** - Named `mcp-gateway` in the MCPGatewayExtension namespace
+- **EnvoyFilter** - Configures Istio to route requests through the external processor (created in the Gateway's namespace)
 
 > **Note:** The `gateway.publicHost` value must match the hostname configured in your Gateway listener (see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md)).
 

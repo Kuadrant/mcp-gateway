@@ -187,10 +187,10 @@ The broker is responsible for:
 
 ```bash
 # Watch all logs in real-time
-kubectl logs -f deployment/mcp-broker-router -n mcp-system
+kubectl logs -f deployment/mcp-gateway -n mcp-system
 
 # View recent broker activity (filter by key patterns)
-kubectl logs deployment/mcp-broker-router -n mcp-system --tail=100 | grep -E "(Registering|Discovered|Federating)"
+kubectl logs deployment/mcp-gateway -n mcp-system --tail=100 | grep -E "(Registering|Discovered|Federating)"
 ```
 
 **Key log patterns:**
@@ -215,7 +215,7 @@ The router is responsible for:
 
 ```bash
 # Watch all logs in real-time
-kubectl logs -f deployment/mcp-broker-router -n mcp-system
+kubectl logs -f deployment/mcp-gateway -n mcp-system
 ```
 
 **Note:** The router operates as an Envoy external processor (ext_proc) and intercepts requests at the proxy level. Router logs are generated when processing tool calls.
@@ -224,7 +224,7 @@ To see router activity, use the MCP Inspector (from Step 3) to make tool calls.
 
 For detailed routing logs, enable debug logging:
 ```bash
-kubectl set env deployment/mcp-broker-router LOG_LEVEL=-4 -n mcp-system
+kubectl set env deployment/mcp-gateway LOG_LEVEL=-4 -n mcp-system
 ```
 
 ### MCP Controller Logs: Dynamic Discovery
@@ -262,7 +262,7 @@ Open two terminals to monitor logs simultaneously:
 
 ```bash
 # Terminal 1 - MCP Gateway logs (broker and router combined)
-kubectl logs -f deployment/mcp-broker-router -n mcp-system
+kubectl logs -f deployment/mcp-gateway -n mcp-system
 
 # Terminal 2 - Envoy access logs (optional)
 kubectl logs -f -n gateway-system -l istio=ingressgateway
@@ -358,7 +358,7 @@ kubectl describe mcpserver <name> -n mcp-test
 
 3. **Check broker logs for connection issues:**
 ```bash
-kubectl logs deployment/mcp-broker-router -n mcp-system | grep -i error
+kubectl logs deployment/mcp-gateway -n mcp-system | grep -i error
 ```
 
 ### Scenario 2: Backend Server Unreachable
@@ -399,7 +399,7 @@ kubectl describe httproute mcp-server1-route -n mcp-test
 
 1. **Check logs for routing activity:**
 ```bash
-kubectl logs deployment/mcp-broker-router -n mcp-system | grep -E "(routing|authority|ext_proc)"
+kubectl logs deployment/mcp-gateway -n mcp-system | grep -E "(routing|authority|ext_proc)"
 ```
 
 2. **Verify prefix mappings in configuration:**

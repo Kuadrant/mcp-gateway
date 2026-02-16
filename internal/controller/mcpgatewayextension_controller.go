@@ -108,7 +108,7 @@ type MCPGatewayExtensionReconciler struct {
 	ConfigWriterDeleter   ConfigWriterDeleter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 	BrokerRouterImage     string
-	BrokerPollInterval    string // default poll interval for broker config changes
+	BrokerPollInterval    string // default interval for pinging upstream MCP servers
 }
 
 // +kubebuilder:rbac:groups=mcp.kagenti.com,resources=mcpgatewayextensions,verbs=get;list;watch;create;update;patch;delete

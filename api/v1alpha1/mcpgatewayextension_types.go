@@ -19,7 +19,7 @@ const (
 
 	// AnnotationPublicHost overrides the public host for the MCP Gateway broker-router
 	AnnotationPublicHost = "kuadrant.io/alpha-gateway-public-host"
-	// AnnotationPollInterval overrides the broker poll interval for config changes
+	// AnnotationPollInterval overrides how often the broker pings upstream MCP servers
 	AnnotationPollInterval = "kuadrant.io/alpha-gateway-poll-interval"
 )
 
@@ -144,7 +144,7 @@ func (m *MCPGatewayExtension) InternalHost() string {
 	return m.Spec.TargetRef.Name + "-istio." + gatewayNamespace + ".svc.cluster.local:8080"
 }
 
-// PollInterval returns the poll interval override from annotations, or empty string if not set
+// PollInterval returns the upstream MCP server ping interval from annotations, or empty string if not set
 func (m *MCPGatewayExtension) PollInterval() string {
 	if m.Annotations == nil {
 		return ""

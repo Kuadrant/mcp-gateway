@@ -7,11 +7,14 @@ This directory contains the Helm chart for deploying MCP Gateway to Kubernetes.
 ## Overview
 
 The MCP Gateway Helm chart deploys:
-- **MCP Broker/Router**: Aggregates and routes MCP (Model Context Protocol) requests
-- **MCP Controller**: Manages MCPServerRegistration and MCPVirtualServer custom resources
-- **Custom Resource Definitions (CRDs)**: MCPServerRegistration and MCPVirtualServer
+- **MCP Controller**: Manages MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer custom resources
+- **MCPGatewayExtension**: Custom resource that triggers the controller to deploy the broker-router
+- **Custom Resource Definitions (CRDs)**: MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer
 - **RBAC**: Service accounts, roles, and bindings for secure operation
-- **EnvoyFilter**: Configures Istio with the MCP Router ext-proc filter (enabled by default)
+
+When the MCPGatewayExtension becomes ready, the controller automatically creates:
+- **MCP Broker/Router**: Aggregates and routes MCP (Model Context Protocol) requests (Deployment + Service named `mcp-gateway`)
+- **EnvoyFilter**: Configures Istio with the MCP Router ext-proc filter (created in the Gateway's namespace)
 
 ## Prerequisites
 
@@ -37,8 +40,8 @@ helm install mcp-gateway ./charts/mcp-gateway --create-namespace --namespace mcp
 
 **After installing the chart**, follow the complete post-installation setup instructions that are displayed by Helm. These instructions include:
 
-- Configuring your Gateway with an MCP listener  
-- Creating an HTTPRoute to route traffic to the broker
+- Verifying the MCPGatewayExtension is ready
+- Verifying the broker-router deployment was created
 - Connecting your MCP servers using MCPServerRegistration resources
 - Accessing the gateway at your configured hostname
 
@@ -48,12 +51,19 @@ The chart uses sensible defaults and requires minimal configuration. The configu
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `image.repository` | Image repository | `ghcr.io/kuadrant/mcp-gateway` |
-| `image.tag` | Image tag | `latest` |
-| `configMap.create` | Create initial ConfigMap | `true` |
-| `envoyFilter.create` | Create EnvoyFilter for Istio integration | `true` |
-| `envoyFilter.namespace` | Namespace for EnvoyFilter | `istio-system` |
-| `gateway.publicHost` | Public hostname for MCP Gateway (required) | `mcp.127-0-0-1.sslip.io` |
+| `image.repository` | Broker-router image repository | `ghcr.io/kuadrant/mcp-gateway` |
+| `image.tag` | Broker-router image tag | Chart appVersion |
+| `imageController.repository` | Controller image repository | `ghcr.io/kuadrant/mcp-controller` |
+| `imageController.tag` | Controller image tag | Chart appVersion |
+| `controller.enabled` | Enable controller deployment | `true` |
+| `broker.pollInterval` | How often broker pings upstream MCP servers | `60s` |
+| `gateway.publicHost` | Public hostname for MCP Gateway | `mcp.127-0-0-1.sslip.io` |
+| `gateway.create` | Create a Gateway resource | `false` |
+| `gateway.name` | Name of the Gateway | `mcp-gateway` |
+| `gateway.namespace` | Namespace for the Gateway | `gateway-system` |
+| `mcpGatewayExtension.create` | Create MCPGatewayExtension resource | `true` |
+| `mcpGatewayExtension.gatewayRef.name` | Target Gateway name | `mcp-gateway` |
+| `mcpGatewayExtension.gatewayRef.namespace` | Target Gateway namespace | `gateway-system` |
 
 ## Usage
 
@@ -74,7 +84,7 @@ spec:
     name: "my-server-route"
   # Optional: for servers requiring authentication
   credentialRef:
-    name: "my-server-credentials"  
+    name: "my-server-credentials"
     key: "token"
 ```
 
@@ -114,6 +124,7 @@ helm uninstall mcp-gateway
 
 # Note: CRDs are not automatically removed
 # Remove them manually if needed:
+kubectl delete crd mcpgatewayextensions.mcp.kagenti.com
 kubectl delete crd mcpserverregistrations.mcp.kagenti.com
 kubectl delete crd mcpvirtualservers.mcp.kagenti.com
 ```

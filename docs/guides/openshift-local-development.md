@@ -65,7 +65,7 @@ GATEWAY_IP=$(oc get svc mcp-gateway-istio -n gateway-system -o jsonpath='{.spec.
 
 Then patch the deployment to use port 8081 (bypassing ExtProc) and map a local alias:
 ```bash
-kubectl patch deployment mcp-gateway-broker-router -n mcp-system --type='json' -p="[
+kubectl patch deployment mcp-gateway -n mcp-system --type='json' -p="[
   {
     \"op\": \"add\",
     \"path\": \"/spec/template/spec/hostAliases\",

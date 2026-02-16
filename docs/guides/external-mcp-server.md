@@ -219,7 +219,7 @@ Wait for the configuration to sync to the broker:
 
 ```bash
 echo "Waiting for GitHub tools to be discovered..."
-until kubectl logs -n mcp-system deploy/mcp-broker-router | grep "Discovered.*tools.*github"; do
+until kubectl logs -n mcp-system deploy/mcp-gateway | grep "Discovered.*tools.*github"; do
   echo "Still waiting..."
   sleep 5
 done
@@ -232,7 +232,7 @@ Check that the MCPServerRegistration is registered:
 
 ```bash
 kubectl get mcpsrs -n mcp-test
-kubectl logs -n mcp-system deployment/mcp-broker-router | grep "Discovered.*tools.*github"
+kubectl logs -n mcp-system deployment/mcp-gateway | grep "Discovered.*tools.*github"
 ```
 
 ## Test Integration
