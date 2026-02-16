@@ -27,7 +27,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	istiov1alpha3 "istio.io/api/networking/v1alpha3"
-	istiotypev1beta1 "istio.io/api/type/v1beta1"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -210,7 +209,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
-				fmt.Sprintf("gateway %s/%s not found", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
+				fmt.Sprintf("invalid: gateway %s/%s not found", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
 		}
 		return nil, err
 	}
@@ -253,7 +252,7 @@ func (r *MCPGatewayExtensionReconciler) checkGatewayConflict(ctx context.Context
 	}
 
 	return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
-		fmt.Sprintf("gateway %s/%s is already configured by MCPGatewayExtension %s/%s",
+		fmt.Sprintf("conflict: gateway %s/%s is already configured by MCPGatewayExtension %s/%s",
 			targetGateway.Namespace, targetGateway.Name, oldest.Namespace, oldest.Name))
 }
 
@@ -443,11 +442,9 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 			Labels:    envoyFilterLabels(mcpExt, targetGateway),
 		},
 		Spec: istiov1alpha3.EnvoyFilter{
-			TargetRefs: []*istiotypev1beta1.PolicyTargetReference{
-				{
-					Group: "gateway.networking.k8s.io",
-					Kind:  "Gateway",
-					Name:  targetGateway.Name,
+			WorkloadSelector: &istiov1alpha3.WorkloadSelector{
+				Labels: map[string]string{
+					"gateway.networking.k8s.io/gateway-name": targetGateway.Name,
 				},
 			},
 			ConfigPatches: []*istiov1alpha3.EnvoyFilter_EnvoyConfigObjectPatch{

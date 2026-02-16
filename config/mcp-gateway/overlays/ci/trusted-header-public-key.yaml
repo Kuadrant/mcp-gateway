@@ -1,0 +1,12 @@
+# This is an example key for testing and demo purposes only
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trusted-headers-public-key
+stringData:
+  key: |
+    -----BEGIN PUBLIC KEY-----
+    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7WdMdvC8hviEAL4wcebqaYbLEtVO
+    VEiyi/nozagw7BaWXmzbOWyy95gZLirTkhUb1P4Z4lgKLU2rD5NCbGPHAA==
+    -----END PUBLIC KEY-----
+type: Opaque

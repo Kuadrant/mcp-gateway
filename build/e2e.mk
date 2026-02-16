@@ -12,31 +12,13 @@ ginkgo: ## Download ginkgo locally if necessary
 test-e2e-deps: ginkgo ## Install e2e test dependencies
 	go mod download
 
-.PHONY: test-e2e-setup
-test-e2e-setup: ## Setup cluster for e2e tests (if not already setup)
-	@if ! kubectl get namespace mcp-system >/dev/null 2>&1; then \
-		echo "Setting up cluster for e2e tests..."; \
-		"$(MAKE)" tools; \
-		"$(MAKE)" kind-create-cluster; \
-		"$(MAKE)" build-and-load-image; \
-		"$(MAKE)" gateway-api-install; \
-		"$(MAKE)" istio-install; \
-		"$(MAKE)" metallb-install; \
-		"$(MAKE)" deploy-namespaces; \
-		"$(MAKE)" deploy-gateway; \
-		"$(MAKE)" deploy; \
-		"$(MAKE)" deploy-test-servers; \
-	else \
-		echo "Cluster already setup, skipping..."; \
-	fi
-
 .PHONY: test-e2e-run
 test-e2e-run: test-e2e-deps ## Run e2e tests (assumes cluster is ready)
 	@echo "Running e2e tests..."
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) ./tests/e2e
 
 .PHONY: test-e2e
-test-e2e: test-e2e-setup test-e2e-run ## Run full e2e test suite (setup + run)
+test-e2e: ci-setup test-e2e-run ## Run full e2e test suite (setup + run)
 	@echo "E2E tests completed"
 
 .PHONY: test-e2e-happy

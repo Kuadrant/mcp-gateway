@@ -17,7 +17,7 @@ spec:
       containers:
       - name: mcp-test-server3
         image: ghcr.io/kuadrant/mcp-gateway/test-server3:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         command: ["fastmcp", "run", "server.py", "--transport", "http", "--host", "0.0.0.0"]
         ports:
         - containerPort: 8000

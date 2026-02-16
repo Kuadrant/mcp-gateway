@@ -36,13 +36,16 @@ jobs:
               - |
                 apiVersion: kubelet.config.k8s.io/v1beta1
                 kind: KubeletConfiguration
-                syncFrequency: "10s"                        
+                syncFrequency: "10s"
             extraPortMappings:
             - containerPort: 30080
               hostPort: 8001
               protocol: TCP
-            - containerPort: 8443
-              hostPort: 8443
+            - containerPort: 30471
+              hostPort: 8003
+              protocol: TCP
+            - containerPort: 30472
+              hostPort: 8004
               protocol: TCP
           EOF
 

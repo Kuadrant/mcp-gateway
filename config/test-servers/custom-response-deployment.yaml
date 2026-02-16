@@ -18,7 +18,7 @@ spec:
       containers:
         - name: mcp-custom-response
           image: ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest
-          imagePullPolicy: Always
+          imagePullPolicy: Never
           command: ['/mcp-test-server']
           args: ['--http', '0.0.0.0:9090']
           ports:

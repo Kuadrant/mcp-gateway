@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"time"
 
+	goenv "github.com/caitlinelfring/go-env-default"
+	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -30,6 +32,16 @@ const (
 	TestServerNameSpace = "mcp-test"
 	ReferenceGrantName  = "allow-mcp-gateway"
 )
+
+// e2e-1 gateway constants (used by multi-gateway tests)
+const (
+	E2E1GatewayName  = "e2e-1"
+	E2E1PublicHost   = "e2e-1.127-0-0-1.sslip.io"
+	E2E1GatewayURL   = "http://localhost:8004/mcp"
+)
+
+// Gateway URL (configurable via environment)
+var gatewayURL = goenv.GetDefault("GATEWAY_URL", "http://localhost:8001/mcp")
 
 // UniqueName generates a unique name with the given prefix
 func UniqueName(prefix string) string {
@@ -72,4 +84,31 @@ func NewExternalMCPServerResources(testName string, k8sClient client.Client, ext
 // BuildTestMCPVirtualServer creates a virtual server builder (legacy alias)
 func BuildTestMCPVirtualServer(name, namespace string, tools []string) *MCPVirtualServerBuilder {
 	return NewMCPVirtualServerBuilder(name, namespace).WithTools(tools)
+}
+
+// MCPToolsLister interface for clients that can list tools
+type MCPToolsLister interface {
+	ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+}
+
+// WaitForToolsWithPrefix waits for tools with the given prefix to be present
+func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix string) {
+	Eventually(func(g Gomega) {
+		toolsList, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(toolsList).NotTo(BeNil())
+		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeTrue(),
+			"tools with prefix %q should exist", prefix)
+	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+}
+
+// WaitForToolsWithPrefixAbsent waits for tools with the given prefix to be absent
+func WaitForToolsWithPrefixAbsent(ctx context.Context, client MCPToolsLister, prefix string) {
+	Eventually(func(g Gomega) {
+		toolsList, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(toolsList).NotTo(BeNil())
+		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeFalse(),
+			"tools with prefix %q should NOT exist", prefix)
+	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 }

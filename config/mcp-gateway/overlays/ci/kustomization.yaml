@@ -1,0 +1,26 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mcp-system
+
+# CI overlay - deploys only the controller, no MCPGatewayExtension
+# Tests will create their own MCPGatewayExtensions
+resources:
+  - namespace.yaml
+  - trusted-header-public-key.yaml
+
+components:
+  - ../../components/controller
+
+patches:
+  # patch ClusterRoleBinding to reference correct namespace
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: mcp-controller
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: mcp-system

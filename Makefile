@@ -135,7 +135,7 @@ install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpgatewayextensions.yaml
 
 # Deploy mcp-gateway components (controller deploys broker-router via MCPGatewayExtension)
-deploy: install-crd deploy-namespaces deploy-controller ## Deploy controller to mcp-system namespace
+deploy: install-crd deploy-controller ## Deploy controller to mcp-system namespace
 
 # Deploy a new gateway httproute and broker instance configured to work with the new gateway
 deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (without controller)
@@ -189,7 +189,6 @@ restart-all:
 
 .PHONY: build-and-load-image
 build-and-load-image: kind build-image load-image restart-all  ## Build & load router/broker/controller image into the Kind cluster and restart
-	@echo "Building and loading image into Kind cluster..."
 
 .PHONY: load-image
 load-image: kind ## Load the mcp-gateway image into the kind cluster
@@ -280,6 +279,17 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 	kubectl apply -f config/samples/mcpserverregistration-conformance-server.yaml
 	@echo "Waiting for MCPServerRegistration to be Ready..."
 	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=120s
+
+# Deploy e2e test gateways (two separate gateways for multi-gateway testing)
+.PHONY: deploy-e2e-gateways
+deploy-e2e-gateways: ## Deploy two gateways for e2e multi-gateway tests
+	@echo "Deploying e2e test gateways..."
+	kubectl apply -k config/e2e/
+	@echo "Waiting for e2e-1 to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-1 -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for e2e-2 to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-2 -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "E2E gateways ready: e2e-1 (port 8004), e2e-2 (port 8003)"
 
 # Build and push container image TODO we have this and build-image lets just use one
 docker-build: ## Build container image locally
@@ -459,35 +469,22 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
-local-env-setup: ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
+local-env-setup: setup-cluster-base ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
 	@echo "========================================="
-	@echo "Starting MCP Gateway Environment Setup"
+	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
-	"$(MAKE)" tools
-	"$(MAKE)" kind-create-cluster
-	"$(MAKE)" build-and-load-image
-	"$(MAKE)" gateway-api-install
-	"$(MAKE)" istio-install
-	"$(MAKE)" metallb-install
-	"$(MAKE)" deploy-namespaces
+	# Deploy single gateway for local demo
 	"$(MAKE)" deploy-gateway
+	# Deploy controller + MCPGatewayExtension
 	"$(MAKE)" deploy
-	"$(MAKE)" add-jwt-key	
+	# Deploy and configure test servers
 	"$(MAKE)" deploy-test-servers
 	"$(MAKE)" deploy-example
+	@echo "Local environment setup complete"
 
 .PHONY: local-bare-setup
-local-bare-setup: ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
-	@echo "========================================="
-	@echo "Starting MCP Gateway Environment Setup"
-	@echo "========================================="
-	"$(MAKE)" tools
-	"$(MAKE)" kind-create-cluster
-	"$(MAKE)" build-and-load-image
-	"$(MAKE)" gateway-api-install
-	"$(MAKE)" istio-install
-	"$(MAKE)" metallb-install
-	"$(MAKE)" deploy-namespaces
+local-bare-setup: setup-cluster-base ## Setup minimal cluster infrastructure (no MCP components)
+	@echo "Bare cluster setup complete (no MCP components deployed)"
 
 .PHONY: local-env-teardown
 local-env-teardown: ## Tear down the local Kind cluster

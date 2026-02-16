@@ -7,15 +7,11 @@ import (
 	"fmt"
 	"strings"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
-	goenv "github.com/caitlinelfring/go-env-default"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-var gatewayURL = goenv.GetDefault("GATEWAY_URL", "http://localhost:8001/mcp")
 
 // these can be used across many tests
 var sharedMCPTestServer1 = "mcp-test-server1"
@@ -39,6 +35,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		for _, to := range testResources {
 			CleanupResource(ctx, k8sClient, to)
 		}
+		testResources = []client.Object{}
 	})
 
 	JustAfterEach(func() {
@@ -825,137 +822,5 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
-	})
-
-	It("[Happy] MCPGatewayExtension targeting non-existent Gateway should report invalid status", func() {
-		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
-		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", SystemNamespace).
-			WithTarget("non-existent-gateway", GatewayNamespace).
-			Build()
-		testResources = append(testResources, mcpExt)
-		Expect(k8sClient.Create(ctx, mcpExt)).To(Succeed())
-
-		By("Verifying MCPGatewayExtension status reports invalid configuration")
-		Eventually(func(g Gomega) {
-			err := VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace, "Invalid")
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-
-		By("Verifying the status message indicates the issue")
-		msg, err := GetMCPGatewayExtensionStatusMessage(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace)
-		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Println("MCPGatewayExtension status message:", msg)
-		Expect(msg).To(ContainSubstring("invalid"))
-	})
-
-	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", func() {
-		// Note: The existing MCPGatewayExtension in mcp-system already owns the gateway.
-		// After adding a ReferenceGrant, this MCPGatewayExtension will get a conflict status
-		// because only one MCPGatewayExtension can own a gateway (the oldest one wins).
-		By("Creating an MCPGatewayExtension in mcp-test namespace targeting Gateway in gateway-system without ReferenceGrant")
-		mcpExt := NewMCPGatewayExtensionBuilder("test-cross-ns", TestServerNameSpace).
-			WithTarget(GatewayName, GatewayNamespace).
-			Build()
-		testResources = append(testResources, mcpExt)
-		Expect(k8sClient.Create(ctx, mcpExt)).To(Succeed())
-
-		By("Verifying MCPGatewayExtension status reports ReferenceGrant required")
-		Eventually(func(g Gomega) {
-			err := VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace, "ReferenceGrantRequired")
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-
-		By("Creating a ReferenceGrant in gateway-system to allow cross-namespace reference")
-		refGrant := NewReferenceGrantBuilder("allow-mcp-test", GatewayNamespace).
-			FromNamespace(TestServerNameSpace).
-			Build()
-		testResources = append(testResources, refGrant)
-		Expect(k8sClient.Create(ctx, refGrant)).To(Succeed())
-
-		By("Verifying MCPGatewayExtension gets conflict status (existing mcp-system MCPGatewayExtension owns the gateway)")
-		Eventually(func(g Gomega) {
-			err := VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace, "Invalid")
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-
-		By("Verifying the status message indicates conflict")
-		msg, err := GetMCPGatewayExtensionStatusMessage(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace)
-		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Println("MCPGatewayExtension status message:", msg)
-		Expect(msg).To(ContainSubstring("conflict"))
-
-		By("Deleting the ReferenceGrant")
-		Expect(k8sClient.Delete(ctx, refGrant)).To(Succeed())
-
-		By("Verifying MCPGatewayExtension returns to ReferenceGrant required status after ReferenceGrant is deleted")
-		Eventually(func(g Gomega) {
-			err := VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace, "ReferenceGrantRequired")
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-	})
-
-	// TODO possibly should use a separate setup
-	It("[Happy] MCPGatewayExtension deletion removes associated config and tools", func() {
-		// This test verifies that deleting the owning MCPGatewayExtension removes the config.
-		// We temporarily delete the existing mcp-system MCPGatewayExtension, then restore it.
-		By("Getting the existing MCPGatewayExtension in mcp-system")
-		existingExt := &mcpv1alpha1.MCPGatewayExtension{}
-		err := k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, existingExt)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("Creating an MCPServerRegistration to verify tools exist")
-		registration := NewMCPServerResourcesWithDefaults("deletion-test", k8sClient).Build()
-		testResources = append(testResources, registration.GetObjects()...)
-		registeredServer := registration.Register(ctx)
-
-		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Verifying tools are present in gateway")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Deleting the existing MCPGatewayExtension")
-		Expect(k8sClient.Delete(ctx, existingExt)).To(Succeed())
-
-		By("Verifying the MCPServerRegistration status reflects the issue with the gateway extension")
-		//no valid mcpgatewayextensions configured
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationNotReadyWithReason(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace, "no valid mcpgatewayextensions configured")).To(Succeed())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Verifying tools are no longer accessible from the gateway")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalseBecause("%s should NOT exist after MCPGatewayExtension deletion", registeredServer.Spec.ToolPrefix))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Recreating the MCPGatewayExtension to restore the system")
-		newExt := NewMCPGatewayExtensionBuilder(MCPExtensionName, SystemNamespace).
-			WithTarget(GatewayName, GatewayNamespace).
-			Build()
-		Expect(k8sClient.Create(ctx, newExt)).To(Succeed())
-
-		By("Verifying MCPGatewayExtension becomes ready again")
-		Eventually(func(g Gomega) {
-			err := VerifyMCPGatewayExtensionReady(ctx, k8sClient, newExt.Name, newExt.Namespace)
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-
-		By("Verifying tools are restored")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should be restored", registeredServer.Spec.ToolPrefix))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 })

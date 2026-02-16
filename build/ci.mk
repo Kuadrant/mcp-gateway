@@ -1,64 +1,45 @@
 # CI-specific targets for GitHub Actions
 
-# CI setup - lighter weight than local-env-setup, assumes Kind is already created
+# CI setup for e2e tests
+# Deploys e2e gateways (gateway-1, gateway-2) and controller only
+# Tests create their own MCPGatewayExtensions
 .PHONY: ci-setup
-ci-setup: kind tools ## Setup environment for CI (creates Kind cluster if needed)
+ci-setup: setup-cluster-base ## Setup environment for CI e2e tests
 	@echo "Setting up CI environment..."
-	@./utils/generate-placeholder-ca.sh
-	# Create Kind cluster if it doesn't exist
-	@if ! $(KIND) get clusters | grep -q mcp-gateway; then \
-		echo "Creating Kind cluster..."; \
-		$(KIND) create cluster --name mcp-gateway --config config/kind/cluster.yaml; \
-	else \
-		echo "Kind cluster 'mcp-gateway' already exists"; \
-	fi
-	# Install Gateway API CRDs
-	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
-	$(KUBECTL) wait --for condition=Established --timeout=60s crd/gateways.gateway.networking.k8s.io
-	# Build and load image
-	"$(MAKE)" docker-build
-	$(call load-image,ghcr.io/kuadrant/mcp-gateway:latest)
-	$(call load-image,ghcr.io/kuadrant/mcp-controller:latest)
-	# Install CRDs and deploy
-	"$(MAKE)" install-crd
-	"$(MAKE)" istio-install
-	"$(MAKE)" metallb-install
-	"$(MAKE)" deploy-gateway	
-	"$(MAKE)" deploy
-	# Wait for deployments
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-controller -n mcp-system
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-broker-router -n mcp-system
-	# Deploy test servers
-	"$(MAKE)" deploy-test-servers
-	# Wait for all test server deployments to be available
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-test-server1 -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-test-server2 -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-test-server3 -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-api-key-server -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-custom-path-server -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-oidc-server -n mcp-test
-	$(KUBECTL) wait --for=condition=available --timeout=180s deployment/everything-server -n mcp-test	
-	# Install cspell
-	npm install -g cspell@9.4.0
+	# Deploy standard mcp-gateway (mcp.127-0-0-1.sslip.io)
+	"$(MAKE)" deploy-gateway
+	# Deploy e2e gateways (gateway-1, gateway-2)
+	"$(MAKE)" deploy-e2e-gateways
+	# Deploy controller only (no MCPGatewayExtension)
+	"$(MAKE)" deploy-controller-only
+	# Deploy and wait for test servers
+	"$(MAKE)" deploy-test-servers-ci
+	@echo "CI setup complete (3 gateways: mcp-gateway, e2e-1, e2e-2)"
+
+# Deploy test servers for CI
+.PHONY: deploy-test-servers-ci
+deploy-test-servers-ci: kind-load-test-servers ## Deploy test servers for CI
+	$(KUBECTL) apply -k config/test-servers/
+	"$(MAKE)" wait-test-servers
 
 # Collect debug info on failure
 .PHONY: ci-debug-logs
 ci-debug-logs: ## Collect logs for debugging CI failures
 	@echo "=== Controller logs ==="
 	-$(KUBECTL) logs -n mcp-system deployment/mcp-controller --tail=100
-	@echo "=== Broker logs ==="
-	-$(KUBECTL) logs -n mcp-system deployment/mcp-broker-router --tail=100
+	@echo "=== MCPGatewayExtensions ==="
+	-$(KUBECTL) get mcpgatewayextensions -A
 	@echo "=== MCPServerRegistrations ==="
 	-$(KUBECTL) get mcpserverregistrations -A
 	@echo "=== HTTPRoutes ==="
 	-$(KUBECTL) get httproutes -A
-	@echo "=== Secret ==="
-	-$(KUBECTL) get secret -n mcp-system mcp-gateway-config -o jsonpath='{.data.config\.yaml}' | base64 --decode
+	@echo "=== Gateways ==="
+	-$(KUBECTL) get gateways -A
 	@echo "=== Pods ==="
 	-$(KUBECTL) get pods -A
 
 .PHONY: ci-debug-test-servers-logs
-ci-debug-test-servers-logs: ## Collect test servers logs for debugging CI failures
+ci-debug-test-servers-logs: ## Collect test server logs for debugging CI failures
 	@echo "=== Test server logs ==="
 	-$(KUBECTL) logs -n mcp-test deployment/mcp-test-server1 --tail=50
 	-$(KUBECTL) logs -n mcp-test deployment/mcp-test-server2 --tail=50

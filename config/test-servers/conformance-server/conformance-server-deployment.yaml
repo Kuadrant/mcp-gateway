@@ -17,7 +17,7 @@ spec:
       containers:
       - name: conformance-server
         image: ghcr.io/kuadrant/mcp-gateway/test-conformance-server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         ports:
         - containerPort: 9090
           name: http

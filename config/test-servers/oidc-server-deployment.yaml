@@ -18,7 +18,7 @@ spec:
       containers:
       - name: server
         image: ghcr.io/kuadrant/mcp-gateway/test-oidc-server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         ports:
         - containerPort: 9090
         env:
@@ -43,6 +43,7 @@ spec:
       - name: keycloak-cert
         configMap:
           name: mcp-gateway-keycloak-cert
+          optional: true
           items:
           - key: keycloak.crt
             path: keycloak.crt

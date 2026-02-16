@@ -1,0 +1,11 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gateway-system
+
+# note we don't set up any reference grants as it is expected this will be done in e2e tests
+resources:
+  - namespace.yaml
+  - gateway-1.yaml
+  - gateway-2.yaml
+  - nodeport.yaml

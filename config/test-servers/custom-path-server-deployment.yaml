@@ -29,7 +29,7 @@ spec:
       containers:
       - name: mcp-custom-path-server
         image: ghcr.io/kuadrant/mcp-gateway/test-custom-path-server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         ports:
         - containerPort: 8080
         readinessProbe:
