@@ -165,7 +165,6 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 
 		// find and replace existing server, or append if not found
 		found := false
-		srw.Logger.Info("SecretReaderWriter upsert", "existing", existingConfig.Servers, "new", server.Name)
 		for i, existing := range existingConfig.Servers {
 
 			if existing.Name == server.Name {
@@ -177,7 +176,7 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 		if !found {
 			existingConfig.Servers = append(existingConfig.Servers, server)
 		}
-		//{"existing": "e2e-server2-route-conflict-test-1-ab03e453/mcp-test/e2e-server2-route-conflict-test-1-ab03e453", "new": "e2e-server2-route-conflict-test-2-d6206ec0/mcp-test/e2e-server2-route-conflict-test-2-d6206ec0"}
+
 		updated, err := yaml.Marshal(existingConfig)
 		if err != nil {
 			return fmt.Errorf("upsert mcpserver failed to marshal config: %w", err)

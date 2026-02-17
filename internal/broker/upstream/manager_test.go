@@ -396,7 +396,7 @@ func TestMCPManager_toolToServerTool(t *testing.T) {
 	assert.Equal(t, "A test tool", serverTool.Tool.Description)
 
 	// check that meta has id field
-	id, ok := serverTool.Tool.Meta.AdditionalFields["id"]
+	id, ok := serverTool.Tool.Meta.AdditionalFields[gatewayServerID]
 	assert.True(t, ok)
 	assert.Equal(t, string(mock.id), id)
 

@@ -23,7 +23,7 @@ const allowedToolsClaimKey = "allowed-tools"
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
 func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
-	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
+	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 
 	// step 1: apply x-authorized-tools filtering (JWT-based)
@@ -32,7 +32,8 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 
 	// step 2: apply virtual server filtering
 	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
-
+	// filter out any gateway specific meta data we are storing internally before sending to clients
+	tools = broker.removeGatewayMeta(tools)
 	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
 
 	// ensure we never return nil (would serialize as null instead of [])
@@ -40,6 +41,16 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 		tools = []mcp.Tool{}
 	}
 	mcpRes.Tools = tools
+}
+
+func (broker *mcpBrokerImpl) removeGatewayMeta(tools []mcp.Tool) []mcp.Tool {
+	broker.logger.Debug("removing gateway specific meta")
+	for _, t := range tools {
+		if t.Meta != nil {
+			delete(t.Meta.AdditionalFields, "kuadrant/id")
+		}
+	}
+	return tools
 }
 
 // applyAuthorizedToolsFilter filters tools based on x-authorized-tools JWT header.
