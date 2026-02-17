@@ -4,4 +4,4 @@ metadata:
   difficulty: easy
 steps:
   prompt:
-    inline: "Call the 'test1_hi' tool with name 'World'. Verify it replies with 'Hi World'."
+    inline: "Call the 'test1_greet' tool with name 'World'. Verify it replies with 'Hi World'."
