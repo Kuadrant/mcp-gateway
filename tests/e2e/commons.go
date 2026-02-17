@@ -35,9 +35,9 @@ const (
 
 // e2e-1 gateway constants (used by multi-gateway tests)
 const (
-	E2E1GatewayName  = "e2e-1"
-	E2E1PublicHost   = "e2e-1.127-0-0-1.sslip.io"
-	E2E1GatewayURL   = "http://localhost:8004/mcp"
+	E2E1GatewayName = "e2e-1"
+	E2E1PublicHost  = "e2e-1.127-0-0-1.sslip.io"
+	E2E1GatewayURL  = "http://localhost:8004/mcp"
 )
 
 // Gateway URL (configurable via environment)
