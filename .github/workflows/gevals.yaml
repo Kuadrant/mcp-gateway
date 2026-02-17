@@ -114,6 +114,6 @@ jobs:
           echo "Running mcpchecker..."
           # Ensure GOBIN is in PATH if not already (github actions usually has it)
           export PATH=$PATH:$(go env GOPATH)/bin
-          mcpchecker check evals/gemini-agent/eval.yaml
+          mcpchecker check --verbose evals/gemini-agent/eval.yaml
 
 
