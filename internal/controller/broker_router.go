@@ -275,10 +275,7 @@ func serviceNeedsUpdate(desired, existing *corev1.Service) bool {
 }
 
 func serviceAccountNeedsUpdate(desired, existing *corev1.ServiceAccount) bool {
-	if !equality.Semantic.DeepEqual(desired.AutomountServiceAccountToken, existing.AutomountServiceAccountToken) {
-		return true
-	}
-	return false
+	return !equality.Semantic.DeepEqual(desired.AutomountServiceAccountToken, existing.AutomountServiceAccountToken)
 }
 
 func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) bool {
@@ -325,4 +322,3 @@ func filterIgnoredFlags(command []string) []string {
 	}
 	return filtered
 }
-
