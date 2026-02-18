@@ -1,0 +1,11 @@
+kind: Agent
+metadata:
+  name: "gemini-agent" 
+plugin:
+  # Using openai-agent type as a generic LLM client that supports OpenAI API format
+  # Set MODEL_BASE_URL to point to Gemini (e.g. https://generativelanguage.googleapis.com/v1beta/openai/)
+  # or any other OpenAI-compatible endpoint.
+  type: "openai-agent"
+  model: "gemini-2.0-flash-exp" # Or whatever model is available
+  params:
+    temperature: 0.1
