@@ -30,39 +30,18 @@ const (
 	DefaultListenerPort = 8080
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
-
-// MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension
+// MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
 type MCPGatewayExtensionSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// TargetRef specifies a Gateway that should be extended to handle the MCP Protocol.
+	// TargetRef specifies the Gateway to extend with MCP protocol support.
+	// The controller will create an EnvoyFilter targeting this Gateway's Envoy proxy.
 	TargetRef MCPGatewayExtensionTargetReference `json:"targetRef"`
 }
 
 // MCPGatewayExtensionStatus defines the observed state of MCPGatewayExtension.
 type MCPGatewayExtensionStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the MCPGatewayExtension resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the MCPGatewayExtension.
+	// The Ready condition indicates whether the broker-router deployment is running
+	// and the EnvoyFilter has been successfully applied to the target Gateway.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -71,8 +50,19 @@ type MCPGatewayExtensionStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// MCPGatewayExtension is the Schema for the mcpgatewayextensions API
+// MCPGatewayExtension extends a Gateway API Gateway to handle the Model Context Protocol (MCP).
+// When created, the controller will:
+// - Deploy a broker-router Deployment and Service in the MCPGatewayExtension's namespace
+// - Create an EnvoyFilter in the Gateway's namespace to route MCP traffic to the broker
+// - Configure the Envoy proxy to use the external processor for MCP request handling
+//
+// The broker aggregates tools from upstream MCP servers registered via MCPServerRegistration
+// resources, while the router handles MCP protocol parsing and request routing.
+//
+// Cross-namespace references to Gateways require a ReferenceGrant in the Gateway's namespace.
 type MCPGatewayExtension struct {
 	metav1.TypeMeta `json:",inline"`
 

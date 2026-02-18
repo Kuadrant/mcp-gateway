@@ -14,11 +14,28 @@ spec:
     singular: mcpgatewayextension
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: Ready status
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: MCPGatewayExtension is the Schema for the mcpgatewayextensions
-          API
+        description: |-
+          MCPGatewayExtension extends a Gateway API Gateway to handle the Model Context Protocol (MCP).
+          When created, the controller will:
+          - Deploy a broker-router Deployment and Service in the MCPGatewayExtension's namespace
+          - Create an EnvoyFilter in the Gateway's namespace to route MCP traffic to the broker
+          - Configure the Envoy proxy to use the external processor for MCP request handling
+
+          The broker aggregates tools from upstream MCP servers registered via MCPServerRegistration
+          resources, while the router handles MCP protocol parsing and request routing.
+
+          Cross-namespace references to Gateways require a ReferenceGrant in the Gateway's namespace.
         properties:
           apiVersion:
             description: |-
@@ -41,8 +58,9 @@ spec:
             description: spec defines the desired state of MCPGatewayExtension
             properties:
               targetRef:
-                description: TargetRef specifies a Gateway that should be extended
-                  to handle the MCP Protocol.
+                description: |-
+                  TargetRef specifies the Gateway to extend with MCP protocol support.
+                  The controller will create an EnvoyFilter targeting this Gateway's Envoy proxy.
                 properties:
                   group:
                     default: gateway.networking.k8s.io
@@ -76,15 +94,9 @@ spec:
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the MCPGatewayExtension resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  Conditions represent the current state of the MCPGatewayExtension.
+                  The Ready condition indicates whether the broker-router deployment is running
+                  and the EnvoyFilter has been successfully applied to the target Gateway.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
