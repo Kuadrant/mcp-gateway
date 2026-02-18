@@ -1,4 +1,5 @@
 # New Words
+serviceaccounts
 Agentic
 apikey
 Automount

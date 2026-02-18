@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
@@ -36,7 +35,6 @@ var (
 	cfg                  *rest.Config
 	ctx                  context.Context
 	cancel               context.CancelFunc
-	mcpGatewayClient     *NotifyingMCPClient
 	defaultMCPGatewayExt *MCPGatewayExtensionSetup
 	gatewayPublicHost    = "mcp.127-0-0-1.sslip.io"
 )
@@ -128,21 +126,10 @@ var _ = BeforeSuite(func() {
 		g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">=", 1))
 	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-	By("setting up an mcp client for the gateway")
-	Eventually(func(g Gomega) {
-		var clientErr error
-		mcpGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {})
-		g.Expect(clientErr).Error().NotTo(HaveOccurred())
-	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
 })
 
 var _ = AfterSuite(func() {
 	By("Tearing down the test environment")
-	if mcpGatewayClient != nil {
-		GinkgoWriter.Println("closing client")
-		mcpGatewayClient.Close()
-	}
 
 	if defaultMCPGatewayExt != nil {
 		defaultMCPGatewayExt.TearDown(ctx)

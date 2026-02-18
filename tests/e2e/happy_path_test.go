@@ -22,15 +22,29 @@ var scaledMCPTestServer = "mcp-test-server3"
 
 var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	var (
-		testResources = []client.Object{}
+		testResources    = []client.Object{}
+		mcpGatewayClient *NotifyingMCPClient
 	)
 
 	BeforeEach(func() {
 		// we don't use defers for this so if a test fails ensure this server that gets scaled down and up is up and running
 		_ = ScaleDeployment(TestServerNameSpace, scaledMCPTestServer, 1)
+
+		// Create MCP client for this test
+		Eventually(func(g Gomega) {
+			var err error
+			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
 	AfterEach(func() {
+		// Close MCP client
+		if mcpGatewayClient != nil {
+			mcpGatewayClient.Close()
+			mcpGatewayClient = nil
+		}
+
 		// cleanup in reverse order
 		for _, to := range testResources {
 			CleanupResource(ctx, k8sClient, to)
@@ -73,7 +87,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Verifying MCPServerRegistrations tools are present")
 		Eventually(func(g Gomega) {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer1.Spec.ToolPrefix))
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer2.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer2.Spec.ToolPrefix))
@@ -86,7 +100,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 				"name": "e2e",
 			}},
 		})
-		Expect(err).Error().NotTo(HaveOccurred())
+		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically("==", 1))
 		content, ok := res.Content[0].(mcp.TextContent)
@@ -103,7 +117,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(err).NotTo(BeNil())
 			g.Expect(err.Error()).Should(ContainSubstring("not found"))
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
-			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.ToolPrefix, toolsList)).To(BeFalse())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())

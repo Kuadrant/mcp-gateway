@@ -185,6 +185,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Re-establishing MCP client connection")
 		e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
 		Expect(clientErr).Error().NotTo(HaveOccurred())
+		defer e2e1Client.Close()
 
 		By("Verifying gateway is accessible again")
 		Eventually(func(g Gomega) {
