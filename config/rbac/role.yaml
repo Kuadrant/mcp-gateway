@@ -16,6 +16,7 @@ rules:
   - ""
   resources:
   - secrets
+  - serviceaccounts
   - services
   verbs:
   - create

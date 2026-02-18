@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -16,6 +17,7 @@ import (
 type MCPGatewayExtensionValidator struct {
 	client.Client
 	DirectAPIReader client.Reader // uncached reader
+	Logger          *slog.Logger
 }
 
 // HasValidReferenceGrant checks if a valid ReferenceGrant exists that allows the MCPGatewayExtension
@@ -26,8 +28,9 @@ func (r *MCPGatewayExtensionValidator) HasValidReferenceGrant(ctx context.Contex
 	if err := r.List(ctx, refGrantList, client.InNamespace(mcpExt.Spec.TargetRef.Namespace)); err != nil {
 		return false, fmt.Errorf("failed to list ReferenceGrants: %w", err)
 	}
-
+	r.Logger.Debug("HasValidReferenceGrant found reference grants ", "len", len(refGrantList.Items))
 	for _, rg := range refGrantList.Items {
+		r.Logger.Debug("HasValidReferenceGrant checking reference grant ", "grant", rg.Name)
 		if r.referenceGrantAllows(&rg, mcpExt) {
 			return true, nil
 		}

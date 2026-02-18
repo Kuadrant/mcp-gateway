@@ -121,9 +121,10 @@ func TestManagedLabelsMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := managedLabelsMatch(tt.existing, tt.desired)
+			diff := managedLabelsDiff(tt.existing, tt.desired)
+			result := diff == "" // no diff means labels match
 			if result != tt.expected {
-				t.Errorf("managedLabelsMatch() = %v, expected %v", result, tt.expected)
+				t.Errorf("managedLabelsDiff() returned %q, match=%v, expected match=%v", diff, result, tt.expected)
 			}
 		})
 	}
@@ -199,9 +200,9 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 			existing := baseEnvoyFilter()
 			tt.modify(existing)
 
-			result := envoyFilterNeedsUpdate(desired, existing)
+			result, reason := envoyFilterNeedsUpdate(desired, existing)
 			if result != tt.expected {
-				t.Errorf("envoyFilterNeedsUpdate() = %v, expected %v", result, tt.expected)
+				t.Errorf("envoyFilterNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
 			}
 		})
 	}

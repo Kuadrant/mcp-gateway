@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -117,6 +118,7 @@ type MCPGatewayExtensionReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.istio.io,resources=envoyfilters,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile reconciles an MCPGatewayExtension resource. Deploying and configuring a MCP Gateway instance configured to integrate and provide MCP functionality with the targeted gateway
@@ -194,7 +196,11 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if !deploymentReady {
-		return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, mcpv1alpha1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready")
+		if err := r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, mcpv1alpha1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready"); err != nil {
+			return ctrl.Result{}, err
+		}
+		// requeue to check deployment status again since Owns watch doesn't trigger on status-only changes
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway); err != nil {
@@ -229,7 +235,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 				return nil, err
 			}
 			return nil, newValidationError(mcpv1alpha1.ConditionReasonRefGrantRequired,
-				fmt.Sprintf("ReferenceGrant required %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
+				fmt.Sprintf("invalid: ReferenceGrant required in %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
 		}
 	}
 
@@ -295,7 +301,7 @@ func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, targe
 }
 
 func mcpExtToRefGrantIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
-	return fmt.Sprintf("mcp.kuadrant.io/MCPGatewayExtension/%s", mext.Namespace)
+	return fmt.Sprintf("%s/MCPGatewayExtension/%s", mcpv1alpha1.GroupVersion.Group, mext.Namespace)
 }
 
 func mcpExtToGatewayIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
@@ -494,7 +500,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context
 		return fmt.Errorf("failed to get envoy filter: %w", err)
 	}
 
-	if !envoyFilterNeedsUpdate(envoyFilter, existingEnvoyFilter) {
+	needsUpdate, reason := envoyFilterNeedsUpdate(envoyFilter, existingEnvoyFilter)
+	if !needsUpdate {
 		return nil
 	}
 
@@ -506,31 +513,32 @@ func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context
 	envoyFilter.ResourceVersion = existingEnvoyFilter.ResourceVersion
 	envoyFilter.UID = existingEnvoyFilter.UID
 
-	r.log.Info("updating envoy filter", "namespace", envoyFilter.Namespace, "name", envoyFilter.Name)
+	r.log.Info("updating envoy filter", "namespace", envoyFilter.Namespace, "name", envoyFilter.Name, "reason", reason)
 	return r.Update(ctx, envoyFilter)
 }
 
 // envoyFilterNeedsUpdate checks if the EnvoyFilter needs to be updated by comparing specs and managed labels
-func envoyFilterNeedsUpdate(desired, existing *istionetv1alpha3.EnvoyFilter) bool {
+// returns (needsUpdate, reason) where reason describes what changed
+func envoyFilterNeedsUpdate(desired, existing *istionetv1alpha3.EnvoyFilter) (bool, string) {
 	// check if spec changed
 	if !proto.Equal(&existing.Spec, &desired.Spec) {
-		return true
+		return true, "spec changed"
 	}
 	// check if managed labels changed
-	if !managedLabelsMatch(existing.Labels, desired.Labels) {
-		return true
+	if reason := managedLabelsDiff(existing.Labels, desired.Labels); reason != "" {
+		return true, reason
 	}
-	return false
+	return false, ""
 }
 
-// managedLabelsMatch checks if the labels we manage match between existing and desired
-func managedLabelsMatch(existing, desired map[string]string) bool {
+// managedLabelsDiff returns a reason string if managed labels differ, empty string if they match
+func managedLabelsDiff(existing, desired map[string]string) string {
 	for _, key := range envoyFilterManagedLabelKeys {
 		if existing[key] != desired[key] {
-			return false
+			return fmt.Sprintf("label %s changed: %q -> %q", key, existing[key], desired[key])
 		}
 	}
-	return true
+	return ""
 }
 
 func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {

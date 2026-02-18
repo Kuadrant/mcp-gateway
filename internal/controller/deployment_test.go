@@ -190,9 +190,9 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			existing := baseDeployment()
 			tt.modify(existing)
 
-			result := deploymentNeedsUpdate(desired, existing)
+			result, reason := deploymentNeedsUpdate(desired, existing)
 			if result != tt.expected {
-				t.Errorf("deploymentNeedsUpdate() = %v, expected %v", result, tt.expected)
+				t.Errorf("deploymentNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
 			}
 		})
 	}
@@ -220,11 +220,11 @@ func TestDeploymentNeedsUpdate_EmptyContainers(t *testing.T) {
 		},
 	}
 
-	if deploymentNeedsUpdate(desired, existing) {
+	if needsUpdate, _ := deploymentNeedsUpdate(desired, existing); needsUpdate {
 		t.Error("deploymentNeedsUpdate() should return false when desired has no containers")
 	}
 
-	if deploymentNeedsUpdate(existing, desired) {
+	if needsUpdate, _ := deploymentNeedsUpdate(existing, desired); needsUpdate {
 		t.Error("deploymentNeedsUpdate() should return false when existing has no containers")
 	}
 }
@@ -327,9 +327,9 @@ func TestServiceNeedsUpdate(t *testing.T) {
 			existing := baseService()
 			tt.modify(existing)
 
-			result := serviceNeedsUpdate(desired, existing)
+			result, reason := serviceNeedsUpdate(desired, existing)
 			if result != tt.expected {
-				t.Errorf("serviceNeedsUpdate() = %v, expected %v", result, tt.expected)
+				t.Errorf("serviceNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
 			}
 		})
 	}
@@ -661,9 +661,9 @@ func TestServiceAccountNeedsUpdate(t *testing.T) {
 				AutomountServiceAccountToken: tt.existing,
 			}
 
-			result := serviceAccountNeedsUpdate(desired, existing)
+			result, reason := serviceAccountNeedsUpdate(desired, existing)
 			if result != tt.expected {
-				t.Errorf("serviceAccountNeedsUpdate() = %v, expected %v", result, tt.expected)
+				t.Errorf("serviceAccountNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
 			}
 		})
 	}

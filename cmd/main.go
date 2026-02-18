@@ -105,6 +105,7 @@ func main() {
 	mcpExtFinderValidator := &controller.MCPGatewayExtensionValidator{
 		Client:          mgr.GetClient(),
 		DirectAPIReader: mgr.GetAPIReader(),
+		Logger:          slogger,
 	}
 
 	if err = (&controller.MCPReconciler{

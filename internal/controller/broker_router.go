@@ -92,14 +92,17 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 								{
 									Name:          "http",
 									ContainerPort: brokerHTTPPort,
+									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "grpc",
 									ContainerPort: brokerGRPCPort,
+									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "config",
 									ContainerPort: brokerConfigPort,
+									Protocol:      corev1.ProtocolTCP,
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
@@ -116,7 +119,8 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 							Name: "config-volume",
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
-									SecretName: "mcp-gateway-config",
+									SecretName:  "mcp-gateway-config",
+									DefaultMode: ptr.To(int32(420)), // 0644 octal
 								},
 							},
 						},
@@ -194,8 +198,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		} else {
 			return false, fmt.Errorf("failed to get service account: %w", err)
 		}
-	} else if serviceAccountNeedsUpdate(serviceAccount, existingServiceAccount) {
-		r.log.Info("updating broker-router service account", "namespace", mcpExt.Namespace)
+	} else if needsUpdate, reason := serviceAccountNeedsUpdate(serviceAccount, existingServiceAccount); needsUpdate {
+		r.log.Info("updating broker-router service account", "namespace", mcpExt.Namespace, "reason", reason)
 		existingServiceAccount.AutomountServiceAccountToken = serviceAccount.AutomountServiceAccountToken
 		if err := r.Update(ctx, existingServiceAccount); err != nil {
 			return false, fmt.Errorf("failed to update service account: %w", err)
@@ -221,8 +225,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		return false, fmt.Errorf("failed to get deployment: %w", err)
 	}
 
-	if deploymentNeedsUpdate(deployment, existingDeployment) {
-		r.log.Info("updating broker-router deployment", "namespace", mcpExt.Namespace)
+	if needsUpdate, reason := deploymentNeedsUpdate(deployment, existingDeployment); needsUpdate {
+		r.log.Info("updating broker-router deployment", "namespace", mcpExt.Namespace, "reason", reason)
 		existingDeployment.Spec.Template.Spec.Containers = deployment.Spec.Template.Spec.Containers
 		existingDeployment.Spec.Template.Spec.Volumes = deployment.Spec.Template.Spec.Volumes
 		if err := r.Update(ctx, existingDeployment); err != nil {
@@ -248,8 +252,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		} else {
 			return false, fmt.Errorf("failed to get service: %w", err)
 		}
-	} else if serviceNeedsUpdate(service, existingService) {
-		r.log.Info("updating broker-router service", "namespace", mcpExt.Namespace)
+	} else if needsUpdate, reason := serviceNeedsUpdate(service, existingService); needsUpdate {
+		r.log.Info("updating broker-router service", "namespace", mcpExt.Namespace, "reason", reason)
 		existingService.Spec.Ports = service.Spec.Ports
 		existingService.Spec.Selector = service.Spec.Selector
 		if err := r.Update(ctx, existingService); err != nil {
@@ -264,46 +268,56 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	return deploymentReady, nil
 }
 
-func serviceNeedsUpdate(desired, existing *corev1.Service) bool {
+// serviceNeedsUpdate checks if the service needs to be updated
+// returns (needsUpdate, reason) where reason describes what changed
+func serviceNeedsUpdate(desired, existing *corev1.Service) (bool, string) {
 	if !equality.Semantic.DeepEqual(desired.Spec.Ports, existing.Spec.Ports) {
-		return true
+		return true, fmt.Sprintf("ports changed: %+v -> %+v", existing.Spec.Ports, desired.Spec.Ports)
 	}
 	if !equality.Semantic.DeepEqual(desired.Spec.Selector, existing.Spec.Selector) {
-		return true
+		return true, fmt.Sprintf("selector changed: %v -> %v", existing.Spec.Selector, desired.Spec.Selector)
 	}
-	return false
+	return false, ""
 }
 
-func serviceAccountNeedsUpdate(desired, existing *corev1.ServiceAccount) bool {
-	return !equality.Semantic.DeepEqual(desired.AutomountServiceAccountToken, existing.AutomountServiceAccountToken)
+// serviceAccountNeedsUpdate checks if the service account needs to be updated
+// returns (needsUpdate, reason) where reason describes what changed
+func serviceAccountNeedsUpdate(desired, existing *corev1.ServiceAccount) (bool, string) {
+	if !equality.Semantic.DeepEqual(desired.AutomountServiceAccountToken, existing.AutomountServiceAccountToken) {
+		return true, fmt.Sprintf("automountServiceAccountToken changed: %v -> %v",
+			existing.AutomountServiceAccountToken, desired.AutomountServiceAccountToken)
+	}
+	return false, ""
 }
 
-func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) bool {
+// deploymentNeedsUpdate checks if the deployment needs to be updated
+// returns (needsUpdate, reason) where reason describes what changed
+func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) {
 	if len(desired.Spec.Template.Spec.Containers) == 0 || len(existing.Spec.Template.Spec.Containers) == 0 {
-		return false
+		return false, ""
 	}
 	desiredContainer := desired.Spec.Template.Spec.Containers[0]
 	existingContainer := existing.Spec.Template.Spec.Containers[0]
 
 	if desiredContainer.Image != existingContainer.Image {
-		return true
+		return true, fmt.Sprintf("image changed: %q -> %q", existingContainer.Image, desiredContainer.Image)
 	}
 	// filter out flags that can be changed directly on the deployment
 	desiredCmd := filterIgnoredFlags(desiredContainer.Command)
 	existingCmd := filterIgnoredFlags(existingContainer.Command)
 	if !equality.Semantic.DeepEqual(desiredCmd, existingCmd) {
-		return true
+		return true, fmt.Sprintf("command changed: %v -> %v", existingCmd, desiredCmd)
 	}
 	if !equality.Semantic.DeepEqual(desiredContainer.Ports, existingContainer.Ports) {
-		return true
+		return true, fmt.Sprintf("ports changed: %+v -> %+v", existingContainer.Ports, desiredContainer.Ports)
 	}
 	if !equality.Semantic.DeepEqual(desiredContainer.VolumeMounts, existingContainer.VolumeMounts) {
-		return true
+		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingContainer.VolumeMounts, desiredContainer.VolumeMounts)
 	}
 	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
-		return true
+		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existing.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes)
 	}
-	return false
+	return false, ""
 }
 
 func filterIgnoredFlags(command []string) []string {
