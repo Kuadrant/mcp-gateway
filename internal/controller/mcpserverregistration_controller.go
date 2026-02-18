@@ -33,7 +33,7 @@ import (
 const (
 
 	// CredentialSecretLabel is the required label for credential secrets
-	CredentialSecretLabel = "mcp.kagenti.com/credential" //nolint:gosec // not a credential, just a label name
+	CredentialSecretLabel = "mcp.kuadrant.io/credential" //nolint:gosec // not a credential, just a label name
 	// CredentialSecretValue is the required value for credential secrets
 	CredentialSecretValue = "true"
 	// HTTPRouteIndex used to find MCPServerRegistrations

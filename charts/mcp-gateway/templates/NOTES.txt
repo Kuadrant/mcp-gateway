@@ -25,7 +25,7 @@
       name: "my-server-route"
   EOF
 
-6. Access your MCP Gateway at: http://{{ .Values.gateway.publicHost }}:{{ .Values.gateway.port }}/mcp
+6. Access your MCP Gateway at: http://{{ .Values.gateway.publicHost }}/mcp
    (Adjust hostname/port based on your Gateway configuration)
 
 7. View logs for troubleshooting:

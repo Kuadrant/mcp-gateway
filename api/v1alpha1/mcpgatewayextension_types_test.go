@@ -140,3 +140,70 @@ func TestMCPGatewayExtension_PollInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPGatewayExtension_ListenerPort(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        uint32
+	}{
+		{
+			name:        "nil annotations returns default port",
+			annotations: nil,
+			want:        DefaultListenerPort,
+		},
+		{
+			name:        "empty annotations returns default port",
+			annotations: map[string]string{},
+			want:        DefaultListenerPort,
+		},
+		{
+			name: "annotation not present returns default port",
+			annotations: map[string]string{
+				"other-annotation": "value",
+			},
+			want: DefaultListenerPort,
+		},
+		{
+			name: "annotation present returns parsed value",
+			annotations: map[string]string{
+				AnnotationListenerPort: "8443",
+			},
+			want: 8443,
+		},
+		{
+			name: "empty annotation value returns default port",
+			annotations: map[string]string{
+				AnnotationListenerPort: "",
+			},
+			want: DefaultListenerPort,
+		},
+		{
+			name: "invalid annotation value returns default port",
+			annotations: map[string]string{
+				AnnotationListenerPort: "not-a-number",
+			},
+			want: DefaultListenerPort,
+		},
+		{
+			name: "negative number returns default port",
+			annotations: map[string]string{
+				AnnotationListenerPort: "-1",
+			},
+			want: DefaultListenerPort,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tt.annotations,
+				},
+			}
+			if got := m.ListenerPort(); got != tt.want {
+				t.Errorf("ListenerPort() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -456,7 +456,7 @@ func BuildCredentialSecret(name, token string) *corev1.Secret {
 			Name:      name,
 			Namespace: TestServerNameSpace,
 			Labels: map[string]string{
-				"mcp.kagenti.com/credential": "true",
+				"mcp.kuadrant.io/credential": "true",
 				"e2e":                        "test",
 			},
 		},

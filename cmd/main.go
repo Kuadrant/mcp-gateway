@@ -86,7 +86,7 @@ func main() {
 		// 	ByObject: map[client.Object]cache.ByObject{
 		// 		&v1.Secret{}: {
 		// 			Label: labels.SelectorFromSet(labels.Set{
-		// 				"mcp.kagenti.com/credential": "true",
+		// 				"mcp.kuadrant.io/credential": "true",
 		// 			}),
 		// 		},
 		// 	},

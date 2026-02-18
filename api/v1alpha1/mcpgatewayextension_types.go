@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"strconv"
+
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -17,10 +19,15 @@ const (
 	// ConditionReasonDeploymentNotReady is the reason when the broker-router deployment is not ready
 	ConditionReasonDeploymentNotReady = "DeploymentNotReady"
 
-	// AnnotationPublicHost overrides the public host for the MCP Gateway broker-router
+	// AnnotationPublicHost overrides the public host for the MCP Gateway broker-router. Note this a temporary annotation and you should expect it to be removed in a future release
 	AnnotationPublicHost = "kuadrant.io/alpha-gateway-public-host"
-	// AnnotationPollInterval overrides how often the broker pings upstream MCP servers
+	// AnnotationPollInterval overrides how often the broker pings upstream MCP servers. Note this a temporary annotation and you should expect it to be removed in a future release
 	AnnotationPollInterval = "kuadrant.io/alpha-gateway-poll-interval"
+	// AnnotationListenerPort specifies the Gateway listener port for the EnvoyFilter to target. Note this a temporary annotation and you should expect it to be removed in a future release
+	AnnotationListenerPort = "kuadrant.io/alpha-gateway-listener-port"
+
+	// DefaultListenerPort is the default port used when no annotation is specified
+	DefaultListenerPort = 8080
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -150,4 +157,20 @@ func (m *MCPGatewayExtension) PollInterval() string {
 		return ""
 	}
 	return m.Annotations[AnnotationPollInterval]
+}
+
+// ListenerPort returns the Gateway listener port from annotations, or DefaultListenerPort if not set or invalid
+func (m *MCPGatewayExtension) ListenerPort() uint32 {
+	if m.Annotations == nil {
+		return DefaultListenerPort
+	}
+	portStr, ok := m.Annotations[AnnotationListenerPort]
+	if !ok || portStr == "" {
+		return DefaultListenerPort
+	}
+	port, err := strconv.ParseUint(portStr, 10, 32)
+	if err != nil {
+		return DefaultListenerPort
+	}
+	return uint32(port)
 }

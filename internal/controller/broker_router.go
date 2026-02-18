@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -79,6 +80,8 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName:           brokerRouterName,
+					AutomountServiceAccountToken: ptr.To(false),
 					Containers: []corev1.Container{
 						{
 							Name:            brokerRouterName,
@@ -124,6 +127,20 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	}
 }
 
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterServiceAccount(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.ServiceAccount {
+	labels := brokerRouterLabels()
+	automount := false
+
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brokerRouterName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		AutomountServiceAccountToken: &automount,
+	}
+}
+
 func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.Service {
 	labels := brokerRouterLabels()
 
@@ -160,6 +177,31 @@ func routerKey(mcpExt *mcpv1alpha1.MCPGatewayExtension) string {
 }
 
 func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+	// reconcile service account (must exist before deployment)
+	serviceAccount := r.buildBrokerRouterServiceAccount(mcpExt)
+	if err := controllerutil.SetControllerReference(mcpExt, serviceAccount, r.Scheme); err != nil {
+		return false, fmt.Errorf("failed to set controller reference on service account: %w", err)
+	}
+
+	existingServiceAccount := &corev1.ServiceAccount{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(serviceAccount), existingServiceAccount)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			r.log.Info("creating broker-router service account", "namespace", mcpExt.Namespace)
+			if err := r.Create(ctx, serviceAccount); err != nil {
+				return false, fmt.Errorf("failed to create service account: %w", err)
+			}
+		} else {
+			return false, fmt.Errorf("failed to get service account: %w", err)
+		}
+	} else if serviceAccountNeedsUpdate(serviceAccount, existingServiceAccount) {
+		r.log.Info("updating broker-router service account", "namespace", mcpExt.Namespace)
+		existingServiceAccount.AutomountServiceAccountToken = serviceAccount.AutomountServiceAccountToken
+		if err := r.Update(ctx, existingServiceAccount); err != nil {
+			return false, fmt.Errorf("failed to update service account: %w", err)
+		}
+	}
+
 	// reconcile deployment
 	deployment := r.buildBrokerRouterDeployment(mcpExt)
 	if err := controllerutil.SetControllerReference(mcpExt, deployment, r.Scheme); err != nil {
@@ -167,7 +209,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	existingDeployment := &appsv1.Deployment{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment)
+	err = r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router deployment", "namespace", mcpExt.Namespace)
@@ -186,6 +228,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
+		return false, nil // deployment updated, requeue to get fresh status
 	}
 
 	// reconcile service
@@ -226,6 +269,13 @@ func serviceNeedsUpdate(desired, existing *corev1.Service) bool {
 		return true
 	}
 	if !equality.Semantic.DeepEqual(desired.Spec.Selector, existing.Spec.Selector) {
+		return true
+	}
+	return false
+}
+
+func serviceAccountNeedsUpdate(desired, existing *corev1.ServiceAccount) bool {
+	if !equality.Semantic.DeepEqual(desired.AutomountServiceAccountToken, existing.AutomountServiceAccountToken) {
 		return true
 	}
 	return false
@@ -275,3 +325,4 @@ func filterIgnoredFlags(command []string) []string {
 	}
 	return filtered
 }
+

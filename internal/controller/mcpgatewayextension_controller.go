@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	mcpGatewayFinalizer = "mcp.kagenti.com/finalizer"
+	mcpGatewayFinalizer = "mcp.kuadrant.io/finalizer"
 	// gatewayIndexKey is the index used to improve look up of mcpgatewayextensions related to a gateway
 	gatewayIndexKey  = "spec.targetRef.gateway"
 	refGrantIndexKey = "spec.from.ref"
@@ -44,8 +44,8 @@ const (
 	labelManagedByValue = "mcp-gateway-controller"
 
 	// envoy filter labels
-	labelExtensionName      = "mcp.kagenti.com/extension-name"
-	labelExtensionNamespace = "mcp.kagenti.com/extension-namespace"
+	labelExtensionName      = "mcp.kuadrant.io/extension-name"
+	labelExtensionNamespace = "mcp.kuadrant.io/extension-namespace"
 	// used to ensure a specific control plane reconciles this resource based on the gateway value
 	labelIstioRev = "istio.io/rev"
 )
@@ -175,7 +175,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		}
 		return ctrl.Result{}, err
 	}
-
+	//this must always be done after the validation
 	if err := r.checkGatewayConflict(ctx, mcpExt, targetGateway); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
@@ -209,7 +209,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
-				fmt.Sprintf("invalid: gateway %s/%s not found", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
+				fmt.Sprintf("invalid: gateway target %s/%s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
 		}
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 				return nil, err
 			}
 			return nil, newValidationError(mcpv1alpha1.ConditionReasonRefGrantRequired,
-				fmt.Sprintf("ReferenceGrant required in namespace %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
+				fmt.Sprintf("ReferenceGrant required %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
 		}
 	}
 
@@ -258,9 +258,9 @@ func (r *MCPGatewayExtensionReconciler) checkGatewayConflict(ctx context.Context
 
 func findOldestExtension(exts []mcpv1alpha1.MCPGatewayExtension) *mcpv1alpha1.MCPGatewayExtension {
 	oldest := &exts[0]
-	for i := range exts[1:] {
-		if exts[i+1].CreationTimestamp.Before(&oldest.CreationTimestamp) {
-			oldest = &exts[i+1]
+	for i := 1; i < len(exts); i++ {
+		if exts[i].CreationTimestamp.Before(&oldest.CreationTimestamp) {
+			oldest = &exts[i]
 		}
 	}
 	return oldest
@@ -295,7 +295,7 @@ func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, targe
 }
 
 func mcpExtToRefGrantIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
-	return fmt.Sprintf("mcp.kagenti.com/MCPGatewayExtension/%s", mext.Namespace)
+	return fmt.Sprintf("mcp.kuadrant.io/MCPGatewayExtension/%s", mext.Namespace)
 }
 
 func mcpExtToGatewayIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
@@ -432,8 +432,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 		return nil, fmt.Errorf("failed to create ext_proc config struct: %w", err)
 	}
 
-	// name the EnvoyFilter based on the MCPGatewayExtension to support multiple gateways
-	envoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", mcpExt.Namespace)
+	envoyFilterName, _ := envoyFilterNameAndNamespace(mcpExt)
 
 	return &istionetv1alpha3.EnvoyFilter{
 		ObjectMeta: metav1.ObjectMeta{
@@ -454,8 +453,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 						Context: istiov1alpha3.EnvoyFilter_GATEWAY,
 						ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
 							Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
-								// TODO the port number cannot be hard coded
-								PortNumber: 8080,
+								PortNumber: mcpExt.ListenerPort(),
 								FilterChain: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterChainMatch{
 									Filter: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterMatch{
 										Name: "envoy.filters.network.http_connection_manager",
@@ -536,22 +534,29 @@ func managedLabelsMatch(existing, desired map[string]string) bool {
 }
 
 func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
-	envoyFilterList := &istionetv1alpha3.EnvoyFilterList{}
-	if err := r.List(ctx, envoyFilterList, client.MatchingLabels{
-		labelManagedBy:          labelManagedByValue,
-		labelExtensionName:      mcpExt.Name,
-		labelExtensionNamespace: mcpExt.Namespace,
-	}); err != nil {
-		return fmt.Errorf("failed to list envoy filters for cleanup: %w", err)
+	name, namespace := envoyFilterNameAndNamespace(mcpExt)
+	envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+	if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, envoyFilter); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get envoy filter for cleanup: %w", err)
 	}
 
-	for _, ef := range envoyFilterList.Items {
-		r.log.Info("deleting envoy filter", "namespace", ef.Namespace, "name", ef.Name)
-		if err := r.Delete(ctx, ef); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete envoy filter %s/%s: %w", ef.Namespace, ef.Name, err)
-		}
+	r.log.Info("deleting envoy filter", "namespace", namespace, "name", name)
+	if err := r.Delete(ctx, envoyFilter); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete envoy filter %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+func envoyFilterNameAndNamespace(mcpExt *mcpv1alpha1.MCPGatewayExtension) (name, namespace string) {
+	name = fmt.Sprintf("mcp-ext-proc-%s-gateway", mcpExt.Namespace)
+	namespace = mcpExt.Spec.TargetRef.Namespace
+	if namespace == "" {
+		namespace = mcpExt.Namespace
+	}
+	return name, namespace
 }
 
 func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ context.Context, obj client.Object) []reconcile.Request {
@@ -593,6 +598,7 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		For(&mcpv1alpha1.MCPGatewayExtension{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ServiceAccount{}).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForGateway)).
 		Watches(&gatewayv1beta1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForReferenceGrant)).
 		Watches(&istionetv1alpha3.EnvoyFilter{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter)).

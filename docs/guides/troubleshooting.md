@@ -293,7 +293,7 @@ kubectl get mcpsr <name> -n <namespace> -o yaml | grep -A 3 credentialRef
 ```
 
 **Solutions**:
-- Ensure secret has label `mcp.kagenti.com/credential: "true"`
+- Ensure secret has label `mcp.kuadrant.io/credential: "true"`
 - Verify secret data key matches `credentialRef.key` in MCPServerRegistration
 - Check credential format (e.g., "Bearer TOKEN" for GitHub)
 - Verify credential has necessary permissions for the external service

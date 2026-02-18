@@ -210,7 +210,7 @@ For external services, create appropriate Istio ServiceEntry and HTTPRoute resou
 
 MCP servers can require authentication:
 1. MCPServerRegistration spec includes `credentialRef` pointing to a Kubernetes secret
-   - **Important**: Secret must have label `mcp.kagenti.com/credential=true`
+   - **Important**: Secret must have label `mcp.kuadrant.io/credential=true`
    - Without this label, the MCPServerRegistration will fail validation
 2. Controller aggregates credentials into `mcp-aggregated-credentials` secret
 3. Broker receives via environment variables: `KAGENTI_{NAME}_CRED`
@@ -224,7 +224,7 @@ metadata:
   name: weather-secret
   namespace: mcp-test
   labels:
-    mcp.kagenti.com/credential: "true"  # required label
+    mcp.kuadrant.io/credential: "true"  # required label
 type: Opaque
 stringData:
   token: "Bearer your-api-token"

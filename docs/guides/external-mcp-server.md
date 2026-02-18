@@ -148,14 +148,14 @@ metadata:
   name: github-token
   namespace: mcp-test
   labels:
-    mcp.kagenti.com/credential: "true"  # required label
+    mcp.kuadrant.io/credential: "true"  # required label
 type: Opaque
 stringData:
   token: "Bearer $GITHUB_PAT"
 EOF
 ```
 
-The `mcp.kagenti.com/credential=true` label is required. Without it the MCPServerRegistration will fail validation.
+The `mcp.kuadrant.io/credential=true` label is required. Without it the MCPServerRegistration will fail validation.
 
 ## Step 5: Create the MCPServerRegistration Resource
 

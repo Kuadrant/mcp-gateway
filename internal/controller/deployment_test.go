@@ -597,3 +597,129 @@ func TestBuildBrokerRouterDeployment_RouterKey(t *testing.T) {
 		t.Errorf("expected different key for different UID, both got %q", keyValue)
 	}
 }
+
+func TestServiceAccountNeedsUpdate(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		desired  *bool
+		existing *bool
+		expected bool
+	}{
+		{
+			name:     "no changes - both false",
+			desired:  &falseVal,
+			existing: &falseVal,
+			expected: false,
+		},
+		{
+			name:     "no changes - both true",
+			desired:  &trueVal,
+			existing: &trueVal,
+			expected: false,
+		},
+		{
+			name:     "no changes - both nil",
+			desired:  nil,
+			existing: nil,
+			expected: false,
+		},
+		{
+			name:     "changed from true to false",
+			desired:  &falseVal,
+			existing: &trueVal,
+			expected: true,
+		},
+		{
+			name:     "changed from false to true",
+			desired:  &trueVal,
+			existing: &falseVal,
+			expected: true,
+		},
+		{
+			name:     "changed from nil to false",
+			desired:  &falseVal,
+			existing: nil,
+			expected: true,
+		},
+		{
+			name:     "changed from false to nil",
+			desired:  nil,
+			existing: &falseVal,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := &corev1.ServiceAccount{
+				AutomountServiceAccountToken: tt.desired,
+			}
+			existing := &corev1.ServiceAccount{
+				AutomountServiceAccountToken: tt.existing,
+			}
+
+			result := serviceAccountNeedsUpdate(desired, existing)
+			if result != tt.expected {
+				t.Errorf("serviceAccountNeedsUpdate() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildBrokerRouterServiceAccount(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+	}
+
+	sa := r.buildBrokerRouterServiceAccount(mcpExt)
+
+	if sa.Name != brokerRouterName {
+		t.Errorf("expected name %q, got %q", brokerRouterName, sa.Name)
+	}
+	if sa.Namespace != mcpExt.Namespace {
+		t.Errorf("expected namespace %q, got %q", mcpExt.Namespace, sa.Namespace)
+	}
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken != false {
+		t.Errorf("expected AutomountServiceAccountToken to be false")
+	}
+	if sa.Labels[labelAppName] != brokerRouterName {
+		t.Errorf("expected label %q=%q, got %q", labelAppName, brokerRouterName, sa.Labels[labelAppName])
+	}
+	if sa.Labels[labelManagedBy] != labelManagedByValue {
+		t.Errorf("expected label %q=%q, got %q", labelManagedBy, labelManagedByValue, sa.Labels[labelManagedBy])
+	}
+}
+
+func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt)
+
+	if deployment.Spec.Template.Spec.ServiceAccountName != brokerRouterName {
+		t.Errorf("expected ServiceAccountName %q, got %q", brokerRouterName, deployment.Spec.Template.Spec.ServiceAccountName)
+	}
+	if deployment.Spec.Template.Spec.AutomountServiceAccountToken == nil || *deployment.Spec.Template.Spec.AutomountServiceAccountToken != false {
+		t.Errorf("expected AutomountServiceAccountToken to be false on deployment pod spec")
+	}
+}

@@ -895,8 +895,8 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					Namespace: gatewayNamespace,
 				}, envoyFilter)).To(Succeed())
 				g.Expect(envoyFilter.Labels[labelManagedBy]).To(Equal(labelManagedByValue))
-				g.Expect(envoyFilter.Labels["mcp.kagenti.com/extension-name"]).To(Equal(resourceName))
-				g.Expect(envoyFilter.Labels["mcp.kagenti.com/extension-namespace"]).To(Equal("default"))
+				g.Expect(envoyFilter.Labels["mcp.kuadrant.io/extension-name"]).To(Equal(resourceName))
+				g.Expect(envoyFilter.Labels["mcp.kuadrant.io/extension-namespace"]).To(Equal("default"))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 
