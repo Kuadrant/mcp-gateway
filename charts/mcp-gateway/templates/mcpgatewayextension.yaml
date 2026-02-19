@@ -6,6 +6,11 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "mcp-gateway.labels" . | nindent 4 }}
+  annotations:
+    kuadrant.io/alpha-gateway-public-host: {{ .Values.gateway.publicHost | quote }}
+    {{- if .Values.broker.pollInterval }}
+    kuadrant.io/alpha-gateway-poll-interval: {{ .Values.broker.pollInterval | quote }}
+    {{- end }}
 spec:
   targetRef:
     group: gateway.networking.k8s.io

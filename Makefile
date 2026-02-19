@@ -17,6 +17,7 @@ ifeq (podman,$(CONTAINER_ENGINE))
 endif
 
 WAIT_TIME ?=120s
+BROKER_ROUTER_NAME ?=mcp-gateway
 
 ## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
@@ -80,9 +81,10 @@ controller-gen: ## Install controller-gen to ./bin/
 		GOBIN=$(shell pwd)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
 	fi
 
-# Generate code (deepcopy, etc.)
+# Generate code (deepcopy, RBAC, etc.)
 generate: controller-gen ## Generate code including deepcopy functions
 	bin/controller-gen object paths="./api/..."
+	bin/controller-gen rbac:roleName=mcp-gateway-role paths="./internal/controller/..." output:dir=config/rbac
 
 # Generate CRDs from Go types
 generate-crds: generate ## Generate CRD manifests from Go types
@@ -132,14 +134,8 @@ install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpvirtualservers.yaml
 	kubectl apply -f config/crd/mcp.kagenti.com_mcpgatewayextensions.yaml
 
-# Deploy mcp-gateway components
-deploy: install-crd deploy-namespaces  deploy-controller deploy-broker ## Deploy broker/router and controller to mcp-system namespace
-
-
-# Deploy only the broker/router
-deploy-broker: install-crd ## Deploy only the broker/router (without controller)
-	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
-	kubectl patch deployment mcp-broker-router -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/poll-interval-patch.yaml
+# Deploy mcp-gateway components (controller deploys broker-router via MCPGatewayExtension)
+deploy: install-crd deploy-controller ## Deploy controller to mcp-system namespace
 
 # Deploy a new gateway httproute and broker instance configured to work with the new gateway
 deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (without controller)
@@ -165,11 +161,16 @@ deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (with
 configure-redis:  ## patch deployment with redis connection
 	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-deployment.yaml
 	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-service.yaml
-	kubectl patch deployment mcp-broker-router -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
+	kubectl patch deployment $(BROKER_ROUTER_NAME) -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
 
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
 	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
+	@echo "Waiting for controller to be ready..."
+	@kubectl wait --for=condition=Available deployment/mcp-controller -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for MCPGatewayExtension to be ready..."
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Controller and broker-router are ready"
 
 define load-image
 	echo "Loading image $(1) into Kind cluster..."
@@ -183,12 +184,11 @@ endef
 
 .PHONY: restart-all
 restart-all:
-	kubectl rollout restart deployment/mcp-broker-router -n mcp-system 2>/dev/null || true
+	kubectl rollout restart deployment/$(BROKER_ROUTER_NAME) -n mcp-system 2>/dev/null || true
 	kubectl rollout restart deployment/mcp-controller -n mcp-system 2>/dev/null || true
 
 .PHONY: build-and-load-image
 build-and-load-image: kind build-image load-image restart-all  ## Build & load router/broker/controller image into the Kind cluster and restart
-	@echo "Building and loading image into Kind cluster..."
 
 .PHONY: load-image
 load-image: kind ## Load the mcp-gateway image into the kind cluster
@@ -214,11 +214,8 @@ deploy-example: install-crd ## Deploy example MCPServerRegistration resource
 	@echo "All test servers ready, deploying MCPServerRegistration resources..."
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-base.yaml
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-extended.yaml
-	@echo "Waiting for controller to process MCPServerRegistration..."
-	@sleep 3
-	@echo "Restarting broker to ensure all connections..."
-	kubectl rollout restart deployment/mcp-broker-router -n mcp-system
-	@kubectl rollout status deployment/mcp-broker-router -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for broker-router to be ready..."
+	@kubectl wait --for=condition=Available deployment/$(BROKER_ROUTER_NAME) -n mcp-system --timeout=$(WAIT_TIME)
 
 # Build test server Docker images
 build-test-servers: ## Build test server Docker images locally
@@ -283,6 +280,17 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 	@echo "Waiting for MCPServerRegistration to be Ready..."
 	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=120s
 
+# Deploy e2e test gateways (two separate gateways for multi-gateway testing)
+.PHONY: deploy-e2e-gateways
+deploy-e2e-gateways: ## Deploy two gateways for e2e multi-gateway tests
+	@echo "Deploying e2e test gateways..."
+	kubectl apply -k config/e2e/
+	@echo "Waiting for e2e-1 to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-1 -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for e2e-2 to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-2 -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "E2E gateways ready: e2e-1 (port 8004), e2e-2 (port 8003)"
+
 # Build and push container image TODO we have this and build-image lets just use one
 docker-build: ## Build container image locally
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway:latest .
@@ -304,15 +312,15 @@ reload-controller: build kind ## Build, load to Kind, and restart controller
 .PHONY: reload-broker
 reload-broker: build docker-build kind ## Build, load to Kind, and restart broker
 	$(call reload-image)
-	@kubectl rollout restart -n mcp-system deployment/mcp-broker-router
-	@kubectl rollout status -n mcp-system deployment/mcp-broker-router --timeout=60s
+	@kubectl rollout restart -n $(MCP_GATEWAY_NAMESPACE) deployment/$(BROKER_ROUTER_NAME)
+	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/$(BROKER_ROUTER_NAME) --timeout=60s
 
 .PHONY: reload
 reload: build docker-build kind ## Build, load to Kind, and restart both controller and broker
 	$(call reload-image)
-	@kubectl rollout restart -n mcp-system deployment/mcp-controller deployment/mcp-broker-router
-	@kubectl rollout status -n mcp-system deployment/mcp-controller --timeout=60s
-	@kubectl rollout status -n mcp-system deployment/mcp-broker-router --timeout=60s
+	@kubectl rollout restart -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-controller deployment/$(BROKER_ROUTER_NAME)
+	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE)deployment/mcp-controller --timeout=60s
+	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/$(BROKER_ROUTER_NAME) --timeout=60s
 
 ##@ E2E Testing
 
@@ -357,7 +365,7 @@ golangci-lint:
 # to add new words to the list.
 .PHONY: spell
 spell:
-	cspell --quiet .
+	cspell --quiet --exclude "config/crd/istio/**" .
 
 .PHONY: lint
 lint: check-gofmt check-goimports check-newlines fmt vet golangci-lint spell ## Run all linting and style checks
@@ -461,35 +469,23 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
-local-env-setup: ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
+local-env-setup: setup-cluster-base ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
 	@echo "========================================="
-	@echo "Starting MCP Gateway Environment Setup"
+	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
-	"$(MAKE)" tools
-	"$(MAKE)" kind-create-cluster
-	"$(MAKE)" build-and-load-image
-	"$(MAKE)" gateway-api-install
-	"$(MAKE)" istio-install
-	"$(MAKE)" metallb-install
-	"$(MAKE)" deploy-namespaces
+	# Deploy single gateway for local demo
 	"$(MAKE)" deploy-gateway
+	# Deploy controller + MCPGatewayExtension
 	"$(MAKE)" deploy
-	"$(MAKE)" add-jwt-key	
+	"${MAKE}" add-jwt-key
+	# Deploy and configure test servers
 	"$(MAKE)" deploy-test-servers
 	"$(MAKE)" deploy-example
+	@echo "Local environment setup complete"
 
 .PHONY: local-bare-setup
-local-bare-setup: ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
-	@echo "========================================="
-	@echo "Starting MCP Gateway Environment Setup"
-	@echo "========================================="
-	"$(MAKE)" tools
-	"$(MAKE)" kind-create-cluster
-	"$(MAKE)" build-and-load-image
-	"$(MAKE)" gateway-api-install
-	"$(MAKE)" istio-install
-	"$(MAKE)" metallb-install
-	"$(MAKE)" deploy-namespaces
+local-bare-setup: setup-cluster-base ## Setup minimal cluster infrastructure (no MCP components)
+	@echo "Bare cluster setup complete (no MCP components deployed)"
 
 .PHONY: local-env-teardown
 local-env-teardown: ## Tear down the local Kind cluster
@@ -499,7 +495,7 @@ local-env-teardown: ## Tear down the local Kind cluster
 .PHONY: add-jwt-key
 add-jwt-key: #add the public key needed to validate any incoming jwt based headers such as x-allowed-tools
 	@for i in 1 2 3 4 5; do \
-		kubectl get deployment/mcp-broker-router -n mcp-system -o yaml | \
+		kubectl get deployment/$(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) -o yaml | \
 		bin/yq '.spec.template.spec.containers[0].env += [{"name":"TRUSTED_HEADER_PUBLIC_KEY","valueFrom":{"secretKeyRef":{"name":"trusted-headers-public-key","key":"key"}}}] | .spec.template.spec.containers[0].env |= unique_by(.name)' | \
 		kubectl apply -f - && break || (echo "Retry $$i/5 failed, waiting 2s..." && sleep 2); \
 	done

@@ -128,7 +128,7 @@ kubectl get mcpsr -A
 kubectl logs -n mcp-system deployment/mcp-gateway-controller
 
 # Check broker logs for tool discovery
-kubectl logs -n mcp-system deployment/mcp-gateway-broker-router | grep "Discovered tools"
+kubectl logs -n mcp-system deployment/mcp-gateway | grep "Discovered tools"
 ```
 
 ### Step 4: Test Tool Discovery

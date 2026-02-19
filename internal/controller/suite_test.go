@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -59,6 +60,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	err = gatewayv1beta1.Install(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = istionetv1alpha3.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
@@ -67,6 +70,7 @@ var _ = BeforeSuite(func() {
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd"),
 			filepath.Join("..", "..", "config", "crd", "gateway-api"),
+			filepath.Join("..", "..", "config", "crd", "istio"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}

@@ -298,7 +298,7 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 }
 
 // initializeMCPSeverSession will create a new session and connection with the backend MCP server
-// This connection is kept open for the life of the gateway session.
+// This connection is kept open for the life of the gateway session to ensure the backend session is not closed/invalidated.
 // TODO when we receive a 404 from a backend MCP Server we should have a way to close the connection at that point also currently when we receive a 404 we remove the session from cache and will open a new connection. They will all be closed once the gateway session expires or the client sends a delete but it is a source of potential leaks
 func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
 	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(mcpReq.serverName)

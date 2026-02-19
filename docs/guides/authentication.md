@@ -84,7 +84,7 @@ kubectl patch gateway mcp-gateway -n gateway-system --type json -p '[
 Configure the MCP Gateway broker to respond with OAuth discovery information:
 
 ```bash
-kubectl set env deployment/mcp-broker-router \
+kubectl set env deployment/mcp-gateway \
   OAUTH_RESOURCE_NAME="MCP Server" \
   OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
   OAUTH_AUTHORIZATION_SERVERS="http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \

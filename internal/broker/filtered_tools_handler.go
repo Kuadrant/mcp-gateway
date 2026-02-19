@@ -25,6 +25,11 @@ const allowedToolsClaimKey = "allowed-tools"
 func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
 	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
+	emptyTools := []mcp.Tool{}
+	if len(mcpRes.Tools) == 0 {
+		mcpRes.Tools = emptyTools
+		return
+	}
 
 	// step 1: apply x-authorized-tools filtering (JWT-based)
 	tools = broker.applyAuthorizedToolsFilter(mcpReq.Header, tools)
@@ -38,7 +43,7 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {
-		tools = []mcp.Tool{}
+		tools = emptyTools
 	}
 	mcpRes.Tools = tools
 }

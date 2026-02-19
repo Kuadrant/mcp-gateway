@@ -1,8 +1,11 @@
 # New Words
+serviceaccounts
 Agentic
 apikey
+Automount
 dotdot
 istionetv
+istiotypev
 istiov
 authorino
 Authorino
@@ -14,6 +17,7 @@ destinationrule
 elicitations
 Elicitations
 envoyfilter
+envoyfilters
 githubcopilot
 hairpinned
 hostnames
@@ -248,6 +252,7 @@ SQAY
 Srbu
 stdr
 stretchr
+structpb
 subosito
 subresource
 testprefix
@@ -345,3 +350,6 @@ noout
 nsunday
 pubout
 sectionName
+appsv
+intstr
+apierrors

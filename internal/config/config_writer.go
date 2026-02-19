@@ -111,7 +111,7 @@ func (srw *SecretReaderWriter) readOrCreateConfigSecret(ctx context.Context, nam
 				Namespace: namespaceName.Namespace,
 				Labels: map[string]string{
 					"app":                        "mcp-gateway",
-					"mcp.kagenti.com/aggregated": "true",
+					"mcp.kuadrant.io/aggregated": "true",
 				},
 			},
 			StringData: map[string]string{
@@ -188,7 +188,7 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 }
 
 // RemoveMCPServer removes a single MCPServer by name from all config secrets cluster-wide.
-// It finds all secrets with the "mcp.kagenti.com/aggregated": "true" label and removes
+// It finds all secrets with the "mcp.kuadrant.io/aggregated": "true" label and removes
 // the server from each. If the server doesn't exist in a secret, that secret is skipped.
 // This uses a read-modify-write pattern with automatic retry on conflict errors.
 func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName string) error {
@@ -196,7 +196,7 @@ func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName s
 	srw.Logger.Info("SecretReaderWriter RemoveMCPServer")
 	secretList := &corev1.SecretList{}
 	if err := srw.Client.List(ctx, secretList, client.MatchingLabels{
-		"mcp.kagenti.com/aggregated": "true",
+		"mcp.kuadrant.io/aggregated": "true",
 	}); err != nil {
 		return fmt.Errorf("remove mcpserver failed to list config secrets: %w", err)
 	}

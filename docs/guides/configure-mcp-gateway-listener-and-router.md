@@ -75,72 +75,40 @@ spec:
               - name: Access-Control-Allow-Credentials
                 value: "true"
       backendRefs:
-        - name: mcp-gateway-broker     # MCP Gateway broker service name
+        - name: mcp-gateway     # MCP Gateway broker service name
           port: 8080
     - matches:
         - path:
             type: PathPrefix
             value: /.well-known/oauth-protected-resource
       backendRefs:
-        - name: mcp-gateway-broker
+        - name: mcp-gateway
           port: 8080
 EOF
 ```
 
 ## Step 3: Verify EnvoyFilter Configuration
 
-Check that the MCP router external processor filter is configured:
+The MCP Gateway controller automatically creates the EnvoyFilter when the MCPGatewayExtension is ready. Check that it exists:
 
 ```bash
-kubectl get envoyfilter mcp-ext-proc -n istio-system
+# EnvoyFilter is created in the Gateway's namespace
+kubectl get envoyfilter -n your-gateway-namespace -l app.kubernetes.io/managed-by=mcp-gateway-controller
 ```
 
-If the EnvoyFilter exists, you can proceed to verification. If not, create it:
+If you see the EnvoyFilter, you can proceed to verification. If the EnvoyFilter is missing:
 
-```bash
-kubectl apply -f - <<EOF
-apiVersion: networking.istio.io/v1alpha3
-kind: EnvoyFilter
-metadata:
-  name: mcp-ext-proc
-  namespace: istio-system
-spec:
-  workloadSelector:
-    labels:
-      istio: ingressgateway
-  configPatches:
-    - applyTo: HTTP_FILTER
-      match:
-        context: GATEWAY
-        listener:
-          portNumber: 8080
-          filterChain:
-            filter:
-              name: envoy.filters.network.http_connection_manager
-              subFilter:
-                name: envoy.filters.http.router
-      patch:
-        operation: INSERT_FIRST
-        value:
-          name: envoy.filters.http.ext_proc
-          typed_config:
-            '@type': type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
-            failure_mode_allow: false
-            mutation_rules:
-              allow_all_routing: true
-            message_timeout: 10s
-            processing_mode:
-              request_header_mode: SEND
-              response_header_mode: SEND
-              request_body_mode: BUFFERED
-              response_body_mode: NONE
-              request_trailer_mode: SKIP
-              response_trailer_mode: SKIP
-            grpc_service:
-              envoy_grpc:
-                cluster_name: outbound|50051||mcp-gateway-broker.mcp-system.svc.cluster.local
-EOF
-```
+1. Check that the MCPGatewayExtension is ready:
+   ```bash
+   kubectl get mcpgatewayextension -n mcp-system
+   ```
+
+2. Check the controller logs for errors:
+   ```bash
+   kubectl logs -n mcp-system deployment/mcp-gateway-controller
+   ```
+
+3. Verify the target Gateway exists and the MCPGatewayExtension has proper permissions (ReferenceGrant if cross-namespace).
 
 ## Step 4: Verify Configuration
 
@@ -163,4 +131,3 @@ You should get a response like this:
 Now that you have MCP Gateway routing configured, you can connect your MCP servers:
 
 - **[Configure MCP Servers](./register-mcp-servers.md)** - Connect internal MCP servers to the gateway
-

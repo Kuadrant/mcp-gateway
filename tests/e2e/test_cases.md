@@ -68,3 +68,9 @@
 
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
 - When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked
+
+### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
+
+- As a platform admin having deployed multiple instances of the MCP Gateway using the MCPGatewayExtension resource, I should see that they become ready once I have created a valid referencegrant. Once the MCPGatewayExtension is valid, there should be a unique deployment of the mcp gateway in the same namespace as the MCPGatewayExtension resources
+
+- As a client, when multiple isolated gateways are ready and available at different hostnames, I should be able to see a unique list of tools for each gateway based on the MCPServerRegistrations created by each team using the MCPGatewayExtension. Example I should see tools prefixed with team_a on one gateway and team_b on the second gateway

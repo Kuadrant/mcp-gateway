@@ -26,12 +26,15 @@ nodes:
         oidc-groups-claim: groups
         oidc-ca-file: /etc/kubernetes/pki/keycloak-ca.crt
   extraPortMappings:
-  - containerPort: 30080 # MCP Gateway port
+  - containerPort: 30080 # mcp-gateway (standard)
     hostPort: 8001
     protocol: TCP
   - containerPort: 30089 # keycloak port
     hostPort: 8002
     protocol: TCP
-  - containerPort: 30471
-    hostPort: 8003 # (second) mcp gateway
+  - containerPort: 30471 # e2e-2 gateway
+    hostPort: 8003
+    protocol: TCP
+  - containerPort: 30472 # e2e-1 gateway
+    hostPort: 8004
     protocol: TCP

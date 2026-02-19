@@ -17,7 +17,7 @@ spec:
       containers:
       - name: mcp-test-server1
         image: ghcr.io/kuadrant/mcp-gateway/test-server1:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         command: ["/mcp-test-server"]
         args: ["--http", "0.0.0.0:9090"]
         ports:

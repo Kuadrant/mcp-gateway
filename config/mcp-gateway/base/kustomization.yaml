@@ -2,10 +2,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# broker-only resources (controller resources are in mcp-system overlay only)
+# base resources - controller deploys broker-router when MCPGatewayExtension is reconciled
 resources:
-  - rbac-broker.yaml
-  - broker-service.yaml
   - mcpgatewayextension.yaml
-  - deployment-broker.yaml
   - httproute.yaml

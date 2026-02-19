@@ -11,14 +11,13 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -27,17 +26,17 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	"github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 )
 
 var (
-	k8sClient        client.Client
-	testScheme       *runtime.Scheme
-	cfg              *rest.Config
-	ctx              context.Context
-	cancel           context.CancelFunc
-	mcpGatewayClient *NotifyingMCPClient
+	k8sClient            client.Client
+	testScheme           *runtime.Scheme
+	cfg                  *rest.Config
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	defaultMCPGatewayExt *MCPGatewayExtensionSetup
+	gatewayPublicHost    = "mcp.127-0-0-1.sslip.io"
 )
 
 func TestE2E(t *testing.T) {
@@ -100,57 +99,40 @@ var _ = BeforeSuite(func() {
 	err = k8sClient.DeleteAllOf(ctx, &gatewayapiv1.HTTPRoute{}, client.InNamespace(TestServerNameSpace))
 	Expect(err).ToNot(HaveOccurred(), "all existing HTTPRoutes should be removed before the e2e test suite")
 
-	By("cleaning up all existing reference grants")
-	err = k8sClient.DeleteAllOf(ctx, &gatewayv1beta1.ReferenceGrant{}, client.InNamespace(GatewayNamespace))
-	Expect(err).ToNot(HaveOccurred(), "all existing ReferenceGrants should be removed before the e2e test suite")
-	By("cleaning up all existing mcpgatewayextensions")
-	err = k8sClient.DeleteAllOf(ctx, &v1alpha1.MCPGatewayExtension{}, client.InNamespace(SystemNamespace))
-	Expect(err).ToNot(HaveOccurred(), "all existing MCPGatewayExtensions should be removed before the e2e test suite")
-
-	By("ensuring ReferenceGrant exists in gateway-system")
-	refGrant := NewReferenceGrantBuilder(ReferenceGrantName, GatewayNamespace).
-		FromNamespace(SystemNamespace).
+	By("setting up MCPGatewayExtension with ReferenceGrant")
+	defaultMCPGatewayExt = NewMCPGatewayExtensionSetup(k8sClient).
+		WithName(MCPExtensionName).
+		InNamespace(SystemNamespace).
+		TargetingGateway(GatewayName, GatewayNamespace).
+		WithPublicHost(gatewayPublicHost).
+		WithHTTPRoute().
 		Build()
-	existingRefGrant := &gatewayv1beta1.ReferenceGrant{}
-	err = k8sClient.Get(ctx, types.NamespacedName{Name: ReferenceGrantName, Namespace: GatewayNamespace}, existingRefGrant)
-	if err != nil {
-		Expect(client.IgnoreNotFound(err)).ToNot(HaveOccurred())
-		Expect(k8sClient.Create(ctx, refGrant)).To(Succeed())
-		GinkgoWriter.Printf("Created ReferenceGrant %s in %s\n", ReferenceGrantName, GatewayNamespace)
-	} else {
-		GinkgoWriter.Printf("ReferenceGrant %s already exists in %s\n", ReferenceGrantName, GatewayNamespace)
-	}
 
-	By("ensuring MCPGatewayExtension exists in mcp-system")
-	mcpExt := NewMCPGatewayExtensionBuilder(MCPExtensionName, SystemNamespace).
-		WithTarget(GatewayName, GatewayNamespace).
-		Build()
-	existingMCPExt := &mcpv1alpha1.MCPGatewayExtension{}
-	err = k8sClient.Get(ctx, types.NamespacedName{Name: MCPExtensionName, Namespace: SystemNamespace}, existingMCPExt)
-	if err != nil {
-		Expect(client.IgnoreNotFound(err)).ToNot(HaveOccurred())
-		Expect(k8sClient.Create(ctx, mcpExt)).To(Succeed())
-		GinkgoWriter.Printf("Created MCPGatewayExtension %s in %s\n", MCPExtensionName, SystemNamespace)
-	} else {
-		GinkgoWriter.Printf("MCPGatewayExtension %s already exists in %s\n", MCPExtensionName, SystemNamespace)
-	}
-	By("Verifying MCPGatewayExtension becomes ready")
+	defaultMCPGatewayExt.
+		Clean(ctx).
+		Register(ctx)
+
+	By("waiting for MCPGatewayExtension to become ready")
 	Eventually(func(g Gomega) {
-		err := VerifyMCPGatewayExtensionReady(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace)
+		err := VerifyMCPGatewayExtensionReady(ctx, k8sClient, MCPExtensionName, SystemNamespace)
 		g.Expect(err).NotTo(HaveOccurred())
-	}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-	By("setting up an mcp client for the gateway")
-	mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {})
-	Expect(err).Error().NotTo(HaveOccurred())
+	By("waiting for broker/router deployment to be ready")
+	Eventually(func(g Gomega) {
+		deployment := &appsv1.Deployment{}
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway", Namespace: SystemNamespace}, deployment)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">=", 1))
+	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 })
 
 var _ = AfterSuite(func() {
 	By("Tearing down the test environment")
-	if mcpGatewayClient != nil {
-		GinkgoWriter.Println("closing client")
-		mcpGatewayClient.Close()
+
+	if defaultMCPGatewayExt != nil {
+		defaultMCPGatewayExt.TearDown(ctx)
 	}
 
 	if cancel != nil {

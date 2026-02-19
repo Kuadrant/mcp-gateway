@@ -28,12 +28,12 @@ spec:
               - name: Access-Control-Allow-Credentials
                 value: 'true'
       backendRefs:
-        - name: mcp-broker
+        - name: mcp-gateway
           port: 8080
     - matches:
         - path:
             type: PathPrefix
             value: /.well-known/oauth-protected-resource
       backendRefs:
-        - name: mcp-broker
+        - name: mcp-gateway
           port: 8080

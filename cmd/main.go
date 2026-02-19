@@ -24,6 +24,9 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+
+	goenv "github.com/caitlinelfring/go-env-default"
+	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -41,6 +44,7 @@ func init() {
 	runtime.Must(v1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
 	runtime.Must(gatewayv1beta1.Install(scheme.Scheme))
+	runtime.Must(istionetv1alpha3.AddToScheme(scheme.Scheme))
 }
 
 func main() {
@@ -82,7 +86,7 @@ func main() {
 		// 	ByObject: map[client.Object]cache.ByObject{
 		// 		&v1.Secret{}: {
 		// 			Label: labels.SelectorFromSet(labels.Set{
-		// 				"mcp.kagenti.com/credential": "true",
+		// 				"mcp.kuadrant.io/credential": "true",
 		// 			}),
 		// 		},
 		// 	},
@@ -101,6 +105,7 @@ func main() {
 	mcpExtFinderValidator := &controller.MCPGatewayExtensionValidator{
 		Client:          mgr.GetClient(),
 		DirectAPIReader: mgr.GetAPIReader(),
+		Logger:          slogger,
 	}
 
 	if err = (&controller.MCPReconciler{
@@ -113,12 +118,17 @@ func main() {
 		panic("unable to start manager : " + err.Error())
 	}
 
+	brokerRouterImage := goenv.GetDefault("RELATED_IMAGE_ROUTER_BROKER", controller.DefaultBrokerRouterImage)
+	brokerPollInterval := os.Getenv("BROKER_POLL_INTERVAL")
+
 	if err = (&controller.MCPGatewayExtensionReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		DirectAPIReader:       mgr.GetAPIReader(),
 		ConfigWriterDeleter:   &configReaderWriter,
 		MCPExtFinderValidator: mcpExtFinderValidator,
+		BrokerRouterImage:     brokerRouterImage,
+		BrokerPollInterval:    brokerPollInterval,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}

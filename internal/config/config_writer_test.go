@@ -166,7 +166,7 @@ func TestEnsureConfigExists_CreatesSecretIfNotExists(t *testing.T) {
 	}
 
 	// verify it has the correct labels
-	if secret.Labels["mcp.kagenti.com/aggregated"] != "true" {
+	if secret.Labels["mcp.kuadrant.io/aggregated"] != "true" {
 		t.Fatal("secret missing aggregated label")
 	}
 }
