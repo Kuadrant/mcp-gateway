@@ -477,6 +477,7 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-gateway
 	# Deploy controller + MCPGatewayExtension
 	"$(MAKE)" deploy
+	"${MAKE}" add-jwt-key
 	# Deploy and configure test servers
 	"$(MAKE)" deploy-test-servers
 	"$(MAKE)" deploy-example
