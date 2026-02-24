@@ -28,8 +28,10 @@ Perfect for evaluation, demos, and getting started quickly.
 Run the automated setup script:
 
 ```bash
+# change this to the release you want to use if looking to not use the main branch
+export MCP_GATEWAY_BRANCH=main 
 # Download and run the setup script
-curl -sSL https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/charts/sample_local_helm_setup.sh | bash
+curl -sSL https://raw.githubusercontent.com/Kuadrant/mcp-gateway/refs/heads/${MCP_GATEWAY_BRANCH}/charts/sample_local_helm_setup.sh | bash
 ```
 
 **Or clone the repository and run locally:**
