@@ -89,7 +89,7 @@ else
         --set gateway.publicHost=mcp.127-0-0-1.sslip.io \
         --set gateway.nodePort.create=true \
         --set gateway.nodePort.mcpPort=30080 \
-        --set envoyFilter.name=mcp-gateway \        
+        --set envoyFilter.name=mcp-gateway \
         --set httpRoute.create=true \
         --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
         --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
