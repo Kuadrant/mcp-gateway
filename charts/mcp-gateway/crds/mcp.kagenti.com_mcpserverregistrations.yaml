@@ -137,7 +137,7 @@ spec:
                 type: string
                 x-kubernetes-validations:
                 - message: toolPrefix is immutable once set
-                  rule: self == oldSelf || oldSelf == ''
+                  rule: self == oldSelf
             required:
             - targetRef
             type: object

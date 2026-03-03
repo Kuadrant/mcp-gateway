@@ -1,0 +1,9 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: mcp-gateway
+spec:
+  source: mcp-gateway-catalog
+  sourceNamespace: mcp-system
+  name: mcp-gateway
+  channel: preview

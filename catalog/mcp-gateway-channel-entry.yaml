@@ -1,0 +1,6 @@
+---
+schema: olm.channel
+package: mcp-gateway
+name: preview
+entries:
+  - name: mcp-gateway.v0.0.0

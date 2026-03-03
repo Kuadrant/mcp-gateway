@@ -31,7 +31,7 @@ echo "Setting release version to: $VERSION"
 # Update config/openshift/deploy_openshift.sh
 OPENSHIFT_SCRIPT="$REPO_ROOT/config/openshift/deploy_openshift.sh"
 if [ -f "$OPENSHIFT_SCRIPT" ]; then
-    sed -i.bak -E "s/MCP_GATEWAY_HELM_VERSION=\"\\\$\{MCP_GATEWAY_HELM_VERSION:-[^}]+\}\"/MCP_GATEWAY_HELM_VERSION=\"\${MCP_GATEWAY_HELM_VERSION:-$VERSION}\"/" "$OPENSHIFT_SCRIPT"
+    sed -i.bak -E "s/MCP_GATEWAY_VERSION=\"\\\$\{MCP_GATEWAY_VERSION:-[^}]+\}\"/MCP_GATEWAY_VERSION=\"\${MCP_GATEWAY_VERSION:-$VERSION}\"/" "$OPENSHIFT_SCRIPT"
     rm -f "$OPENSHIFT_SCRIPT.bak"
     echo "Updated: $OPENSHIFT_SCRIPT"
 else
@@ -60,11 +60,34 @@ else
     echo "Warning: $QUICK_START not found"
 fi
 
+# Update OLM base CSV containerImage annotation
+CSV_BASE="$REPO_ROOT/config/manifests/bases/mcp-gateway.clusterserviceversion.yaml"
+if [ -f "$CSV_BASE" ]; then
+    sed -i.bak -E "s|containerImage: ghcr.io/kuadrant/mcp-controller:.+|containerImage: ghcr.io/kuadrant/mcp-controller:v$VERSION|" "$CSV_BASE"
+    rm -f "$CSV_BASE.bak"
+    echo "Updated: $CSV_BASE"
+else
+    echo "Warning: $CSV_BASE not found"
+fi
+
+# Update OLM CatalogSource image tag
+CATALOG_SOURCE="$REPO_ROOT/config/deploy/olm/catalogsource.yaml"
+if [ -f "$CATALOG_SOURCE" ]; then
+    sed -i.bak "s|image: ghcr.io/kuadrant/mcp-controller-catalog:.*|image: ghcr.io/kuadrant/mcp-controller-catalog:v$VERSION|" "$CATALOG_SOURCE"
+    rm -f "$CATALOG_SOURCE.bak"
+    echo "Updated: $CATALOG_SOURCE"
+else
+    echo "Warning: $CATALOG_SOURCE not found"
+fi
+
 echo "Done. Version set to $VERSION"
 echo ""
 echo "Files updated:"
 echo "  - config/openshift/deploy_openshift.sh"
 echo "  - charts/sample_local_helm_setup.sh"
 echo "  - docs/guides/quick-start.md"
+echo "  - config/manifests/bases/mcp-gateway.clusterserviceversion.yaml"
+echo "  - config/deploy/olm/catalogsource.yaml"
 echo ""
+echo "After updating, regenerate the bundle with: make bundle VERSION=$VERSION"
 echo "Review changes with: git diff"

@@ -1,4 +1,15 @@
 # New Words
+apiservicedefinitions
+catalogsource
+clusterserviceversion
+customresourcedefinitions
+installplan
+mediatype
+olm
+operatorframework
+opm
+scorecard
+strenv
 ALPN
 Agentic
 Authorino
@@ -376,4 +387,5 @@ unmarshalling
 upserted
 vhost
 wasmplugin
+yourorg
 ztunnels

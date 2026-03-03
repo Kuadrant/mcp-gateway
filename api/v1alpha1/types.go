@@ -38,7 +38,7 @@ type MCPServerRegistrationSpec struct {
 	// This helps avoid naming conflicts when aggregating tools from multiple sources.
 	// For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf || oldSelf == ''",message="toolPrefix is immutable once set"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="toolPrefix is immutable once set"
 	ToolPrefix string `json:"toolPrefix,omitempty"`
 
 	// Path specifies the URL path where the MCP server endpoint is exposed.
