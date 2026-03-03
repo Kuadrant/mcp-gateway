@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -242,7 +243,7 @@ func (v *Verifier) HTTPRouteHasOwnerReference(name, namespace, ownerName string)
 func (v *Verifier) HTTPRouteNotFound(name, namespace string) error {
 	_, err := v.getHTTPRoute(name, namespace)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return err

@@ -62,7 +62,7 @@ This automatically installs:
 When the MCPGatewayExtension becomes ready, the controller automatically creates:
 - **MCP Broker/Router Deployment** - Aggregates tools from upstream MCP servers
 - **MCP Broker/Router Service** - Named `mcp-gateway` in the MCPGatewayExtension namespace
-- **HTTPRoute** - Named `mcp-gateway-route`, routes traffic from the Gateway listener to the broker service on `/mcp`. The hostname is derived from the listener (wildcards like `*.example.com` become `mcp.example.com`). Can be disabled with the `kuadrant.io/alpha-disable-httproute: "true"` annotation on the MCPGatewayExtension if you need a custom HTTPRoute (e.g. with CORS headers or additional path rules)
+- **HTTPRoute** - Named `mcp-gateway-route`, routes traffic from the Gateway listener to the broker service on `/mcp`. The hostname is derived from the listener (wildcards like `*.example.com` become `mcp.example.com`). This functionality can be disabled with the `kuadrant.io/alpha-disable-httproute: "true"` annotation on the MCPGatewayExtension if you need a custom HTTPRoute (e.g. with CORS headers or additional path rules). Note: disabling does not delete a previously created `mcp-gateway-route`; you must remove it manually
 - **EnvoyFilter** - Configures Istio to route requests through the external processor (created in the Gateway's namespace)
 - **ServiceAccount** - For the broker/router pods
 - **Configuration Secret** - `mcp-gateway-config` containing server configuration

@@ -6,7 +6,6 @@ import (
 	"context"
 	"strings"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -701,20 +700,10 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			TargetingGateway(E2E1GatewayName, GatewayNamespace).
 			WithSectionName(E2E1ListenerName).
 			WithPublicHost(E2E1PublicHost).
+			WithDisableHTTPRoute(true).
 			Build()
 		setup.Clean(ctx).Register(ctx)
 		defer setup.TearDown(ctx)
-
-		By("Adding disable-httproute annotation")
-		ext := setup.GetExtension()
-		Eventually(func(g Gomega) {
-			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(ext), ext)).To(Succeed())
-			if ext.Annotations == nil {
-				ext.Annotations = map[string]string{}
-			}
-			ext.Annotations[mcpv1alpha1.AnnotationDisableHTTPRoute] = "true"
-			g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
 		By("Verifying MCPGatewayExtension becomes ready")
 		Eventually(func(g Gomega) {

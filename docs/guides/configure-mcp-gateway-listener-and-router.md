@@ -62,7 +62,12 @@ If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, o
      kuadrant.io/alpha-disable-httproute=true
    ```
 
-2. Create your custom HTTPRoute:
+2. Delete the previously auto-created HTTPRoute if it exists:
+   ```bash
+   kubectl delete httproute mcp-gateway-route -n mcp-system --ignore-not-found
+   ```
+
+3. Create your custom HTTPRoute:
    ```bash
    kubectl apply -f - <<EOF
    apiVersion: gateway.networking.k8s.io/v1

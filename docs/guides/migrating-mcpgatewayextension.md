@@ -103,7 +103,10 @@ spec:
 
 This is useful when your HTTPRoute includes custom configuration such as CORS headers, additional path rules, or OAuth well-known endpoints that the auto-generated route does not include.
 
-> **Important:** Setting `kuadrant.io/alpha-disable-httproute: "true"` will also delete any previously auto-created `mcp-gateway-route` HTTPRoute. Ensure your custom HTTPRoute is in place before setting this annotation.
+> **Important:** Setting `kuadrant.io/alpha-disable-httproute: "true"` prevents the controller from creating or updating the HTTPRoute, but does not delete a previously auto-created `mcp-gateway-route`. You must delete it manually once your custom HTTPRoute is in place:
+> ```bash
+> kubectl delete httproute mcp-gateway-route -n mcp-system
+> ```
 
 ### If you want to use the auto-generated HTTPRoute
 
@@ -131,11 +134,12 @@ helm upgrade mcp-gateway ./charts/mcp-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
-Then annotate the MCPGatewayExtension and create your custom HTTPRoute:
+Then annotate the MCPGatewayExtension, delete the auto-created HTTPRoute, and create your custom one:
 
 ```bash
 kubectl annotate mcpgatewayextension -n mcp-system my-mcp-gateway \
   kuadrant.io/alpha-disable-httproute=true
 
+kubectl delete httproute mcp-gateway-route -n mcp-system --ignore-not-found
 kubectl apply -f my-custom-httproute.yaml
 ```

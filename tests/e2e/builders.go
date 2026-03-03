@@ -486,6 +486,7 @@ type MCPGatewayExtensionSetup struct {
 	extension        *mcpv1alpha1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
 	httpRoute        *gatewayapiv1.HTTPRoute
+	disableHTTPRoute bool
 	createHTTPRoute  bool
 	createdNamespace bool
 	createdRefGrant  bool
@@ -546,6 +547,12 @@ func (s *MCPGatewayExtensionSetup) WithSectionName(sectionName string) *MCPGatew
 	return s
 }
 
+// WithDisableHTTPRoute sets the disable-httproute annotation
+func (s *MCPGatewayExtensionSetup) WithDisableHTTPRoute(disable bool) *MCPGatewayExtensionSetup {
+	s.disableHTTPRoute = disable
+	return s
+}
+
 // WithHTTPRoute creates an HTTPRoute with the public host and /mcp path
 // pointing to the mcp-gateway service in the same namespace as the MCPGatewayExtension
 func (s *MCPGatewayExtensionSetup) WithHTTPRoute() *MCPGatewayExtensionSetup {
@@ -562,6 +569,9 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	}
 	if s.pollInterval != "" {
 		annotations[mcpv1alpha1.AnnotationPollInterval] = s.pollInterval
+	}
+	if s.disableHTTPRoute {
+		annotations[mcpv1alpha1.AnnotationDisableHTTPRoute] = "true"
 	}
 
 	s.extension = &mcpv1alpha1.MCPGatewayExtension{
