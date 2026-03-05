@@ -377,3 +377,5 @@ upserted
 vhost
 wasmplugin
 ztunnels
+mkdocs
+diataxis
