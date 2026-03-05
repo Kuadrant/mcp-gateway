@@ -190,10 +190,14 @@ deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (with
   --set mcpGatewayExtension.gatewayRef.name=$(MCP_GATEWAY_NAME) \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 
+.PHONY: deploy-redis
+deploy-redis: ## deploy redis to mcp-system namespace
+	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-deployment.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-service.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	kubectl rollout status deployment/redis -n $(MCP_GATEWAY_NAMESPACE) --timeout=60s
+
 .PHONY: configure-redis
-configure-redis:  ## patch deployment with redis connection
-	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-deployment.yaml
-	kubectl apply -f config/mcp-gateway/overlays/mcp-system/redis-service.yaml
+configure-redis: deploy-redis ## deploy redis and patch deployment with redis connection
 	kubectl patch deployment $(BROKER_ROUTER_NAME) -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
 
 # Deploy only the controller

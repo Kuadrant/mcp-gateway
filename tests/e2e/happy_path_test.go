@@ -250,8 +250,88 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Full] should deploy redis and scale up the broker and see sessions shared", func() {
-		Skip("not implemented")
+	It("[Full] Redis session cache enables shared sessions across scaled gateway replicas", func() {
+		deploymentName := "mcp-gateway"
+		redisURL := fmt.Sprintf("CACHE_CONNECTION_STRING=redis://redis.%s.svc.cluster.local:6379", SystemNamespace)
+
+		DeferCleanup(func() {
+			By("Cleanup: scaling mcp-gateway back to 1 replica")
+			Expect(ScaleDeployment(SystemNamespace, deploymentName, 1)).To(Succeed())
+
+			By("Cleanup: removing CACHE_CONNECTION_STRING from deployment")
+			Expect(SetDeploymentEnv(SystemNamespace, deploymentName, "CACHE_CONNECTION_STRING-")).To(Succeed())
+
+			By("Cleanup: waiting for rollout")
+			Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 1)).To(Succeed())
+		})
+
+		By("Setting CACHE_CONNECTION_STRING on mcp-gateway deployment")
+		Expect(SetDeploymentEnv(SystemNamespace, deploymentName, redisURL)).To(Succeed())
+
+		By("Waiting for mcp-gateway rollout after redis config")
+		Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 1)).To(Succeed())
+
+		By("Scaling mcp-gateway to 2 replicas")
+		Expect(ScaleDeployment(SystemNamespace, deploymentName, 2)).To(Succeed())
+
+		By("Waiting for both replicas to be ready")
+		Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 2)).To(Succeed())
+
+		By("Registering an MCP server")
+		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Ensuring the gateway has the tools")
+		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.ToolPrefix)
+
+		By("Creating a client and calling headers tool to establish a backend session")
+		mcpClient, err := NewMCPGatewayClient(context.Background(), gatewayURL)
+		Expect(err).NotTo(HaveOccurred())
+
+		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "headers")
+		res, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: toolName},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+
+		backendSessionID := ""
+		for _, cont := range res.Content {
+			textContent, ok := cont.(mcp.TextContent)
+			Expect(ok).To(BeTrue())
+			if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
+				backendSessionID = textContent.Text
+				GinkgoWriter.Println("initial backend session:", backendSessionID)
+			}
+		}
+		Expect(backendSessionID).To(ContainSubstring("Mcp-Session-Id"))
+
+		By("Calling the headers tool multiple times to verify session reuse across instances")
+		for i := 0; i < 5; i++ {
+			res, err = mcpClient.CallTool(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: toolName},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).NotTo(BeNil())
+			for _, cont := range res.Content {
+				textContent, ok := cont.(mcp.TextContent)
+				Expect(ok).To(BeTrue())
+				if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
+					GinkgoWriter.Printf("call %d backend session: %s\n", i+1, textContent.Text)
+					Expect(textContent.Text).To(Equal(backendSessionID),
+						"backend session should be reused across calls (shared via redis)")
+				}
+			}
+		}
+
+		By("Closing the client")
+		Expect(mcpClient.Close()).NotTo(HaveOccurred())
 	})
 
 	It("[Happy] should assign unique mcp-session-ids to concurrent clients and new session on reconnect", func() {

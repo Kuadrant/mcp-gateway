@@ -52,6 +52,10 @@
 
 - When an HTTPRoute uses a Hostname backendRef (`kind: Hostname, group: networking.istio.io`) with a URLRewrite filter, and an MCPServerRegistration references that HTTPRoute, the controller should correctly handle the external endpoint configuration and the MCPServerRegistration should become ready. Tool discovery is not tested as it requires actual HTTPS connectivity to external services.
 
+### [Full] Redis session cache enables shared sessions across scaled gateway replicas
+
+- Redis is already deployed in the mcp-system namespace as part of the CI setup. The test needs to configure the mcp-gateway to use it and scale up. Set `CACHE_CONNECTION_STRING=redis://redis.mcp-system.svc.cluster.local:6379` env var on the mcp-gateway deployment, then wait for rollout, then scale the mcp-gateway deployment to 2 replicas. After registering an MCPServerRegistration and waiting for tools to be available, a client should call the `headers` tool to establish a backend session and capture the backend `Mcp-Session-Id` from the response. Subsequent calls to the same tool (at least 5 times) should return the same backend session ID, proving that sessions are shared via Redis across gateway instances. Clean up after by removing the env var and scaling down to 1 gateway replica and wait for rollout. Do not deploy or delete Redis in the test itself.
+
 ### [Full] Gracefully handle an MCP Server becoming unavailable
 
 - When a backend MCP Server becomes unavailable, the gateway should no longer show its tools in the tools/list response and a notification should be sent to the client within one minute. When the MCP Server becomes available again, the tools/list should be updated to include the tools again. While unavailable any tools/call should result in a 503 response

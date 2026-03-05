@@ -12,6 +12,8 @@ ci-setup: setup-cluster-base ## Setup environment for CI e2e tests
 	"$(MAKE)" deploy-e2e-gateways
 	# Deploy controller only (no MCPGatewayExtension)
 	"$(MAKE)" deploy-controller-only
+	# Deploy Redis for session cache tests
+	"$(MAKE)" deploy-redis
 	# Deploy and wait for test servers
 	"$(MAKE)" deploy-test-servers-ci
 	@echo "CI setup complete (3 gateways: mcp-gateway, e2e-1, e2e-2)"

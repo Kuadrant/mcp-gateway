@@ -30,6 +30,17 @@ func WaitForDeploymentReady(namespace, name string, _ int) error {
 	return nil
 }
 
+// SetDeploymentEnv sets an environment variable on a deployment
+func SetDeploymentEnv(namespace, deploymentName, envVar string) error {
+	cmd := exec.Command("kubectl", "set", "env", fmt.Sprintf("deployment/%s", deploymentName),
+		"-n", namespace, envVar)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to set env on deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return nil
+}
+
 // IsTrustedHeadersEnabled checks if the gateway has trusted headers public key configured
 func IsTrustedHeadersEnabled() bool {
 	cmd := exec.Command("kubectl", "get", "deployment", "-n", SystemNamespace,
