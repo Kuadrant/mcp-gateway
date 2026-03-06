@@ -51,7 +51,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	var (
 		localRequestHeaders *extProcV3.HttpHeaders
 		requestID           string
-		streaming           = false
+		endOfStream         = false
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
 	)
@@ -70,10 +70,17 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		case *extProcV3.ProcessingRequest_RequestHeaders:
 			if r.RequestHeaders == nil {
 				err := fmt.Errorf("no request headers present")
-				recordError(span, err, 400)
+				recordError(span, err, 500)
+				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
+				for _, res := range resp {
+					if sendErr := stream.Send(res); sendErr != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", sendErr))
+					}
+				}
 				return err
 			}
 			localRequestHeaders = r.RequestHeaders
+			endOfStream = r.RequestHeaders.EndOfStream
 
 			ctx = extractTraceContext(ctx, localRequestHeaders.Headers)
 			requestID = getSingleValueHeader(localRequestHeaders.Headers, "x-request-id")
@@ -102,62 +109,74 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			continue
 
 		case *extProcV3.ProcessingRequest_RequestBody:
-			responses := responseBuilder.WithDoNothingResponse(streaming).Build()
-			if localRequestHeaders == nil || localRequestHeaders.Headers == nil {
-				s.Logger.ErrorContext(ctx, "Error no request headers present. Exiting")
-				for _, response := range responses {
-					if err := stream.Send(response); err != nil {
+			// endOfStream was set on request headers, meaning no body was expected.
+			// respond with do-nothing so envoy can continue to the response phase.
+			if endOfStream {
+				s.Logger.DebugContext(ctx, "body phase received but EndOfStream was set on headers, skipping", "request id", requestID)
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
 						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
-						return fmt.Errorf("error sending response")
+						return err
 					}
 				}
-				if localRequestHeaders == nil {
-					s.Logger.DebugContext(ctx, "Body process requested before headers arrived")
-					err := fmt.Errorf("protocol error: no request headers")
-					recordError(span, err, 400)
-					return err
+				continue
+			}
+			if localRequestHeaders == nil || localRequestHeaders.Headers == nil {
+				err := fmt.Errorf("request body received before headers")
+				s.Logger.ErrorContext(ctx, err.Error())
+				recordError(span, err, 500)
+				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
+				for _, res := range resp {
+					if sendErr := stream.Send(res); sendErr != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", sendErr))
+					}
 				}
-				if mcpRequest == nil {
-					s.Logger.DebugContext(ctx, "Body process did not receive body")
-					err := fmt.Errorf("protocol error: no body")
-					recordError(span, err, 400)
-					return err
-				}
+				return err
 			}
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
-			if len(r.RequestBody.Body) > 0 {
-				if err := json.Unmarshal(r.RequestBody.Body, &mcpRequest); err != nil {
-					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error unmarshalling request body: %v", err))
-					recordError(span, err, 400)
-					for _, response := range responses {
-						if err := stream.Send(response); err != nil {
-							s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
-							return err
-						}
+			// It is highly unlikely we would hit this situation as envoy skips this step if no body present. However it doesn't hurt to be defensive here just in case
+			if len(r.RequestBody.Body) == 0 {
+				s.Logger.DebugContext(ctx, "empty request body, skipping", "request id", requestID)
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+						return err
 					}
 				}
-				if _, err := mcpRequest.Validate(); err != nil {
-					s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
-					recordError(span, err, 400)
-					resp := responseBuilder.WithImmediateResponse(400, "invalid mcp request").Build()
-					for _, res := range resp {
-						if err := stream.Send(res); err != nil {
-							s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
-							return err
-						}
+				continue
+			}
+			if err := json.Unmarshal(r.RequestBody.Body, &mcpRequest); err != nil {
+				s.Logger.ErrorContext(ctx, fmt.Sprintf("Error unmarshalling request body: %v", err))
+				recordError(span, err, 400)
+				resp := responseBuilder.WithImmediateResponse(400, "invalid request body").Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+						return err
 					}
-					continue
 				}
+				continue
+			}
+			if _, err := mcpRequest.Validate(); err != nil {
+				s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
+				recordError(span, err, 400)
+				resp := responseBuilder.WithImmediateResponse(400, "invalid mcp request").Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+						return err
+					}
+				}
+				continue
 			}
 			mcpRequest.Headers = localRequestHeaders.Headers
-			mcpRequest.Streaming = streaming
+			mcpRequest.Streaming = false
+			span.SetAttributes(spanAttributes(mcpRequest)...)
 
-			if mcpRequest != nil {
-				span.SetAttributes(spanAttributes(mcpRequest)...)
-			}
-
-			responses = s.RouteMCPRequest(ctx, mcpRequest)
-			for _, response := range responses {
+			routeResponses := s.RouteMCPRequest(ctx, mcpRequest)
+			for _, response := range routeResponses {
 				s.Logger.DebugContext(ctx, fmt.Sprintf("Sending MCP body routing instructions to Envoy: %+v", response))
 				if err := stream.Send(response); err != nil {
 					s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
@@ -170,7 +189,13 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		case *extProcV3.ProcessingRequest_ResponseHeaders:
 			if r.ResponseHeaders == nil || localRequestHeaders == nil {
 				err := fmt.Errorf("no response headers or request headers")
-				recordError(span, err, 400)
+				recordError(span, err, 500)
+				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
+				for _, res := range resp {
+					if sendErr := stream.Send(res); sendErr != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", sendErr))
+					}
+				}
 				return err
 			}
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_ResponseHeaders", "request id:", requestID)
