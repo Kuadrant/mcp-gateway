@@ -3,6 +3,14 @@ name: Gevals Integration Tests
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'internal/**'
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'evals/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/gevals.yaml'
   workflow_dispatch:
     inputs:
       task-filter:

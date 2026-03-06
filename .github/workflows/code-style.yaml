@@ -3,6 +3,14 @@ name: Code Style
 on:
   pull_request:
     branches: [ 'main',  ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'LICENSE'
+      - 'evals/**'
+      - '.coderabbit.yaml'
+      - '.gitignore'
   merge_group:
     types: [checks_requested]
   workflow_dispatch:

@@ -3,6 +3,12 @@ name: Helm Install Test
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'charts/**'
+      - 'config/crd/**'
+      - 'api/**'
+      - 'Dockerfile*'
+      - '.github/workflows/helm-install-test.yaml'
   workflow_dispatch:
 
 concurrency:

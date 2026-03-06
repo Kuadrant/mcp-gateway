@@ -3,8 +3,24 @@ name: E2E Tests
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'LICENSE'
+      - 'charts/**'
+      - 'evals/**'
+      - '.coderabbit.yaml'
+      - '.gitignore'
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'LICENSE'
+      - 'charts/**'
+      - 'evals/**'
   workflow_dispatch:
 
 concurrency:
