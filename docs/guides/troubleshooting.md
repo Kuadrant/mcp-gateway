@@ -489,7 +489,7 @@ kubectl logs -n mcp-system -l app=mcp-gateway | grep -i session
 - Ensure `mcp-session-id` header is included in subsequent requests
 - Verify session hasn't expired (default timeout varies)
 - Check if broker pod restarted (loses in-memory sessions)
-- Consider implementing persistent session storage for production
+- For multi-replica deployments, configure Redis as a shared session store — see **[Scaling the MCP Gateway](./scaling.md)**
 
 ## General Debugging
 
