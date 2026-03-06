@@ -255,27 +255,29 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		redisURL := fmt.Sprintf("CACHE_CONNECTION_STRING=redis://redis.%s.svc.cluster.local:6379", SystemNamespace)
 
 		DeferCleanup(func() {
-			By("Cleanup: scaling mcp-gateway back to 1 replica")
-			Expect(ScaleDeployment(SystemNamespace, deploymentName, 1)).To(Succeed())
-
-			By("Cleanup: removing CACHE_CONNECTION_STRING from deployment")
+			By("Cleanup: removing CACHE_CONNECTION_STRING and scaling back to 1 replica")
 			Expect(SetDeploymentEnv(SystemNamespace, deploymentName, "CACHE_CONNECTION_STRING-")).To(Succeed())
-
-			By("Cleanup: waiting for rollout")
+			Expect(ScaleDeployment(SystemNamespace, deploymentName, 1)).To(Succeed())
 			Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 1)).To(Succeed())
 		})
+
+		gen, err := GetDeploymentGeneration(SystemNamespace, deploymentName)
+		Expect(err).NotTo(HaveOccurred())
 
 		By("Setting CACHE_CONNECTION_STRING on mcp-gateway deployment")
 		Expect(SetDeploymentEnv(SystemNamespace, deploymentName, redisURL)).To(Succeed())
 
 		By("Waiting for mcp-gateway rollout after redis config")
-		Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 1)).To(Succeed())
+		Expect(WaitForDeploymentReplicas(SystemNamespace, deploymentName, 1, gen)).To(Succeed())
+
+		gen, err = GetDeploymentGeneration(SystemNamespace, deploymentName)
+		Expect(err).NotTo(HaveOccurred())
 
 		By("Scaling mcp-gateway to 2 replicas")
 		Expect(ScaleDeployment(SystemNamespace, deploymentName, 2)).To(Succeed())
 
 		By("Waiting for both replicas to be ready")
-		Expect(WaitForDeploymentReady(SystemNamespace, deploymentName, 2)).To(Succeed())
+		Expect(WaitForDeploymentReplicas(SystemNamespace, deploymentName, 2, gen)).To(Succeed())
 
 		By("Registering an MCP server")
 		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).Build()
