@@ -123,7 +123,7 @@ func TestProcess_HappyPath(t *testing.T) {
 				},
 			},
 		},
-		responseHeadersStep("200"),
+		responseHeadersStep(),
 	})
 
 	err := srv.Process(mock)
@@ -154,7 +154,7 @@ func TestProcess_EmptyBody(t *testing.T) {
 				},
 			},
 		},
-		responseHeadersStep("200"),
+		responseHeadersStep(),
 	})
 
 	err := srv.Process(mock)
@@ -179,7 +179,7 @@ func TestProcess_UnmarshalError(t *testing.T) {
 				immediateResponse(400),
 			},
 		},
-		responseHeadersStep("200"),
+		responseHeadersStep(),
 	})
 
 	err := srv.Process(mock)
@@ -273,7 +273,7 @@ func TestProcess_EndOfStream(t *testing.T) {
 				},
 			},
 		},
-		responseHeadersStep("200"),
+		responseHeadersStep(),
 	})
 
 	err := srv.Process(mock)
@@ -318,7 +318,7 @@ func TestProcessSpanEnded(t *testing.T) {
 
 	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
 		requestHeadersStep(),
-		responseHeadersStep("200"),
+		responseHeadersStep(),
 	})
 
 	err := srv.Process(mock)
@@ -389,15 +389,15 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 	}
 }
 
-// responseHeadersStep returns a standard response headers step with the given status
-func responseHeadersStep(status string) mockProcessServerMessageAndErr {
+// responseHeadersStep returns a standard response headers step with 200 status
+func responseHeadersStep() mockProcessServerMessageAndErr {
 	return mockProcessServerMessageAndErr{
 		msg: &extProcV3.ProcessingRequest{
 			Request: &extProcV3.ProcessingRequest_ResponseHeaders{
 				ResponseHeaders: &extProcV3.HttpHeaders{
 					Headers: &corev3.HeaderMap{
 						Headers: []*corev3.HeaderValue{
-							{Key: ":status", Value: status},
+							{Key: ":status", Value: "200"},
 						},
 					},
 				},
