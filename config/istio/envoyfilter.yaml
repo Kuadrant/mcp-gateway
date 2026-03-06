@@ -25,6 +25,7 @@ spec:
           typed_config:
             '@type': 'type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor'
             failure_mode_allow: false
+            allow_mode_override: true
             mutation_rules:
               allow_all_routing: true
             message_timeout: 10s

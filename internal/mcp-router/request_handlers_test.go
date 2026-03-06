@@ -2,6 +2,7 @@ package mcprouter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/client"
@@ -176,7 +178,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.True(t, sessionAdded)
 
 	// Mock InitForClient - should not be called since session exists
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
 		// This should not be called in this test since session exists in cache
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
@@ -530,6 +532,524 @@ func TestRouterError(t *testing.T) {
 		require.Equal(t, "invalid value: 42", err.Error())
 		require.Equal(t, int32(400), err.Code())
 	})
+}
+
+func TestMCPRequest_isElicitationResponse(t *testing.T) {
+	testCases := []struct {
+		name     string
+		req      *MCPRequest
+		expected bool
+	}{
+		{
+			name: "accept action is elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+				Result:  map[string]any{"action": "accept", "content": map[string]any{"name": "value"}},
+			},
+			expected: true,
+		},
+		{
+			name: "decline action is elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-456",
+				Result:  map[string]any{"action": "decline"},
+			},
+			expected: true,
+		},
+		{
+			name: "cancel action is elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-789",
+				Result:  map[string]any{"action": "cancel"},
+			},
+			expected: true,
+		},
+		{
+			name: "method set means not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Result:  map[string]any{"action": "accept"},
+			},
+			expected: false,
+		},
+		{
+			name: "nil result is not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+			},
+			expected: false,
+		},
+		{
+			name: "empty result is not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+				Result:  map[string]any{},
+			},
+			expected: false,
+		},
+		{
+			name: "missing action key is not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+				Result:  map[string]any{"content": map[string]any{"name": "value"}},
+			},
+			expected: false,
+		},
+		{
+			name: "unknown action value is not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+				Result:  map[string]any{"action": "unknown"},
+			},
+			expected: false,
+		},
+		{
+			name: "non-string action is not elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-123",
+				Result:  map[string]any{"action": 42},
+			},
+			expected: false,
+		},
+		{
+			name: "empty method with valid action is elicitation response",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "",
+				ID:      "gw-123",
+				Result:  map[string]any{"action": "accept"},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.req.isElicitationResponse()
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestMCPRequestValid_ElicitationResponse(t *testing.T) {
+	testCases := []struct {
+		name      string
+		req       *MCPRequest
+		expectErr error
+	}{
+		{
+			name: "valid elicitation response with accept",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-uuid-123",
+				Result:  map[string]any{"action": "accept"},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "valid elicitation response with decline",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-uuid-456",
+				Result:  map[string]any{"action": "decline"},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "valid elicitation response with cancel",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-uuid-789",
+				Result:  map[string]any{"action": "cancel"},
+			},
+			expectErr: nil,
+		},
+		{
+			name: "empty method without result is invalid",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-uuid-123",
+			},
+			expectErr: ErrInvalidRequest,
+		},
+		{
+			name: "empty method with unknown action is invalid",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				ID:      "gw-uuid-123",
+				Result:  map[string]any{"action": "unknown"},
+			},
+			expectErr: ErrInvalidRequest,
+		},
+		{
+			name: "elicitation response without ID is invalid",
+			req: &MCPRequest{
+				JSONRPC: "2.0",
+				Result:  map[string]any{"action": "accept"},
+			},
+			expectErr: ErrInvalidRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			valid, err := tc.req.Validate()
+			if tc.expectErr != nil {
+				require.Error(t, err)
+				require.False(t, valid)
+			} else {
+				require.NoError(t, err)
+				require.True(t, valid)
+			}
+		})
+	}
+}
+
+func TestHandleElicitationResponse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	t.Run("routes elicitation response to correct backend", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		serverConfigs := []*config.MCPServer{
+			{
+				Name:       "weather-server",
+				URL:        "http://weather.mcp.local:8080/mcp",
+				ToolPrefix: "weather_",
+				Enabled:    true,
+				Hostname:   "weather.mcp.local",
+			},
+		}
+
+		elicitationMap := idmap.New()
+		gatewayID := elicitationMap.Store(float64(42), "weather-server", "backend-session-abc")
+
+		server := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{
+				Servers: serverConfigs,
+			},
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: elicitationMap,
+			Broker:         newMockBroker(serverConfigs, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      gatewayID,
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept", "content": map[string]any{"name": "test"}},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.NotNil(t, rb.RequestBody.Response)
+
+		// verify authority is set to backend hostname
+		headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		var authoritySet, sessionSet, pathSet bool
+		for _, h := range headers {
+			switch h.Header.Key {
+			case ":authority":
+				require.Equal(t, "weather.mcp.local", string(h.Header.RawValue))
+				authoritySet = true
+			case "mcp-session-id":
+				require.Equal(t, "backend-session-abc", string(h.Header.RawValue))
+				sessionSet = true
+			case ":path":
+				require.Equal(t, "/mcp", string(h.Header.RawValue))
+				pathSet = true
+			}
+		}
+		require.True(t, authoritySet, "authority header should be set")
+		require.True(t, sessionSet, "mcp-session-id header should be set")
+		require.True(t, pathSet, "path header should be set")
+
+		// verify the body has the original backend ID restored
+		body := rb.RequestBody.Response.BodyMutation.GetBody()
+		var restored MCPRequest
+		err = json.Unmarshal(body, &restored)
+		require.NoError(t, err)
+		require.Equal(t, float64(42), restored.ID)
+
+		// verify the gateway ID was consumed from the idmap (Lookup is destructive)
+		_, found := elicitationMap.Lookup(gatewayID)
+		require.False(t, found)
+	})
+
+	t.Run("rejects missing session ID", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		server := &ExtProcServer{
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: idmap.New(),
+			Broker:         newMockBroker(nil, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      "gw-123",
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept"},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.Equal(t, int32(400), int32(ir.ImmediateResponse.Status.Code))
+	})
+
+	t.Run("rejects invalid session", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		server := &ExtProcServer{
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: idmap.New(),
+			Broker:         newMockBroker(nil, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      "gw-123",
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept"},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte("invalid-jwt-token")},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.Equal(t, int32(404), int32(ir.ImmediateResponse.Status.Code))
+	})
+
+	t.Run("rejects unknown gateway ID", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		server := &ExtProcServer{
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: idmap.New(), // empty - no stored mappings
+			Broker:         newMockBroker(nil, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      "nonexistent-gateway-id",
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept"},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.Equal(t, int32(400), int32(ir.ImmediateResponse.Status.Code))
+	})
+
+	t.Run("rejects unknown server name", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		elicitationMap := idmap.New()
+		gatewayID := elicitationMap.Store(float64(1), "nonexistent-server", "session-123")
+
+		server := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{
+				Servers: []*config.MCPServer{}, // no servers configured
+			},
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: elicitationMap,
+			Broker:         newMockBroker(nil, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      gatewayID,
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "decline"},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.Equal(t, int32(500), int32(ir.ImmediateResponse.Status.Code))
+	})
+
+	t.Run("restores string backend ID", func(t *testing.T) {
+		cache, err := session.NewCache(context.Background())
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		serverConfigs := []*config.MCPServer{
+			{
+				Name:     "test-server",
+				URL:      "http://test.mcp.local:8080/mcp",
+				Hostname: "test.mcp.local",
+			},
+		}
+
+		elicitationMap := idmap.New()
+		gatewayID := elicitationMap.Store("original-string-id", "test-server", "backend-session-xyz")
+
+		server := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{
+				Servers: serverConfigs,
+			},
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: elicitationMap,
+			Broker:         newMockBroker(serverConfigs, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      gatewayID,
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "cancel"},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		body := rb.RequestBody.Response.BodyMutation.GetBody()
+		var restored MCPRequest
+		err = json.Unmarshal(body, &restored)
+		require.NoError(t, err)
+		require.Equal(t, "original-string-id", restored.ID)
+	})
+}
+
+func TestHandleElicitationResponse_ViaRouteMCPRequest(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache(context.Background())
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "test-server",
+			URL:      "http://test.mcp.local:8080/mcp",
+			Hostname: "test.mcp.local",
+		},
+	}
+
+	elicitationMap := idmap.New()
+	gatewayID := elicitationMap.Store(float64(99), "test-server", "backend-session-456")
+
+	server := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers: serverConfigs,
+		},
+		JWTManager:     jwtManager,
+		Logger:         logger,
+		SessionCache:   cache,
+		ElicitationMap: elicitationMap,
+		Broker:         newMockBroker(serverConfigs, map[string]string{}),
+	}
+
+	// elicitation response routed via RouteMCPRequest (the main switch)
+	data := &MCPRequest{
+		ID:      gatewayID,
+		JSONRPC: "2.0",
+		Result:  map[string]any{"action": "accept", "content": map[string]any{"value": "yes"}},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			},
+		},
+	}
+
+	resp := server.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	body := rb.RequestBody.Response.BodyMutation.GetBody()
+	var restored MCPRequest
+	err = json.Unmarshal(body, &restored)
+	require.NoError(t, err)
+	require.Equal(t, float64(99), restored.ID)
 }
 
 func TestHandleRequestHeaders(t *testing.T) {

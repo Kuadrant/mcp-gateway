@@ -18,6 +18,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
@@ -325,13 +326,13 @@ func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *sessi
 	grpcSrv := grpc.NewServer()
 	// Create the ExtProcServer instance
 	server := &mcpRouter.ExtProcServer{
-		RoutingConfig: mcpConfig,
-		Logger:        logger.With("component", "router"),
-		JWTManager:    jwtManager,
-		InitForClient: clients.Initialize,
-		SessionCache:  sessionCache,
-		Broker:        broker, // TODO we shouldn't need a handle to broker in the router
-
+		RoutingConfig:  mcpConfig,
+		Logger:         logger.With("component", "router"),
+		JWTManager:     jwtManager,
+		InitForClient:  clients.Initialize,
+		SessionCache:   sessionCache,
+		ElicitationMap: idmap.New(),
+		Broker:         broker, // TODO we shouldn't need a handle to broker in the router
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

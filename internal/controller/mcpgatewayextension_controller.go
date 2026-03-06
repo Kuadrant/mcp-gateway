@@ -704,8 +704,9 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 	extProcConfig, err := structpb.NewStruct(map[string]any{
 		"name": "envoy.filters.http.ext_proc",
 		"typed_config": map[string]any{
-			"@type":              "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
-			"failure_mode_allow": false,
+			"@type":               "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
+			"failure_mode_allow":  false,
+			"allow_mode_override": true,
 			"mutation_rules": map[string]any{
 				"allow_all_routing": true,
 			},

@@ -53,7 +53,7 @@ func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	}
 
 	if mcpReq.ID != nil {
-		attrs = append(attrs, attribute.String("jsonrpc.request.id", fmt.Sprintf("%d", *mcpReq.ID)))
+		attrs = append(attrs, attribute.String("jsonrpc.request.id", fmt.Sprint(mcpReq.ID)))
 	}
 
 	if mcpReq.GetSessionID() != "" {
