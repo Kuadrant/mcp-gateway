@@ -100,3 +100,97 @@ jobs:
             LDFLAGS=${{ steps.build-args.outputs.ldflags }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  build-bundle:
+    name: Build Bundle Image
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase owner
+        id: owner
+        run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=0.0.0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install tools
+        run: make olm-tools
+
+      - name: Generate bundle
+        run: |
+          make bundle \
+            VERSION=${{ steps.version.outputs.version }} \
+            CHANNELS=preview \
+            DEFAULT_CHANNEL=preview \
+            CONTROLLER_IMG=${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/mcp-controller:${{ github.ref_name }} \
+            RELATED_IMAGE_ROUTER_BROKER=${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/mcp-gateway:${{ github.ref_name }}
+
+      - name: Build and push bundle image
+        run: |
+          export BUNDLE_IMG=${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/mcp-controller-bundle:${{ github.ref_name }}
+          make bundle-build BUNDLE_IMG=$BUNDLE_IMG
+          docker push $BUNDLE_IMG
+
+  build-catalog:
+    name: Build Catalog Image
+    needs: build-bundle
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase owner
+        id: owner
+        run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Install tools
+        run: make olm-tools
+
+      - name: Generate and build catalog image
+        run: |
+          export BUNDLE_IMG=${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/mcp-controller-bundle:${{ github.ref_name }}
+          export CATALOG_IMG=${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/mcp-controller-catalog:${{ github.ref_name }}
+          make catalog BUNDLE_IMG=$BUNDLE_IMG
+          make catalog-build CATALOG_IMG=$CATALOG_IMG
+          docker push $CATALOG_IMG

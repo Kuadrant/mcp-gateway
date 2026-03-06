@@ -9,5 +9,6 @@
         }
     ],
     "dictionaries": ["project-words"],
-    "ignorePaths": ["tests/**", "/project-words.txt", "/config/crd/istio/**", "go.mod","realm-import.yaml","docs/plans/**"]
+    "ignorePaths": ["tests/**", "/project-words.txt", "/config/crd/istio/**", "go.mod","realm-import.yaml", "docs/plans/**", "catalog/mcp-gateway-catalog/**"]
+
 }

@@ -1,0 +1,7 @@
+namespace: mcp-system
+
+resources:
+- namespace.yaml
+- operatorgroup.yaml
+- catalogsource.yaml
+- subscription.yaml

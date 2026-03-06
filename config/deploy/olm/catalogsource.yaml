@@ -1,0 +1,11 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: mcp-gateway-catalog
+spec:
+  sourceType: grpc
+  image: ghcr.io/kuadrant/mcp-controller-catalog:latest
+  displayName: MCP Gateway
+  grpcPodConfig:
+    securityContextConfig: restricted
+  publisher: Kuadrant

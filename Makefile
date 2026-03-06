@@ -24,6 +24,29 @@ GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY := $(shell git diff --quiet 2>/dev/null && echo "" || echo "-dirty")
 LDFLAGS := -X main.version=$(VERSION) -X main.gitSHA=$(GIT_SHA) -X main.dirty=$(GIT_DIRTY)
 
+# Image tag and bundle version derivation (matches kuadrant-operator pattern)
+DEFAULT_IMAGE_TAG = latest
+is_semantic_version = $(shell [[ $(1) =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$ ]] && echo "true")
+version_is_semantic := $(call is_semantic_version,$(VERSION))
+ifeq (0.0.0,$(VERSION))
+BUNDLE_VERSION = $(VERSION)
+IMAGE_TAG = latest
+else ifeq ($(version_is_semantic),true)
+BUNDLE_VERSION = $(VERSION)
+IMAGE_TAG = v$(VERSION)
+else
+BUNDLE_VERSION = 0.0.0
+IMAGE_TAG ?= $(DEFAULT_IMAGE_TAG)
+endif
+
+# OLM
+IMAGE_TAG_BASE ?= ghcr.io/kuadrant/mcp-controller
+BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(IMAGE_TAG)
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:$(IMAGE_TAG)
+CHANNELS ?= preview
+DEFAULT_CHANNEL ?= preview
+INSTALL_OLM ?= false
+
 ## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
@@ -503,6 +526,8 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@if [ -f bin/yq ]; then echo "[OK] yq already installed"; else echo "Installing yq..."; "$(MAKE)" -s yq; fi
 	@if [ -f bin/istioctl ]; then echo "[OK] istioctl already installed"; else echo "Installing istioctl..."; "$(MAKE)" -s istioctl; fi
 	@if [ -f bin/controller-gen ]; then echo "[OK] controller-gen already installed"; else echo "Installing controller-gen..."; "$(MAKE)" -s controller-gen; fi
+	@if [ -f bin/operator-sdk ]; then echo "[OK] operator-sdk already installed"; else echo "Installing operator-sdk..."; "$(MAKE)" -s operator-sdk; fi
+	@if [ -f bin/opm ]; then echo "[OK] opm already installed"; else echo "Installing opm..."; "$(MAKE)" -s opm; fi
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
@@ -512,8 +537,17 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	@echo "========================================="
 	# Deploy single gateway for local demo
 	"$(MAKE)" deploy-gateway
-	# Deploy controller + MCPGatewayExtension
+ifeq ($(INSTALL_OLM),true)
+	# Deploy controller via OLM (default)
+	"$(MAKE)" deploy-namespaces
+	kubectl apply -f config/mcp-gateway/overlays/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	"$(MAKE)" deploy-olm
+	kubectl apply -k config/mcp-gateway/base/ -n $(MCP_GATEWAY_NAMESPACE)
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
+else
+	# Deploy controller via kustomize (non-OLM fallback)
 	"$(MAKE)" deploy
+endif
 	"${MAKE}" add-jwt-key
 	# Deploy and configure test servers
 	"$(MAKE)" deploy-test-servers

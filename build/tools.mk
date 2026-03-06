@@ -40,3 +40,26 @@ $(GOLANGCI_LINT):
 
 .PHONY: golangci-lint-bin
 golangci-lint-bin: $(GOLANGCI_LINT) # Download golangci-lint locally if necessary.
+
+OPERATOR_SDK = bin/operator-sdk
+OPERATOR_SDK_VERSION = v1.38.0
+$(OPERATOR_SDK):
+	@mkdir -p bin
+	curl -fsSLo $(OPERATOR_SDK) https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_$(OS)_$(ARCH)
+	chmod +x $(OPERATOR_SDK)
+
+.PHONY: operator-sdk
+operator-sdk: $(OPERATOR_SDK) ## Download operator-sdk locally if necessary.
+
+OPM = bin/opm
+OPM_VERSION = v1.52.0
+$(OPM):
+	@mkdir -p bin
+	curl -fsSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/$(OPM_VERSION)/$(OS)-$(ARCH)-opm
+	chmod +x $(OPM)
+
+.PHONY: opm
+opm: $(OPM) ## Download opm locally if necessary.
+
+.PHONY: olm-tools
+olm-tools: operator-sdk opm kustomize controller-gen yq ## Install all tools needed for OLM bundle/catalog generation

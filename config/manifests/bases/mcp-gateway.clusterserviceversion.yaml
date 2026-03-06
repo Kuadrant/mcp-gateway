@@ -1,0 +1,122 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "mcp.kagenti.com/v1alpha1",
+          "kind": "MCPGatewayExtension",
+          "metadata": {
+            "name": "mcp-gateway-extension",
+            "namespace": "mcp-system"
+          },
+          "spec": {
+            "targetRef": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "Gateway",
+              "name": "mcp-gateway",
+              "namespace": "gateway-system",
+              "sectionName": "mcp"
+            }
+          }
+        },
+        {
+          "apiVersion": "mcp.kagenti.com/v1alpha1",
+          "kind": "MCPServerRegistration",
+          "metadata": {
+            "name": "example-server",
+            "namespace": "mcp-test"
+          },
+          "spec": {
+            "toolPrefix": "example_",
+            "targetRef": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "name": "example-route"
+            }
+          }
+        },
+        {
+          "apiVersion": "mcp.kagenti.com/v1alpha1",
+          "kind": "MCPVirtualServer",
+          "metadata": {
+            "name": "example-vs",
+            "namespace": "default"
+          },
+          "spec": {
+            "description": "example virtual server",
+            "tools": [
+              "server1_tool1",
+              "server2_tool2"
+            ]
+          }
+        }
+      ]
+    capabilities: Basic Install
+    categories: Integration & Delivery
+    containerImage: ghcr.io/kuadrant/mcp-controller:latest
+    description: An Envoy-based gateway for Model Context Protocol (MCP) servers
+    repository: https://github.com/Kuadrant/mcp-gateway
+    support: kuadrant
+  name: mcp-gateway.v0.0.0
+  namespace: placeholder
+spec:
+  customresourcedefinitions:
+    owned:
+      - description: Extends a Gateway API Gateway to handle MCP traffic by deploying a broker-router and configuring Envoy.
+        displayName: MCP Gateway Extension
+        kind: MCPGatewayExtension
+        name: mcpgatewayextensions.mcp.kagenti.com
+        version: v1alpha1
+      - description: Registers an upstream MCP server for tool federation through the gateway.
+        displayName: MCP Server Registration
+        kind: MCPServerRegistration
+        name: mcpserverregistrations.mcp.kagenti.com
+        version: v1alpha1
+      - description: Defines a virtual MCP server that exposes a curated subset of tools from registered servers.
+        displayName: MCP Virtual Server
+        kind: MCPVirtualServer
+        name: mcpvirtualservers.mcp.kagenti.com
+        version: v1alpha1
+  description: |-
+    MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers.
+    It federates tools from multiple upstream MCP servers behind a single gateway endpoint,
+    providing authentication, authorization, and routing through Envoy.
+
+    The controller watches MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer
+    custom resources to dynamically configure the gateway. The broker-router component is
+    deployed automatically when an MCPGatewayExtension is reconciled.
+  displayName: MCP Gateway
+  icon:
+    - base64data: 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
+      mediatype: image/png
+  installModes:
+    - supported: true
+      type: OwnNamespace
+    - supported: true
+      type: SingleNamespace
+    - supported: false
+      type: MultiNamespace
+    - supported: true
+      type: AllNamespaces
+  keywords:
+    - mcp
+    - gateway
+    - model-context-protocol
+    - envoy
+    - kubernetes
+  links:
+    - name: MCP Gateway
+      url: https://github.com/Kuadrant/mcp-gateway
+    - name: Documentation
+      url: https://github.com/Kuadrant/mcp-gateway/tree/main/docs
+  maintainers:
+    - email: mcp-gateway@kuadrant.io
+      name: Kuadrant
+  maturity: preview
+  minKubeVersion: "1.28.0"
+  provider:
+    name: Kuadrant
+    url: https://kuadrant.io
+  version: 0.0.0

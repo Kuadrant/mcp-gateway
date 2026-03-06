@@ -2,7 +2,7 @@
 
 set -e
 
-MCP_GATEWAY_HELM_VERSION="${MCP_GATEWAY_HELM_VERSION:-0.5.0}"
+MCP_GATEWAY_VERSION="${MCP_GATEWAY_VERSION:-0.5.0}"
 MCP_GATEWAY_HOST="${MCP_GATEWAY_HOST:-mcp.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')}"
 MCP_GATEWAY_NAMESPACE="${MCP_GATEWAY_NAMESPACE:-mcp-system}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateway-system}"
@@ -39,25 +39,48 @@ oc apply -k "$SCRIPT_BASE_DIR/kustomize/connectivity-link/instance/base"
 # Create gateway namespace
 kubectl create ns $GATEWAY_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
-# Install MCP Gateway Controller (cluster-wide, no broker)
-echo "Installing MCP Gateway Controller..."
-helm upgrade -i mcp-controller oci://ghcr.io/kuadrant/charts/mcp-gateway \
-  --version $MCP_GATEWAY_HELM_VERSION \
-  --namespace $MCP_GATEWAY_NAMESPACE \
-  --create-namespace \
-  --set controller.enabled=true \
-  --set broker.create=false \
-  --set gateway.create=false \
-  --set mcpGatewayExtension.create=false \
-  --set envoyFilter.create=false
+# Install MCP Gateway Controller via OLM
+echo "Installing MCP Gateway Controller via OLM..."
+kubectl create ns $MCP_GATEWAY_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
-# Install MCP Gateway Instance (broker + gateway + routes)
+kubectl apply -f "$SCRIPT_BASE_DIR/../deploy/olm/catalogsource.yaml" -n openshift-marketplace
+
+echo "Waiting for CatalogSource to be ready..."
+retries=0
+until kubectl get catalogsource mcp-gateway-catalog -n openshift-marketplace -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null | grep -q "READY"; do
+  retries=$((retries + 1))
+  if [ $retries -ge 60 ]; then
+    echo "Timed out waiting for CatalogSource to be ready"
+    exit 1
+  fi
+  sleep 5
+done
+
+kubectl apply -f "$SCRIPT_BASE_DIR/../deploy/olm/operatorgroup.yaml" -n $MCP_GATEWAY_NAMESPACE
+
+# patch subscription sourceNamespace for OpenShift
+sed "s|sourceNamespace: .*|sourceNamespace: openshift-marketplace|" \
+  "$SCRIPT_BASE_DIR/../deploy/olm/subscription.yaml" > /tmp/mcp-subscription.yaml
+kubectl apply -f /tmp/mcp-subscription.yaml -n $MCP_GATEWAY_NAMESPACE
+
+echo "Waiting for controller CSV to succeed..."
+retries=0
+until kubectl get csv -n $MCP_GATEWAY_NAMESPACE -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Succeeded"; do
+  retries=$((retries + 1))
+  if [ $retries -ge 60 ]; then
+    echo "Timed out waiting for controller CSV to succeed"
+    exit 1
+  fi
+  sleep 5
+done
+echo "MCP Gateway Controller installed via OLM"
+
+# Install MCP Gateway Instance (gateway + MCPGatewayExtension)
 echo "Installing MCP Gateway Instance..."
 helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
-  --version $MCP_GATEWAY_HELM_VERSION \
+  --version $MCP_GATEWAY_VERSION \
   --namespace $MCP_GATEWAY_NAMESPACE \
   --set controller.enabled=false \
-  --set broker.create=true \
   --set gateway.create=true \
   --set gateway.name=mcp-gateway \
   --set gateway.namespace=$GATEWAY_NAMESPACE \
@@ -65,9 +88,7 @@ helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
   --set gateway.internalHostPattern="*.mcp.local" \
   --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=mcp-gateway \
-  --set mcpGatewayExtension.gatewayRef.namespace=$GATEWAY_NAMESPACE \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=mcp-gateway
+  --set mcpGatewayExtension.gatewayRef.namespace=$GATEWAY_NAMESPACE
 
 # Create OpenShift Route (still using ingress chart for Route only)
 echo "Creating OpenShift Route..."

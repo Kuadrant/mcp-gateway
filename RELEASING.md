@@ -1,8 +1,9 @@
 # Releasing MCP Gateway
 
-Creating a GitHub release triggers automated workflows that:
+Creating a GitHub release with a `vX.Y.Z` tag triggers automated workflows that:
 1. Build and push container images (`mcp-gateway`, `mcp-controller`) to `ghcr.io/kuadrant/`
-2. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
+2. Build and push OLM bundle and catalog images to `ghcr.io/kuadrant/`
+3. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
 
 ## Release Steps
 
@@ -22,10 +23,19 @@ Run the version update script:
 This updates version references in:
 - `config/openshift/deploy_openshift.sh`
 - `charts/sample_local_helm_setup.sh`
+- `docs/guides/quick-start.md`
+- `config/manifests/bases/mcp-gateway.clusterserviceversion.yaml`
+- `config/deploy/olm/catalogsource.yaml`
+
+Then regenerate the OLM bundle:
+```bash
+make bundle VERSION=X.Y.Z
+```
 
 Commit and push:
 ```bash
-git add config/openshift/deploy_openshift.sh charts/sample_local_helm_setup.sh
+git add config/openshift/deploy_openshift.sh charts/sample_local_helm_setup.sh \
+  docs/guides/quick-start.md config/manifests/bases/ config/deploy/olm/catalogsource.yaml bundle/
 git commit -s -m "Update version to X.Y.Z"
 git push -u origin release-X.Y.Z
 ```
@@ -42,7 +52,7 @@ git push -u origin release-X.Y.Z
 
 ### 3. Verify Workflows Complete
 
-1. [Build Images](https://github.com/Kuadrant/mcp-gateway/actions/workflows/images.yaml) - builds container images with version tag
+1. [Build Images](https://github.com/Kuadrant/mcp-gateway/actions/workflows/images.yaml) - builds container images, OLM bundle and catalog with version tag
 2. [Helm Chart Release](https://github.com/Kuadrant/mcp-gateway/actions/workflows/helm-release.yaml) - pushes chart to OCI registry
 
 ### 4. Verify Published Artifacts
@@ -51,6 +61,8 @@ git push -u origin release-X.Y.Z
 docker pull ghcr.io/kuadrant/mcp-gateway:vX.Y.Z
 docker pull ghcr.io/kuadrant/mcp-controller:vX.Y.Z
 helm show chart oci://ghcr.io/kuadrant/charts/mcp-gateway --version X.Y.Z
+docker pull ghcr.io/kuadrant/mcp-controller-bundle:vX.Y.Z
+docker pull ghcr.io/kuadrant/mcp-controller-catalog:vX.Y.Z
 ```
 
 ## Post-Release: Bump Version on Main
@@ -62,7 +74,9 @@ git checkout main
 git pull
 git checkout -b bump-version-X.Y.Z
 ./scripts/set-release-version.sh X.Y.Z
-git add config/openshift/deploy_openshift.sh charts/sample_local_helm_setup.sh docs/guides/quick-start.md
+make bundle VERSION=X.Y.Z
+git add config/openshift/deploy_openshift.sh charts/sample_local_helm_setup.sh \
+  docs/guides/quick-start.md config/manifests/bases/ config/deploy/olm/catalogsource.yaml bundle/
 git commit -s -m "Update version to X.Y.Z"
 git push -u origin bump-version-X.Y.Z
 ```
