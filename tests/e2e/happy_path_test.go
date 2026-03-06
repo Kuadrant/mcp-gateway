@@ -302,14 +302,17 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(res).NotTo(BeNil())
 
 		backendSessionID := ""
+		found := false
 		for _, cont := range res.Content {
 			textContent, ok := cont.(mcp.TextContent)
 			Expect(ok).To(BeTrue())
 			if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
+				found = true
 				backendSessionID = textContent.Text
 				GinkgoWriter.Println("initial backend session:", backendSessionID)
 			}
 		}
+		Expect(found).To(BeTrue(), "expected Mcp-Session-Id header in initial call")
 		Expect(backendSessionID).To(ContainSubstring("Mcp-Session-Id"))
 
 		By("Calling the headers tool multiple times to verify session reuse across instances")
@@ -319,15 +322,18 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).NotTo(BeNil())
+			found := false
 			for _, cont := range res.Content {
 				textContent, ok := cont.(mcp.TextContent)
 				Expect(ok).To(BeTrue())
 				if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
+					found = true
 					GinkgoWriter.Printf("call %d backend session: %s\n", i+1, textContent.Text)
 					Expect(textContent.Text).To(Equal(backendSessionID),
 						"backend session should be reused across calls (shared via redis)")
 				}
 			}
+			Expect(found).To(BeTrue(), "expected Mcp-Session-Id header in every call")
 		}
 
 		By("Closing the client")
