@@ -36,10 +36,11 @@ var errServerNotPresent = errors.New("mcp server is not present in gateway yet")
 
 const (
 
-	// CredentialSecretLabel is the required label for credential secrets
-	CredentialSecretLabel = "mcp.kuadrant.io/credential" //nolint:gosec // not a credential, just a label name
-	// CredentialSecretValue is the required value for credential secrets
-	CredentialSecretValue = "true"
+	// ManagedSecretLabel is the required label for secrets the controller watches (credentials, session store).
+	// Only secrets with this label are cached by the informer.
+	ManagedSecretLabel = "mcp.kuadrant.io/secret" //nolint:gosec // not a credential, just a label name
+	// ManagedSecretValue is the required value for the managed secret label
+	ManagedSecretValue = "true"
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
@@ -403,9 +404,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		}
 
 		// check for required label
-		if secret.Labels == nil || secret.Labels[CredentialSecretLabel] != CredentialSecretValue {
+		if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
 			return nil, fmt.Errorf("credential secret %s is missing required label %s=%s",
-				mcpsr.Spec.CredentialRef.Name, CredentialSecretLabel, CredentialSecretValue)
+				mcpsr.Spec.CredentialRef.Name, ManagedSecretLabel, ManagedSecretValue)
 		}
 
 		val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
@@ -659,7 +660,7 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				// TODO add a cache filter
 				secret := obj.(*corev1.Secret)
-				return secret.Labels != nil && secret.Labels[CredentialSecretLabel] == CredentialSecretValue
+				return secret.Labels != nil && secret.Labels[ManagedSecretLabel] == ManagedSecretValue
 			})),
 		).
 		Watches(
