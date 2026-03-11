@@ -85,6 +85,22 @@ spec:
                   PublicHost overrides the public host derived from the listener hostname.
                   Use when the listener has a wildcard and you need a specific host.
                 type: string
+              sessionStore:
+                description: |-
+                  SessionStore references a secret for redis-based session storage.
+                  The secret must exist in the MCPGatewayExtension namespace and contain a REDIS_URL key.
+                  The value is injected as CACHE_CONNECTION_STRING into the broker-router deployment.
+                  When not set, in-memory session storage is used.
+                properties:
+                  secretName:
+                    description: |-
+                      SecretName is the name of the secret containing the REDIS_URL key.
+                      The value should be a redis connection string: redis://<user>:<pass>@<host>:<port>/<db>
+                    minLength: 1
+                    type: string
+                required:
+                - secretName
+                type: object
               targetRef:
                 description: |-
                   TargetRef specifies the Gateway to extend with MCP protocol support.

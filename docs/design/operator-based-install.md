@@ -179,6 +179,14 @@ spec:
   trustedHeadersKey:
     secretName: trusted-headers-key
     generate: true
+
+  # references a secret for redis-based session storage
+  # secret must exist in the MCPGatewayExtension namespace and contain a REDIS_URL key
+  # value is injected as CACHE_CONNECTION_STRING env var into the broker-router deployment
+  # when not set, in-memory session storage is used
+  # +optional
+  sessionStore:
+    secretName: redis-credentials
 ```
 
 ### Component Changes

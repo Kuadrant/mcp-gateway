@@ -4,6 +4,7 @@
 - [MCPGatewayExtensionSpec](#mcpgatewayextensionspec)
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [TrustedHeadersKey](#trustedheaderskey)
+- [SessionStore](#sessionstore)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
 
 ## MCPGatewayExtension
@@ -23,6 +24,7 @@
 | `backendPingIntervalSeconds` | Integer | No | How often (in seconds) the broker pings upstream MCP servers. Min: 10, Max: 7200, Default: 60 |
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
+| `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
 
 ## MCPGatewayExtensionTargetReference
 
@@ -40,6 +42,12 @@
 |-----------|----------|:------------:|-----------------|
 | `secretName` | String | Yes | Name of the secret containing the PEM-encoded public key used by the broker to verify trusted-header JWTs. The secret must have a data entry with key `key`. When `generate` is `Enabled`, the operator creates this secret |
 | `generate` | String | No | Controls whether the operator generates an ECDSA P-256 key pair. `Enabled`: creates `<secretName>` (public key) and `<secretName>-private` (private key) with owner references. `Disabled` (default): the secret must already exist. Changing this field requires deleting the existing secrets first to ensure the keys are a matching pair |
+
+## SessionStore
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `secretName` | String | Yes | Name of the secret containing a `REDIS_URL` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
 
 ## MCPGatewayExtensionStatus
 
@@ -61,5 +69,5 @@
 | `InvalidMCPGatewayExtension` | Invalid configuration detected |
 | `ReferenceGrantRequired` | A ReferenceGrant is missing for a cross-namespace Gateway reference |
 | `DeploymentNotReady` | The broker-router deployment is not ready |
-| `SecretNotFound` | The trusted headers secret is missing |
-| `SecretInvalid` | The trusted headers secret lacks the required `key` data entry |
+| `SecretNotFound` | A referenced secret is missing (trusted headers or session store) |
+| `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `REDIS_URL` for session store) |
