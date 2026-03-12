@@ -160,6 +160,7 @@ kubectl logs -n kuadrant-system -l app=authorino
 ## Next Steps
 
 With authorization configured, you can:
+- **[Tool Revocation](./tool-revocation.md)** - Revoke tool access and monitor enforcement
 - **[External MCP Servers](./external-mcp-server.md)** - Apply auth to external services
 - **[Virtual MCP Servers](./virtual-mcp-servers.md)** - Compose auth across multiple servers
 - **[Troubleshooting](./troubleshooting.md)** - Debug auth and authz issues

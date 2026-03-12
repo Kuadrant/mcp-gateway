@@ -15,5 +15,6 @@
 - [Authentication](./authentication.md)
 - [Authorization](./authorization.md)
 - [Scaling](./scaling.md)
+- [Tool Revocation](./tool-revocation.md)
 - [Vault Integration](./vault-integration.md)
 - [Troubleshooting](./troubleshooting.md)
