@@ -83,6 +83,19 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 			},
 		})
 	}
+	if mcpExt.Spec.SessionStore != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "CACHE_CONNECTION_STRING",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: mcpExt.Spec.SessionStore.SecretName,
+					},
+					Key: "REDIS_URL",
+				},
+			},
+		})
+	}
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

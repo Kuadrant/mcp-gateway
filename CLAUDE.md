@@ -9,6 +9,10 @@ MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. 
 - **MCP Broker**: HTTP service that aggregates tools from multiple MCP servers (HTTP on :8080/mcp)
 - **MCP Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration CRDs (optional, `--controller` flag)
 
+# Exploration
+
+To explore the code base, if the codebase-memory-mcp is configured, index the project and use this MCP server and use its tools to explore the project as much as possible.
+
 ## Architecture
 
 ```

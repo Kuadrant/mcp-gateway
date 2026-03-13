@@ -1,4 +1,5 @@
 # New Words
+Valkey
 apiservicedefinitions
 catalogsource
 clusterserviceversion
