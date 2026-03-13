@@ -81,8 +81,8 @@ done
 echo "MCP Gateway Controller installed via OLM"
 
 echo "Waiting for MCP Gateway CRDs to be established..."
-kubectl wait crd/mcpgatewayextensions.mcp.kagenti.com --for condition=established --timeout=60s
-kubectl wait crd/mcpserverregistrations.mcp.kagenti.com --for condition=established --timeout=60s
+until kubectl wait crd/mcpgatewayextensions.mcp.kagenti.com --for condition=established &>/dev/null; do sleep 5; done
+until kubectl wait crd/mcpserverregistrations.mcp.kagenti.com --for condition=established &>/dev/null; do sleep 5; done
 
 # Install MCP Gateway Instance (Gateway, ReferenceGrant, MCPGatewayExtension)
 echo "Installing MCP Gateway Instance..."

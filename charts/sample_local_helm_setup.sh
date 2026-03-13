@@ -15,9 +15,12 @@ echo "Using local chart: $USE_LOCAL_CHART"
 
 echo "Setting up MCP Gateway using Helm chart..."
 
-# Create Kind cluster with inline configuration
-echo "Creating Kind cluster..."
-cat <<EOF | kind create cluster --config=-
+# Create Kind cluster with inline configuration (skip if already exists)
+if kind get clusters 2>/dev/null | grep -q '^kind$'; then
+    echo "Kind cluster already exists, reusing it."
+else
+    echo "Creating Kind cluster..."
+    cat <<EOF | kind create cluster --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -36,13 +39,14 @@ nodes:
     hostPort: 7002
     protocol: TCP
 EOF
+fi
 
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 
 helm repo add istio https://istio-release.storage.googleapis.com/charts
 helm repo update
-helm install istio-base istio/base -n istio-system --create-namespace --wait
-helm install istiod istio/istiod -n istio-system --wait
+helm upgrade --install istio-base istio/base -n istio-system --create-namespace --wait
+helm upgrade --install istiod istio/istiod -n istio-system --wait
 
 # Create gateway namespace for the Gateway resource
 kubectl create namespace gateway-system --dry-run=client -o yaml | kubectl apply -f -
@@ -58,11 +62,15 @@ kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRAN
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-httproute.yaml -n mcp-test
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-httproute-ext.yaml -n mcp-test
 
+# Patch test server images, usually used for local dev built images, to pull images from remote
+kubectl patch deployment mcp-test-server1 -n mcp-test --type='json' -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
+kubectl patch deployment mcp-test-server2 -n mcp-test --type='json' -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
+
 # Install MCP Gateway using either local chart or remote OCI chart
 # The chart creates: Gateway, NodePort service, Broker, Controller, EnvoyFilter
 if [ "$USE_LOCAL_CHART" = "true" ]; then
     echo "Installing from local chart: ./charts/mcp-gateway/"
-    helm install mcp-gateway ./charts/mcp-gateway/ \
+    helm upgrade --install mcp-gateway ./charts/mcp-gateway/ \
         --create-namespace \
         --namespace mcp-system \
         --set broker.create=true \
@@ -77,7 +85,7 @@ if [ "$USE_LOCAL_CHART" = "true" ]; then
         --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 else
     echo "Installing from remote OCI chart: oci://ghcr.io/kuadrant/charts/mcp-gateway"
-    helm install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+    helm upgrade --install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
         --create-namespace \
         --namespace mcp-system \
         --version 0.5.1-rc1 \
@@ -95,6 +103,14 @@ fi
 
 # Apply MCPServerRegistration samples
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/samples/mcpserverregistration-test-servers-base.yaml
+
+echo "Waiting for MCP Gateway deployments to be created..."
+for deploy in mcp-gateway mcp-gateway-controller; do
+    until kubectl get deployment "$deploy" -n mcp-system &>/dev/null; do
+        echo "  Waiting for deployment/$deploy to exist..."
+        sleep 5
+    done
+done
 
 echo "Waiting for MCP Gateway pods to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/mcp-gateway -n mcp-system
