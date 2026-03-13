@@ -2,16 +2,18 @@ package session
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	redis "github.com/redis/go-redis/v9"
 )
 
+const clientElicitationPrefix = "clientelicitation:"
+
 // Cache implements a cache
 type Cache struct {
-	connectionString string
-	inmemory         *sync.Map
-	extClient        *redis.Client
+	inmemory  *sync.Map
+	extClient *redis.Client
 }
 
 // KeyExists checks if a key exists in the cache
@@ -43,15 +45,20 @@ func (c *Cache) GetSession(ctx context.Context, key string) (map[string]string, 
 	return c.extClient.HGetAll(ctx, key).Result()
 }
 
-// DeleteSessions deletes sessions from the cache
+// DeleteSessions deletes sessions and associated metadata from the cache
 func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 	if c.inmemory != nil {
 		for _, k := range key {
 			c.inmemory.Delete(k)
+			c.inmemory.Delete(clientElicitationPrefix + k)
 		}
 		return nil
 	}
-	return c.extClient.Del(ctx, key...).Err()
+	allKeys := make([]string, 0, len(key)*2)
+	for _, k := range key {
+		allKeys = append(allKeys, k, clientElicitationPrefix+k)
+	}
+	return c.extClient.Del(ctx, allKeys...).Err()
 }
 
 // AddSession will add a session under the key. If the key exists it will append that session
@@ -86,39 +93,52 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 	return c.extClient.HDel(ctx, key, mcpServerID).Err()
 }
 
-// Close closes the cache connection
-func (c *Cache) Close() error {
+// SetClientElicitation records that the client for this gateway session supports elicitation
+func (c *Cache) SetClientElicitation(ctx context.Context, gatewaySessionID string) error {
+	key := clientElicitationPrefix + gatewaySessionID
 	if c.inmemory != nil {
+		c.inmemory.Store(key, true)
 		return nil
 	}
-	return c.extClient.Close()
+	return c.extClient.Set(ctx, key, "1", 0).Err()
 }
 
-// NewCache returns a new cache
-func NewCache(ctx context.Context, opts ...func(*Cache)) (*Cache, error) {
-	c := &Cache{
-		inmemory: nil,
+// GetClientElicitation returns whether the client for this gateway session supports elicitation
+func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error) {
+	key := clientElicitationPrefix + gatewaySessionID
+	if c.inmemory != nil {
+		_, ok := c.inmemory.Load(key)
+		return ok, nil
 	}
+	val, err := c.extClient.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return val == "1", nil
+}
+
+// NewCache returns a new cache. Pass WithRedisClient to use an external redis
+// store; otherwise an in-memory cache is returned.
+func NewCache(opts ...func(*Cache)) (*Cache, error) {
+	c := &Cache{}
 	for _, opt := range opts {
 		opt(c)
 	}
-	if c.connectionString != "" {
-		opt, err := redis.ParseURL(c.connectionString)
-		if err != nil {
-			return c, err
-		}
-
-		c.extClient = redis.NewClient(opt)
-		return c, c.extClient.Ping(ctx).Err()
+	if c.extClient != nil {
+		return c, nil
 	}
 	c.inmemory = &sync.Map{}
 	return c, nil
 }
 
-// WithConnectionString accepts a redis connections string "redis://<user>:<pass>@localhost:6379/<db>"
-func WithConnectionString(url string) func(c *Cache) {
+// WithRedisClient configures the cache to use an existing redis client
+func WithRedisClient(client *redis.Client) func(c *Cache) {
 	return func(c *Cache) {
-		c.inmemory = nil
-		c.connectionString = url
+		if client != nil {
+			c.extClient = client
+		}
 	}
 }

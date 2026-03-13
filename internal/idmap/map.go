@@ -2,71 +2,60 @@
 package idmap
 
 import (
-	"sync"
+	"context"
+	"time"
 
-	"github.com/google/uuid"
+	redis "github.com/redis/go-redis/v9"
 )
 
 // Map stores and retrieves request ID mappings.
 type Map interface {
 	// Store a new id mapping, returning the downstream gateway id
-	Store(backendID any, serverName string, sessionID string) string
-	// Lookup gets an entry for a gateway id, deleting the entry in the map
-	// This is done as once there has been an elicitation response, we don't want the request entry anymore
-	Lookup(gatewayID string) (Entry, bool)
-	// Explicit removal for a gateway id
-	Remove(gatewayID string)
+	Store(ctx context.Context, backendID any, serverName string, sessionID string, gatewaySessionID string) (string, error)
+	// Lookup gets an entry for a gateway id without removing it.
+	// Callers must call Remove explicitly after successful processing.
+	Lookup(ctx context.Context, gatewayID string) (Entry, bool, error)
+	// Remove is explicit best-effort removal for a gateway id
+	Remove(ctx context.Context, gatewayID string)
 }
 
 // Entry holds a backend request ID and its associated server/session info.
 type Entry struct {
-	BackendID  any // per mcp spec, the ID can be string, int64, or float64
-	ServerName string
-	SessionID  string
+	BackendID        any    `json:"backendID"` // per mcp spec, the ID can be string, int64, or float64
+	ServerName       string `json:"serverName"`
+	SessionID        string `json:"sessionID"`
+	GatewaySessionID string `json:"gatewaySessionID"`
 }
 
-type idmap struct {
-	mu      sync.Mutex
-	entries map[string]Entry
+type mapConfig struct {
+	redisClient *redis.Client
+	entryTTL    time.Duration
 }
 
-// New returns an initialized Map.
-func New() Map {
-	return &idmap{entries: make(map[string]Entry)}
-}
-
-func (m *idmap) Store(backendID any, serverName string, sessionID string) string {
-	id := uuid.NewString()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.entries[id] = Entry{
-		BackendID:  backendID,
-		ServerName: serverName,
-		SessionID:  sessionID,
+// New returns an initialized Map. Pass WithRedisClient to use a Redis-backed
+// store; otherwise an in-memory store is returned.
+func New(opts ...func(*mapConfig)) (Map, error) {
+	cfg := &mapConfig{}
+	for _, o := range opts {
+		o(cfg)
 	}
-
-	return id
-}
-
-func (m *idmap) Lookup(gatewayID string) (Entry, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	entry, ok := m.entries[gatewayID]
-	if !ok {
-		return Entry{}, false
+	if cfg.redisClient != nil {
+		return newRedisMapFromClient(cfg.redisClient, cfg.entryTTL), nil
 	}
-
-	delete(m.entries, gatewayID)
-
-	return entry, ok
+	return newInMemoryMap(), nil
 }
 
-func (m *idmap) Remove(gatewayID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// WithRedisClient configures the Map to use an existing Redis client.
+func WithRedisClient(client *redis.Client) func(*mapConfig) {
+	return func(c *mapConfig) {
+		c.redisClient = client
+	}
+}
 
-	delete(m.entries, gatewayID)
+// WithEntryTTL sets the safety-net TTL for Redis-backed entries.
+// Only applies when a Redis client is configured.
+func WithEntryTTL(ttl time.Duration) func(*mapConfig) {
+	return func(c *mapConfig) {
+		c.entryTTL = ttl
+	}
 }

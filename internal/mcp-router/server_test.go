@@ -38,7 +38,7 @@ var _ extProcV3.ExternalProcessor_ProcessServer = &mockProcessServer{}
 
 func TestProcess(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -181,7 +181,7 @@ func TestProcessSpanEnded(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{

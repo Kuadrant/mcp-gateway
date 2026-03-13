@@ -9,6 +9,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/client"
@@ -25,18 +26,21 @@ type SessionCache interface {
 	DeleteSessions(ctx context.Context, key ...string) error
 	RemoveServerSession(ctx context.Context, key, mcpServerID string) error
 	KeyExists(ctx context.Context, key string) (bool, error)
+	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
+	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
 }
 
 // InitForClient defines a function for initializing an MCP server for a client
-type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig *config.MCPServersConfig
-	JWTManager    *session.JWTManager
-	Logger        *slog.Logger
-	InitForClient InitForClient
-	SessionCache  SessionCache
+	RoutingConfig  *config.MCPServersConfig
+	JWTManager     *session.JWTManager
+	Logger         *slog.Logger
+	InitForClient  InitForClient
+	SessionCache   SessionCache
+	ElicitationMap idmap.Map
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 }
@@ -54,6 +58,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		streaming           = false
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
+		rewriter            *sseRewriter // nil until a tool call response arrives
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -178,6 +183,22 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
 			span.SetAttributes(attribute.String("http.status_code", statusCode))
 
+			if mcpRequest != nil && mcpRequest.isToolCall() {
+				clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpRequest.GetSessionID())
+				if elErr != nil {
+					s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
+				}
+				mcpRequest.clientElicitation = clientElicitation
+				if clientElicitation {
+					rewriter = &sseRewriter{
+						idMap:      s.ElicitationMap,
+						req:        mcpRequest,
+						logger:     s.Logger,
+						gatewayIDs: make([]string, 0),
+					}
+				}
+			}
+
 			responses, _ := s.HandleResponseHeaders(ctx, r.ResponseHeaders, localRequestHeaders, mcpRequest)
 			for _, response := range responses {
 				s.Logger.DebugContext(ctx, fmt.Sprintf("Sending response header processing instructions to Envoy: %+v", response))
@@ -187,22 +208,47 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 			}
-			return nil
+			if rewriter != nil {
+				continue // tool call: response body is streamed
+			}
+			return nil // non-tool-call: response body is not streamed
 		case *extProcV3.ProcessingRequest_ResponseBody:
-			s.Logger.ErrorContext(ctx, "[EXT-PROC] Unexpected response body processing request received",
-				"size", len(r.ResponseBody.GetBody()),
-				"end_of_stream", r.ResponseBody.GetEndOfStream(),
-				"note", "response_body_mode is set to NONE in EnvoyFilter - this should not occur",
-				"request-id", requestID)
+			body := r.ResponseBody.GetBody()
+			endOfStream := r.ResponseBody.GetEndOfStream()
+
+			if rewriter != nil {
+				body = rewriter.Process(ctx, body)
+
+				if endOfStream {
+					remaining := rewriter.Flush(ctx)
+					body = append(body, remaining...)
+				}
+
+			}
+
 			response := &extProcV3.ProcessingResponse{
 				Response: &extProcV3.ProcessingResponse_ResponseBody{
-					ResponseBody: &extProcV3.BodyResponse{},
+					ResponseBody: &extProcV3.BodyResponse{
+						Response: &extProcV3.CommonResponse{
+							BodyMutation: &extProcV3.BodyMutation{
+								Mutation: &extProcV3.BodyMutation_Body{
+									Body: body,
+								},
+							},
+						},
+					},
 				},
 			}
+
 			if err := stream.Send(response); err != nil {
-				s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+				s.Logger.ErrorContext(ctx, "error sending response body", "error", err)
+				recordError(span, err, 500)
 				return err
 			}
+			if endOfStream {
+				return nil
+			}
+
 			continue
 		}
 	}

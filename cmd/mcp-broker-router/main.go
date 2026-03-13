@@ -18,6 +18,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
@@ -25,6 +26,7 @@ import (
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/fsnotify/fsnotify"
 	"github.com/mark3labs/mcp-go/server"
+	redis "github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -162,16 +164,22 @@ func main() {
 		logger.Info("Logger upgraded with OTLP export")
 	}
 
-	sessionCache, err := session.NewCache(ctx)
-	if err != nil {
-		panic("failed to setup session cache" + err.Error())
-	}
+	var redisClient *redis.Client
 	if cacheConnectionStringFlag != "" {
-		logger.Info("session cache using external store")
-		sessionCache, err = session.NewCache(ctx, session.WithConnectionString(cacheConnectionStringFlag))
+		logger.Info("cache using external redis store")
+		redisOpt, err := redis.ParseURL(cacheConnectionStringFlag)
 		if err != nil {
-			panic("failed to setup session cache" + err.Error())
+			panic("failed to parse redis connection string: " + err.Error())
 		}
+		redisClient = redis.NewClient(redisOpt)
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			panic("failed to connect to redis: " + err.Error())
+		}
+	}
+
+	sessionCache, err := session.NewCache(session.WithRedisClient(redisClient))
+	if err != nil {
+		panic("failed to setup session cache: " + err.Error())
 	}
 
 	var jwtSessionMgr *session.JWTManager
@@ -188,9 +196,15 @@ func main() {
 	}
 	jwtSessionMgr = jwtmgr
 
+	sessionTTL := time.Duration(sessionDurationInMins) * time.Minute
+	elicitationMap, err := idmap.New(idmap.WithRedisClient(redisClient), idmap.WithEntryTTL(sessionTTL))
+	if err != nil {
+		panic("failed to setup elicitation map: " + err.Error())
+	}
+
 	managerTickerInterval := time.Duration(managerTickerIntervalSecs) * time.Second
 	brokerServer, mcpBroker, mcpServer := setUpBroker(mcpBrokerAddrFlag, enforceToolFilteringFlag, jwtSessionMgr, brokerWriteTimeoutSecs, managerTickerInterval)
-	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache)
+	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
 	if mcpRoutePublicHost == "" {
@@ -259,6 +273,12 @@ func main() {
 	}
 
 	routerGRPCServer.GracefulStop()
+
+	if redisClient != nil {
+		if err := redisClient.Close(); err != nil {
+			logger.Error("redis close error", "error", err)
+		}
+	}
 }
 
 func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWTManager, writeTimeoutSecs int64, managerTickerInterval time.Duration) (*http.Server, broker.MCPBroker, *server.StreamableHTTPServer) {
@@ -320,18 +340,17 @@ func setUpBroker(address string, toolFiltering bool, sessionManager *session.JWT
 	return httpSrv, mcpBroker, streamableHTTPServer
 }
 
-func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache) (*grpc.Server, *mcpRouter.ExtProcServer) {
+func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
-	// Create the ExtProcServer instance
 	server := &mcpRouter.ExtProcServer{
-		RoutingConfig: mcpConfig,
-		Logger:        logger.With("component", "router"),
-		JWTManager:    jwtManager,
-		InitForClient: clients.Initialize,
-		SessionCache:  sessionCache,
-		Broker:        broker, // TODO we shouldn't need a handle to broker in the router
-
+		RoutingConfig:  mcpConfig,
+		Logger:         logger.With("component", "router"),
+		JWTManager:     jwtManager,
+		InitForClient:  clients.Initialize,
+		SessionCache:   sessionCache,
+		ElicitationMap: elicitationMap,
+		Broker:         broker, // TODO we shouldn't need a handle to broker in the router
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

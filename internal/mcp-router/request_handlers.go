@@ -63,18 +63,26 @@ const (
 	methodToolCall    = "tools/call"
 	methodInitialize  = "initialize"
 	methodInitialized = "notification/initialized"
+
+	elicitationResultAction  = "action"
+	elicitationActionAccept  = "accept"
+	elicitationActionDecline = "decline"
+	elicitationActionCancel  = "cancel"
 )
 
 // MCPRequest encapsulates a mcp protocol request to the gateway
 type MCPRequest struct {
-	ID         *int              `json:"id"`
-	JSONRPC    string            `json:"jsonrpc"`
-	Method     string            `json:"method"`
-	Params     map[string]any    `json:"params"`
-	Headers    *corev3.HeaderMap `json:"-"`
-	Streaming  bool              `json:"-"`
-	sessionID  string            `json:"-"`
-	serverName string            `json:"-"`
+	ID                any               `json:"id"`
+	JSONRPC           string            `json:"jsonrpc"`
+	Method            string            `json:"method,omitempty"`
+	Params            map[string]any    `json:"params,omitempty"`
+	Result            map[string]any    `json:"result,omitempty"` // set in elicitation responses (which are a request from the client)
+	Headers           *corev3.HeaderMap `json:"-"`
+	Streaming         bool              `json:"-"`
+	sessionID         string            `json:"-"`
+	serverName        string            `json:"-"`
+	backendSessionID  string            `json:"-"`
+	clientElicitation bool              `json:"-"`
 }
 
 // GetSingleHeaderValue returns a single header value
@@ -98,7 +106,8 @@ func (mr *MCPRequest) Validate() (bool, error) {
 	if mr.JSONRPC != "2.0" {
 		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("json rpc version invalid"))
 	}
-	if mr.Method == "" {
+	// elicitation responses (sent as a request to the server) do not have the method set
+	if mr.Method == "" && !mr.isElicitationResponse() {
 		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("no method set in json rpc payload"))
 	}
 	if mr.ID == nil && !mr.isNotificationRequest() {
@@ -120,6 +129,42 @@ func (mr *MCPRequest) isToolCall() bool {
 // isInitializeRequest returns true if the method is initialize or initialized
 func (mr *MCPRequest) isInitializeRequest() bool {
 	return mr.Method == "initialize" || mr.Method == "notifications/initialized"
+}
+
+// clientSupportsElicitation checks if an initialize request declares elicitation support
+func (mr *MCPRequest) clientSupportsElicitation() bool {
+	if mr.Method != methodInitialize || mr.Params == nil {
+		return false
+	}
+	caps, ok := mr.Params["capabilities"]
+	if !ok {
+		return false
+	}
+	capsMap, ok := caps.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, hasElicitation := capsMap["elicitation"]
+	return hasElicitation
+}
+
+func (mr *MCPRequest) isElicitationResponse() bool {
+	// elicitation responses do not set the method
+	if mr.Method != "" || mr.Result == nil {
+		return false
+	}
+
+	action, ok := mr.Result[elicitationResultAction]
+	if !ok {
+		return false
+	}
+
+	a, ok := action.(string)
+	if !ok {
+		return false
+	}
+
+	return a == elicitationActionAccept || a == elicitationActionDecline || a == elicitationActionCancel
 }
 
 // ToolName returns the tool name in a tools/call request
@@ -168,14 +213,29 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	defer span.End()
 
 	s.Logger.DebugContext(ctx, "HandleMCPRequest ", "session id", mcpReq.GetSessionID())
-	switch mcpReq.Method {
-	case methodToolCall:
+	switch {
+	case mcpReq.isElicitationResponse():
+		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
+		return s.HandleElicitationResponse(ctx, mcpReq)
+	case mcpReq.Method == methodToolCall:
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
 	default:
 		span.SetAttributes(attribute.String("mcp.route", "broker"))
 		return s.HandleNoneToolCall(ctx, mcpReq)
 	}
+}
+
+// validateSession checks for a valid session ID and JWT
+func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
+	if sessionID == "" {
+		return NewRouterError(400, fmt.Errorf("no session ID found"))
+	}
+	isInvalid, err := s.JWTManager.Validate(sessionID)
+	if err != nil || isInvalid {
+		return NewRouterError(404, fmt.Errorf("session no longer valid"))
+	}
+	return nil
 }
 
 // HandleToolCall will handle an MCP Tool Call
@@ -199,34 +259,19 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 		calculatedResponse.WithImmediateResponse(400, "no tool name set")
 		return calculatedResponse.Build()
 	}
-	if mcpReq.GetSessionID() == "" {
-		s.Logger.InfoContext(ctx, "No mcp-session-id found in headers")
-		span.SetStatus(codes.Error, "no session ID found")
-		span.SetAttributes(attribute.String("error.type", "missing_session"))
-		calculatedResponse.WithImmediateResponse(400, "no session ID found")
-		return calculatedResponse.Build()
-	}
-	// This request wont go through the broker so needs to be validated
-	isInvalidSession, err := s.JWTManager.Validate(mcpReq.GetSessionID())
-	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to validate session", "session", mcpReq.GetSessionID(), "error ", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "session validation failed")
-		span.SetAttributes(attribute.String("error.type", "session_validation_error"))
-		calculatedResponse.WithImmediateResponse(404, "session no longer valid")
-		return calculatedResponse.Build()
-	}
-	if isInvalidSession {
-		s.Logger.DebugContext(ctx, "invalid session ", "session", mcpReq.GetSessionID())
-		span.SetStatus(codes.Error, "invalid session")
+	if sessionErr := s.validateSession(mcpReq.GetSessionID()); sessionErr != nil {
+		s.Logger.ErrorContext(ctx, "session validation failed", "session", mcpReq.GetSessionID(), "error", sessionErr)
+		span.RecordError(sessionErr)
+		span.SetStatus(codes.Error, sessionErr.Error())
 		span.SetAttributes(attribute.String("error.type", "invalid_session"))
-		calculatedResponse.WithImmediateResponse(404, "session no longer valid")
+		calculatedResponse.WithImmediateResponse(sessionErr.Code(), sessionErr.Error())
 		return calculatedResponse.Build()
 	}
 
 	// Get tool annotations from broker and set headers
 	headers := NewHeaders()
 	var serverInfo *config.MCPServer
+	var err error
 	{
 		_, infoSpan := tracer().Start(ctx, "mcp-router.broker.get-server-info",
 			trace.WithAttributes(
@@ -342,6 +387,10 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 		}
 		remoteMCPSeverSession = id
 	}
+	// store the backend session id so that if an elicitation request is streamed in the response
+	// we have the correct session to route back to
+	mcpReq.backendSessionID = remoteMCPSeverSession
+
 	headers.WithMCPSession(remoteMCPSeverSession)
 	// reset the host name now we have identified the correct tool and backend
 	headers.WithAuthority(serverInfo.Hostname)
@@ -373,6 +422,75 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	}
 	calculatedResponse.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
 	return calculatedResponse.Build()
+}
+
+// HandleElicitationResponse routes an elicitation response from the client to the correct backend server
+func (s *ExtProcServer) HandleElicitationResponse(
+	ctx context.Context,
+	mcpReq *MCPRequest,
+) []*eppb.ProcessingResponse {
+	response := NewResponse()
+
+	if sessionErr := s.validateSession(mcpReq.GetSessionID()); sessionErr != nil {
+		response.WithImmediateResponse(sessionErr.Code(), sessionErr.Error())
+		return response.Build()
+	}
+
+	gatewayID := fmt.Sprint(mcpReq.ID)
+
+	entry, ok, err := s.ElicitationMap.Lookup(ctx, gatewayID)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to lookup elicitation mapping", "error", err, "gatewayID", gatewayID)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	if !ok {
+		s.Logger.ErrorContext(ctx, "elicitation response for unknown gateway ID", "gatewayID", gatewayID)
+		response.WithImmediateResponse(400, "unknown elicitation ID")
+		return response.Build()
+	}
+	if entry.GatewaySessionID != mcpReq.GetSessionID() {
+		s.Logger.ErrorContext(ctx, "elicitation session mismatch", "gatewayID", gatewayID, "expected", entry.GatewaySessionID, "got", mcpReq.GetSessionID())
+		response.WithImmediateResponse(403, "session mismatch")
+		return response.Build()
+	}
+
+	// restore the id for the request
+	mcpReq.ID = entry.BackendID
+
+	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(entry.ServerName)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+
+	headers := NewHeaders()
+	headers.WithAuthority(mcpServerConfig.Hostname)
+	headers.WithMCPSession(entry.SessionID) // entry.SessionID contains the backend session id from when the elicitation request was made
+	headers.WithMCPServerName(entry.ServerName)
+	path, err := mcpServerConfig.Path()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to parse url for backend", "error", err)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	headers.WithPath(path)
+
+	body, err := mcpReq.ToBytes()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to get bytes for elicitation response", "mcpReqID", mcpReq.ID, "serverName", entry.ServerName)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+
+	headers.WithContentLength(len(body))
+	response.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
+
+	// remove the mapping only after the response was successfully built
+	s.ElicitationMap.Remove(ctx, gatewayID)
+
+	return response.Build()
 }
 
 // initializeMCPSeverSession will create a new session and connection with the backend MCP server
@@ -416,7 +534,17 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 	}
 	s.Logger.DebugContext(ctx, "initializing target as no mcp-session-id found for client", "server ", mcpReq.serverName, "with passthrough headers", passThroughHeaders)
 
-	clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, s.RoutingConfig.RouterAPIKey, mcpServerConfig, passThroughHeaders)
+	// check if the original client declared elicitation support
+	if !mcpReq.clientElicitation {
+		clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpReq.GetSessionID())
+		if elErr != nil {
+			s.Logger.ErrorContext(ctx, "failed to get client elicitation flag", "error", elErr, "session", mcpReq.GetSessionID())
+			return "", NewRouterErrorf(500, "failed to read client elicitation flag: %w", elErr)
+		}
+		mcpReq.clientElicitation = clientElicitation
+	}
+
+	clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, s.RoutingConfig.RouterAPIKey, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
 	if err != nil {
 		s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 		initSpan.RecordError(err)

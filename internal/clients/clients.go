@@ -16,7 +16,7 @@ import (
 
 // Initialize will create a new initialize and initialized request and return the associated http client for connection management
 // This method makes a request back to the gateway setting the target mcp server to initialize. We hairpin through the gateway to ensure any Auth applied to that host is triggered for the call.
-func Initialize(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string) (*client.Client, error) {
+func Initialize(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error) {
 	//mcp-gateway-istio
 	// force the initialize to hairpin back through envoy
 	passThroughHeaders[mcprouter.RoutingKey] = routerKey
@@ -36,10 +36,14 @@ func Initialize(ctx context.Context, gatewayHost, routerKey string, conf *config
 	if err := httpClient.Start(ctx); err != nil {
 		return nil, err
 	}
+	caps := mcp.ClientCapabilities{}
+	if clientElicitation {
+		caps.Elicitation = &struct{}{}
+	}
 	if _, err := httpClient.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			Capabilities:    mcp.ClientCapabilities{},
+			Capabilities:    caps,
 			ClientInfo: mcp.Implementation{
 				Name:    "mcp-gateway",
 				Version: "0.0.1",

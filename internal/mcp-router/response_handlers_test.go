@@ -29,7 +29,7 @@ type mockBrokerImpl struct {
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -87,7 +87,7 @@ func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
 
 func TestHandleResponseHeaders_NoGatewaySessionID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -130,7 +130,7 @@ func TestHandleResponseHeaders_NoGatewaySessionID(t *testing.T) {
 
 func TestHandleResponseHeaders_404RemovesServerSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -196,7 +196,7 @@ func TestHandleResponseHeaders_404RemovesServerSession(t *testing.T) {
 
 func TestHandleResponseHeaders_404WithoutMCPRequest(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -241,7 +241,7 @@ func TestHandleResponseHeaders_404WithoutMCPRequest(t *testing.T) {
 
 func TestHandleResponseHeaders_404WithMultipleServerSessions(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -312,7 +312,7 @@ func TestHandleResponseHeaders_404WithMultipleServerSessions(t *testing.T) {
 
 func TestHandleResponseHeaders_SuccessStatusDoesNotRemoveSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	cache, err := session.NewCache(context.Background())
+	cache, err := session.NewCache()
 	require.NoError(t, err)
 
 	server := &ExtProcServer{
@@ -374,6 +374,100 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotRemoveSession(t *testing.T) {
 			require.Equal(t, "upstream-session-456", sessions[serverName])
 		})
 	}
+}
+
+func TestHandleResponseHeaders_StoresElicitationForDirectInit(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	brokerSessionID := "broker-session-jwt-123"
+
+	// no mcp-session-id (first init), no mcp-init-host (direct client request)
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{},
+		},
+	}
+
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(brokerSessionID)},
+				{Key: ":status", RawValue: []byte("200")},
+			},
+		},
+	}
+
+	mcpReq := &MCPRequest{
+		Method: "initialize",
+		Params: map[string]any{
+			"capabilities": map[string]any{
+				"elicitation": map[string]any{},
+			},
+		},
+	}
+
+	_, err = srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+
+	val, err := cache.GetClientElicitation(context.Background(), brokerSessionID)
+	require.NoError(t, err)
+	require.True(t, val)
+}
+
+func TestHandleResponseHeaders_SkipsElicitationForHairpinInit(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	backendSessionID := "backend-session-456"
+
+	// mcp-init-host present indicates hairpin backend init
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-init-host", RawValue: []byte("backend.example.com")},
+			},
+		},
+	}
+
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(backendSessionID)},
+				{Key: ":status", RawValue: []byte("200")},
+			},
+		},
+	}
+
+	mcpReq := &MCPRequest{
+		Method: "initialize",
+		Params: map[string]any{
+			"capabilities": map[string]any{
+				"elicitation": map[string]any{},
+			},
+		},
+	}
+
+	_, err = srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+
+	val, err := cache.GetClientElicitation(context.Background(), backendSessionID)
+	require.NoError(t, err)
+	require.False(t, val)
 }
 
 func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) broker.MCPBroker {

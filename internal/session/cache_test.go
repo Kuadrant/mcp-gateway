@@ -10,7 +10,7 @@ import (
 func TestInMemoryCache_AddSession(t *testing.T) {
 
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// add first session for a key
@@ -39,7 +39,7 @@ func TestInMemoryCache_AddSession(t *testing.T) {
 
 func TestInMemoryCache_GetSession(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// get non-existent session returns empty map
@@ -51,7 +51,7 @@ func TestInMemoryCache_GetSession(t *testing.T) {
 
 func TestInMemoryCache_KeyExists(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// key doesn't exist initially
@@ -71,7 +71,7 @@ func TestInMemoryCache_KeyExists(t *testing.T) {
 
 func TestInMemoryCache_DeleteSessions(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// add sessions
@@ -105,7 +105,7 @@ func TestInMemoryCache_DeleteSessions(t *testing.T) {
 
 func TestInMemoryCache_UpdateExistingSession(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// add initial session
@@ -129,7 +129,7 @@ func TestInMemoryCache_UpdateExistingSession(t *testing.T) {
 
 func TestInMemoryCache_MultipleServersPerGatewaySession(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	gatewaySession := "gateway-session-1"
@@ -157,17 +157,15 @@ func TestInMemoryCache_MultipleServersPerGatewaySession(t *testing.T) {
 }
 
 func TestNewCache_DefaultsToInMemory(t *testing.T) {
-	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 	require.NotNil(t, cache.inmemory)
 	require.Nil(t, cache.extClient)
-	require.Empty(t, cache.connectionString)
 }
 
 func TestInMemoryCache_RemoveServerSession(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	gatewaySession := "gateway-session-1"
@@ -229,10 +227,65 @@ func TestInMemoryCache_RemoveServerSession(t *testing.T) {
 
 func TestInMemoryCache_RemoveServerSession_NonExistentGatewaySession(t *testing.T) {
 	ctx := context.Background()
-	cache, err := NewCache(ctx)
+	cache, err := NewCache()
 	require.NoError(t, err)
 
 	// try to remove server session from non-existent gateway session
 	err = cache.RemoveServerSession(ctx, "non-existent-gateway", "server1")
 	require.NoError(t, err)
+}
+
+func TestInMemoryCache_SetAndGetClientElicitation(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	sessionID := "gateway-session-1"
+
+	// not set initially
+	val, err := cache.GetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+	require.False(t, val)
+
+	// set elicitation
+	err = cache.SetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+
+	// now returns true
+	val, err = cache.GetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+	require.True(t, val)
+}
+
+func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	sessionID := "gateway-session-1"
+
+	// set elicitation and add a session
+	err = cache.SetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+	_, err = cache.AddSession(ctx, sessionID, "server1", "upstream-1")
+	require.NoError(t, err)
+
+	// verify both exist
+	val, err := cache.GetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+	require.True(t, val)
+	sessions, err := cache.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+
+	// delete sessions cleans up both
+	err = cache.DeleteSessions(ctx, sessionID)
+	require.NoError(t, err)
+
+	val, err = cache.GetClientElicitation(ctx, sessionID)
+	require.NoError(t, err)
+	require.False(t, val)
+	sessions, err = cache.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	require.Empty(t, sessions)
 }

@@ -98,6 +98,7 @@ cenkalti
 cespare
 ciinfo
 clientcmd
+clientelicitation
 clientgoscheme
 clientregistration
 configmap
@@ -136,6 +137,7 @@ errcheck
 evals
 evanphx
 externalname
+extprochttp
 fastmcp
 finalizer
 finalizers
