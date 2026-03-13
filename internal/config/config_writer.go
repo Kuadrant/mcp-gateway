@@ -112,6 +112,7 @@ func (srw *SecretReaderWriter) readOrCreateConfigSecret(ctx context.Context, nam
 				Labels: map[string]string{
 					"app":                        "mcp-gateway",
 					"mcp.kuadrant.io/aggregated": "true",
+					"mcp.kuadrant.io/secret":     "true",
 				},
 			},
 			StringData: map[string]string{

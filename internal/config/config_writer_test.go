@@ -169,6 +169,9 @@ func TestEnsureConfigExists_CreatesSecretIfNotExists(t *testing.T) {
 	if secret.Labels["mcp.kuadrant.io/aggregated"] != "true" {
 		t.Fatal("secret missing aggregated label")
 	}
+	if secret.Labels["mcp.kuadrant.io/secret"] != "true" {
+		t.Fatal("secret missing managed secret label")
+	}
 }
 
 func TestDeleteConfig(t *testing.T) {
