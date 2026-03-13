@@ -389,3 +389,5 @@ vhost
 wasmplugin
 yourorg
 ztunnels
+operatorframework
+Valkey
