@@ -70,7 +70,7 @@ kubectl apply -f /tmp/mcp-subscription.yaml -n $MCP_GATEWAY_NAMESPACE
 
 echo "Waiting for controller CSV to succeed..."
 retries=0
-until kubectl get csv -n $MCP_GATEWAY_NAMESPACE -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Succeeded"; do
+until kubectl get csv -n $MCP_GATEWAY_NAMESPACE -l operators.coreos.com/mcp-gateway.$MCP_GATEWAY_NAMESPACE="" -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Succeeded"; do
   retries=$((retries + 1))
   if [ $retries -ge 60 ]; then
     echo "Timed out waiting for controller CSV to succeed"
