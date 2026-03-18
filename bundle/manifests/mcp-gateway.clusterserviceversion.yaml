@@ -5,14 +5,14 @@ metadata:
     alm-examples: "[\n  {\n    \"apiVersion\": \"mcp.kagenti.com/v1alpha1\",\n    \"kind\": \"MCPGatewayExtension\",\n    \"metadata\": {\n      \"name\": \"mcp-gateway-extension\",\n      \"namespace\": \"mcp-system\"\n    },\n    \"spec\": {\n      \"targetRef\": {\n        \"group\": \"gateway.networking.k8s.io\",\n        \"kind\": \"Gateway\",\n        \"name\": \"mcp-gateway\",\n        \"namespace\": \"gateway-system\",\n        \"sectionName\": \"mcp\"\n      }\n    }\n  },\n  {\n    \"apiVersion\": \"mcp.kagenti.com/v1alpha1\",\n    \"kind\": \"MCPServerRegistration\",\n    \"metadata\": {\n      \"name\": \"example-server\",\n      \"namespace\": \"mcp-test\"\n    },\n    \"spec\": {\n      \"toolPrefix\": \"example_\",\n      \"targetRef\": {\n        \"group\": \"gateway.networking.k8s.io\",\n        \"kind\": \"HTTPRoute\",\n        \"name\": \"example-route\"\n      }\n    }\n  },\n  {\n    \"apiVersion\": \"mcp.kagenti.com/v1alpha1\",\n    \"kind\": \"MCPVirtualServer\",\n    \"metadata\": {\n      \"name\": \"example-vs\",\n      \"namespace\": \"default\"\n    },\n    \"spec\": {\n      \"description\": \"example virtual server\",\n      \"tools\": [\n        \"server1_tool1\",\n        \"server2_tool2\"\n      ]\n    }\n  }\n]"
     capabilities: Basic Install
     categories: Integration & Delivery
-    containerImage: ghcr.io/kuadrant/mcp-controller:v0.5.1-rc1
-    createdAt: "2026-03-11T15:41:01Z"
+    containerImage: ghcr.io/kuadrant/mcp-controller:v0.5.1
+    createdAt: "2026-03-18T12:14:55Z"
     description: An Envoy-based gateway for Model Context Protocol (MCP) servers
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/Kuadrant/mcp-gateway
     support: kuadrant
-  name: mcp-gateway.v0.5.1-rc1
+  name: mcp-gateway.v0.5.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -201,8 +201,8 @@ spec:
                       - --log-level=0
                     env:
                       - name: RELATED_IMAGE_ROUTER_BROKER
-                        value: ghcr.io/kuadrant/mcp-gateway:v0.5.1-rc1
-                    image: ghcr.io/kuadrant/mcp-controller:v0.5.1-rc1
+                        value: ghcr.io/kuadrant/mcp-gateway:v0.5.1
+                    image: ghcr.io/kuadrant/mcp-controller:v0.5.1
                     imagePullPolicy: IfNotPresent
                     livenessProbe:
                       httpGet:
@@ -262,6 +262,6 @@ spec:
     name: Kuadrant
     url: https://kuadrant.io
   relatedImages:
-    - image: ghcr.io/kuadrant/mcp-gateway:v0.5.1-rc1
+    - image: ghcr.io/kuadrant/mcp-gateway:v0.5.1
       name: router-broker
-  version: 0.5.1-rc1
+  version: 0.5.1

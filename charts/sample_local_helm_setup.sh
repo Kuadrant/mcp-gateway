@@ -88,7 +88,7 @@ else
     helm upgrade --install mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
         --create-namespace \
         --namespace mcp-system \
-        --version 0.5.1-rc1 \
+        --version 0.5.1 \
         --set broker.create=true \
         --set gateway.create=true \
         --set gateway.name=mcp-gateway \

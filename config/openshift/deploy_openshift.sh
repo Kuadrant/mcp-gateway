@@ -2,7 +2,7 @@
 
 set -e
 
-MCP_GATEWAY_VERSION="${MCP_GATEWAY_VERSION:-0.5.1-rc1}"
+MCP_GATEWAY_VERSION="${MCP_GATEWAY_VERSION:-0.5.1}"
 MCP_GATEWAY_HOST="${MCP_GATEWAY_HOST:-mcp.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')}"
 MCP_GATEWAY_NAMESPACE="${MCP_GATEWAY_NAMESPACE:-mcp-system}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateway-system}"
