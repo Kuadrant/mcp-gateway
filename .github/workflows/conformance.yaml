@@ -27,6 +27,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CONFORMANCE_VERSION: "0.1.15"
+  MCP_URL: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
+
 jobs:
   conformance-tests:
     runs-on: ubuntu-latest
@@ -62,47 +66,24 @@ jobs:
 
       - name: Run MCP conformance tests
         run: |
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario server-initialize
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-list
-
-          sleep 10
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario ping
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-simple-text
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-image
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-audio
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-embedded-resource
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-mixed-content
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-error
-
-          npx @modelcontextprotocol/conformance server \
-            --url http://mcp.127-0-0-1.sslip.io:8001/mcp \
-            --scenario tools-call-with-progress
+          SCENARIOS=(
+            server-initialize
+            tools-list
+            ping
+            tools-call-simple-text
+            tools-call-image
+            tools-call-audio
+            tools-call-embedded-resource
+            tools-call-mixed-content
+            tools-call-error
+            tools-call-with-progress
+          )
+          for scenario in "${SCENARIOS[@]}"; do
+            echo "=== Running scenario: $scenario ==="
+            npx @modelcontextprotocol/conformance@${CONFORMANCE_VERSION} server \
+              --url ${MCP_URL} \
+              --scenario "$scenario"
+          done
 
       - name: Collect logs on failure
         if: failure()
