@@ -8,6 +8,8 @@ urls-impl:
 	@echo "Gateway: http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)"
 	@echo "Keycloak: https://keycloak.127-0-0-1.sslip.io:$(KIND_HOST_PORT_KEYCLOAK)"
 
+##@ Inspection
+
 .PHONY: inspect-server1
 inspect-server1: ## Open MCP Inspector for test server 1
 	$(call inspect-server-template,test server 1,mcp-test-server1,9090,hi time slow headers)

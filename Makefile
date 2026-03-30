@@ -426,9 +426,7 @@ reload: build docker-build kind ## Build, load to Kind, and restart both control
 	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-gateway-controller --timeout=60s
 	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/$(BROKER_ROUTER_NAME) --timeout=60s
 
-##@ E2E Testing
-
-# E2E test targets are in build/e2e.mk
+##@ Build
 
 # Build multi-platform image
 docker-buildx: ## Build multi-platform container image
@@ -464,6 +462,8 @@ golangci-lint:
 	fi
 
 KUBE_API_LINTER_VERSION ?= v0.0.0-20260320123815-c9b9b51b278a
+
+##@ Linting
 
 .PHONY: kube-api-linter
 kube-api-linter: bin/golangci-lint-kube-api-linter ## Run kube-api-linter on API types
@@ -550,7 +550,9 @@ fix-newlines:
 	done
 
 
-test-unit:
+##@ Testing
+
+test-unit: ## Run unit tests
 	go test -v -race ./...
 
 .PHONY: test-controller-integration
@@ -764,8 +766,6 @@ otel-status: ## Show status of OpenTelemetry observability stack
 otel-forward: ## Port-forward Grafana (3000)
 	@echo "Grafana: http://localhost:3000"
 	@kubectl port-forward -n observability svc/grafana 3000:3000
-
-##@ Testing
 
 .PHONY: testwithcoverage
 testwithcoverage:
