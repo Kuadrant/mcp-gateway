@@ -29,7 +29,7 @@ spec:
         - name: ISSUER_URL
           value: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
         - name: EXPECTED_AUD
-          value: mcp-test/mcp-oidc-server-route
+          value: mcp-test/oidc-server
         - name: EXPECTED_ADMIN_TOKEN
           value: test-api-key-secret-token-for-oidc-server
         - name: LOG_LEVEL
