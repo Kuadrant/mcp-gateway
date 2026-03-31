@@ -11,13 +11,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "mcp-gateway.selectorLabels" . | nindent 6 }}
-      component: controller
+      {{- include "mcp-gateway.controllerSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "mcp-gateway.selectorLabels" . | nindent 8 }}
-        component: controller
+        {{- include "mcp-gateway.controllerSelectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "mcp-gateway.controllerServiceAccountName" . }}
       containers:
