@@ -54,6 +54,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Controller selector labels - distinct from broker to avoid service selector overlap
+*/}}
+{{- define "mcp-gateway.controllerSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "mcp-gateway.name" . }}-controller
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
 Create the name of the controller service account to use
 */}}
 {{- define "mcp-gateway.controllerServiceAccountName" -}}
