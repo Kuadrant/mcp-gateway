@@ -38,15 +38,18 @@ else
     echo "Warning: $OPENSHIFT_SCRIPT not found"
 fi
 
-# Update charts/sample_local_helm_setup.sh default version
-SAMPLE_SCRIPT="$REPO_ROOT/charts/sample_local_helm_setup.sh"
-if [ -f "$SAMPLE_SCRIPT" ]; then
-    sed -i.bak -E "s/MCP_GATEWAY_VERSION:-[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?/MCP_GATEWAY_VERSION:-$VERSION/" "$SAMPLE_SCRIPT"
-    rm -f "$SAMPLE_SCRIPT.bak"
-    echo "Updated: $SAMPLE_SCRIPT"
-else
-    echo "Warning: $SAMPLE_SCRIPT not found"
-fi
+# Update scripts with MCP_GATEWAY_VERSION bash defaults
+for SCRIPT in \
+    "$REPO_ROOT/scripts/quick-start.sh" \
+    "$REPO_ROOT/charts/sample_local_helm_setup.sh"; do
+    if [ -f "$SCRIPT" ]; then
+        sed -i.bak -E "s/MCP_GATEWAY_VERSION:-[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?/MCP_GATEWAY_VERSION:-$VERSION/" "$SCRIPT"
+        rm -f "$SCRIPT.bak"
+        echo "Updated: $SCRIPT"
+    else
+        echo "Warning: $SCRIPT not found"
+    fi
+done
 
 # Update config/mcp-system deployment images
 CONTROLLER_DEPLOY="$REPO_ROOT/config/mcp-system/deployment-controller.yaml"
