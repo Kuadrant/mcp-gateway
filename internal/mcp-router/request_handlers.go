@@ -218,6 +218,10 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
 		return s.HandleElicitationResponse(ctx, mcpReq)
 	case mcpReq.Method == methodToolCall:
+		if s.Broker.IsBrokerTool(mcpReq.ToolName()) {
+			span.SetAttributes(attribute.String("mcp.route", "broker-tool"))
+			return s.HandleNoneToolCall(ctx, mcpReq)
+		}
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
 	default:
