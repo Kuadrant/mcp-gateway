@@ -1,0 +1,52 @@
+---
+# sample MCPServerRegistrations with category and hint fields for tool discovery
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server1
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test1_
+  category: "greetings utilities"
+  hint: "greeting tools, time utilities, request header inspection, and slow response simulation"
+  targetRef:
+    # Server 1 - Go SDK based (greet, time, slow, headers tools)
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server1-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server2
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test2_
+  category: "greetings authentication"
+  hint: "hello world greeting, time, header inspection, auth token validation, and slow response tools"
+  targetRef:
+    # Server 2 - Go SDK based (hello_world, time, headers, auth1234, slow tools)
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server2-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server3
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test3_
+  category: "math weather"
+  hint: "mathematical operations (add, dozen, pi), weather forecasts, and time utilities"
+  targetRef:
+    # Server 3 - Python FastMCP based (time, add, dozen, pi, get_weather, slow)
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server3-route
