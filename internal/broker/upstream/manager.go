@@ -320,6 +320,9 @@ func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
 	for _, tool := range mcpTools {
 		for existingToolName, existingToolInfo := range gatewayServerTools {
 			existingTool := existingToolInfo.Tool
+			if existingTool.Meta == nil {
+				continue
+			}
 			// TODO revisit as this is in the tool definition
 			existingToolID, ok := existingTool.Meta.AdditionalFields[gatewayServerID]
 			if !ok {
