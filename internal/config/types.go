@@ -79,7 +79,9 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		existingConfig.Category != mcpServer.Category ||
+		existingConfig.Hint != mcpServer.Hint
 }
 
 // Path returns the path part of the mcp url
