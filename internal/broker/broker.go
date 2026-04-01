@@ -162,6 +162,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		"0.0.1",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
+		server.WithInstructions(gatewayInstructions),
 	)
 	mcpBkr.listeningMCPServer.AddTools(discoveryTools(mcpBkr)...)
 	return mcpBkr
