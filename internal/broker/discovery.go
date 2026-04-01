@@ -14,6 +14,13 @@ import (
 const (
 	discoverToolsName = "discover_tools"
 	selectToolsName   = "select_tools"
+
+	gatewayInstructions = `This is an MCP Gateway that aggregates tools from multiple backend MCP servers into a single endpoint. The full tool set may be large.
+
+To avoid loading all tool schemas upfront, use the discovery tools:
+1. Call discover_tools to browse available servers, categories, and tool names (lightweight, no full schemas).
+2. Call select_tools with the tool names relevant to your task. This scopes your session — subsequent tools/list calls will return only the selected tools with full schemas.
+3. To change scope, call select_tools again with a new set. Pass an empty list to reset to the full tool set.`
 )
 
 // IsBrokerTool returns true if the tool is handled by the broker directly
