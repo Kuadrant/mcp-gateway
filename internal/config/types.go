@@ -64,6 +64,8 @@ type MCPServer struct {
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Category   string      `json:"category,omitempty"   yaml:"category,omitempty"`
+	Hint       string      `json:"hint,omitempty"       yaml:"hint,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
