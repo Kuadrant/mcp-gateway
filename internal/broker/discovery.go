@@ -209,6 +209,26 @@ func (broker *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.Call
 	}, nil
 }
 
+// ensureBrokerTools ensures discover_tools and select_tools are always present
+// in the tool list, even if upstream filters removed them.
+func (broker *mcpBrokerImpl) ensureBrokerTools(tools []mcp.Tool) []mcp.Tool {
+	if broker.listeningMCPServer == nil {
+		return tools
+	}
+	has := make(map[string]bool)
+	for _, t := range tools {
+		if IsBrokerTool(t.Name) {
+			has[t.Name] = true
+		}
+	}
+	for _, st := range broker.listeningMCPServer.ListTools() {
+		if IsBrokerTool(st.Tool.Name) && !has[st.Tool.Name] {
+			tools = append(tools, st.Tool)
+		}
+	}
+	return tools
+}
+
 // applySessionScopeFilter filters tools based on the session's selected scope.
 // Meta-tools (discover_tools, select_tools) are always included.
 func (broker *mcpBrokerImpl) applySessionScopeFilter(sessionID string, tools []mcp.Tool) []mcp.Tool {

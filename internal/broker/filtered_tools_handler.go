@@ -45,6 +45,9 @@ func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp
 		tools = broker.applySessionScopeFilter(session.SessionID(), tools)
 	}
 
+	// ensure broker meta-tools are always present regardless of upstream filters
+	tools = broker.ensureBrokerTools(tools)
+
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
 	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
