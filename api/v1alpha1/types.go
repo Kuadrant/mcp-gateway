@@ -62,6 +62,18 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// category is a free-text classification of the server's domain.
+	// Used by the discover_tools meta-tool to present a high-level overview of available servers.
+	// Defaults to "uncategorised" if not set.
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// hint is a short natural-language description of what the server's tools do.
+	// Used by the discover_tools meta-tool to help agents decide which tools are relevant
+	// without loading full tool schemas.
+	// +optional
+	Hint string `json:"hint,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.
