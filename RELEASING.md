@@ -44,15 +44,17 @@ Commit and push:
 ```bash
 git add -u config/ charts/ docs/ bundle/
 git commit -s -m "Update version to X.Y.Z-rcN"
-git push -u origin release-X.Y
+git push -u origin release-X.Y.Z
 ```
 
 ### 2. Create GitHub Release
 
+Release branches use the full three-component format `release-X.Y.Z` (e.g. `release-0.6.0`), and all links, tags, and examples must use this format.
+
 1. Go to [Releases](https://github.com/Kuadrant/mcp-gateway/releases)
 2. Click **Draft a new release**
 3. Click **Choose a tag** and create a new tag (e.g. `vX.Y.Z-rc1` or `vX.Y.Z`)
-4. Set **Target** to your `release-X.Y` branch
+4. Set **Target** to your `release-X.Y.Z` branch
 5. Set the release title (e.g. `vX.Y.Z-rc1` or `vX.Y.Z`)
 6. Click **Generate release notes**
 7. For release candidates: check **Set as a pre-release** (do not mark as latest)
@@ -80,6 +82,18 @@ done
 helm show chart oci://ghcr.io/kuadrant/charts/mcp-gateway --version ${VERSION} > /dev/null 2>&1 \
   && echo "✅ helm chart ${VERSION}" || echo "❌ helm chart ${VERSION}"
 ```
+
+### 5. Create RC Test Matrix Issue (Release Candidates Only)
+
+After verifying all artifacts are published, create a test matrix issue to track RC testing:
+
+1. Go to [New Issue](https://github.com/Kuadrant/mcp-gateway/issues/new/choose)
+2. Select the **RC Test Matrix** template
+3. Replace `vX.Y.Z-rcN` with the actual RC version in the title and body
+4. Replace `release-X.Y.Z` with the actual release branch name in all links
+5. Submit the issue and share with the team for testing
+
+Testing covers installation methods, E2E tests, integration tests, conformance tests, and documentation guide walkthroughs. See the [template](.github/ISSUE_TEMPLATE/rc-test-matrix.md) for the full checklist.
 
 ## Post-Release: Bump Version on Main
 
