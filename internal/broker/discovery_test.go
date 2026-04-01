@@ -1,7 +1,10 @@
 package broker
 
 import (
+	"log/slog"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestIsBrokerTool(t *testing.T) {
@@ -60,4 +63,58 @@ func TestSessionScope(t *testing.T) {
 			t.Error("expected nil after remove")
 		}
 	})
+}
+
+func TestApplySessionScopeFilter(t *testing.T) {
+	store := newSessionScopeStore()
+	b := &mcpBrokerImpl{
+		sessionScopes: store,
+		logger:        slog.Default(),
+	}
+
+	tools := []mcp.Tool{
+		{Name: "discover_tools"},
+		{Name: "select_tools"},
+		{Name: "test1_greet"},
+		{Name: "test1_time"},
+		{Name: "test2_hello"},
+	}
+
+	t.Run("no scope returns all tools", func(t *testing.T) {
+		result := b.applySessionScopeFilter("no-scope-session", tools)
+		if len(result) != 5 {
+			t.Errorf("expected 5 tools, got %d", len(result))
+		}
+	})
+
+	t.Run("scope filters to selected tools plus meta-tools", func(t *testing.T) {
+		store.setScope("scoped-session", []string{"test1_greet", "test1_time"})
+		result := b.applySessionScopeFilter("scoped-session", tools)
+		if len(result) != 4 { // 2 selected + 2 meta-tools
+			t.Errorf("expected 4 tools, got %d: %v", len(result), toolNames(result))
+		}
+		names := toolNames(result)
+		for _, expected := range []string{"discover_tools", "select_tools", "test1_greet", "test1_time"} {
+			if !containsName(names, expected) {
+				t.Errorf("expected %q in result, got %v", expected, names)
+			}
+		}
+	})
+}
+
+func toolNames(tools []mcp.Tool) []string {
+	names := make([]string, len(tools))
+	for i, t := range tools {
+		names[i] = t.Name
+	}
+	return names
+}
+
+func containsName(names []string, name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
