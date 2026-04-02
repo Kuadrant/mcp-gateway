@@ -40,17 +40,22 @@ func newSessionScopeStore() *sessionScopeStore {
 	}
 }
 
-func (s *sessionScopeStore) getScope(sessionID string) map[string]bool {
+// getScope returns the scope for a session and whether one has been set.
+// Three states: (nil, false) = no scope set (default hidden),
+// (empty, true) = explicitly reset to all tools, (non-empty, true) = filtered.
+func (s *sessionScopeStore) getScope(sessionID string) (map[string]bool, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.scopes[sessionID]
+	scope, exists := s.scopes[sessionID]
+	return scope, exists
 }
 
 func (s *sessionScopeStore) setScope(sessionID string, tools []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(tools) == 0 {
-		delete(s.scopes, sessionID)
+		// empty scope means "show all tools"
+		s.scopes[sessionID] = map[string]bool{}
 		return
 	}
 	scope := make(map[string]bool, len(tools))
@@ -237,16 +242,44 @@ func (broker *mcpBrokerImpl) ensureBrokerTools(tools []mcp.Tool) []mcp.Tool {
 }
 
 // applySessionScopeFilter filters tools based on the session's selected scope.
-// Meta-tools (discover_tools, select_tools) are always included.
+// When no scope is set: if tool count exceeds discoveryToolThreshold, only meta-tools
+// are visible (progressive discovery). Otherwise all tools are shown.
+// After select_tools with tools: only those tools + meta-tools.
+// After select_tools with empty list: all tools visible.
 func (broker *mcpBrokerImpl) applySessionScopeFilter(sessionID string, tools []mcp.Tool) []mcp.Tool {
-	scope := broker.sessionScopes.getScope(sessionID)
-	if scope == nil {
+	scope, exists := broker.sessionScopes.getScope(sessionID)
+
+	// explicitly reset to all tools
+	if exists && len(scope) == 0 {
 		return tools
 	}
 
+	// explicit scope: filter to meta-tools + scoped tools
+	if exists {
+		var filtered []mcp.Tool
+		for _, tool := range tools {
+			if IsBrokerTool(tool.Name) || scope[tool.Name] {
+				filtered = append(filtered, tool)
+			}
+		}
+		return filtered
+	}
+
+	// no scope set: check threshold
+	nonMetaCount := 0
+	for _, tool := range tools {
+		if !IsBrokerTool(tool.Name) {
+			nonMetaCount++
+		}
+	}
+	if nonMetaCount <= broker.discoveryToolThreshold {
+		return tools
+	}
+
+	// above threshold: default hidden, only meta-tools
 	var filtered []mcp.Tool
 	for _, tool := range tools {
-		if IsBrokerTool(tool.Name) || scope[tool.Name] {
+		if IsBrokerTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}

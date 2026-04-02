@@ -184,6 +184,14 @@ Turn 2+ (work):
 
 Standard MCP clients don't understand the discovery flow, so the agent must prompt the user to trigger the next turn after `tools/list_changed`.
 
+### Tool count threshold
+
+Whether new sessions see all tools or only meta-tools is controlled by the `--discovery-tool-threshold` flag (default: 10). When the total number of non-meta tools exceeds the threshold, new sessions default to hidden — only `discover_tools` and `select_tools` are visible until the agent calls `select_tools` to scope its session. At or below the threshold, all tools are shown without requiring discovery.
+
+This auto-scales: small gateways with a handful of tools work without friction, while large aggregation points enforce the discovery flow. Setting the threshold to 0 always requires discovery.
+
+Calling `select_tools` with an empty list resets to the full tool set regardless of threshold, giving agents an escape hatch when discovery isn't needed.
+
 ### Re-scoping
 
 When the agent's context changes (e.g., the user asks a follow-up about payments), it can call `select_tools` again with a different set. Calling with an empty list resets to the full tool set.

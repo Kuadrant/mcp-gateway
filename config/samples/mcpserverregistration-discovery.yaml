@@ -50,3 +50,35 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: mcp-server3-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: restaurant-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: restaurant_
+  category: "dining reservations"
+  hint: "search restaurants by cuisine and location, check table availability, make and cancel reservations"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-restaurant-server-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: messaging-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: messaging_
+  category: "communication contacts"
+  hint: "find contacts, send messages via email/sms/slack, view message history, create messaging groups"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-messaging-server-route

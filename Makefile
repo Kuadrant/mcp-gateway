@@ -314,7 +314,9 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/custom-path-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-path-server:latest .
 	cd tests/servers/oidc-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-oidc-server:latest .
 	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest .
-	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .	
+	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .
+	cd tests/servers/restaurant-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-restaurant-server:latest .
+	cd tests/servers/messaging-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-messaging-server:latest .
 
 # Build conformance server Docker image
 .PHONY: build-conformance-server
@@ -334,6 +336,8 @@ kind-load-test-servers: kind build-test-servers ## Load test server images into 
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-oidc-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-restaurant-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-messaging-server:latest)
 
 # Load everything server image into Kind cluster
 kind-load-everything-server: kind build-everything-server ## Load everything server image into Kind cluster

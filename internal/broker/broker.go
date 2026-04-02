@@ -81,6 +81,10 @@ type mcpBrokerImpl struct {
 
 	// sessionScopes tracks per-session tool scoping for discovery
 	sessionScopes *sessionScopeStore
+
+	// discoveryToolThreshold: when total tools exceed this, new sessions default to hidden.
+	// At or below this count, all tools are shown without requiring discovery.
+	discoveryToolThreshold int
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -114,6 +118,15 @@ func WithManagerTickerInterval(interval time.Duration) Option {
 func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.invalidToolPolicy = policy
+	}
+}
+
+// WithDiscoveryToolThreshold sets the tool count threshold for progressive discovery.
+// When total tools exceed this value, new sessions only see meta-tools until select_tools is called.
+// At or below this count, all tools are shown without requiring discovery.
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolThreshold = threshold
 	}
 }
 

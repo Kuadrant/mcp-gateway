@@ -30,16 +30,22 @@ func TestIsBrokerTool(t *testing.T) {
 func TestSessionScope(t *testing.T) {
 	store := newSessionScopeStore()
 
-	t.Run("no scope returns nil", func(t *testing.T) {
-		tools := store.getScope("session-1")
+	t.Run("no scope returns nil and false", func(t *testing.T) {
+		tools, exists := store.getScope("session-1")
 		if tools != nil {
 			t.Errorf("expected nil, got %v", tools)
+		}
+		if exists {
+			t.Error("expected exists=false for unset scope")
 		}
 	})
 
 	t.Run("set and get scope", func(t *testing.T) {
 		store.setScope("session-1", []string{"tool_a", "tool_b"})
-		tools := store.getScope("session-1")
+		tools, exists := store.getScope("session-1")
+		if !exists {
+			t.Fatal("expected exists=true")
+		}
 		if len(tools) != 2 {
 			t.Fatalf("expected 2 tools, got %d", len(tools))
 		}
@@ -48,30 +54,31 @@ func TestSessionScope(t *testing.T) {
 		}
 	})
 
-	t.Run("empty list clears scope", func(t *testing.T) {
+	t.Run("empty list sets scope to show all", func(t *testing.T) {
 		store.setScope("session-1", []string{})
-		tools := store.getScope("session-1")
-		if tools != nil {
-			t.Errorf("expected nil after clear, got %v", tools)
+		tools, exists := store.getScope("session-1")
+		if !exists {
+			t.Error("expected exists=true after empty set")
+		}
+		if len(tools) != 0 {
+			t.Errorf("expected empty scope, got %v", tools)
 		}
 	})
 
 	t.Run("remove session", func(t *testing.T) {
 		store.setScope("session-2", []string{"tool_c"})
 		store.removeSession("session-2")
-		if store.getScope("session-2") != nil {
-			t.Error("expected nil after remove")
+		tools, exists := store.getScope("session-2")
+		if exists {
+			t.Error("expected exists=false after remove")
+		}
+		if tools != nil {
+			t.Errorf("expected nil after remove, got %v", tools)
 		}
 	})
 }
 
 func TestApplySessionScopeFilter(t *testing.T) {
-	store := newSessionScopeStore()
-	b := &mcpBrokerImpl{
-		sessionScopes: store,
-		logger:        slog.Default(),
-	}
-
 	tools := []mcp.Tool{
 		{Name: "discover_tools"},
 		{Name: "select_tools"},
@@ -80,14 +87,70 @@ func TestApplySessionScopeFilter(t *testing.T) {
 		{Name: "test2_hello"},
 	}
 
-	t.Run("no scope returns all tools", func(t *testing.T) {
+	t.Run("no scope below threshold shows all tools", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 10, // 3 non-meta tools, under threshold
+		}
 		result := b.applySessionScopeFilter("no-scope-session", tools)
 		if len(result) != 5 {
-			t.Errorf("expected 5 tools, got %d", len(result))
+			t.Errorf("expected 5 tools, got %d: %v", len(result), toolNames(result))
+		}
+	})
+
+	t.Run("no scope above threshold shows only meta-tools", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 2, // 3 non-meta tools, above threshold
+		}
+		result := b.applySessionScopeFilter("no-scope-session", tools)
+		if len(result) != 2 {
+			t.Errorf("expected 2 meta-tools, got %d: %v", len(result), toolNames(result))
+		}
+		for _, name := range toolNames(result) {
+			if !IsBrokerTool(name) {
+				t.Errorf("unexpected non-meta tool %q in default hidden result", name)
+			}
+		}
+	})
+
+	t.Run("no scope at exact threshold shows all tools", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 3, // exactly 3 non-meta tools
+		}
+		result := b.applySessionScopeFilter("no-scope-session", tools)
+		if len(result) != 5 {
+			t.Errorf("expected 5 tools at threshold, got %d: %v", len(result), toolNames(result))
+		}
+	})
+
+	t.Run("threshold 0 always hides", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 0,
+		}
+		result := b.applySessionScopeFilter("no-scope-session", tools)
+		if len(result) != 2 {
+			t.Errorf("expected 2 meta-tools with threshold 0, got %d: %v", len(result), toolNames(result))
 		}
 	})
 
 	t.Run("scope filters to selected tools plus meta-tools", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 10,
+		}
 		store.setScope("scoped-session", []string{"test1_greet", "test1_time"})
 		result := b.applySessionScopeFilter("scoped-session", tools)
 		if len(result) != 4 { // 2 selected + 2 meta-tools
@@ -98,6 +161,20 @@ func TestApplySessionScopeFilter(t *testing.T) {
 			if !containsName(names, expected) {
 				t.Errorf("expected %q in result, got %v", expected, names)
 			}
+		}
+	})
+
+	t.Run("empty scope shows all tools regardless of threshold", func(t *testing.T) {
+		store := newSessionScopeStore()
+		b := &mcpBrokerImpl{
+			sessionScopes:          store,
+			logger:                 slog.Default(),
+			discoveryToolThreshold: 0,
+		}
+		store.setScope("reset-session", []string{})
+		result := b.applySessionScopeFilter("reset-session", tools)
+		if len(result) != 5 {
+			t.Errorf("expected 5 tools after reset, got %d: %v", len(result), toolNames(result))
 		}
 	})
 }
