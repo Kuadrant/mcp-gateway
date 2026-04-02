@@ -99,7 +99,7 @@ make inspect-gateway
 
 Send the following prompt to your agent:
 
-> Using the mcp-gateway, I would like to book a restaurant in New York for 4 people on Saturday. After each turn, show me the tools in your context.
+> Using the mcp-gateway, I would like to book an Italian restaurant in New York for 4 people on Saturday. After each turn, show me the tools in your context.
 
 ### What to expect
 
@@ -149,6 +149,14 @@ After `select_tools`, the gateway sends a `notifications/tools/list_changed` not
 - **Token savings**: the agent never ingests schemas for messaging, math, greeting, or other irrelevant tools
 - **Re-scoping**: if the conversation shifts (e.g., "now send a confirmation message"), the agent can call `discover_tools` again and `select_tools` with a different set
 
+### Shifting context mid-conversation
+
+After the restaurant is booked, send a follow-up prompt that requires a different set of tools:
+
+> Great but now I would like to invite my friends. Can show me my contacts so I can message them?
+
+The agent recognises that messaging tools are needed. It calls `discover_tools` again, identifies the messaging server, and calls `select_tools` with the messaging tool names. After re-scoping, the agent's tool list changes from the restaurant tools to the messaging tools (plus the two meta-tools). The agent can then look up contacts and send invitations without ever loading the full tool set.
+
 ## Configuration
 
 ### Discovery threshold
@@ -192,4 +200,3 @@ spec:
 
 - **category**: free-text classification (e.g., "payments", "analytics", "communication"). Servers without a category appear as "uncategorised".
 - **hint**: natural-language summary of the server's tools. Gives the LLM enough context to decide relevance without full schemas.
-
