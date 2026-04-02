@@ -169,7 +169,7 @@ A custom agent built with awareness of the browse → select pattern can detect 
 #### With a generic MCP client (one extra user prompt)
 
 ```
-User: "Find me an Italian restaurant near downtown for Saturday, 4 people, and book it"
+User: "Find me an Italian restaurant in New York for Saturday"
 
 Turn 1 (discovery):
   Agent calls discover_tools, then select_tools
@@ -207,6 +207,8 @@ Session scoping operates as an additional filter layer, composing with existing 
 An agent can only select tools that survive the first two filters. `discover_tools` only returns tools the current session is authorized to see. `select_tools` returns an error if any requested tool name does not exist or is not authorized for the current session — no partial scoping is applied.
 
 ### Trade-offs
+
+Note TDT (is a Tool Discovery Tool that uses BM25 and keywords to reduce down the tool set)
 
 | | Progressive discovery (this proposal) | Full list + select | Server-side search (tdt) |
 |---|---|---|---|
