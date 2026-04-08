@@ -273,7 +273,7 @@ This allows AuthPolicy to validate the OAuth token while backends receive their 
 ## Test Servers
 
 Test servers in `config/test-servers/`:
-- **Server1**: Go SDK (tools: hi, time, slow, headers)
+- **Server1**: Go SDK (tools: greet, time, slow, headers)
 - **Server2**: Go SDK (tools: hello_world, time, headers, auth1234, slow)
 - **Server3**: Python FastMCP (tools: time, add, dozen, pi, get_weather, slow)
 - **API Key Server**: Validates Bearer token authentication (tool: hello_world)
