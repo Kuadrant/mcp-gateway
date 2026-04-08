@@ -18,15 +18,13 @@ export MCP_GATEWAY_VERSION=0.6.0-rc1
 curl -sSL https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/scripts/quick-start.sh | bash
 ```
 
-The script checks prerequisites, then walks through each step interactively:
+The script checks prerequisites, then runs through each step automatically:
 
 1. **Create Kind cluster** with port mapping (`localhost:7001`)
 2. **Install Gateway API CRDs and Istio** as the Gateway API provider
 3. **Create the Gateway** with listeners and a NodePort service
 4. **Install MCP Gateway** CRDs, controller, and MCPGatewayExtension (the controller automatically deploys the broker-router)
 5. **Deploy test MCP servers** and register them with the gateway
-
-Each step describes what it will do and waits for confirmation before proceeding.
 
 ## Test with MCP Inspector
 
@@ -45,12 +43,18 @@ Click **Connect**, then browse and test the available tools:
 
 | Tool | Description |
 |------|-------------|
-| `test1_hi` | Simple greeting |
+| `test1_greet` | Simple greeting |
 | `test1_time` | Current time |
+| `test1_slow` | Delay N seconds |
 | `test1_headers` | HTTP header inspection |
+| `test1_add_tool` | Dynamically add a new tool |
 | `test2_hello_world` | Greeting from server 2 |
 | `test2_time` | Current time from server 2 |
 | `test2_headers` | HTTP headers from server 2 |
+| `test2_auth1234` | Auth test from server 2 |
+| `test2_slow` | Delay from server 2 |
+| `test2_set_time` | Set time from server 2 |
+| `test2_pour_chocolate_into_mold` | Chocolate mold from server 2 |
 
 ## Cleanup
 
