@@ -21,6 +21,8 @@ on:
       - 'LICENSE'
       - 'charts/**'
       - 'evals/**'
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
