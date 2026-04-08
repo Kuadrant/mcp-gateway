@@ -10,7 +10,7 @@ spec:
   # Tool prefix applied to all servers in this MCPServer
   toolPrefix: test1_
   targetRef:
-    # Server 1 - Go SDK based (hi, time, slow, headers tools)
+    # Server 1 - Go SDK based (greet, time, slow, headers tools)
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: mcp-server1-route
