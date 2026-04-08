@@ -14,7 +14,7 @@ auth-example-setup: cert-manager-install kuadrant-install keycloak-install ## Se
 	@echo ""
 	@echo "Prerequisites: make local-env-setup should be completed"
 	@echo ""
-	@echo "Step 1/5: Configuring OAuth environment variables..."
+	@echo "Step 1/6: Configuring OAuth environment variables..."
 	@kubectl set env deployment/mcp-gateway \
 		OAUTH_RESOURCE_NAME="MCP Server" \
 		OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
@@ -24,23 +24,28 @@ auth-example-setup: cert-manager-install kuadrant-install keycloak-install ## Se
 		-n mcp-system
 	@echo "✅ OAuth environment variables configured"
 	@echo ""
-	@echo "Step 2/5: Installing Vault..."
+	@echo "Step 2/6: Installing Vault..."
 	@bin/kustomize build config/vault | bin/yq 'select(.kind == "Deployment").spec.template.spec.containers[0].args += ["-dev-root-token-id=root"] | .' | kubectl apply -f -
 	@echo "✅ Vault installed"
 	@echo ""
-	@echo "Step 3/5: Applying AuthPolicy configurations..."
+	@echo "Step 3/6: Applying AuthPolicy configurations..."
 	@kubectl apply -k ./config/samples/oauth-token-exchange/
 	@kubectl patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type='merge' \
 		-p='{"spec":{"trustedHeadersKey":{"secretName":"trusted-headers-public-key"}}}'
 	@echo "✅ AuthPolicy configurations applied"
 	@echo ""
-	@echo "Step 4/5: Configuring CORS rules for the OpenID Connect Client Registration endpoint..."
+	@echo "Step 4/6: Configuring CORS rules for the OpenID Connect Client Registration endpoint..."
 	@kubectl apply -f ./config/keycloak/preflight_envoyfilter.yaml
 	@echo "✅ CORS configured"
 	@echo ""
-	@echo "Step 5/5: Patch Authorino deployment to be able to connect to Keycloak..."
+	@echo "Step 5/6: Patch Authorino deployment to be able to connect to Keycloak..."
 	@./utils/patch-authorino-to-keycloak.sh
 	@echo "✅ Authorino deployment patched"
+	@echo ""
+	@echo "Step 6/6: Deploying test MCP servers..."
+	@"$(MAKE)" deploy-test-servers
+	@"$(MAKE)" deploy-example
+	@echo "✅ Test MCP servers deployed and configured"
 	@echo ""
 	@echo "🎉 OAuth example setup complete!"
 	@echo ""

@@ -91,6 +91,7 @@ This will:
 - Configure the mcp-broker with OAuth environment variables
 - Apply AuthPolicy for token validation/exchange on the /mcp endpoint, including tool authorization via keycloak group mappings (both via Keycloak)
 - Apply additional OAuth configurations
+- Deploy several test MCP servers including OIDC-enabled MCP server
 
 The mcp-broker now serves OAuth discovery information at `/.well-known/oauth-protected-resource`.
 
