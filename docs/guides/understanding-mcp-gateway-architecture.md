@@ -227,7 +227,7 @@ For detailed routing logs, enable debug logging:
 kubectl set env deployment/mcp-gateway LOG_LEVEL=-4 -n mcp-system
 ```
 
-### MCP Controller Logs: Dynamic Discovery
+### MCP Gateway Controller Logs: Dynamic Discovery
 
 The controller is responsible for:
 - Watching MCPServerRegistration custom resources
@@ -239,7 +239,7 @@ The controller is responsible for:
 
 ```bash
 # Watch controller logs
-kubectl logs -f deployment/mcp-controller -n mcp-system
+kubectl logs -f deployment/mcp-gateway-controller -n mcp-system
 ```
 
 **Key log patterns:**

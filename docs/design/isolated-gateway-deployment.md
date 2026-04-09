@@ -13,7 +13,7 @@
 
 > Note: The existing MCP controller component is expected to evolve into a full MCP operator capable of both reconciling MCPServerRegistration instances and deploying MCP Gateway instances into targeted namespaces. This design reflects a step towards that future.
 
-The existing behavior of the MCP Controller, which has remained in place from the proof of concept (PoC), is to:
+The existing behavior of the MCP Gateway Controller, which has remained in place from the proof of concept (PoC), is to:
 1. Discover all MCPServerRegistration resources across the cluster
 2. Construct a unified MCP configuration from them
 3. Create that configuration in a known secret in the `mcp-system` namespace
@@ -73,7 +73,7 @@ spec:
 
 ### MCPGatewayExtension Controller Behavior
 
-The MCP Controller will reconcile this new resource in a dedicated MCPGatewayExtension controller. This controller will:
+The MCP Gateway Controller will reconcile this new resource in a dedicated MCPGatewayExtension controller. This controller will:
 
 1. Verify that if an MCPGatewayExtension targets a Gateway in another namespace, an associated ReferenceGrant exists
 2. Update the MCPGatewayExtension status accordingly (without revealing whether the targeted Gateway resource exists)
@@ -101,7 +101,7 @@ In this initial phase, users will use the Helm charts to deploy the broker and r
 
 **Diagram**
 
-> Note: The MCP Controller does not need to be in the same namespace as the MCPGatewayExtension. It is shown that way here purely to reduce noise.
+> Note: The MCP Gateway Controller does not need to be in the same namespace as the MCPGatewayExtension. It is shown that way here purely to reduce noise.
 
 ![Isolated Gateway Deployment Diagram](./images/isolated-gateway.jpg)
 

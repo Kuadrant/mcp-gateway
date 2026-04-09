@@ -48,8 +48,8 @@ test-e2e-auth-ci: test-e2e-deps enable-debug-logging ## Run auth e2e tests only 
 
 .PHONY: enable-debug-logging
 enable-debug-logging: ## Enable debug logging on controller and wait for restart
-	@echo "Enabling debug logging on mcp-controller..."
-	kubectl patch deployment mcp-controller -n mcp-system --type='json' \
+	@echo "Enabling debug logging on mcp-gateway-controller..."
+	kubectl patch deployment mcp-gateway-controller -n mcp-system --type='json' \
 		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/command", "value": ["./mcp_controller", "--log-level=-4"]}]'
 	@echo "Waiting for controller rollout..."
-	kubectl rollout status deployment/mcp-controller -n mcp-system --timeout=120s
+	kubectl rollout status deployment/mcp-gateway-controller -n mcp-system --timeout=120s

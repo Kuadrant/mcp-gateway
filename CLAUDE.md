@@ -7,7 +7,7 @@ This file provides guidance to Claude Code when working with this repository.
 MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. Single binary (`mcp-broker-router`) with three components:
 - **MCP Router**: Envoy external processor that routes MCP requests (gRPC on :50051)
 - **MCP Broker**: HTTP service that aggregates tools from multiple MCP servers (HTTP on :8080/mcp)
-- **MCP Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration CRDs (optional, `--controller` flag)
+- **MCP Gateway Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration CRDs (optional, `--controller` flag)
 
 # Exploration
 

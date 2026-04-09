@@ -88,7 +88,7 @@ kubectl apply -k "${REPO}/config/crd?ref=${GIT_REF}"
 kubectl apply -k "${REPO}/config/mcp-gateway/overlays/mcp-system?ref=${GIT_REF}"
 
 echo "Waiting for controller..."
-kubectl wait --for=condition=available --timeout=120s deployment/mcp-controller -n mcp-system
+kubectl wait --for=condition=available --timeout=120s deployment/mcp-gateway-controller -n mcp-system
 echo "Waiting for broker-router (deployed automatically by the controller)..."
 kubectl wait --for=condition=available --timeout=120s deployment/mcp-gateway -n mcp-system
 echo "Waiting for gateway pod..."

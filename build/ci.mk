@@ -63,7 +63,7 @@ ci-auth-setup: cert-manager-install kuadrant-install ## Setup auth infrastructur
 .PHONY: ci-debug-logs
 ci-debug-logs: ## Collect logs for debugging CI failures
 	@echo "=== Controller logs ==="
-	-$(KUBECTL) logs -n mcp-system deployment/mcp-controller --tail=100
+	-$(KUBECTL) logs -n mcp-system deployment/mcp-gateway-controller --tail=100
 	@echo "=== MCPGatewayExtensions ==="
 	-$(KUBECTL) get mcpgatewayextensions -A
 	@echo "=== MCPServerRegistrations ==="

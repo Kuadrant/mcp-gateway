@@ -7,7 +7,7 @@ This directory contains the Helm chart for deploying MCP Gateway to Kubernetes.
 ## Overview
 
 The MCP Gateway Helm chart deploys:
-- **MCP Controller**: Manages MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer custom resources
+- **MCP Gateway Controller**: Manages MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer custom resources
 - **MCPGatewayExtension**: Custom resource that triggers the controller to deploy the broker-router
 - **Custom Resource Definitions (CRDs)**: MCPGatewayExtension, MCPServerRegistration, and MCPVirtualServer
 - **RBAC**: Service accounts, roles, and bindings for secure operation
