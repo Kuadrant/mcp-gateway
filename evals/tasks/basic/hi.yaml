@@ -1,8 +1,0 @@
-kind: Task
-apiVersion: mcpchecker/v1alpha2
-metadata:
-  name: basic-hi
-  difficulty: easy
-spec:
-  prompt:
-    inline: "Call the 'test1_greet' tool with name 'World'. Verify it replies with 'Hi World'."
