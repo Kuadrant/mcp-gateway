@@ -159,7 +159,7 @@ The `mcp.kuadrant.io/secret=true` label is required. Without it the MCPServerReg
 
 ## Step 5: Create the MCPServerRegistration Resource
 
-Create the `MCPServer` resource that registers the GitHub MCP server with the gateway:
+Create the `MCPServerRegistration` resource that registers the GitHub MCP server with the gateway:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -213,37 +213,24 @@ This AuthPolicy extracts the API key from the OAuth token and sets it as the `x-
 
 **Note:** This step is only required if you're using AuthPolicy for OAuth authentication. For simple bearer token auth, the router handles the Authorization header automatically.
 
-## Step 7: Wait for Configuration Sync
+## Step 7: Verify the Registration
 
-Wait for the configuration to sync to the broker:
-
-```bash
-echo "Waiting for GitHub tools to be discovered..."
-until kubectl logs -n mcp-system deploy/mcp-gateway | grep "Discovered.*tools.*github"; do
-  echo "Still waiting..."
-  sleep 5
-done
-echo "GitHub tools discovered!"
-```
-
-## Verification
-
-Check that the MCPServerRegistration is registered:
+Wait for the MCPServerRegistration to become ready:
 
 ```bash
-kubectl get mcpsrs -n mcp-test
-kubectl logs -n mcp-system deployment/mcp-gateway | grep "Discovered.*tools.*github"
+kubectl get mcpsr -n mcp-test
 ```
+
+The `github` entry should show `READY = True` and a non-zero `TOOLS` count:
+
+```text
+NAME     PREFIX    TARGET                PATH   READY   TOOLS   CREDENTIALS    AGE
+github   github_   github-mcp-external   /mcp   True    41      github-token   30s
+```
+
+If `READY` is still `False`, wait a few seconds and re-run the command.
 
 ## Test Integration
-
-Test tools/list through the gateway:
-
-```bash
-curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
-```
 
 To test tool calls, open the MCP Inspector:
 
@@ -259,7 +246,7 @@ associated with your access token.
 ## Cleanup
 
 ```bash
-kubectl delete mcpserver github -n mcp-test
+kubectl delete mcpserverregistration github -n mcp-test
 kubectl delete httproute github-mcp-external -n mcp-test
 kubectl delete serviceentry github-mcp-external -n mcp-test
 kubectl delete destinationrule github-mcp-external -n mcp-test
