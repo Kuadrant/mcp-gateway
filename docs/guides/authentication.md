@@ -119,7 +119,10 @@ kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/con
 kubectl wait --for=condition=available --timeout=90s deployment/authorino -n kuadrant-system
 
 # Patch Authorino deployment to resolve Keycloak's host name to MCP gateway IP (Development environment only):
-export GATEWAY_IP=$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+export GATEWAY_IP=$(kubectl get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+if [ -z "$GATEWAY_IP" ]; then
+  GATEWAY_IP=$(kubectl get pod -l gateway.networking.k8s.io/gateway-name=mcp-gateway -n gateway-system -o jsonpath='{.items[0].status.podIP}')
+fi
 kubectl patch deployment authorino -n kuadrant-system --type='json' -p="[
   {
     \"op\": \"add\",
@@ -199,7 +202,9 @@ curl http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource
 #   ],
 #   "scopes_supported": [
 #     "basic",
-#     "groups"
+#     "groups",
+#     "roles",
+#     "profile"
 #   ]
 # }
 ```
@@ -225,6 +230,8 @@ You should get a response like this:
 ## Step 5: Test Authentication Flow
 
 Use the MCP Inspector to test the complete OAuth flow.
+
+> **Note:** If you set up your cluster using the [Quick Start Guide](./quick-start.md), Keycloak (port 8002) is not exposed to the host. Run `kubectl port-forward -n gateway-system svc/mcp-gateway-np 8002:8002` in a separate terminal before proceeding.
 
 ```bash
 # Start MCP Inspector (requires Node.js/npm)

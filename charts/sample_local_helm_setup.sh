@@ -34,10 +34,10 @@ nodes:
         node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 30080
-    hostPort: 7001
+    hostPort: 8001
     protocol: TCP
   - containerPort: 30089
-    hostPort: 7002
+    hostPort: 8002
     protocol: TCP
 EOF
 fi
@@ -130,7 +130,7 @@ echo "================================================================"
 echo "Setup complete!"
 echo "================================================================"
 echo "MCP Inspector: http://localhost:6274"
-echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:7001/mcp"
+echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo ""
 echo "Check status:"
 echo "  kubectl get pods -n mcp-system"
@@ -141,7 +141,7 @@ echo ""
 echo "Press Ctrl+C to stop and cleanup."
 echo "================================================================"
 
-open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:7001/mcp" 2>/dev/null || echo "Open manually: http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:7001/mcp"
+open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:8001/mcp" 2>/dev/null || echo "Open manually: http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:8001/mcp"
 
 # Cleanup function
 cleanup() {
