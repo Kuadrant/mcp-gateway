@@ -24,7 +24,7 @@ test-e2e: ci-setup test-e2e-run ## Run full e2e test suite (setup + run)
 .PHONY: test-e2e-happy
 test-e2e-happy: test-e2e-deps ## Quick e2e test run for local development (no setup)
 	@echo "Running e2e tests (local mode)..."
-	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --focus="[Happy]" ./tests/e2e
+	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --focus="\[Happy\]" ./tests/e2e
 
 .PHONY: test-e2e-cleanup
 test-e2e-cleanup: ## Clean up e2e test resources
