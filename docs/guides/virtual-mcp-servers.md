@@ -30,9 +30,21 @@ A virtual MCP server is defined by an `MCPVirtualServer` custom resource that sp
 
 When a client includes the virtual server header, MCP Gateway filters responses to only include the specified tools.
 
-## Step 1: Create Virtual Server Definitions
+## Step 1: Discover Available Tools
 
-Create virtual servers for different use cases using tools from your configured MCP servers:
+Before creating virtual servers, check which tools are available in your gateway. You can browse them using [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
+
+```bash
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest
+```
+
+> **Note:** `DANGEROUSLY_OMIT_AUTH=true` is for local testing only. Do not use it in shared or production environments.
+
+Open the inspector at [http://localhost:6274](http://localhost:6274) and connect to your gateway using **Streamable HTTP** transport with your gateway URL (e.g. `http://mcp.127-0-0-1.sslip.io:8001/mcp`). The **Tools** tab lists all available tool names -- you'll use these in the next step.
+
+## Step 2: Create Virtual Server Definitions
+
+Create virtual servers for different use cases. Replace the example tool names below with tools from your gateway:
 
 ### Development Tools Virtual Server
 
@@ -46,7 +58,7 @@ metadata:
 spec:
   description: "Development and debugging tools"
   tools:
-  - test1_hello_world      # Example: replace with your actual tool names
+  - test1_hello_world      # replace with your actual tool names
   - test1_headers
   - github_get_me
   - github_list_repos
@@ -65,24 +77,29 @@ metadata:
 spec:
   description: "Data analysis and reporting tools"
   tools:
-  - test2_time            # Example: replace with your actual tool names
+  - test2_time            # replace with your actual tool names
   - test3_dozen
   - github_get_repo_stats
 EOF
 ```
 
-**Important**: Replace the example tool names above with actual tools from your configured MCP servers.
-
-## Step 2: Verify Virtual Server Creation
+## Step 3: Verify Virtual Server Creation
 
 Check that your virtual servers were created successfully:
 
 ```bash
-# List all virtual servers
 kubectl get mcpvirtualserver -A
 ```
 
-## Step 3: Test Virtual Server Access
+Expected output:
+
+```text
+NAMESPACE    NAME         TOOLS   AGE
+mcp-system   data-tools           10s
+mcp-system   dev-tools            15s
+```
+
+## Step 4: Test Virtual Server Access
 
 Test your virtual servers using curl with the appropriate header:
 
@@ -133,15 +150,14 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
 
 **Expected Response**: All tools from all configured MCP servers
 
-## Step 4: Use with MCP Inspector
+## Step 5: Use with MCP Inspector
 
-You can also test virtual servers using the MCP Inspector by setting the virtual server header. The MCP Inspector allows you to configure custom headers for testing different virtual server configurations.
+You can also test virtual servers using MCP Inspector. Connect to your gateway as described in [Step 1](#step-1-discover-available-tools), then add the `X-Mcp-Virtualserver` header with the `namespace/name` of your virtual server (e.g. `mcp-system/dev-tools`) under the **Headers** section. The tools list will show only the tools defined in that virtual server.
 
 ## Remove Virtual Servers
 
 ```bash
-# Delete a virtual server
-kubectl delete mcpvirtualserver dev-tools -n mcp-system
+kubectl delete mcpvirtualserver dev-tools data-tools -n mcp-system
 ```
 
 ## Authorization and Tool Filtering
