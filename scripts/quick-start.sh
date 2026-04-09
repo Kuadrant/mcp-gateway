@@ -45,7 +45,7 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 echo ""
 
-output "Step 1: Create Kind cluster with port mapping (localhost:7001 -> NodePort 30080)"
+output "Step 1: Create Kind cluster with port mapping (localhost:8001 -> NodePort 30080)"
 
 if kind get clusters 2>/dev/null | grep -q '^kind$'; then
     echo "Kind cluster already exists, reusing it."
@@ -63,7 +63,7 @@ nodes:
         node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 30080
-    hostPort: 7001
+    hostPort: 8001
     protocol: TCP
 EOF
 fi
@@ -121,12 +121,12 @@ echo ""
 echo "============================================================"
 echo "MCP Gateway is ready!"
 echo ""
-echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:7001/mcp"
+echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo ""
 echo "To test with MCP Inspector (requires Node.js):"
 echo "  DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest"
 echo ""
-echo "  Then connect to: http://mcp.127-0-0-1.sslip.io:7001/mcp"
+echo "  Then connect to: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo "  Transport: Streamable HTTP"
 echo ""
 echo "To clean up:"

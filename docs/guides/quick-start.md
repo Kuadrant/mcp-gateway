@@ -20,7 +20,7 @@ curl -sSL https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/scripts/qu
 
 The script checks prerequisites, then runs through each step automatically:
 
-1. **Create Kind cluster** with port mapping (`localhost:7001`)
+1. **Create Kind cluster** with port mapping (`localhost:8001`)
 2. **Install Gateway API CRDs and Istio** as the Gateway API provider
 3. **Create the Gateway** with listeners and a NodePort service
 4. **Install MCP Gateway** CRDs, controller, and MCPGatewayExtension (the controller automatically deploys the broker-router)
@@ -37,7 +37,7 @@ DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest
 Open the inspector at [http://localhost:6274](http://localhost:6274) and configure:
 
 - **Transport**: Streamable HTTP
-- **URL**: `http://mcp.127-0-0-1.sslip.io:7001/mcp`
+- **URL**: `http://mcp.127-0-0-1.sslip.io:8001/mcp`
 
 Click **Connect**, then browse and test the available tools:
 
