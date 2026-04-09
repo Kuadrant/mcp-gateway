@@ -1,0 +1,8 @@
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: basic-echo
+  difficulty: easy
+spec:
+  prompt:
+    inline: "Call the 'everything_echo' tool with name 'World'. Verify it replies with 'Echo: World'."

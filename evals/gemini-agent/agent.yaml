@@ -7,6 +7,6 @@ builtin:
   # or any other OpenAI-compatible endpoint.
   type: "openai-acp"
 
-  model: "qwen2.5:1.5b"
+  model: "openai:qwen2.5:1.5b"
   params:
     temperature: 0.1
