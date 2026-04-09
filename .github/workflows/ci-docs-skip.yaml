@@ -1,0 +1,55 @@
+name: CI Docs Skip
+
+# Provides pass statuses for required checks when only non-code files change.
+# Without this, PRs touching only these paths can never merge because the real
+# workflows use paths-ignore and never report a status for the required checks.
+# The paths list below is the union of all paths-ignore entries from
+# images.yaml, tests.yaml, and code-style.yaml.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches: ['main']
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'LICENSE'
+      - 'charts/**'
+      - 'evals/**'
+      - 'tests/servers/**'
+      - '.coderabbit.yaml'
+      - '.gitignore'
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  build:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: mcp-gateway
+          - image: mcp-controller
+    steps:
+      - run: echo "Docs-only change, skipping build"
+
+  unit-tests:
+    name: Unit Tests
+    strategy:
+      matrix:
+        go-version: [1.22.x]
+        platform: [ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - run: echo "Docs-only change, skipping tests"
+
+  code-style:
+    name: Code Style Checks
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change, skipping code style"
