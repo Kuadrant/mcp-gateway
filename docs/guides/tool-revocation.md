@@ -44,61 +44,31 @@ To force faster revocation, reduce the access token lifespan in your identity pr
 
 ## Step 3: Verify Revocation
 
-After revoking a tool, verify that the user can no longer access it.
+After revoking a tool, verify that the user can no longer access it. The simplest way is using MCP Inspector.
+
+Find your gateway address:
+
+```bash
+kubectl get gateway mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'
+```
+
+Open MCP Inspector and connect to your gateway's `/mcp` endpoint (e.g., `http://<gateway-address>:8001/mcp`). Authenticate as the affected user through the OAuth flow.
 
 **Check `tools/list` filtering:**
 
-Authenticate as the affected user and list tools. The revoked tool should no longer appear:
-
-```bash
-# Obtain a token as the affected user, then:
-curl -X POST http://your-gateway-host/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
-```
+Under **Tools > List Tools**, the revoked tool should no longer appear in the list.
 
 **Check `tools/call` denial:**
 
-Attempt to call the revoked tool. You should receive a 403 Forbidden response:
-
-```bash
-curl -X POST http://your-gateway-host/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "revoked_tool"}}'
-```
-
-Expected response:
-
-```json
-{
-  "error": "Forbidden",
-  "message": "MCP Tool Access denied: Insufficient permissions for this tool."
-}
-```
+Attempt to call the revoked tool. Since the tool is no longer in the user's authorized set, the request should fail.
 
 ## Step 4: Monitor Revocation Enforcement
 
-Use existing observability to track denied access attempts after revocation.
-
-### Authorino Logs
-
-Authorino logs all authorization decisions, including denials. Check for authorization failures:
-
-```bash
-kubectl logs -n kuadrant-system -l app=authorino | grep -i "unauthorized\|denied\|forbidden"
-```
-
-### OpenTelemetry Traces
-
-If [OpenTelemetry](./opentelemetry.md) is enabled, the MCP Router emits trace spans for every request. Denied requests include `http.status_code: 403` on the response span. You can query your trace backend for these:
+If [OpenTelemetry](./opentelemetry.md) is enabled, denied requests appear as trace spans with `http.status_code: 403`. Query your trace backend to find them:
 
 - Filter by `http.status_code = 403`
 - Use `gen_ai.tool.name` to identify which tool was denied
 - Use `mcp.session.id` to correlate with the client session
-
-### Loki / Log Aggregation
 
 If the [observability stack](./observability.md) is deployed, query gateway logs for revocation-related activity:
 
@@ -106,7 +76,7 @@ If the [observability stack](./observability.md) is deployed, query gateway logs
 {namespace="mcp-system"} |= `x-mcp-toolname` | json | line_format "{{.msg}}"
 ```
 
-The router logs the `x-mcp-toolname` and `x-mcp-servername` headers for every `tools/call` request. Combined with the 403 status from Authorino, this gives visibility into which users are attempting to call revoked tools.
+The router logs the `x-mcp-toolname` and `x-mcp-servername` headers for every `tools/call` request. Combined with the 403 status, this gives visibility into which users are attempting to call revoked tools.
 
 ## Next Steps
 
