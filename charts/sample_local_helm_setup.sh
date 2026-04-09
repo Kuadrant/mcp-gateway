@@ -17,11 +17,12 @@ echo "Using local chart: $USE_LOCAL_CHART"
 echo "Setting up MCP Gateway using Helm chart..."
 
 # Create Kind cluster with inline configuration (skip if already exists)
-if kind get clusters 2>/dev/null | grep -q '^kind$'; then
+KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-mcp-gateway}
+if kind get clusters 2>/dev/null | grep -Fxq -- "$KIND_CLUSTER_NAME"; then
     echo "Kind cluster already exists, reusing it."
 else
     echo "Creating Kind cluster..."
-    cat <<EOF | kind create cluster --config=-
+    cat <<EOF | kind create cluster --name "${KIND_CLUSTER_NAME}" --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -42,7 +43,7 @@ nodes:
 EOF
 fi
 
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
 
 helm repo add istio https://istio-release.storage.googleapis.com/charts
 helm repo update

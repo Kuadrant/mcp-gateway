@@ -47,10 +47,11 @@ echo ""
 
 output "Step 1: Create Kind cluster with port mapping (localhost:8001 -> NodePort 30080)"
 
-if kind get clusters 2>/dev/null | grep -q '^kind$'; then
+KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-mcp-gateway}
+if kind get clusters 2>/dev/null | grep -Fxq -- "$KIND_CLUSTER_NAME"; then
     echo "Kind cluster already exists, reusing it."
 else
-    cat <<EOF | kind create cluster --config=-
+    cat <<EOF | kind create cluster --name "${KIND_CLUSTER_NAME}" --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -130,5 +131,5 @@ echo "  Then connect to: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo "  Transport: Streamable HTTP"
 echo ""
 echo "To clean up:"
-echo "  kind delete cluster"
+echo "  kind delete cluster --name ${KIND_CLUSTER_NAME}"
 echo "============================================================"
