@@ -47,7 +47,7 @@ The issued OAuth token should include claims similar to:
 }
 ```
 
-> **Note:** The test Keycloak instance deployed in the [authentication guide](./authentication.md) is already configured to include these claims based on user group membership. The `mcp` user is part of both `accounting` group, which map to different tool permissions.
+> **Note:** The test Keycloak instance deployed in the [authentication guide](./authentication.md) is already configured to include these claims based on user group membership. The `mcp` user is part of the `accounting` group, which maps to specific tool permissions.
 
 ## Step 2: Configure Tool-Level Authorization
 
@@ -133,13 +133,13 @@ open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-
 
 **Test Scenarios:**
 
-1. **Login as mcp/mcp** (has both `accounting` and `developers` groups)
+1. **Login as mcp/mcp** (has `accounting` and `engineering` groups)
 2. **Try allowed tools**:
    - `test1_greet`
    - `test2_headers`
    - `test3_add`
 3. **Try restricted tools**:
-   - `apikey_hello_world` - Should return 403 Forbidden
+   - `test1_time` - Should return 403 Forbidden (accounting group only has the `greet` role for test-server1)
 
 ## Alternative Authorization Mechanisms
 
@@ -154,7 +154,7 @@ Monitor authorization decisions:
 kubectl get authpolicy -A
 
 # View authorization logs
-kubectl logs -n kuadrant-system -l app=authorino
+kubectl logs -n kuadrant-system -l authorino-resource=authorino
 ```
 
 ## Next Steps
