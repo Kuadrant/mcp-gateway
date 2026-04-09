@@ -5,32 +5,31 @@ This guide covers adding an MCP listener to your existing Gateway. The controlle
 
 ## Prerequisites
 
-- MCP Gateway installed in your cluster
-- Existing Gateway resource
-- Gateway API Provider (Istio) configured
+- MCP Gateway [installed in your cluster](./quick-start-guide.md)
+- Existing [Gateway](https://gateway-api.sigs.k8s.io/) resource
+- Gateway API provider (e.g. Istio) configured
 
 ## Step 1: Add MCP Listener to Gateway
 
-Add a listener for MCP traffic to your existing Gateway:
+Add a listener for MCP traffic to your existing Gateway. Patch it to add a new listener entry:
 
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: your-gateway-name
-  namespace: your-gateway-namespace
+```bash
+kubectl patch gateway your-gateway-name -n your-gateway-namespace --type merge -p '
 spec:
-  gatewayClassName: istio
   listeners:
-  # ... your existing listeners ...
   - name: mcp
-    hostname: 'mcp.127-0-0-1.sslip.io'  # Change to your hostname
+    hostname: "mcp.example.com"
     port: 8080
     protocol: HTTP
     allowedRoutes:
       namespaces:
         from: All
+'
 ```
+
+Replace `your-gateway-name`, `your-gateway-namespace`, and the hostname with your values. The hostname must resolve to your Gateway's external address.
+
+> **Note:** The patch above replaces all listeners. To preserve existing listeners, use a JSON patch or edit the Gateway directly with `kubectl edit gateway your-gateway-name -n your-gateway-namespace`.
 
 > **Important:** If you installed MCP Gateway using Helm, ensure the `gateway.publicHost` value in your Helm values matches the hostname above. For example:
 > ```bash
@@ -56,8 +55,9 @@ kubectl get httproute mcp-gateway-route -n mcp-system
 
 If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, or OAuth well-known endpoints), disable automatic creation and manage your own:
 
-1. Set `httpRouteManagement: Disabled` on your MCPGatewayExtension:
+1. Find your MCPGatewayExtension name and set `httpRouteManagement: Disabled`:
    ```bash
+   kubectl get mcpgatewayextension -n mcp-system
    kubectl patch mcpgatewayextension -n mcp-system your-extension-name \
      --type merge -p '{"spec":{"httpRouteManagement":"Disabled"}}'
    ```
@@ -79,6 +79,7 @@ If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, o
      parentRefs:
        - name: your-gateway-name
          namespace: your-gateway-namespace
+         sectionName: mcp
      hostnames:
        - 'mcp.127-0-0-1.sslip.io'
      rules:
@@ -141,7 +142,7 @@ If you see the EnvoyFilter, you can proceed to verification. If the EnvoyFilter 
 Test that the MCP endpoint is accessible through your Gateway:
 
 ```bash
-curl -X POST http://mcp.127-0-0-1.sslip.io:8080/mcp \
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize"}'
 ```
@@ -149,7 +150,7 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8080/mcp \
 You should get a response like this:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"Kagenti MCP Broker","version":"0.0.1"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"Kuadrant MCP Gateway","version":"0.0.1"}}}
 ```
 
 ## Next Steps
