@@ -10,7 +10,7 @@ setup-cluster-base: tools kind-create-cluster build-and-load-image gateway-api-i
 deploy-controller-only: ## Deploy only the controller (tests create their own MCPGatewayExtensions)
 	$(KUBECTL) apply -k config/mcp-gateway/overlays/ci/
 	@echo "Waiting for controller to be ready..."
-	@$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-controller -n mcp-system
+	@$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-gateway-controller -n mcp-system
 
 # Wait for test server deployments
 .PHONY: wait-test-servers

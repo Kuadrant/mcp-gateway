@@ -233,13 +233,13 @@ deploy-redis: ## deploy redis to mcp-system namespace
 
 .PHONY: configure-redis
 configure-redis: deploy-redis ## deploy redis and patch deployment with redis connection
-	kubectl patch deployment $(BROKER_ROUTER_NAME) -n mcp-system --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
+	kubectl patch deployment $(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
 
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
 	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
 	@echo "Waiting for controller to be ready..."
-	@kubectl wait --for=condition=Available deployment/mcp-controller -n mcp-system --timeout=$(WAIT_TIME)
+	@kubectl wait --for=condition=Available deployment/mcp-gateway-controller -n mcp-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for MCPGatewayExtension to be ready..."
 	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n mcp-system --timeout=$(WAIT_TIME)
 	@echo "Controller and broker-router are ready"
@@ -256,8 +256,8 @@ endef
 
 .PHONY: restart-all
 restart-all:
-	kubectl rollout restart deployment/$(BROKER_ROUTER_NAME) -n mcp-system 2>/dev/null || true
-	kubectl rollout restart deployment/mcp-controller -n mcp-system 2>/dev/null || true
+	kubectl rollout restart deployment/$(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) 2>/dev/null || true
+	kubectl rollout restart deployment/mcp-gateway-controller -n $(MCP_GATEWAY_NAMESPACE) 2>/dev/null || true
 
 .PHONY: build-and-load-image
 build-and-load-image: kind build-image load-image restart-all  ## Build & load router/broker/controller image into the Kind cluster and restart
@@ -287,7 +287,7 @@ deploy-example: install-crd ## Deploy example MCPServerRegistration resource
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-base.yaml
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-extended.yaml
 	@echo "Waiting for broker-router to be ready..."
-	@kubectl wait --for=condition=Available deployment/$(BROKER_ROUTER_NAME) -n mcp-system --timeout=$(WAIT_TIME)
+	@kubectl wait --for=condition=Available deployment/$(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
 
 # Deploy example MCPServerRegistration for everything server only
 deploy-example-minimal: install-crd ## Deploy MCPServerRegistration for everything server
@@ -410,8 +410,8 @@ endef
 reload-controller: build kind ## Build, load to Kind, and restart controller
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --file Dockerfile.controller -t $(IMAGE_TAG_BASE):$(IMAGE_TAG) .
 	$(call load-image,$(IMAGE_TAG_BASE):$(IMAGE_TAG))
-	@kubectl rollout restart -n mcp-system deployment/mcp-controller
-	@kubectl rollout status -n mcp-system deployment/mcp-controller --timeout=60s
+	@kubectl rollout restart -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-gateway-controller
+	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-gateway-controller --timeout=60s
 
 .PHONY: reload-broker
 reload-broker: build docker-build kind ## Build, load to Kind, and restart broker
@@ -422,8 +422,8 @@ reload-broker: build docker-build kind ## Build, load to Kind, and restart broke
 .PHONY: reload
 reload: build docker-build kind ## Build, load to Kind, and restart both controller and broker
 	$(call reload-image)
-	@kubectl rollout restart -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-controller deployment/$(BROKER_ROUTER_NAME)
-	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE)deployment/mcp-controller --timeout=60s
+	@kubectl rollout restart -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-gateway-controller deployment/$(BROKER_ROUTER_NAME)
+	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/mcp-gateway-controller --timeout=60s
 	@kubectl rollout status -n $(MCP_GATEWAY_NAMESPACE) deployment/$(BROKER_ROUTER_NAME) --timeout=60s
 
 ##@ E2E Testing
@@ -726,9 +726,9 @@ ifeq ($(ISTIO_TRACING),1)
 		-p='{"spec":{"values":{"meshConfig":{"enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"$(OTEL_COLLECTOR_HOST)"}}]}}}}'
 	@sleep 5
 endif
-	kubectl set env deployment/mcp-gateway -n mcp-system \
+	kubectl set env deployment/mcp-gateway -n $(MCP_GATEWAY_NAMESPACE) \
 		OTEL_EXPORTER_OTLP_ENDPOINT="$(OTEL_COLLECTOR_HTTP)" OTEL_EXPORTER_OTLP_INSECURE="true"
-	@kubectl rollout status deployment/mcp-gateway -n mcp-system --timeout=120s
+	@kubectl rollout status deployment/mcp-gateway -n $(MCP_GATEWAY_NAMESPACE) --timeout=120s
 ifeq ($(AUTH_TRACING),1)
 	@if ! kubectl get authorino -n kuadrant-system 2>/dev/null | grep -q authorino; then \
 		$(MAKE) auth-example-setup; \

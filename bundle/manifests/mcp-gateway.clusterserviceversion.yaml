@@ -161,7 +161,7 @@ spec:
         - label:
             app: mcp-controller
             component: controller
-          name: mcp-controller
+          name: mcp-gateway-controller
           spec:
             replicas: 1
             selector:

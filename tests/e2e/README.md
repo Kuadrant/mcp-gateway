@@ -29,7 +29,7 @@ make test-e2e-watch
 If tests fail, check:
 ```bash
 # Controller logs
-kubectl logs -n mcp-system deployment/mcp-controller
+kubectl logs -n mcp-system deployment/mcp-gateway-controller
 
 # Broker logs  
 kubectl logs -n mcp-system deployment/mcp-broker-router

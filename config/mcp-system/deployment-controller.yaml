@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-controller
+  name: mcp-gateway-controller
   namespace: mcp-system
   labels:
     app: mcp-controller

@@ -2,7 +2,7 @@
 
 ### Problem
 
-The MCP Gateway needs to discover and register backend MCP servers so that their tools can be aggregated and presented to clients as a unified MCP server. When an MCPServerRegistration custom resource is created or updated in Kubernetes, the MCP Controller must:
+The MCP Gateway needs to discover and register backend MCP servers so that their tools can be aggregated and presented to clients as a unified MCP server. When an MCPServerRegistration custom resource is created or updated in Kubernetes, the MCP Gateway Controller must:
 
 1. Discover the MCP server endpoint from the referenced HTTPRoute
 2. Update the broker and router configuration
@@ -18,7 +18,7 @@ The broker needs a robust mechanism to manage the lifecycle of each upstream MCP
 
 The MCP Gateway uses a two-phase registration process:
 
-1. **Controller Phase**: The MCP Controller watches for MCPServerRegistration resources, discovers server endpoints from HTTPRoutes, and writes aggregated configuration to ConfigMaps
+1. **Controller Phase**: The MCP Gateway Controller watches for MCPServerRegistration resources, discovers server endpoints from HTTPRoutes, and writes aggregated configuration to ConfigMaps
 2. **Broker Phase**: The MCP Broker reads configuration changes and manages each upstream MCP server through an `MCPManager` struct that handles the full lifecycle of the connection
 
 Each upstream MCP server is managed by a dedicated `MCPManager` instance that runs as a background routine, handling:
@@ -31,7 +31,7 @@ Each upstream MCP server is managed by a dedicated `MCPManager` instance that ru
 
 ```mermaid
 sequenceDiagram
-  participant Controller as MCP Controller
+  participant Controller as MCP Gateway Controller
   participant ConfigMap as ConfigMap
   participant Broker as MCP Broker
   participant Manager as MCPManager

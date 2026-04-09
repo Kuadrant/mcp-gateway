@@ -56,7 +56,7 @@ helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
 ```
 
 This automatically installs:
-- **MCP Controller** - Watches MCPGatewayExtension and MCPServerRegistration resources
+- **MCP Gateway Controller** - Watches MCPGatewayExtension and MCPServerRegistration resources
 - **MCPGatewayExtension** - Custom resource targeting your Gateway
 
 When the MCPGatewayExtension becomes ready, the controller automatically creates:

@@ -51,7 +51,7 @@ Note: CRDs are also installed automatically when deploying the controller via He
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        MCP System Namespace                          │
 ├──────────────────────────────────────────────────────────────────────┤
-│                    MCP Controller (cluster-wide)                     │
+│                 MCP Gateway Controller (cluster-wide)                │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
               ┌─────────────────────┴─────────────────────┐
@@ -89,9 +89,9 @@ export TEAM_A_HOST="team-a.127-0-0-1.sslip.io"
 export TEAM_B_HOST="team-b.127-0-0-1.sslip.io"
 ```
 
-## Step 3: Deploy the MCP Controller
+## Step 3: Deploy the MCP Gateway Controller
 
-The MCP Controller runs cluster-wide and reconciles MCPGatewayExtension and MCPServerRegistration resources. Deploy it once in a central namespace:
+The MCP Gateway Controller runs cluster-wide and reconciles MCPGatewayExtension and MCPServerRegistration resources. Deploy it once in a central namespace:
 
 ```bash
 helm upgrade -i mcp-controller ./charts/mcp-gateway \
