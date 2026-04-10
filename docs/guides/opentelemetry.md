@@ -1,10 +1,17 @@
 # OpenTelemetry Integration
 
-The MCP Gateway supports OpenTelemetry (OTel) for distributed tracing and log export. When enabled, the MCP Router (ext_proc) emits trace spans for every request and can export structured logs via OTLP. When no endpoint is configured, OTel is completely disabled with zero overhead.
+This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distributed tracing and log export. When enabled, the MCP Router (ext_proc) emits trace spans for every request and can export structured logs via OTLP. When no endpoint is configured, OTel is completely disabled with zero overhead.
 
-## Enabling OpenTelemetry
+## Prerequisites
 
-Set the following environment variables on the `mcp-broker-router` process:
+- MCP Gateway installed and configured
+- An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent)
+
+> **Note:** For a pre-configured local stack with OTEL Collector, Tempo, Loki, and Grafana, see the [observability example](../../examples/otel/README.md).
+
+## Step 1: Enable OpenTelemetry
+
+Set the following environment variables on the MCP Gateway deployment:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -13,7 +20,7 @@ Set the following environment variables on the `mcp-broker-router` process:
 
 ### Helm Install
 
-After installing the MCP Gateway with Helm, set the environment variables on the broker-router deployment:
+After installing the MCP Gateway with Helm, set the environment variables on the deployment. Use `helm list -A` to find your release name and namespace:
 
 ```bash
 kubectl set env deployment/<release-name> -n <namespace> \
@@ -42,6 +49,10 @@ export OTEL_EXPORTER_OTLP_INSECURE="true"
 ```
 
 See the [standalone binary install guide](./binary-install.md) for full configuration details.
+
+## Step 2: Verify Traces Are Being Exported
+
+After enabling OTel, generate some traffic against the gateway (e.g., an `initialize` or `tools/list` request) and confirm traces appear in your collector backend. The gateway emits spans under the service name `mcp-gateway` by default.
 
 ## Environment Variables
 
@@ -99,9 +110,11 @@ mcp-router.process
 Span attributes follow [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#server) and include:
 
 - `mcp.method.name` -- MCP method (initialize, tools/call, tools/list)
+- `gen_ai.operation.name` -- same as `mcp.method.name`
 - `gen_ai.tool.name` -- tool name (for tools/call requests)
 - `mcp.session.id` -- gateway session ID
 - `mcp.server` -- resolved backend server name
+- `mcp.route` -- routing decision (`tool-call`, `broker`, or `elicitation-response`)
 - `http.method`, `http.path`, `http.request_id`, `http.status_code`
 - `jsonrpc.request.id`, `jsonrpc.protocol.version`
 - `client.address` -- from x-forwarded-for header
@@ -129,12 +142,12 @@ The router extracts [W3C Trace Context](https://www.w3.org/TR/trace-context/) (`
 - Clients can pass a `traceparent` header to create end-to-end traces from outside the mesh.
 - If no `traceparent` is present, the router creates a new root trace.
 
-Example with explicit trace propagation:
+Example with explicit trace propagation (replace the URL with your gateway endpoint):
 
 ```bash
 TRACE_ID=$(openssl rand -hex 16)
 
-curl -s -X POST http://mcp.example.com/mcp \
+curl -s -X POST http://your-gateway-host/mcp \
   -H "Content-Type: application/json" \
   -H "traceparent: 00-${TRACE_ID}-$(openssl rand -hex 8)-01" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
@@ -142,6 +155,7 @@ curl -s -X POST http://mcp.example.com/mcp \
 echo "Search for trace: $TRACE_ID"
 ```
 
-## Local Development
+## Next Steps
 
-For a pre-configured local observability stack (OTEL Collector, Tempo, Loki, Grafana), see the [examples/otel/README.md](../../examples/otel/README.md).
+- For a pre-configured local observability stack (OTEL Collector, Tempo, Loki, Grafana), see the [observability example](../../examples/otel/README.md).
+- To scale the gateway with shared session state, see the [scaling guide](./scaling.md).
