@@ -10,18 +10,13 @@ You must register your MCP servers to be discovered and routed by the MCP Gatewa
 
 ## Procedure
 
-To connect an MCP server to MCP Gateway, you need:
-1. An MCPGatewayExtension resource that targets your Gateway
-2. A ReferenceGrant if the MCPGatewayExtension is in a different namespace than the Gateway
-3. An HTTPRoute that routes to your MCP server
-4. An MCPServerRegistration resource that references the HTTPRoute
+## Step 1: Ensure MCPGatewayExtension exists
 
-The MCPGatewayExtension tells the controller which Gateway this MCP Gateway instance serves. Without it, MCPServerRegistration resources will remain in NotReady status.
+An MCPGatewayExtension tells the controller which Gateway this MCP Gateway instance serves. Without it, MCPServerRegistration resources will remain in NotReady status.
 
-## Step 1: Create MCPGatewayExtension
+> **Note:** Only one MCPGatewayExtension is allowed per namespace. The `sectionName` field selects which listener on the Gateway to use, but each namespace can only have one MCPGatewayExtension. If you followed the [quick start](./quick-start.md) or [install guide](./how-to-install-and-configure.md), an MCPGatewayExtension already exists. Check with `kubectl get mcpgatewayextension -A`. If one is already present and Ready, skip to Step 2.
 
-First, create an MCPGatewayExtension in the same namespace as your MCP Gateway broker/router deployment. It should target a unique Gateway resource. 
-
+If you need to create one:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -36,17 +31,11 @@ spec:
     kind: Gateway
     name: mcp-gateway
     namespace: gateway-system
-    sectionName: mcp  # Name of the listener on the Gateway
+    sectionName: mcp  # must match a listener name on the Gateway
 EOF
 ```
 
-Wait for it to become ready:
-
-```bash
-kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test --timeout=60s
-```
-
-If your target Gateway is in a different namespace than your MCPGatewayExtension, you will also need to create a ReferenceGrant:
+If your MCPGatewayExtension is in a different namespace than the Gateway, create a ReferenceGrant first:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -66,7 +55,13 @@ spec:
 EOF
 ```
 
-Skip the ReferenceGrant if the MCPGatewayExtension is in the same namespace as the Gateway.
+Wait for it to become ready:
+
+```bash
+kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test --timeout=60s
+```
+
+## Step 2: Create an HTTPRoute
 
 Create an `HTTPRoute` that routes to your MCP server:
 
@@ -96,7 +91,7 @@ spec:
 EOF
 ```
 
-### Step 2: Create MCPServerRegistration Resource
+## Step 3: Create MCPServerRegistration Resource
 
 Create an `MCPServerRegistration` resource that references the HTTPRoute:
 
@@ -117,22 +112,34 @@ spec:
 EOF
 ```
 
-### Step 3: Verify Registration
+## Step 4: Verify Registration
 
-Check that the `MCPServerRegistration` was created and discovered:
+Wait for the MCPServerRegistration to become ready (the broker needs a moment to connect and discover tools):
 
 ```bash
-# Check MCPServerRegistration status
-kubectl get mcpsr -A
-
-# Check controller logs
-kubectl logs -n mcp-system deployment/mcp-gateway-controller
-
-# Check broker logs for tool discovery
-kubectl logs -n mcp-system deployment/mcp-gateway | grep "Discovered tools"
+kubectl wait --for=condition=Ready mcpsr/my-mcp-server -n mcp-test --timeout=120s
 ```
 
-### Step 4: Test Tool Discovery
+Then check the status:
+
+```bash
+kubectl get mcpsr -A
+```
+
+The `READY` column should show `True` and the `TOOLS` column should show the number of tools discovered. For example:
+
+```text
+NAMESPACE   NAME            PREFIX      TARGET                     PATH   READY   TOOLS   CREDENTIALS   AGE
+mcp-test    my-mcp-server   myserver_   mcp-api-key-server-route   /mcp   True    4                     30s
+```
+
+If the status is not Ready, check the MCPServerRegistration conditions for details:
+
+```bash
+kubectl describe mcpsr my-mcp-server -n mcp-test
+```
+
+## Step 5: Test Tool Discovery
 
 Verify that your MCP server tools are available through the gateway by using the following commands:
 
@@ -141,7 +148,7 @@ Verify that your MCP server tools are available through the gateway by using the
 # Use -D to dump headers to a file, then read the session ID
 curl -s -D /tmp/mcp_headers -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
 
 # Extract the MCP session ID from response headers
 SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
