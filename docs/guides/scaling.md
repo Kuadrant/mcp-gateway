@@ -82,8 +82,10 @@ kubectl rollout status deployment/redis -n your-namespace
 
 Create a secret containing the Redis connection URL. The secret must have the `mcp.kuadrant.io/secret: "true"` label — without it, the MCPGatewayExtension will fail validation.
 
+> **Note:** The secret must be created in the **same namespace as the MCPGatewayExtension**. The Redis deployment itself can run in any namespace — just ensure the connection string in the secret points to it correctly.
+
 ```bash
-kubectl apply -n your-namespace -f - <<EOF
+kubectl apply -n mcp-system -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -132,10 +134,10 @@ kubectl rollout status deployment/mcp-gateway -n mcp-system
 
 ## Step 5: Verify Session Sharing
 
-Confirm that the external store is active by checking the gateway logs. You should see `session cache using external store` on startup:
+Confirm that the external store is active by checking the gateway logs. You should see `cache using external redis store` on startup:
 
 ```bash
-kubectl logs -n mcp-system deployment/mcp-gateway | grep "session cache"
+kubectl logs -n mcp-system deployment/mcp-gateway | grep "cache using external"
 ```
 
 Test that sessions are shared across replicas by making multiple tool calls from the same client. The backend session ID should remain consistent regardless of which replica handles the request.
