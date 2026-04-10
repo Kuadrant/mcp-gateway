@@ -189,13 +189,7 @@ kubectl describe mcpsr <name> -n <namespace>
 ```bash
 # Check MCPServerRegistration resource status
 kubectl get mcpsr -A
-kubectl describe mcpserver <server-name> -n <namespace>
-
-# Check controller logs
-kubectl logs -n mcp-system -l app=mcp-controller | grep <server-name>
-
-# Check broker logs
-kubectl logs -n mcp-system -l app=mcp-gateway | grep "Discovered tools"
+kubectl describe mcpserverregistration <server-name> -n <namespace>
 ```
 
 **Solutions**:

@@ -207,8 +207,9 @@ type MCPGatewayExtensionTargetReference struct {
 
 	// sectionName is the name of a listener on the target Gateway. The controller will
 	// read the listener's port and hostname to configure the MCP Gateway instance.
-	// This allows multiple MCPGatewayExtensions to target different listeners on the
-	// same Gateway, each with their own MCP Gateway instance.
+	// Only one MCPGatewayExtension is allowed per namespace. MCPGatewayExtensions in
+	// different namespaces may target different listeners on the same Gateway, provided
+	// those listeners use different ports.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
