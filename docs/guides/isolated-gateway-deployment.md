@@ -193,7 +193,7 @@ kubectl get pods -n team-b
 
 ## Step 8: Expose Gateways Externally
 
-### OpenShift (Routes)
+### OpenShift
 
 OpenShift Routes expose the Gateways externally with TLS termination.
 
@@ -248,21 +248,49 @@ Verify routes are created:
 oc get routes -n gateway-system
 ```
 
-## Exposing via NodePort
+### Kubernetes (NodePort)
 
-For a local kind or kubernetes setup you can configure helm to setup the NodePort service. Re-run the commands with the following flags set
+Re-run the Team A and Team B Helm commands from Steps 4 and 6 with NodePort flags added:
 
 ```bash
-# Team A gateway
---set gateway.nodePort.create=true \
---set gateway.nodePort.mcpPort=30080 \
+helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
+  --namespace team-a \
+  --set controller.enabled=false \
+  --set broker.create=true \
+  --set gateway.create=true \
+  --set gateway.name=team-a-gateway \
+  --set gateway.namespace=gateway-system \
+  --set gateway.publicHost="$TEAM_A_HOST" \
+  --set gateway.internalHostPattern="*.team-a.mcp.local" \
+  --set mcpGatewayExtension.create=true \
+  --set mcpGatewayExtension.gatewayRef.name=team-a-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
+  --set envoyFilter.create=true \
+  --set envoyFilter.name=team-a-gateway \
+  --set gateway.nodePort.create=true \
+  --set gateway.nodePort.mcpPort=30080
 ```
 
 ```bash
-# Team B gateway
---set gateway.nodePort.create=true \
---set gateway.nodePort.mcpPort=30471 \
+helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
+  --namespace team-b \
+  --set controller.enabled=false \
+  --set broker.create=true \
+  --set gateway.create=true \
+  --set gateway.name=team-b-gateway \
+  --set gateway.namespace=gateway-system \
+  --set gateway.publicHost="$TEAM_B_HOST" \
+  --set gateway.internalHostPattern="*.team-b.mcp.local" \
+  --set mcpGatewayExtension.create=true \
+  --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
+  --set envoyFilter.create=true \
+  --set envoyFilter.name=team-b-gateway \
+  --set gateway.nodePort.create=true \
+  --set gateway.nodePort.mcpPort=30471
 ```
+
+> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30471) to host ports. See the [Kind cluster setup guide](./kind-cluster-setup.md) for details.
 
 ## Next Steps: Register MCP Servers
 
