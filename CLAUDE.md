@@ -241,7 +241,7 @@ Users must create the Istio ServiceEntry, DestinationRule, and HTTPRoute resourc
 
 MCP servers can require authentication:
 1. MCPServerRegistration spec includes `credentialRef` pointing to a Kubernetes secret
-   - **Important**: Secret must have label `mcp.kuadrant.io/credential=true`
+   - **Important**: Secret must have label `mcp.kuadrant.io/secret=true`
    - Without this label, the MCPServerRegistration will fail validation
 2. Controller reads the credential from the referenced secret and includes it in the config Secret
 3. Broker receives the credential via the config and passes it to the upstream connection
@@ -255,7 +255,7 @@ metadata:
   name: weather-secret
   namespace: mcp-test
   labels:
-    mcp.kuadrant.io/credential: "true"  # required label
+    mcp.kuadrant.io/secret: "true"  # required label
 type: Opaque
 stringData:
   token: "Bearer your-api-token"

@@ -18,7 +18,7 @@ If you already have a Kubernetes cluster with [Gateway API](https://gateway-api.
 
 ```bash
 # Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 # Install MCP Gateway (quotes required for zsh)
 kubectl apply -k 'https://github.com/Kuadrant/mcp-gateway/config/install?ref=main'
 ```
@@ -110,7 +110,7 @@ Uses a YAML configuration file to define MCP servers:
 ```bash
 make run
 # Or directly:
-./bin/mcp-broker-router --mcp-gateway-config ./config/mcp-system/config.yaml
+./bin/mcp-broker-router --mcp-gateway-config ./config/samples/config.yaml
 ```
 
 The broker watches the config file for changes and hot-reloads configuration automatically.
@@ -133,7 +133,7 @@ In controller mode:
 ## Configuration
 
 ### Standalone Configuration
-Edit `config/mcp-system/config.yaml`:
+Edit `config/samples/config.yaml`:
 
 ```yaml
 servers:
@@ -192,7 +192,7 @@ spec:
 ```bash
 --mcp-router-address            # gRPC ext_proc address (default: 0.0.0.0:50051)
 --mcp-broker-public-address     # HTTP broker address (default: 0.0.0.0:8080)
---mcp-gateway-config            # Config file path (default: ./config/mcp-system/config.yaml)
+--mcp-gateway-config            # Config file path (default: ./config/samples/config.yaml)
 --controller                    # Enable Kubernetes controller mode
 ```
 

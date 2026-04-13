@@ -108,7 +108,7 @@ func main() {
 	flag.StringVar(
 		&mcpConfigFile,
 		"mcp-gateway-config",
-		"./config/mcp-system/config.yaml",
+		"./config/samples/config.yaml",
 		"where to locate the mcp server config",
 	)
 	flag.IntVar(
