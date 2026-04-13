@@ -25,7 +25,7 @@ spec:
             secretName: mcp-gateway-config
       containers:
         - name: mcp-broker-router
-          image: ghcr.io/kuadrant/mcp-gateway:v0.6.0-rc1
+          image: ghcr.io/kuadrant/mcp-gateway:v0.6.0-rc2
           imagePullPolicy: IfNotPresent
           command:
             - ./mcp_gateway

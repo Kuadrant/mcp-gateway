@@ -14,7 +14,7 @@ Get MCP Gateway running locally in a Kind cluster.
 Set the release version and run the setup script:
 
 ```bash
-export MCP_GATEWAY_VERSION=0.6.0-rc1
+export MCP_GATEWAY_VERSION=0.6.0-rc2
 curl -sSL https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/scripts/quick-start.sh | bash
 ```
 

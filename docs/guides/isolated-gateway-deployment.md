@@ -33,7 +33,7 @@ helm upgrade -i mcp-controller oci://ghcr.io/kuadrant/charts/mcp-gateway \
 ## Step 1: Install MCP Gateway CRDs
 
 ```bash
-export MCP_GATEWAY_VERSION=0.6.0-rc1
+export MCP_GATEWAY_VERSION=0.6.0-rc2
 kubectl apply -k "https://github.com/kuadrant/mcp-gateway/config/crd?ref=v${MCP_GATEWAY_VERSION}"
 ```
 

@@ -2,7 +2,7 @@
 set -e
 
 GITHUB_ORG=${MCP_GATEWAY_ORG:-Kuadrant}
-VERSION=${MCP_GATEWAY_VERSION:-0.5.1}
+VERSION=${MCP_GATEWAY_VERSION:-0.6.0-rc2}
 GIT_REF="v${VERSION}"
 REPO="https://github.com/${GITHUB_ORG}/mcp-gateway"
 RAW="https://raw.githubusercontent.com/${GITHUB_ORG}/mcp-gateway/${GIT_REF}"

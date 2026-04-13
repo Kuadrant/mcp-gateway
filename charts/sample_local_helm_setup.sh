@@ -7,7 +7,7 @@ set -e
 
 # Allow specifying a different GitHub org/user and version via environment variables
 GITHUB_ORG=${MCP_GATEWAY_ORG:-Kuadrant}
-VERSION=${MCP_GATEWAY_VERSION:-0.6.0-rc1}
+VERSION=${MCP_GATEWAY_VERSION:-0.6.0-rc2}
 GIT_REF="v${VERSION}"
 USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}
 echo "Using GitHub org: $GITHUB_ORG"

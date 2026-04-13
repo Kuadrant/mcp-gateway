@@ -4,7 +4,7 @@ metadata:
   name: mcp-gateway-catalog
 spec:
   sourceType: grpc
-  image: ghcr.io/kuadrant/mcp-controller-catalog:v0.6.0-rc1
+  image: ghcr.io/kuadrant/mcp-controller-catalog:v0.6.0-rc2
   displayName: MCP Gateway
   grpcPodConfig:
     securityContextConfig: restricted
