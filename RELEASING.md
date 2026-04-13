@@ -44,8 +44,21 @@ Commit and push:
 ```bash
 git add -u config/ charts/ docs/ bundle/
 git commit -s -m "Update version to X.Y.Z-rcN"
+```
+
+If the release branch has branch protection (no direct pushes), create a PR:
+```bash
+git checkout -b bump-version-X.Y.Z-rcN
+git push -u origin bump-version-X.Y.Z-rcN
+# Create PR targeting release-X.Y, get it merged
+```
+
+If you can push directly:
+```bash
 git push -u origin release-X.Y
 ```
+
+**Important**: The version bump must be on the release branch **before** creating the tag. The OLM bundle, catalog, and deployment manifests bake in version references at build time. If the tag is created before the version bump merges, those artifacts will contain stale version references.
 
 ### 2. Create GitHub Release
 
