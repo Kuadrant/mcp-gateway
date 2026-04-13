@@ -40,7 +40,7 @@ EOF
 
 ```bash
 # Install Gateway API standard CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 
 # Verify installation
 kubectl get crd gateways.gateway.networking.k8s.io

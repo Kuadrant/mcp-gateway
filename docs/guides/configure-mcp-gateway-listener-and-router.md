@@ -5,7 +5,7 @@ This guide covers adding an MCP listener to your existing Gateway. The controlle
 
 ## Prerequisites
 
-- MCP Gateway [installed in your cluster](./quick-start-guide.md)
+- MCP Gateway [installed in your cluster](./quick-start.md)
 - Existing [Gateway](https://gateway-api.sigs.k8s.io/) resource
 - Gateway API provider (e.g. Istio) configured
 

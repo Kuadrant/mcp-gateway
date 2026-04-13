@@ -22,7 +22,7 @@ This method runs MCP Gateway broker and router components as standalone binaries
 
 ## Prerequisites
 
-- [Go 1.21+](https://golang.org/doc/install) installed (for building from source)
+- [Go 1.25+](https://golang.org/doc/install) installed (for building from source)
 - [Git](https://git-scm.com/downloads) installed
 - [Envoy proxy](https://www.envoyproxy.io/docs/envoy/latest/start/install) installed and configured
 - Access to MCP servers you want to aggregate
@@ -73,13 +73,13 @@ Save this as `config/servers.yaml` or any location you prefer.
 ```bash
 # Run with your configuration
 ./bin/mcp-broker-router \
-  --config=config/servers.yaml \
+  --mcp-gateway-config=config/servers.yaml \
   --mcp-gateway-public-host=your-hostname.example.com \
   --log-level=-4
 ```
 
 **Command Options**:
-- `--config`: Path to your YAML configuration file
+- `--mcp-gateway-config`: Path to your YAML configuration file
 - `--mcp-gateway-public-host`: **Required** - Public hostname for MCP Gateway (must match your Gateway listener hostname)
 - `--mcp-router-address`: Address for gRPC router (default: `0.0.0.0:50051`)
 - `--log-level`: Logging verbosity
@@ -174,8 +174,8 @@ envoy -c envoy.yaml
 ## Step 5: Verify Installation
 
 ```bash
-# Check health endpoint (direct to broker)
-curl http://localhost:8080/health
+# Check broker status (direct to broker)
+curl http://localhost:8080/status
 
 # Test through Envoy proxy
 curl http://localhost:8888/mcp \
@@ -201,7 +201,7 @@ lsof -i :50051 # Router
 cat config/servers.yaml
 
 # Run with debug logging
-./bin/mcp-broker-router --config=config/servers.yaml --log-level=-4
+./bin/mcp-broker-router --mcp-gateway-config=config/servers.yaml --log-level=-4
 ```
 
 ### Tools Not Appearing
@@ -223,7 +223,7 @@ curl -X POST http://weather.example.com:8080/mcp \
 ps aux | grep envoy
 
 # Verify Envoy can reach broker
-curl http://localhost:8080/health
+curl http://localhost:8080/status
 
 # Check Envoy logs for ext_proc errors
 # Ensure gRPC router (port 50051) is accessible from Envoy
