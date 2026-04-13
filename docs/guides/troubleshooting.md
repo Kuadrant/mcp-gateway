@@ -39,7 +39,7 @@ kubectl get deployment -n mcp-system
 ```
 
 **Solutions**:
-- Install Gateway API CRDs first: `kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml`
+- Install Gateway API CRDs first: `kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml`
 - Delete existing resources if upgrading: `kubectl delete -k 'https://github.com/Kuadrant/mcp-gateway/config/install?ref=main'`
 
 ### Pods Not Starting
@@ -194,7 +194,6 @@ kubectl describe mcpserverregistration <server-name> -n <namespace>
 
 **Solutions**:
 - Verify MCPServerRegistration `targetRef` points to correct HTTPRoute name and namespace
-- Ensure HTTPRoute has `mcp-server: 'true'` label
 - Check that backend MCP server is running: `kubectl get pods -n <mcp-server-namespace>`
 - Verify backend service exists: `kubectl get svc -n <namespace> <service-name>`
 - Check HTTPRoute has valid backend reference: `kubectl describe httproute <route-name>`
@@ -213,7 +212,7 @@ kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
 
 # Check broker router logs for errors
-kubectl logs -n mcp-system -l app=mcp-gateway
+kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway
 ```
 
 **Solutions**:
@@ -476,7 +475,7 @@ curl -D - -X POST http://<mcp-hostname>/mcp \
 
 ```bash
 # Check broker session storage
-kubectl logs -n mcp-system -l app=mcp-gateway | grep -i session
+kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway | grep -i session
 ```
 
 **Solutions**:
@@ -523,7 +522,7 @@ kubectl get httproute -A
 ```bash
 # Test broker from within cluster
 kubectl run -it --rm test --image=curlimages/curl --restart=Never -- \
-  curl -v http://mcp-gateway.mcp-system.svc.cluster.local:8080/health
+  curl -v http://mcp-gateway.mcp-system.svc.cluster.local:8080/status
 ```
 
 ## Getting Help
@@ -533,7 +532,7 @@ If you continue to experience issues:
 1. Collect logs from all components:
    ```bash
    kubectl logs -n mcp-system -l app=mcp-controller > controller.log
-   kubectl logs -n mcp-system -l app=mcp-gateway > broker.log
+   kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway > broker.log
    kubectl get mcpsr -A -o yaml > mcpservers.yaml
    kubectl get httproute -A -o yaml > httproutes.yaml
    kubectl get gateway -A -o yaml > gateways.yaml
