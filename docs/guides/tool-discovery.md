@@ -66,23 +66,6 @@ At this point the gateway federates tools from multiple servers. The total tool 
 
 The gateway is accessible at `http://mcp.127-0-0-1.sslip.io:8001/mcp`.
 
-### Claude Desktop
-
-Add the following to your Claude Desktop MCP configuration (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "mcp-gateway": {
-      "type": "http",
-      "url": "http://mcp.127-0-0-1.sslip.io:8001/mcp"
-    }
-  }
-}
-```
-
-Restart Claude Desktop to pick up the configuration.
-
 ### Claude Code
 
 ```bash
