@@ -136,7 +136,7 @@ Context pollution — where untrusted data from one tool call influences subsequ
 | JWT_SESSION_SIGNING_KEY defaults to "default-not-secure" if not set | High | Not implemented | Set via flag/envvar or [#714](https://github.com/Kuadrant/mcp-gateway/issues/714) to have the controller generate and manage the key |
 | MCPVirtualServer only hides tools from listing, does not prevent calling | Medium | By design — virtual servers filter tools/list but authorized clients can still call any tool directly | Use AuthPolicy with tool-level RBAC to enforce access control; virtual servers control visibility, not authorization. Document this clearly in virtual server docs |
 | Client OAuth tokens forwarded to backends without token exchange | Medium | By design — all headers forwarded | Configure token exchange via AuthPolicy to replace client tokens with scoped tokens |
-| TLS configuration not included in examples | Low | Relies on infrastructure layer | Deploy behind Istio or configure TLS on Gateway listeners for production |
+| TLS configurations are not included in examples | Low | Relies on infrastructure layer | Deploy behind Istio or configure TLS on Gateway listeners for production |
 
 ## Recommendations for Secure Deployment
 
