@@ -1,0 +1,5 @@
+dependencies:
+  - type: olm.package
+    value:
+      packageName: kuadrant-operator
+      version: ">=1.4.3"
