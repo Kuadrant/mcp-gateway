@@ -622,8 +622,8 @@ local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gate
 	"$(MAKE)" deploy-gateway
 	"$(MAKE)" deploy-namespaces
 	kubectl apply -f config/mcp-gateway/overlays/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
-	"$(MAKE)" deploy-kuadrant-catalog
 	"$(MAKE)" deploy-olm
+	"$(MAKE)" deploy-kuadrant-catalog
 	# apply MCPGatewayExtension CR and HTTPRoute (not OLM resources — those are in deploy-olm)
 	kubectl apply -k config/mcp-gateway/base/ -n $(MCP_GATEWAY_NAMESPACE)
 	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)

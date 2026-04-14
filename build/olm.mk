@@ -115,7 +115,7 @@ KUADRANT_CATALOG_TAG ?= v1.4.3
 
 .PHONY: deploy-kuadrant-catalog
 deploy-kuadrant-catalog: ## Deploy Kuadrant OLM catalog from upstream repo
-	kubectl apply -f https://raw.githubusercontent.com/Kuadrant/kuadrant-operator/refs/tags/$(KUADRANT_CATALOG_TAG)/config/deploy/olm/catalogsource.yaml
+	kubectl apply -n olm -f https://raw.githubusercontent.com/Kuadrant/kuadrant-operator/refs/tags/$(KUADRANT_CATALOG_TAG)/config/deploy/olm/catalogsource.yaml
 
 .PHONY: undeploy-olm
 undeploy-olm: operator-sdk ## Remove OLM-deployed controller
