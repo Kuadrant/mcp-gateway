@@ -38,8 +38,6 @@ const (
 const (
 	E2E1GatewayName  = "e2e-1"
 	E2E1ListenerName = "mcp" // listener name on e2e-1 gateway
-	E2E1PublicHost   = "e2e-1.127-0-0-1.sslip.io"
-	E2E1GatewayURL   = "http://localhost:8004/mcp"
 )
 
 // shared-gateway constants (used by team isolation tests)
@@ -48,22 +46,48 @@ const (
 	// Team A listeners
 	TeamAMCPListenerName  = "team-a-mcp"
 	TeamAMCPSListenerName = "team-a-mcps"
-	TeamAPublicHost       = "team-a.127-0-0-1.sslip.io"
-	TeamAGatewayURL       = "http://localhost:8005/mcp"
 	TeamANamespace        = "team-a"
 	TeamANamespaceLabel   = "mcp-team"
 	TeamANamespaceValue   = "team-a"
 	// Team B listeners
 	TeamBMCPListenerName  = "team-b-mcp"
 	TeamBMCPSListenerName = "team-b-mcps"
-	TeamBPublicHost       = "team-b.127-0-0-1.sslip.io"
-	TeamBGatewayURL       = "http://localhost:8006/mcp"
 	TeamBNamespace        = "team-b"
 	TeamBNamespaceValue   = "team-b"
 )
 
-// Gateway URL (configurable via environment)
-var gatewayURL = goenv.GetDefault("GATEWAY_URL", "http://localhost:8001/mcp")
+const defaultE2EDomain = "127-0-0-1.sslip.io"
+
+// e2e environment configuration
+var (
+	e2eDomain = goenv.GetDefault("E2E_DOMAIN", defaultE2EDomain)
+	e2eScheme = goenv.GetDefault("E2E_SCHEME", "http")
+)
+
+// public hosts - derived from E2E_DOMAIN
+var (
+	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp."+e2eDomain)
+	E2E1PublicHost    = goenv.GetDefault("E2E1_PUBLIC_HOST", "e2e-1."+e2eDomain)
+	TeamAPublicHost   = goenv.GetDefault("TEAM_A_PUBLIC_HOST", "team-a."+e2eDomain)
+	TeamBPublicHost   = goenv.GetDefault("TEAM_B_PUBLIC_HOST", "team-b."+e2eDomain)
+)
+
+// gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
+var (
+	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "http://localhost:8001/mcp"))
+	E2E1GatewayURL  = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
+	TeamAGatewayURL = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
+	TeamBGatewayURL = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))
+)
+
+// gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,
+// otherwise derives the URL from the public host.
+func gatewayURLDefault(host, kindDefault string) string {
+	if e2eDomain == defaultE2EDomain {
+		return kindDefault
+	}
+	return e2eScheme + "://" + host + "/mcp"
+}
 
 // UniqueName generates a unique name with the given prefix
 func UniqueName(prefix string) string {

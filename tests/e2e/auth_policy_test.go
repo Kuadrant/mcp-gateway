@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	goenv "github.com/caitlinelfring/go-env-default"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -14,7 +15,7 @@ import (
 
 // auth tests must target the gateway via hostname, not localhost.
 // AuthPolicy (Authorino) matches on Host header; localhost bypasses enforcement.
-var authGatewayURL = fmt.Sprintf("http://%s:8001/mcp", gatewayPublicHost)
+var authGatewayURL = goenv.GetDefault("AUTH_GATEWAY_URL", fmt.Sprintf("%s://%s:8001/mcp", e2eScheme, gatewayPublicHost))
 
 func authInitBody() []byte {
 	return []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e-auth","version":"0.0.1"}}}`)

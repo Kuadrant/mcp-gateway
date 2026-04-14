@@ -237,7 +237,7 @@ func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 			},
 			Hostnames: []gatewayapiv1.Hostname{
 				gatewayapiv1.Hostname(b.hostname),
-				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp.local", ".127-0-0-1.sslip.io", 1)),
+				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp.local", "."+e2eDomain, 1)),
 			},
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{

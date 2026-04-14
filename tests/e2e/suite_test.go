@@ -1,5 +1,28 @@
 //go:build e2e
 
+// E2E Test Environment Configuration
+//
+// By default, tests target a local Kind cluster using localhost port mappings
+// and 127-0-0-1.sslip.io hostnames. To run against a real cluster, set:
+//
+//   E2E_DOMAIN    - base domain for all public hostnames (default: 127-0-0-1.sslip.io)
+//   E2E_SCHEME    - http or https (default: http)
+//
+// Setting E2E_DOMAIN to a non-default value causes gateway URLs to be derived
+// from the public hostnames automatically (e.g. http://mcp.<domain>/mcp) instead
+// of using Kind's localhost port mappings.
+//
+// Individual overrides are also available:
+//
+//   GATEWAY_URL, GATEWAY_PUBLIC_HOST
+//   E2E1_GATEWAY_URL, E2E1_PUBLIC_HOST
+//   TEAM_A_GATEWAY_URL, TEAM_A_PUBLIC_HOST
+//   TEAM_B_GATEWAY_URL, TEAM_B_PUBLIC_HOST
+//   AUTH_GATEWAY_URL
+//   KEYCLOAK_TOKEN_URL
+//
+// See commons.go for the full list of configurable values and their defaults.
+
 package e2e
 
 import (
@@ -36,7 +59,6 @@ var (
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	defaultMCPGatewayExt *MCPGatewayExtensionSetup
-	gatewayPublicHost    = "mcp.127-0-0-1.sslip.io"
 )
 
 func TestE2E(t *testing.T) {

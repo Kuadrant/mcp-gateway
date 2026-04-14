@@ -15,7 +15,7 @@ import (
 	goenv "github.com/caitlinelfring/go-env-default"
 )
 
-var keycloakTokenURL = goenv.GetDefault("KEYCLOAK_TOKEN_URL", "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/token")
+var keycloakTokenURL = goenv.GetDefault("KEYCLOAK_TOKEN_URL", "https://keycloak."+e2eDomain+":8002/realms/mcp/protocol/openid-connect/token")
 
 // obtains an access token via ROPC grant (test automation only)
 func GetKeycloakUserToken(username, password string) (string, error) {
