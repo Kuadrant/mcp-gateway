@@ -122,7 +122,7 @@ echo "Waiting for Istio gateway pod to be ready..."
 kubectl wait --for=condition=ready --timeout=300s pod -l gateway.networking.k8s.io/gateway-name=mcp-gateway -n gateway-system
 
 echo "Starting MCP inspector..."
-MCP_AUTO_OPEN_ENABLED=false DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest &
+MCP_AUTO_OPEN_ENABLED=false DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1 &
 INSPECTOR_PID=$!
 
 sleep 3

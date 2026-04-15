@@ -16,7 +16,6 @@ Key concepts:
 
 - MCP Gateway installed and configured
 - Identity provider supporting OAuth 2.1 (this guide uses Keycloak)
-- [Kuadrant operator](https://docs.kuadrant.io/1.2.x/install-helm/) installed
 - [Node.js and npm](https://nodejs.org/en/download/) installed (for MCP Inspector testing)
 
 **Note**: This guide demonstrates authentication using Kuadrant's AuthPolicy, but MCP Gateway supports any Istio/Gateway API compatible authentication mechanism.
@@ -231,11 +230,9 @@ You should get a response like this:
 
 Use the MCP Inspector to test the complete OAuth flow.
 
-> **Note:** If you set up your cluster using the [Quick Start Guide](./quick-start.md), Keycloak (port 8002) is not exposed to the host. Run `kubectl port-forward -n gateway-system svc/mcp-gateway-np 8002:8002` in a separate terminal before proceeding.
-
 ```bash
 # Start MCP Inspector (requires Node.js/npm)
-npx @modelcontextprotocol/inspector@latest &
+npx @modelcontextprotocol/inspector@0.21.1 &
 INSPECTOR_PID=$!
 
 # Wait a moment for services to start
