@@ -31,7 +31,7 @@ The script checks prerequisites, then runs through each step automatically:
 Once the script completes, you can use [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to interact with the gateway. This requires [Node.js and npm](https://nodejs.org/en/download/).
 
 ```bash
-DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1
 ```
 
 Open the inspector at [http://localhost:6274](http://localhost:6274) and configure:
