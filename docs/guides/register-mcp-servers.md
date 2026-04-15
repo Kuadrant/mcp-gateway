@@ -70,23 +70,21 @@ kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: mcp-api-key-server-route
+  name: my-mcp-server-route
   namespace: mcp-test
-  labels:
-    mcp-server: 'true'
 spec:
   parentRefs:
     - name: mcp-gateway
       namespace: gateway-system
   hostnames:
-    - 'api-key-server.mcp.local'  # Internal routing hostname
+    - 'my-mcp-server.mcp.local'  # Internal routing hostname
   rules:
     - matches:
         - path:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: mcp-api-key-server  # Your MCP server service name
+        - name: mcp-test-server1    # Your MCP server service name
           port: 9090                # Your MCP server port
 EOF
 ```
@@ -107,7 +105,7 @@ spec:
   targetRef:
     group: "gateway.networking.k8s.io"
     kind: "HTTPRoute"
-    name: "mcp-api-key-server-route"  # The name and namespace of your MCP Server HTTPRoute
+    name: "my-mcp-server-route"  # Must match the HTTPRoute name
     namespace: "mcp-test"
 EOF
 ```
@@ -129,8 +127,8 @@ kubectl get mcpsr -A
 The `READY` column should show `True` and the `TOOLS` column should show the number of tools discovered. For example:
 
 ```text
-NAMESPACE   NAME            PREFIX      TARGET                     PATH   READY   TOOLS   CREDENTIALS   AGE
-mcp-test    my-mcp-server   myserver_   mcp-api-key-server-route   /mcp   True    4                     30s
+NAMESPACE   NAME            PREFIX      TARGET               PATH   READY   TOOLS   CREDENTIALS   AGE
+mcp-test    my-mcp-server   myserver_   my-mcp-server-route   /mcp   True    5                     30s
 ```
 
 If the status is not Ready, check the MCPServerRegistration conditions for details:
