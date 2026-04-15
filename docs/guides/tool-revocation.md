@@ -30,7 +30,15 @@ To revoke a tool for a single user:
 1. Go to **Users** > select the user
 2. Go to **Role mapping** > remove the tool role from the relevant client
 
-## Step 2: Understand When Revocation Takes Effect
+## Step 2: Verify tools/call Denial
+
+After revoking a tool, verify that the user can no longer call it. Log out of any existing MCP Inspector session and log back in as the affected user to get a fresh token.
+
+Open MCP Inspector and connect to your gateway's `/mcp` endpoint. Authenticate through the OAuth flow.
+
+Under **Tools > List Tools**, the revoked tool will still appear (this is expected — `tools/list` filtering is configured in Step 4). Try calling the revoked tool — the request should return 403 Forbidden.
+
+## Step 3: Understand When Revocation Takes Effect
 
 Revocation is not instantaneous. Access is governed by the JWT token, and tokens are valid until they expire.
 
@@ -42,27 +50,132 @@ To force faster revocation, reduce the access token lifespan in your identity pr
 
 > **Note:** There is no mechanism to revoke a specific in-flight token. Revocation relies on token expiry and re-issuance.
 
-## Step 3: Verify Revocation
+## Step 4: Enable tools/list Filtering
 
-After revoking a tool, verify that the user can no longer access it. The simplest way is using MCP Inspector.
+By default, revoking a tool only blocks `tools/call` requests (returning 403). The revoked tool still appears in `tools/list` responses. To filter revoked tools from the list, the broker needs a signed header that carries the user's authorized tools.
 
-Find your gateway address:
+This step configures Authorino to generate that header using a wristband JWT signed with an ECDSA key pair.
+
+### Generate an ECDSA key pair
 
 ```bash
-kubectl get gateway mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}'
+openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
+openssl ec -in private-key.pem -pubout -out public-key.pem
 ```
 
-Open MCP Inspector and connect to your gateway's `/mcp` endpoint (e.g., `http://<gateway-address>:8001/mcp`). Authenticate as the affected user through the OAuth flow.
+### Create Kubernetes secrets
 
-**Check `tools/list` filtering:**
+The public key goes in the broker's namespace; the private key goes in Authorino's namespace:
 
-Under **Tools > List Tools**, the revoked tool should no longer appear in the list.
+```bash
+kubectl create secret generic trusted-headers-public-key \
+  --from-file=key=public-key.pem \
+  -n mcp-system \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-**Check `tools/call` denial:**
+kubectl create secret generic trusted-headers-private-key \
+  --from-file=key.pem=private-key.pem \
+  -n kuadrant-system \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
-Attempt to call the revoked tool. Since the tool is no longer in the user's authorized set, the request should fail.
+### Update the AuthPolicy to generate the x-authorized-tools header
 
-## Step 4: Monitor Revocation Enforcement
+Delete the existing `mcp-auth-policy` and create a new version that adds authorization rules and a wristband response. The policy must be deleted first because the original uses `defaults.rules` while this version uses `rules`, and `kubectl apply` would merge both instead of replacing:
+
+```bash
+kubectl delete authpolicy mcp-auth-policy -n gateway-system --ignore-not-found
+kubectl create -f - <<EOF
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-auth-policy
+  namespace: gateway-system
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  when:
+    - predicate: "!request.path.contains('/.well-known')"
+  rules:
+    authentication:
+      'keycloak':
+        jwt:
+          issuerUrl: http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
+    authorization:
+      'allow-mcp-method':
+        patternMatching:
+          patterns:
+          - predicate: |
+              !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
+      'authorized-tools':
+        opa:
+          rego: |
+            allow = true
+            tools = { server: roles | server := object.keys(input.auth.identity.resource_access)[_]; roles := object.get(input.auth.identity.resource_access, server, {}).roles }
+          allValues: true
+    response:
+      success:
+        headers:
+          x-authorized-tools:
+            wristband:
+              issuer: 'authorino'
+              customClaims:
+                'allowed-tools':
+                  selector: auth.authorization.authorized-tools.tools.@tostr
+              tokenDuration: 300
+              signingKeyRefs:
+                - name: trusted-headers-private-key
+                  algorithm: ES256
+      unauthenticated:
+        headers:
+          'WWW-Authenticate':
+            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
+        body:
+          value: |
+            {
+              "error": "Unauthorized",
+              "message": "Access denied: Authentication required."
+            }
+      unauthorized:
+        code: 401
+        headers:
+          'WWW-Authenticate':
+            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
+        body:
+          value: |
+            {
+              "error": "Forbidden",
+              "message": "Access denied: Unsupported method. New authentication required (401)."
+            }
+EOF
+```
+
+### Configure the broker to validate the signed header
+
+The patch triggers an automatic broker redeployment that loads the public key from the secret created earlier:
+
+```bash
+kubectl patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type='merge' \
+  -p='{"spec":{"trustedHeadersKey":{"secretName":"trusted-headers-public-key"}}}'
+
+kubectl rollout status deployment/mcp-gateway -n mcp-system --timeout=60s
+```
+
+Verify the AuthPolicy is enforced:
+
+```bash
+kubectl get authpolicy mcp-auth-policy -n gateway-system -o jsonpath='{.status.conditions[?(@.type=="Enforced")].status}'
+# Expected: True
+```
+
+## Step 5: Verify tools/list Filtering
+
+Log out and log back in to get a fresh token. Under **Tools > List Tools**, the revoked tool should no longer appear in the list. Only tools matching the user's `resource_access` roles are returned.
+
+## Step 6: Monitor Revocation Enforcement
 
 If [OpenTelemetry](./opentelemetry.md) is enabled, denied requests appear as trace spans with `http.status_code: 403`. Query your trace backend to find them:
 
@@ -80,6 +193,5 @@ The router logs the `x-mcp-toolname` and `x-mcp-servername` headers for every `t
 
 ## Next Steps
 
-- **[Authorization](./authorization.md)** - Configure tool-level access control
 - **[OpenTelemetry](./opentelemetry.md)** - Enable distributed tracing
 - **[Troubleshooting](./troubleshooting.md)** - Debug authorization issues

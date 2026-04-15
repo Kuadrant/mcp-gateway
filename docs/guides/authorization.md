@@ -116,7 +116,7 @@ Test that authorization now controls tool access by setting up the MCP Inspector
 
 ```bash
 # Start MCP Inspector (requires Node.js/npm)
-npx @modelcontextprotocol/inspector@latest &
+npx @modelcontextprotocol/inspector@0.21.1 &
 INSPECTOR_PID=$!
 
 # Wait for services to start
@@ -137,7 +137,6 @@ open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-
 2. **Try allowed tools**:
    - `test1_greet`
    - `test2_headers`
-   - `test3_add`
 3. **Try restricted tools**:
    - `test1_time` - Should return 403 Forbidden (accounting group only has the `greet` role for test-server1)
 

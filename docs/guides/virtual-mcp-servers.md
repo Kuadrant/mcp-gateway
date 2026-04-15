@@ -36,7 +36,7 @@ When a client includes the virtual server header, MCP Gateway filters responses 
 Before creating virtual servers, check which tools are available in your gateway. You can browse them using [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 
 ```bash
-DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1
 ```
 
 > **Note:** `DANGEROUSLY_OMIT_AUTH=true` is for local testing only. Do not use it in shared or production environments.

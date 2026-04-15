@@ -66,6 +66,9 @@ nodes:
   - containerPort: 30080
     hostPort: 8001
     protocol: TCP
+  - containerPort: 30089 # keycloak
+    hostPort: 8002
+    protocol: TCP
 EOF
 fi
 
@@ -125,7 +128,7 @@ echo ""
 echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo ""
 echo "To test with MCP Inspector (requires Node.js):"
-echo "  DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest"
+echo "  DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1"
 echo ""
 echo "  Then connect to: http://mcp.127-0-0-1.sslip.io:8001/mcp"
 echo "  Transport: Streamable HTTP"
