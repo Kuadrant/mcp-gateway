@@ -12,7 +12,7 @@ Clients call your Gateway's hostname, and the Gateway rewrites and routes traffi
 - Authentication credentials for the external server (if required)
 - **MCPGatewayExtension** targeting the Gateway (required for MCPServerRegistration to work)
 
-**Note:** If you're trying this locally, `make local-env-setup` already meets all prerequisites except the GitHub PAT.
+**Note:** If you're trying this locally, `make local-env-setup` meets all prerequisites except the GitHub PAT. The optional AuthPolicy step (Step 6) additionally requires Kuadrant (`make auth-example-setup`).
 
 If you haven't created an MCPGatewayExtension yet, see [Configure MCP Servers](./register-mcp-servers.md#step-1-create-mcpgatewayextension) for instructions.
 
