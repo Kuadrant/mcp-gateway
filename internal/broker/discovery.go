@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -103,7 +106,7 @@ func discoveryTools(broker *mcpBrokerImpl) []server.ServerTool {
 		{
 			Tool: mcp.Tool{
 				Name:        selectToolsName,
-				Description: "Scope your session to a specific set of tools. After calling this, your tools/list will only return the selected tools. Call discover_tools first to identify relevant tools. Call again with a different set to re-scope, or with an empty list to reset to the full tool set.",
+				Description: "Scope your session to a specific set of tools. After calling this, the server will send a notifications/tools/list_changed notification — end your current turn and wait for it. Subsequent tools/list requests will return only the selected tools. Call discover_tools first to identify relevant tools. Call again with a different set to re-scope, or with an empty list to reset to the full tool set.",
 				InputSchema: mcp.ToolInputSchema{
 					Type: "object",
 					Properties: map[string]any{
@@ -127,6 +130,17 @@ func (broker *mcpBrokerImpl) handleDiscoverTools(_ context.Context, req mcp.Call
 
 	categoryFilter, _ := req.GetArguments()["category"].(string)
 
+	// resolve auth-based tool restrictions
+	allowedTools := broker.resolveAllowedTools(req.Header)
+	if allowedTools != nil && len(allowedTools) == 0 {
+		// auth enforced but no tools allowed
+		resp := discoverToolsResponse{Servers: []serverInfo{}}
+		data, _ := json.Marshal(resp)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{mcp.NewTextContent(string(data))},
+		}, nil
+	}
+
 	var servers []serverInfo
 	for _, manager := range broker.mcpServers {
 		conf := manager.MCP.GetConfig()
@@ -140,7 +154,16 @@ func (broker *mcpBrokerImpl) handleDiscoverTools(_ context.Context, req mcp.Call
 
 		var toolNames []string
 		for _, tool := range manager.GetManagedTools() {
+			if allowedTools != nil {
+				allowed, serverInMap := allowedTools[conf.Name]
+				if !serverInMap || !slices.Contains(allowed, tool.Name) {
+					continue
+				}
+			}
 			toolNames = append(toolNames, fmt.Sprintf("%s%s", manager.MCP.GetPrefix(), tool.Name))
+		}
+		if len(toolNames) == 0 {
+			continue
 		}
 
 		servers = append(servers, serverInfo{
@@ -164,6 +187,44 @@ func (broker *mcpBrokerImpl) handleDiscoverTools(_ context.Context, req mcp.Call
 	}, nil
 }
 
+// resolveAllowedTools parses the x-authorized-tools header and returns the
+// allowed server->tools map. Returns nil when no auth filtering applies
+// (header absent and enforcement off). Returns an empty map when auth is
+// enforced but no header is present, or when the header is invalid.
+func (broker *mcpBrokerImpl) resolveAllowedTools(headers http.Header) map[string][]string {
+	headerValues, present := headers[authorizedToolsHeader]
+	if !present {
+		if broker.enforceToolFilter {
+			return map[string][]string{}
+		}
+		return nil
+	}
+	allowedTools, err := broker.parseAuthorizedToolsJWT(headerValues)
+	if err != nil {
+		broker.logger.Error("failed to parse x-authorized-tools header in discovery", "error", err)
+		return map[string][]string{}
+	}
+	return allowedTools
+}
+
+// isToolAuthorized checks whether a prefixed tool name is permitted by the
+// allowed tools map (server name -> unprefixed tool names).
+func (broker *mcpBrokerImpl) isToolAuthorized(prefixedName string, allowedTools map[string][]string) bool {
+	for _, manager := range broker.mcpServers {
+		prefix := manager.MCP.GetPrefix()
+		if !strings.HasPrefix(prefixedName, prefix) {
+			continue
+		}
+		unprefixed := strings.TrimPrefix(prefixedName, prefix)
+		serverName := manager.MCP.GetName()
+		if allowed, ok := allowedTools[serverName]; ok {
+			return slices.Contains(allowed, unprefixed)
+		}
+		return false
+	}
+	return false
+}
+
 func (broker *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	toolsRaw, ok := args["tools"]
@@ -185,12 +246,18 @@ func (broker *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.Call
 		tools = append(tools, name)
 	}
 
-	// validate all tools exist
+	// validate all tools exist and are authorized
 	if len(tools) > 0 {
 		allTools := broker.listeningMCPServer.ListTools()
+		allowedTools := broker.resolveAllowedTools(req.Header)
 		for _, name := range tools {
 			if _, exists := allTools[name]; !exists {
 				return nil, fmt.Errorf("tool %q does not exist or is not authorized", name)
+			}
+			if allowedTools != nil {
+				if !broker.isToolAuthorized(name, allowedTools) {
+					return nil, fmt.Errorf("tool %q does not exist or is not authorized", name)
+				}
 			}
 		}
 	}

@@ -6,13 +6,13 @@ The MCP Gateway federates tools from multiple upstream MCP servers and exposes t
 
 ### Flat, unbounded tool lists
 
-When a gateway federates dozens of upstream servers, each exposing multiple tools, the `tools/list` response becomes a large flat list. AI agents consuming this list must process every tool definition (name, description, input schema) to determine which ones are relevant to their current task. This has direct consequences:
+When a gateway federates dozens of upstream servers, each exposing multiple tools, the `tools/list` response becomes a large flat list. This has direct consequences:
 
-- **Context window pressure and token cost**: LLM-based agents have finite context windows. Injecting hundreds of tool definitions consumes tokens that could be used for reasoning, conversation history, or user instructions. At scale, tool definitions alone can exhaust a significant portion of the available context. A tool definition includes a full API schema object. Beyond the context limit, every token carrying an irrelevant tool definition is a direct cost — agents pay per token on every request, so oversized tool lists increase the cost of every single interaction.
+- **Token cost**: every tool definition (name, description, full input schema) consumes context window tokens. Irrelevant tools are pure waste — they cost money on every request and displace reasoning, history, and user instructions.
 
-- **Degraded tool selection**: Studies and practical experience show that LLMs make worse tool-calling decisions as the number of available tools increases. With a small, focused set of tools, models reliably select the right one. With hundreds of tools, they hallucinate tool names, pick semantically similar but wrong tools, or fail to call any tool at all.
+- **Degraded tool selection**: LLMs make worse tool-calling decisions as the tool count grows — hallucinating names, picking semantically similar but wrong tools, or failing to call any tool at all.
 
-- **Increased latency**: Larger tool lists mean larger `tools/list` responses, more data over the wire, and more processing time on the client side before the agent can begin reasoning.
+- **Increased latency**: larger responses, more wire time, more client-side processing before reasoning can begin.
 
 ### No context-aware discovery
 
@@ -24,25 +24,14 @@ The current `tools/list` endpoint is stateless and context-free. It returns the 
 
 Neither mechanism addresses the core discovery problem: helping agents find the right tools for what they're trying to do right now.
 
-### The scale challenge
-
-The problem compounds as organizations adopt the MCP Gateway pattern at scale:
-
-- A platform team federates 20+ MCP servers, each exposing 5-15 tools, resulting in 100-300+ tools behind a single gateway.
-- Multiple teams and agents share the same gateway, each needing different subsets of tools.
-- New tools are added regularly as teams deploy new MCP servers, further growing the list.
-
-Without a discovery mechanism, the gateway becomes harder to use as it becomes more capable. The value of federation (single endpoint, unified auth, centralized policy) is undermined by the cost of presenting everything to everyone.
-
 ### What we need
 
-A mechanism that allows clients to discover relevant tools based on their current context, without requiring operators to pre-define every possible combination of tools. The solution should:
+At scale (20+ servers, 100-300+ tools, multiple teams sharing a gateway), the gateway becomes harder to use as it becomes more capable. We need a mechanism that:
 
-- Reduce the number of tools presented to agents to a relevant, manageable subset
-- Work within the existing MCP protocol capabilities, but potentially propose enhancements
-- Integrate with the gateway's existing filtering layers (MCPVirtualServer, auth)
-- Not require changes to upstream MCP servers
-- Scale with the number of registered tools without degrading agent performance
+- Reduces tools presented to agents to a relevant subset
+- Works within MCP protocol semantics
+- Composes with existing filtering (MCPVirtualServer, auth)
+- Requires no changes to upstream MCP servers
 
 ## Proposal: Progressive Discovery with Session Scoping
 
@@ -64,7 +53,7 @@ metadata:
   namespace: mcp-test
 spec:
   toolPrefix: rs_
-  category: "dining reservations"
+  category: "dining"
   hint: "search restaurants, make and cancel reservations, view menus"
   targetRef:
     group: gateway.networking.k8s.io
@@ -129,7 +118,7 @@ Scopes the session to a specific set of tools. After this call, the gateway send
 ```json
 {
   "name": "select_tools",
-  "description": "Scope your session to a specific set of tools. After calling this, your tools/list will only return the selected tools. Call discover_tools first to identify relevant tools. Call again with a different set to re-scope, or with an empty list to reset to the full tool set.",
+  "description": "Scope your session to a specific set of tools. After calling this, the server will send a notifications/tools/list_changed notification — end your current turn and wait for it. Subsequent tools/list requests will return only the selected tools. Call discover_tools first to identify relevant tools. Call again with a different set to re-scope, or with an empty list to reset to the full tool set.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -169,7 +158,7 @@ A custom agent built with awareness of the browse → select pattern can detect 
 #### With a generic MCP client (one extra user prompt)
 
 ```
-User: "Find me an Italian restaurant in New York for Saturday"
+User: "Find me an Italian restaurant near downtown for Saturday, 4 people, and book it"
 
 Turn 1 (discovery):
   Agent calls discover_tools, then select_tools
@@ -204,12 +193,9 @@ Session scoping operates as an additional filter layer, composing with existing 
 2. **MCPVirtualServer** restricts to operator-defined tool subsets
 3. **Session scoping** (this proposal) further narrows to agent-selected tools
 
-An agent can only select tools that survive the first two filters. `discover_tools` only returns tools the current session is authorized to see. `select_tools` returns an error if any requested tool name does not exist or is not authorized for the current session — no partial scoping is applied.
+An agent can only select tools that survive the first two filters. `discover_tools` must only return tools the current session is authorized to see (not yet implemented in the POC). `select_tools` returns an error if any requested tool name does not exist or is not authorized for the current session — no partial scoping is applied.
 
 ### Trade-offs
-
-Note TDT (is a Tool Discovery Tool that uses BM25 and keywords to reduce down the tool set)
-
 | | Progressive discovery (this proposal) | Full list + select | Server-side search (tdt) |
 |---|---|---|---|
 | **First-turn cost** | Low — lightweight metadata only | High — full schemas for all tools | Low — only meta-tools exposed |
