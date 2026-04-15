@@ -120,7 +120,7 @@ jobs:
   build-bundle:
     name: Build Bundle Image
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -182,7 +182,7 @@ jobs:
   build-catalog:
     name: Build Catalog Image
     needs: build-bundle
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
