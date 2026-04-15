@@ -20,6 +20,7 @@ Virtual servers work by filtering the complete tool list based on a curated sele
 - MCP Gateway installed and configured
 - [MCP servers configured](./register-mcp-servers.md) with tools available
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
+- [jq](https://jqlang.github.io/jq/download/) installed
 
 ## Understanding Virtual Servers
 
@@ -58,10 +59,9 @@ metadata:
 spec:
   description: "Development and debugging tools"
   tools:
-  - test1_hello_world      # replace with your actual tool names
+  - test1_greet             # replace with your actual tool names
   - test1_headers
-  - github_get_me
-  - github_list_repos
+  - test2_hello_world
 EOF
 ```
 
@@ -77,9 +77,9 @@ metadata:
 spec:
   description: "Data analysis and reporting tools"
   tools:
-  - test2_time            # replace with your actual tool names
+  - test2_time             # replace with your actual tool names
   - test3_dozen
-  - github_get_repo_stats
+  - test3_add
 EOF
 ```
 
