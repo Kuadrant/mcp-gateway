@@ -41,7 +41,12 @@ Note: CRDs are also installed automatically when deploying via Helm.
 
 ### Step 2: Install MCP Gateway
 
-Install from GitHub Container Registry:
+Find your Gateway name and namespace, then install from GitHub Container Registry:
+
+```bash
+# find your gateway
+kubectl get gateway -A
+```
 
 ```bash
 helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
