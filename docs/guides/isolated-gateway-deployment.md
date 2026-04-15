@@ -99,8 +99,7 @@ helm upgrade -i mcp-controller ./charts/mcp-gateway \
   --create-namespace \
   --set controller.enabled=true \
   --set gateway.create=false \
-  --set mcpGatewayExtension.create=false \
-  --set envoyFilter.create=false
+  --set mcpGatewayExtension.create=false
 ```
 
 Verify the controller is running:
@@ -118,7 +117,6 @@ helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
   --namespace team-a \
   --create-namespace \
   --set controller.enabled=false \
-  --set broker.create=true \
   --set gateway.create=true \
   --set gateway.name=team-a-gateway \
   --set gateway.namespace=gateway-system \
@@ -126,9 +124,7 @@ helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
   --set gateway.internalHostPattern="*.team-a.mcp.local" \
   --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=team-a-gateway \
-  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=team-a-gateway
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
 The Helm chart creates:
@@ -140,7 +136,7 @@ The controller then automatically creates:
 - HTTPRoute for the MCP endpoint
 - Broker/Router deployment
 - Service for the broker
-- ServiceAccount and RBAC
+- ServiceAccount
 - Config Secret for MCP server configuration
 
 ## Step 5: Verify Team A Deployment
@@ -165,7 +161,6 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --namespace team-b \
   --create-namespace \
   --set controller.enabled=false \
-  --set broker.create=true \
   --set gateway.create=true \
   --set gateway.name=team-b-gateway \
   --set gateway.namespace=gateway-system \
@@ -173,9 +168,7 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --set gateway.internalHostPattern="*.team-b.mcp.local" \
   --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
-  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=team-b-gateway
+  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 ```
 
 ## Step 7: Verify Team B Deployment
@@ -256,7 +249,6 @@ Re-run the Team A and Team B Helm commands from Steps 4 and 6 with NodePort flag
 helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
   --namespace team-a \
   --set controller.enabled=false \
-  --set broker.create=true \
   --set gateway.create=true \
   --set gateway.name=team-a-gateway \
   --set gateway.namespace=gateway-system \
@@ -265,8 +257,6 @@ helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
   --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=team-a-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=team-a-gateway \
   --set gateway.nodePort.create=true \
   --set gateway.nodePort.mcpPort=30080
 ```
@@ -275,7 +265,6 @@ helm upgrade -i team-a-mcp-gateway ./charts/mcp-gateway \
 helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --namespace team-b \
   --set controller.enabled=false \
-  --set broker.create=true \
   --set gateway.create=true \
   --set gateway.name=team-b-gateway \
   --set gateway.namespace=gateway-system \
@@ -284,8 +273,6 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --set mcpGatewayExtension.create=true \
   --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=team-b-gateway \
   --set gateway.nodePort.create=true \
   --set gateway.nodePort.mcpPort=30471
 ```
@@ -460,7 +447,5 @@ helm install team-a-mcp-gateway ./charts/mcp-gateway \
   --set gateway.name=team-a-gateway \
   --set gateway.namespace=gateway-system \
   --set gateway.publicHost="$TEAM_A_HOST" \
-  --set envoyFilter.create=true \
-  --set envoyFilter.name=team-a-gateway \
   --set mcpGatewayExtension.create=false
 ```
