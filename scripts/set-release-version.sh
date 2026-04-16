@@ -84,7 +84,8 @@ fi
 for GUIDE in \
     "$REPO_ROOT/docs/guides/quick-start.md" \
     "$REPO_ROOT/docs/guides/isolated-gateway-deployment.md" \
-    "$REPO_ROOT/docs/guides/how-to-install-and-configure.md"; do
+    "$REPO_ROOT/docs/guides/how-to-install-and-configure.md" \
+    "$REPO_ROOT/docs/guides/olm-install.md"; do
     if [ -f "$GUIDE" ]; then
         sed -i.bak -E "s/MCP_GATEWAY_VERSION=[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?/MCP_GATEWAY_VERSION=$VERSION/" "$GUIDE"
         rm -f "$GUIDE.bak"
