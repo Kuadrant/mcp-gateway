@@ -56,7 +56,7 @@ jobs:
       - name: Setup CI environment
         run: |
           make ci-setup
-          make deploy-controller
+          kubectl apply -k config/mcp-gateway/base/ -n mcp-system
 
       - name: Deploy conformance server
         run: make deploy-conformance-server
