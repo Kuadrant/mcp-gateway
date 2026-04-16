@@ -266,11 +266,15 @@ build-and-load-image: kind build-image load-image restart-all  ## Build & load r
 load-image: kind ## Load the mcp-gateway image into the kind cluster
 	$(call load-image,$(GATEWAY_IMG))
 	$(call load-image,$(IMAGE_TAG_BASE):$(IMAGE_TAG))
+	$(call load-image,$(REGISTRY)/$(ORG)/mcp-gateway:latest)
+	$(call load-image,$(IMAGE_TAG_BASE):latest)
 
 .PHONY: build-image
 build-image: kind ## Build the mcp-gateway image
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --build-arg LDFLAGS="$(LDFLAGS)" -t $(GATEWAY_IMG) .
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --file Dockerfile.controller -t $(IMAGE_TAG_BASE):$(IMAGE_TAG) .
+	$(CONTAINER_ENGINE) tag $(GATEWAY_IMG) $(REGISTRY)/$(ORG)/mcp-gateway:latest
+	$(CONTAINER_ENGINE) tag $(IMAGE_TAG_BASE):$(IMAGE_TAG) $(IMAGE_TAG_BASE):latest
 
 # Deploy example MCPServerRegistration
 deploy-example: install-crd ## Deploy example MCPServerRegistration resource
