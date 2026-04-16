@@ -15,7 +15,7 @@ make olm-install
 Deploy from a release tag using kustomize with a remote ref:
 
 ```bash
-export MCP_GATEWAY_VERSION=0.6.0-rc2
+export MCP_GATEWAY_VERSION=0.6.0
 kubectl apply -k "https://github.com/Kuadrant/mcp-gateway/config/deploy/olm?ref=v${MCP_GATEWAY_VERSION}"
 ```
 
