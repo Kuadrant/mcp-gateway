@@ -304,6 +304,7 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 
 	oauthHandler := broker.ProtectedResourceHandler{Logger: logger}
 	mux.HandleFunc("/.well-known/oauth-protected-resource", oauthHandler.Handle)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/", oauthHandler.Handle)
 
 	// WriteTimeout of 0 (disabled) is important for SSE connections (GET /mcp).
 	// SSE streams notifications indefinitely - any write timeout would kill the connection.
