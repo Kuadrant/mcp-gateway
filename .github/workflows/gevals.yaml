@@ -132,7 +132,7 @@ jobs:
             echo "No results file found — mcpchecker may have crashed"
             exit 1
           fi
-          mcpchecker verify --task 1.0 --assertion 1.0 "$RESULTS_FILE"
+          mcpchecker result verify "$RESULTS_FILE" --task 1.0 --assertion 1.0
 
       - name: Upload Evaluation Results
         if: always()
