@@ -7,7 +7,7 @@ This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distribut
 - MCP Gateway installed and configured
 - An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent)
 
-> **Note:** For a pre-configured local stack with OTEL Collector, Tempo, Loki, and Grafana, see the [observability example](../../examples/otel/README.md).
+> **Note:** For a pre-configured local stack with OTEL Collector, Tempo, Loki, and Grafana, see the [observability example](https://github.com/Kuadrant/mcp-gateway/tree/release-0.6.0/examples/otel).
 
 ## Step 1: Enable OpenTelemetry
 
@@ -37,18 +37,6 @@ kubectl set env deployment/mcp-gateway -n mcp-system \
   OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4318" \
   OTEL_EXPORTER_OTLP_INSECURE="true"
 ```
-
-### Standalone Binary
-
-Export the variables before starting the process:
-
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4318"
-export OTEL_EXPORTER_OTLP_INSECURE="true"
-./bin/mcp-broker-router
-```
-
-See the [standalone binary install guide](./binary-install.md) for full configuration details.
 
 ## Step 2: Verify Traces Are Being Exported
 
@@ -157,5 +145,5 @@ echo "Search for trace: $TRACE_ID"
 
 ## Next Steps
 
-- For a pre-configured local observability stack (OTEL Collector, Tempo, Loki, Grafana), see the [observability example](../../examples/otel/README.md).
+- For a pre-configured local observability stack (OTEL Collector, Tempo, Loki, Grafana), see the [observability example](https://github.com/Kuadrant/mcp-gateway/tree/release-0.6.0/examples/otel).
 - To scale the gateway with shared session state, see the [scaling guide](./scaling.md).
