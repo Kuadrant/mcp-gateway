@@ -277,7 +277,7 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --set gateway.nodePort.mcpPort=30471
 ```
 
-> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30471) to host ports. See the [Kind cluster setup guide](./kind-cluster-setup.md) for details.
+> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30471) to host ports.
 
 ## Next Steps: Register MCP Servers
 
