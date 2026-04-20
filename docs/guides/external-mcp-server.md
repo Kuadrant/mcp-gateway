@@ -186,9 +186,8 @@ At this point the broker has discovered the GitHub tools and will list them to c
 ### Step 7: Connect an MCP Client
 
 
-> Note: you may need to open keycloak in your browser and accept the self signed cert if doing this locally.
-
-> Note: If you are using a claude session, you may need to start it with: NODE_TLS_REJECT_UNAUTHORIZED=0 claude if doing this locally. 
+> **Note:** You may need to open Keycloak in your browser and accept the self-signed certificate if doing this locally.
+> If you are using a Claude session, you may need to start it with `NODE_TLS_REJECT_UNAUTHORIZED=0 claude` if doing this locally.
 
 Configure your MCP client to connect to the gateway. For Claude Code, add to `.claude.json`:
 
