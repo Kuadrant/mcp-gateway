@@ -13,6 +13,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 var authorizedToolsHeader = http.CanonicalHeaderKey("x-authorized-tools")
@@ -22,7 +23,7 @@ const allowedToolsClaimKey = "allowed-tools"
 
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
 	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 	emptyTools := []mcp.Tool{}
@@ -37,6 +38,16 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 
 	// step 2: apply virtual server filtering
 	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
+
+	// step 3: apply session scope filtering
+	session := server.ClientSessionFromContext(ctx)
+	if session != nil {
+		tools = broker.applySessionScopeFilter(session.SessionID(), tools)
+	}
+
+	// ensure broker meta-tools are always present regardless of upstream filters
+	tools = broker.ensureBrokerTools(tools)
+
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
 	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))

@@ -43,6 +43,9 @@ type MCPBroker interface {
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
 
+	// IsBrokerTool returns true if the tool name is handled directly by the broker
+	IsBrokerTool(name string) bool
+
 	// Shutdown closes any resources associated with this Broker
 	Shutdown(ctx context.Context) error
 
@@ -75,6 +78,13 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// sessionScopes tracks per-session tool scoping for discovery
+	sessionScopes *sessionScopeStore
+
+	// discoveryToolThreshold: when total tools exceed this, new sessions default to hidden.
+	// At or below this count, all tools are shown without requiring discovery.
+	discoveryToolThreshold int
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -111,6 +121,15 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
+// WithDiscoveryToolThreshold sets the tool count threshold for progressive discovery.
+// When total tools exceed this value, new sessions only see meta-tools until select_tools is called.
+// At or below this count, all tools are shown without requiring discovery.
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolThreshold = threshold
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceToolFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -118,6 +137,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		logger:                logger,
 		virtualServers:        map[string]*config.VirtualServer{},
 		managerTickerInterval: time.Second * 60,
+		sessionScopes:         newSessionScopeStore(),
 	}
 
 	for _, option := range opts {
@@ -135,6 +155,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
 		slog.Info("Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
+		mcpBkr.sessionScopes.removeSession(session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
@@ -154,7 +175,9 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		"0.0.1",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
+		server.WithInstructions(gatewayInstructions),
 	)
+	mcpBkr.listeningMCPServer.AddTools(discoveryTools(mcpBkr)...)
 	return mcpBkr
 }
 
@@ -276,6 +299,10 @@ func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (m *mcpBrokerImpl) IsBrokerTool(name string) bool {
+	return IsBrokerTool(name)
 }
 
 // MCPServer is a listening MCP server that federates the endpoints

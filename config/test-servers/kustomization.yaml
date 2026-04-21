@@ -39,3 +39,9 @@ resources:
   - broken-server-service.yaml
   - broken-server-httproute.yaml
   - broken-server-deployment.yaml
+  - restaurant-server-deployment.yaml
+  - restaurant-server-service.yaml
+  - restaurant-server-httproute.yaml
+  - messaging-server-deployment.yaml
+  - messaging-server-service.yaml
+  - messaging-server-httproute.yaml

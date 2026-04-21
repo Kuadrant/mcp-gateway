@@ -67,8 +67,9 @@ var (
 	managerTickerIntervalSecs int64
 	loglevel                  int
 	logFormat                 string
-	enforceToolFilteringFlag  bool
-	invalidToolPolicyFlag     string
+	enforceToolFilteringFlag   bool
+	invalidToolPolicyFlag      string
+	discoveryToolThresholdFlag int
 )
 
 func main() {
@@ -135,6 +136,7 @@ func main() {
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
 	flag.BoolVar(&enforceToolFilteringFlag, "enforce-tool-filtering", false, "when enabled an x-authorized-tools header will be needed to return any tools")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
+	flag.IntVar(&discoveryToolThresholdFlag, "discovery-tool-threshold", 10, "when total registered tools exceeds this threshold, new sessions only see discovery meta-tools until select_tools is called. Set 0 to always require discovery.")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -216,6 +218,7 @@ func main() {
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
+		broker.WithDiscoveryToolThreshold(discoveryToolThresholdFlag),
 	)
 	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
 	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
@@ -397,6 +400,10 @@ func LoadConfig(path string) {
 			s.URL,
 			"routable host",
 			s.Hostname,
+			"category",
+			s.Category,
+			"hint",
+			s.Hint,
 		)
 	}
 }

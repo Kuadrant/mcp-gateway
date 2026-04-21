@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-messaging-server
+  labels:
+    app: mcp-messaging-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-messaging-server
+  template:
+    metadata:
+      labels:
+        app: mcp-messaging-server
+    spec:
+      containers:
+      - name: mcp-messaging-server
+        image: ghcr.io/kuadrant/mcp-gateway/test-messaging-server:latest
+        imagePullPolicy: Never
+        command: ["/mcp-test-server"]
+        args: ["--http", "0.0.0.0:9090"]
+        ports:
+        - containerPort: 9090
+          name: http
+        env:
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+          requests:
+            memory: "64Mi"
+            cpu: "50m"

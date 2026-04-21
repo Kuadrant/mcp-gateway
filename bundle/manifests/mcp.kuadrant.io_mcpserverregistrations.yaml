@@ -71,6 +71,12 @@ spec:
           spec:
             description: spec defines the desired state of MCPServerRegistration.
             properties:
+              category:
+                description: |-
+                  category is a free-text classification of the server's domain.
+                  Used by the discover_tools meta-tool to present a high-level overview of available servers.
+                  Defaults to "uncategorised" if not set.
+                type: string
               credentialRef:
                 description: |-
                   credentialRef references a Secret containing authentication credentials for the MCP server.
@@ -90,6 +96,12 @@ spec:
                 required:
                 - name
                 type: object
+              hint:
+                description: |-
+                  hint is a short natural-language description of what the server's tools do.
+                  Used by the discover_tools meta-tool to help agents decide which tools are relevant
+                  without loading full tool schemas.
+                type: string
               path:
                 default: /mcp
                 description: |-

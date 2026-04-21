@@ -49,6 +49,8 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Enabled:    up.Enabled,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
+		Category:   up.Category,
+		Hint:       up.Hint,
 	}
 }
 
