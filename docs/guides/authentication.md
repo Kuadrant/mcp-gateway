@@ -86,7 +86,7 @@ Configure the MCP Gateway broker to respond with OAuth discovery information:
 kubectl set env deployment/mcp-gateway \
   OAUTH_RESOURCE_NAME="MCP Server" \
   OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
-  OAUTH_AUTHORIZATION_SERVERS="http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
+  OAUTH_AUTHORIZATION_SERVERS="https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
   OAUTH_BEARER_METHODS_SUPPORTED="header" \
   OAUTH_SCOPES_SUPPORTED="basic,groups,roles,profile,offline_access" \
   -n mcp-system
@@ -158,7 +158,7 @@ spec:
       authentication:
         'keycloak':
           jwt:
-            issuerUrl: http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
+            issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
       response:
         unauthenticated:
           code: 401
@@ -194,7 +194,7 @@ curl http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource
 #   "resource_name": "MCP Server",
 #   "resource": "http://mcp.127-0-0-1.sslip.io:8001/mcp",
 #   "authorization_servers": [
-#     "http://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"
+#     "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"
 #   ],
 #   "bearer_methods_supported": [
 #     "header"
@@ -203,7 +203,8 @@ curl http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource
 #     "basic",
 #     "groups",
 #     "roles",
-#     "profile"
+#     "profile",
+#     "offline_access"
 #   ]
 # }
 ```
