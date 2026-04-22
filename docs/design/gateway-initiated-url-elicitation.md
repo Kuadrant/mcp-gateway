@@ -92,7 +92,8 @@ sequenceDiagram
     Router->>Upstream: tools/call (with expired PAT)
     Upstream-->>Router: 401 Unauthorized
     Router->>Cache: DeleteUserCredential(sessionID, "github")
-    Note over Client,Router: Next tool call triggers re-elicitation
+    Router-->>Client: URLElicitationRequiredError (-32042)
+    Note over Client,Router: Client prompts user to re-enter credential
 ```
 
 ### Component Responsibilities
@@ -143,7 +144,7 @@ spec:
     url: "https://vault.example.com/ui/vault/secrets/mcp/create"
 ```
 
-When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. When OAuth fields are added in future (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
+When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. If OAuth fields are added (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
 
 #### Config Type
 
