@@ -108,7 +108,8 @@ deploy-olm: olm-install ## Deploy controller via OLM on local cluster
 	# refs (@sha256:...) get IfNotPresent. Extract the digest from containerd inside Kind,
 	# create a digest-based ref, and use that so OLM uses the locally loaded image.
 	CATALOG_DIGEST=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane ctr -n k8s.io images ls 2>/dev/null | grep '$(IMAGE_TAG_BASE)-catalog:local' | awk '{print $$3}') && \
-	(docker exec $(KIND_CLUSTER_NAME)-control-plane ctr -n k8s.io images tag $(IMAGE_TAG_BASE)-catalog:local $(IMAGE_TAG_BASE)-catalog@$$CATALOG_DIGEST 2>/dev/null || true) && \
+	(TAG_ERR=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane ctr -n k8s.io images tag $(IMAGE_TAG_BASE)-catalog:local $(IMAGE_TAG_BASE)-catalog@$$CATALOG_DIGEST 2>&1) || \
+		if echo "$$TAG_ERR" | grep -q "already exists"; then true; else echo "$$TAG_ERR" >&2; false; fi) && \
 	"$(MAKE)" deploy-catalog CATALOG_IMG=$(IMAGE_TAG_BASE)-catalog@$$CATALOG_DIGEST
 
 KUADRANT_CATALOG_TAG ?= v1.4.3
