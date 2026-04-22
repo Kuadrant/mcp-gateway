@@ -20,7 +20,7 @@ Enable the MCP Gateway to dynamically request per-user credentials at client too
 - Protocol compliant as per [URLElicitationRequiredError flow](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#url-mode-with-elicitation-required-error-flow) from the MCP specification
 - Cache credentials encrypted in the shared session cache (Redis / in-memory)
 - Invalidate cached credentials on upstream 401 to trigger re-elicitation
-- Maintain capability of using OIDC authentication the main broker gateway route
+- Maintain capability of using OIDC authentication on the main broker gateway route
 
 ## Non-Goals
 
@@ -197,7 +197,9 @@ Per-user credentials are written by the broker and read by the router. The stora
 
 #### Encryption at Rest
 
-Credentials are encrypted within the cache using AES-GCM before storage. The encryption key is derived from the existing session signing key (`--mcp-session-signing-key`) using HKDF (HMAC-based Key Derivation Function, [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869)), so no additional configuration is required. HKDF derives a cryptographically strong key using a context-specific salt, ensuring the encryption key is distinct from the signing key even though both originate from the same secret.
+When an external cache is configured, credentials are encrypted using AES-GCM before storage. The encryption key is derived from the existing session signing key (`--mcp-session-signing-key`) using HKDF (HMAC-based Key Derivation Function, [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869)), so no additional configuration is required. HKDF derives a cryptographically strong key using a context-specific salt, ensuring the encryption key is distinct from the signing key even though both originate from the same secret.
+
+Encryption is only applied when using an external cache store as the storage backend — it protects credentials in an external store that may be shared or persisted to disk. For the in-memory backend, encryption adds no value since a process memory dump would reveal the encryption key alongside the ciphertext and in order to be used to call a backend the token credential has to be in plain text in memory.
 
 #### Cache Schema
 
@@ -243,13 +245,15 @@ The broker serves a simple HTML form at `/credentials`:
 
 ## Security Considerations
 
+### Credential Page Must Be Auth-Protected
+
+The `/credentials` endpoint must be behind the gateway route's OAuth/OIDC policy. Without authentication, an attacker with a valid or guessed elicitation ID could brute-force inject a malicious credential into another user's session. The OIDC token from the authenticated request also provides the identity needed to bind the credential to the correct session.
+
 ### Identity Verification
 
 The MCP specification [warns about phishing attacks](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#phishing) where an attacker could trick another user into completing an elicitation on their behalf. The credential page must verify that the user opening the URL is the same user who triggered the elicitation.
 
-The initial implementation does not include identity verification. Before production use, the credential page should:
-- Verify the user's OIDC session matches the gateway session that triggered the elicitation
-- Use a signed or encrypted elicitation ID that cannot be forged
+Identity verification is handled by the AuthPolicy attached to the gateway route where the credential page is served. The AuthPolicy validates the OIDC token from the request, ensuring the user opening the URL is the same user who triggered the elicitation.
 
 ### Token Passthrough
 
@@ -288,7 +292,7 @@ The MCP spec [calls this out explicitly](https://modelcontextprotocol.io/specifi
 - [ ] Broker: implement `/credentials` page handler (GET form + POST storage)
 - [ ] Register `/credentials` endpoint in `cmd/mcp-broker-router/main.go`
 - [ ] Controller: propagate `elicitation` from CRD to config
-- [ ] Identity verification on credential page (anti-phishing)
+- [ ] Document that operators must configure AuthPolicy on the credential page route (identity verification / anti-phishing)
 - [ ] `notifications/elicitation/complete` — broker notifies client after credential stored
 - [ ] Vault storage backend
 - [ ] E2E test with a test server that validates per-user credentials
