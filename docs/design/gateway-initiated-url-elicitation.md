@@ -298,5 +298,6 @@ The MCP spec [calls this out explicitly](https://modelcontextprotocol.io/specifi
 - [ ] E2E test with a test server that validates per-user credentials
 - [ ] Update API reference docs for `elicitation` field
 - [ ] User-facing guide for configuring URL mode elicitation
+- [ ] Update security-architecture.md (data boundaries, credential isolation, known risks)
 
 ### Completed
