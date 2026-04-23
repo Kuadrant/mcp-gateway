@@ -4,11 +4,15 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. Single binary (`mcp-broker-router`) with three components:
+MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. It consists of two separate binaries with four components:
+
+**`cmd/mcp-broker-router/main.go`** — data-plane binary running:
 - **MCP Router**: Envoy external processor that routes MCP requests (gRPC on :50051)
 - **MCP Broker**: HTTP service that aggregates tools from multiple MCP servers (HTTP on :8080/mcp)
-- **MCP Gateway Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration CRDs
-- **MCP Gateway Operator**: Kubernetes controller that reconciles MCPGatewayExtension resources and implements the operator pattern to deploy instances of the MCP Router and MCP Broker to form a working MCP Gateway instance.
+
+**`cmd/main.go`** — control-plane binary running:
+- **MCP Gateway Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration and MCPVirtualServer CRDs
+- **MCP Gateway Operator**: Kubernetes controller that reconciles MCPGatewayExtension resources and deploys instances of the MCP Router and MCP Broker to form a working MCP Gateway instance
 
 ### Not Implemented
 - Resource/prompt federation (only tools currently)
@@ -37,8 +41,8 @@ Client → Gateway (Envoy) → Router (ext_proc) → Broker → Upstream MCP Ser
 
 - `Router`: ext_proc server that parses MCP Requests and routes the request to the correct MCP Backend
 - `Broker`: default MCP Backend for the Gateway. It handles initialize and tool/list requests. Manages session initialization for the MCP Gateway. Serves aggregated tools for the gateway and handles backend MCP Server discovery and integration.
-- `controller`: Kubernetes based controller that manages the CRDs defined by the code in `api/v1alpha1`
-- `operator`: Kubernetes based controller that is responsible for deploying instances of the router and broker which together form the MCP Gateway
+- `controller`: Kubernetes-based controller that manages the CRDs defined by the code in `api/v1alpha1`
+- `operator`: Kubernetes-based controller that is responsible for deploying instances of the router and broker which together form the MCP Gateway
 
 **Important**: We use Istio ONLY as a Gateway API provider, NOT as a service mesh:
 - No sidecars on any workload pods
@@ -87,7 +91,7 @@ Users authenticate based AuthPolicies applied on the Gateway Resource or the HTT
 - `internal/controller/mcpvirtualserver_controller.go`: MCPVirtualServer reconciliation. Controller Component
 - `internal/config/config_writer.go`: Configuration management used by the controller to manage the configuration for the broker and router components
 - `internal/session/cache.go`: cache integration for the router and broker components. It stores session information.
-- `internal/session/jwt.go`: JWT based session manager.
+- `internal/session/jwt.go`: JWT-based session manager.
 - `internal/clients/`: MCP client for the internal hairpinned initialize during a tool/call
 - `internal/idmap/`: Maps gateway-assigned request IDs to backend server request IDs
 - `internal/otel/`: OpenTelemetry instrumentation (tracing, metrics, logs)
@@ -98,7 +102,7 @@ Users authenticate based AuthPolicies applied on the Gateway Resource or the HTT
 ### Code Style
 
 - Minimal, DRY, terse comments (lowercase, only when necessary)
-- Idiomatic Go, leverage interfaces where appropriate use Go specific plugins, language servers and agents if available
+- Idiomatic Go, leverage interfaces where appropriate use Go-specific plugins, language servers and agents if available
 - No emojis or AI-style formatting
 - Files must end with newline
 - Regularly run make lint to check for lint errors.
