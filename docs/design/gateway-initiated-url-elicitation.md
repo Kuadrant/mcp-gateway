@@ -30,7 +30,7 @@ Enable the MCP Gateway to dynamically request per-user credentials at client too
 
 ## Prerequisites
 
-- MCP client must declare `elicitation.url` capability during the [initialize handshake](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#capabilities) (MCP spec 2025-11-25)
+- MCP client must declare `elicitation.url` capability during the [initialize handshake](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#capabilities) (MCP spec 2025-11-25). Clients without this capability can still use elicitation-configured servers — the router uses the `Authorization` header as-is and returns standard errors on 401 instead of triggering elicitation (see [Non-Interactive Agents](#non-interactive-agents-service-accounts)).
 - MCP Gateway accessible over HTTPS for the credential page
 
 
@@ -51,6 +51,8 @@ sequenceDiagram
 
     Client->>Gateway: POST /mcp tools/call (github_get_me)
     Gateway->>Router: ext_proc request
+    Router->>Router: Check Authorization header → none
+    Router->>Router: Check client elicitation.url capability → supported
     Router->>Cache: GetUserCredential(sessionID, "github")
     Cache-->>Router: empty (no credential)
     Router-->>Client: URLElicitationRequiredError (-32042)
@@ -70,6 +72,7 @@ sequenceDiagram
     Note over Client: User closes browser, retries
     Client->>Gateway: POST /mcp tools/call (github_get_me) [retry]
     Gateway->>Router: ext_proc request
+    Router->>Router: Check Authorization header → none
     Router->>Cache: GetUserCredential(sessionID, "github")
     Cache-->>Router: PAT
     Router->>Router: Set Authorization: Bearer PAT
@@ -83,14 +86,20 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client as MCP Client
-    participant Router as MCP Router
+    participant Gateway as Envoy
+    participant Router as MCP Router (ext_proc)
     participant Cache as Session Cache
     participant Upstream as Upstream MCP Server
 
-    Client->>Router: tools/call
+    Client->>Gateway: POST /mcp tools/call
+    Gateway->>Router: ext_proc request
+    Router->>Router: Check Authorization header → none
     Router->>Cache: GetUserCredential → expired PAT
-    Router->>Upstream: tools/call (with expired PAT)
-    Upstream-->>Router: 401 Unauthorized
+    Router->>Router: Set Authorization: Bearer PAT
+    Router-->>Gateway: Route to upstream
+    Gateway->>Upstream: POST /mcp tools/call (with expired PAT)
+    Upstream-->>Gateway: 401 Unauthorized
+    Gateway->>Router: ext_proc response (401)
     Router->>Cache: DeleteUserCredential(sessionID, "github")
     Router-->>Client: URLElicitationRequiredError (-32042)
     Note over Client,Router: Client prompts user to re-enter credential
@@ -100,7 +109,7 @@ sequenceDiagram
 
 | Component | Role |
 |-----------|------|
-| **Router** | Detects missing credential, returns `-32042` with configured or default URL, injects cached credential into `Authorization` header (pattern 1), invalidates on upstream 401 |
+| **Router** | Checks for existing `Authorization` header (use as-is), checks client `elicitation.url` capability, falls back to cache, returns `-32042` on miss (if capable), injects cached credential into `Authorization` header (pattern 1), invalidates on upstream 401 |
 | **Broker** | Hosts `/credentials` page, verifies user identity, writes credential to cache |
 | **Cache** | Shared storage for per-user, per-server credentials |
 | **Controller** | Propagates `elicitation` from CRD to config |
@@ -300,9 +309,8 @@ The MCP spec [calls this out explicitly](https://modelcontextprotocol.io/specifi
 - [ ] Add `Elicitation *ElicitationConfig` field to `MCPServer` config type
 - [ ] Add `elicitation` object to MCPServerRegistration CRD and regenerate
 - [ ] Add credential storage interface with cache implementation (set/get/delete + AES-GCM encryption)
-- [ ] Router: check cache for user credential in `HandleToolCall`, return `URLElicitationRequiredError` on miss
-- [ ] Router: inject cached credential into `Authorization` header on cache hit
-- [ ] Router: invalidate cached credential on upstream 401 in `HandleResponseHeaders`
+- [ ] Router: credential resolution in `HandleToolCall` — (1) use existing `Authorization` header if present, (2) check cache and inject on hit, (3) return `-32042` on miss if client declares `elicitation.url` capability, otherwise return standard error
+- [ ] Router: invalidate cached credential on upstream 401 in `HandleResponseHeaders`, return `-32042` if client supports elicitation, otherwise standard error
 - [ ] Broker: implement `/credentials` page handler (GET form + POST storage)
 - [ ] Register `/credentials` endpoint in `cmd/mcp-broker-router/main.go`
 - [ ] Controller: propagate `elicitation` from CRD to config
