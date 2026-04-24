@@ -153,7 +153,7 @@ spec:
     url: "https://vault.example.com/ui/vault/secrets/mcp/create"
 ```
 
-When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. If OAuth fields are added (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
+When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. In future, if OAuth fields are added (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
 
 #### Config Type
 
@@ -172,7 +172,7 @@ The elicitation URL determines how the credential reaches the upstream request. 
 
 #### Pattern 1: Broker Credential Page (default)
 
-When no `elicitation.url` is set, the router generates a URL pointing to the broker's `/credentials` page. The user enters a credential on the broker page, the broker writes it to the session cache, and the router reads from cache on retry to inject the `Authorization` header.
+When no `credentialURLElicitation.url` is set, the router generates a URL pointing to the broker's `/credentials` page. The user enters a credential on the broker page, the broker writes it to the session cache, and the router reads from cache on retry to inject the `Authorization` header.
 
 ```
 Router → -32042 (broker URL) → User enters PAT → Broker stores in cache → Router reads cache → sets header
@@ -182,7 +182,7 @@ The router is responsible for credential injection.
 
 #### Pattern 2: External UI with AuthPolicy
 
-When `elicitation.url` is set to an external UI (e.g., Vault web UI), the user stores their credential there directly. An AuthPolicy on the upstream HTTPRoute reads the credential from the external store and injects it into the `Authorization` header. The router does not need to read from cache — it only needs to detect whether a credential is missing (upstream 401) and re-trigger elicitation.
+When `credentialURLElicitation.url` is set to an external UI (e.g., Vault web UI), the user stores their credential there directly. An AuthPolicy on the upstream HTTPRoute reads the credential from the external store and injects it into the `Authorization` header. The router does not need to read from cache — it only needs to detect whether a credential is missing (upstream 401) and re-trigger elicitation.
 
 ```
 Router → -32042 (external URL) → User stores PAT in Vault → AuthPolicy reads from Vault → sets header
@@ -220,12 +220,12 @@ User credentials are stored as fields on the existing gateway session hash, usin
 | Set | `jwt-abc-123` | `usercred:github` | AES-GCM encrypted credential |
 | Get | `jwt-abc-123` | `usercred:github` | AES-GCM encrypted credential |
 | Delete (on 401) | `jwt-abc-123` | `usercred:github` | — |
+| Delete (on session invalidation) | `jwt-abc-123` | `usercred:github` | — |
 
-Cached credentials are also removed when the backend MCP session is invalidated, ensuring credentials don't outlive the session they were collected for.
 
 ### URLElicitationRequiredError Response
 
-Returned as an SSE-formatted immediate response (HTTP 200, `text/event-stream`). The `url` field uses `elicitation.url` from the server config if set, otherwise defaults to the broker's `/credentials` page:
+Returned as an SSE-formatted immediate response (HTTP 200, `text/event-stream`). The `url` field uses `credentialURLElicitation.url` from the server config if set, otherwise defaults to the broker's `/credentials` page:
 
 ```json
 {
@@ -266,10 +266,6 @@ The `/credentials` endpoint must be behind the gateway route's OAuth/OIDC policy
 The MCP specification [warns about phishing attacks](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#phishing) where an attacker could trick another user into completing an elicitation on their behalf. The credential page must verify that the user opening the URL is the same user who triggered the elicitation.
 
 Identity verification is handled by the AuthPolicy attached to the gateway route where the credential page is served. The AuthPolicy validates the OIDC token from the request, ensuring the user opening the URL is the same user who triggered the elicitation.
-
-### Token Passthrough
-
-The MCP specification [prohibits token passthrough](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough). This design is distinct from passthrough because credentials are collected out-of-band via the credential page, stored server-side bound to user identity, and never transit through the MCP client or LLM context.
 
 ### Non-Interactive Agents (Service Accounts)
 
