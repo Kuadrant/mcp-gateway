@@ -260,6 +260,24 @@ Identity verification is handled by the AuthPolicy attached to the gateway route
 
 The MCP specification [prohibits token passthrough](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough). This design is distinct from passthrough because credentials are collected out-of-band via the credential page, stored server-side bound to user identity, and never transit through the MCP client or LLM context.
 
+### Non-Interactive Agents (Service Accounts)
+
+Non-interactive agents (CI/CD pipelines, automated MCP clients, agent-to-agent calls) cannot complete browser-based elicitation or OAuth flows. Credential injection for these callers is handled entirely via AuthPolicy — the router's behavior is unchanged.
+
+If the upstream MCP server shares the same identity provider as the gateway, only one credential is needed — the gateway's `Authorization` header is valid for both and the router uses it as-is. When the upstream expects a different credential, an AuthPolicy on the MCP's route reads the credential from an additional header or external store (e.g., Vault) and sets the `Authorization` header before the request reaches the upstream.
+
+#### Disabling Elicitation
+
+Non-interactive agents that cannot handle `URLElicitationRequiredError` (-32042) can send a header to opt out:
+
+```
+x-mcp-no-elicitation: true
+```
+
+When this header is present and no credential is available (cache miss or upstream 401), the router returns a standard error instead of `-32042`. This gives the agent an actionable error rather than a URL it cannot open.
+
+The MCP specification's [token passthrough prohibition](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough) guards against credentials being visible to the LLM context. Non-interactive agents have no LLM observing their headers, so header-based credential delivery does not carry the same risk.
+
 ## Relationship to Existing Approaches
 
 | Approach | When to Use |
