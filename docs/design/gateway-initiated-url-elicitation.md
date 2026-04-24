@@ -8,7 +8,7 @@ Many upstream MCP servers require per-user credentials. Example: a user's own Gi
 2. **Token exchange via OAuth provider** — requires the OAuth provider to support token exchange and be configured per upstream. Requires third party identity federation.
 3. **Vault integration** — requires a Vault instance exposed to external users for credential provisioning.
 
-URL elicitation complements these strategies by offering a server-side credential collection path that doesn't require exposing infrastructure like Vault to external users and keeps credentials out of the MCP client entirely.
+URL elicitation complements these strategies by offering a server-side credential collection path that doesn't require exposing infrastructure like Vault to external users and keeps credentials out of the MCP client context and LLM context entirely.
 
 ## Summary
 
@@ -30,7 +30,7 @@ Enable the MCP Gateway to dynamically request per-user credentials at client too
 
 ## Prerequisites
 
-- MCP client must support URL mode elicitation (MCP spec 2025-11-25)
+- MCP client must declare `elicitation.url` capability during the [initialize handshake](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#capabilities) (MCP spec 2025-11-25)
 - MCP Gateway accessible over HTTPS for the credential page
 
 
@@ -212,6 +212,8 @@ User credentials are stored as fields on the existing gateway session hash, usin
 | Get | `jwt-abc-123` | `usercred:github` | AES-GCM encrypted credential |
 | Delete (on 401) | `jwt-abc-123` | `usercred:github` | — |
 
+Cached credentials are also removed when the backend MCP session is invalidated, ensuring credentials don't outlive the session they were collected for.
+
 ### URLElicitationRequiredError Response
 
 Returned as an SSE-formatted immediate response (HTTP 200, `text/event-stream`). The `url` field uses `elicitation.url` from the server config if set, otherwise defaults to the broker's `/credentials` page:
@@ -262,21 +264,14 @@ The MCP specification [prohibits token passthrough](https://modelcontextprotocol
 
 ### Non-Interactive Agents (Service Accounts)
 
-Non-interactive agents (CI/CD pipelines, automated MCP clients, agent-to-agent calls) cannot complete browser-based elicitation or OAuth flows. Credential injection for these callers is handled entirely via AuthPolicy — the router's behavior is unchanged.
+Non-interactive agents (CI/CD pipelines, automated MCP clients, agent-to-agent calls) cannot complete browser-based elicitation or OAuth flows. No special configuration is needed — the router uses the client's initialize handshake to determine behavior.
 
-If the upstream MCP server shares the same identity provider as the gateway, only one credential is needed — the gateway's `Authorization` header is valid for both and the router uses it as-is. When the upstream expects a different credential, an AuthPolicy on the MCP's route reads the credential from an additional header or external store (e.g., Vault) and sets the `Authorization` header before the request reaches the upstream.
+If the client does not declare `elicitation.url` in its capabilities, the router never returns `URLElicitationRequiredError` (-32042). Instead:
 
-#### Disabling Elicitation
+1. The `Authorization` header from the request is used as-is for upstream routing
+2. If the upstream returns 401, the router returns a standard error
 
-Non-interactive agents that cannot handle `URLElicitationRequiredError` (-32042) can send a header to opt out:
-
-```
-x-mcp-no-elicitation: true
-```
-
-When this header is present and no credential is available (cache miss or upstream 401), the router returns a standard error instead of `-32042`. This gives the agent an actionable error rather than a URL it cannot open.
-
-The MCP specification's [token passthrough prohibition](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough) guards against credentials being visible to the LLM context. Non-interactive agents have no LLM observing their headers, so header-based credential delivery does not carry the same risk.
+If the upstream MCP server shares the same identity provider as the gateway, only one credential is needed — the gateway's `Authorization` header is valid for both. When the upstream expects a different credential, an AuthPolicy on the MCP's route reads the credential from an additional header or external store (e.g., Vault) and sets the `Authorization` header before the request reaches the upstream.
 
 ## Relationship to Existing Approaches
 
