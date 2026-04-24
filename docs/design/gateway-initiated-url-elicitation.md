@@ -5,7 +5,7 @@
 Many upstream MCP servers require per-user credentials. Example: a user's own GitHub PAT, not a shared service account token. The gateway currently supports several per-user credential strategies:
 
 1. **Header-based token replacement** — the MCP client sends the user's credential in a custom header and the gateway maps it to the upstream `Authorization` header. The credential passes through the MCP client, making it visible to the LLM context and client-side logging. The MCP specification explicitly [prohibits token passthrough](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough) for this reason.
-2. **Token exchange via OAuth provider** — requires the OAuth provider to support token exchange and be configured per upstream. Requires third party identity federation.
+2. **Token exchange via OAuth provider** — requires the OAuth provider to support token exchange and be configured per upstream. Requires third-party identity federation.
 3. **Vault integration** — requires a Vault instance exposed to external users for credential provisioning.
 
 URL elicitation complements these strategies by offering a server-side credential collection path that doesn't require exposing infrastructure like Vault to external users and keeps credentials out of the MCP client context and LLM context entirely.
@@ -109,7 +109,7 @@ sequenceDiagram
 
 | Component | Role |
 |-----------|------|
-| **Router** | Checks for existing `Authorization` header (use as-is), checks client `elicitation.url` capability, falls back to cache, returns `-32042` on miss (if capable), injects cached credential into `Authorization` header (pattern 1), invalidates on upstream 401 |
+| **Router** | (1) If `Authorization` header present, use as-is for upstream routing. (2) If absent, check cache — inject cached credential on hit. (3) On cache miss, return `-32042` if client declares `elicitation.url` capability, otherwise return standard error. (4) On upstream 401, invalidate cached credential and re-elicit or error per client capability. |
 | **Broker** | Hosts `/credentials` page, writes credential to cache |
 | **Cache** | Shared storage for per-user, per-server credentials |
 | **Controller** | Propagates `credentialURLElicitation` from CRD to config |
@@ -153,7 +153,7 @@ spec:
     url: "https://vault.example.com/ui/vault/secrets/mcp/create"
 ```
 
-When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. In future, if OAuth fields are added (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
+When no `url` is set, the router generates a URL pointing to the broker's built-in credential page. In the future, if OAuth fields are added (client ID, authorize endpoint, etc.), their presence on the object will imply an OAuth flow.
 
 #### Config Type
 
@@ -174,7 +174,7 @@ The elicitation URL determines how the credential reaches the upstream request. 
 
 When no `credentialURLElicitation.url` is set, the router generates a URL pointing to the broker's `/credentials` page. The user enters a credential on the broker page, the broker writes it to the session cache, and the router reads from cache on retry to inject the `Authorization` header.
 
-```
+```text
 Router → -32042 (broker URL) → User enters PAT → Broker stores in cache → Router reads cache → sets header
 ```
 
@@ -184,7 +184,7 @@ The router is responsible for credential injection.
 
 When `credentialURLElicitation.url` is set to an external UI (e.g., Vault web UI), the user stores their credential there directly. An AuthPolicy on the upstream HTTPRoute reads the credential from the external store and injects it into the `Authorization` header. The router does not need to read from cache — it only needs to detect whether a credential is missing (upstream 401) and re-trigger elicitation.
 
-```
+```text
 Router → -32042 (external URL) → User stores PAT in Vault → AuthPolicy reads from Vault → sets header
 ```
 
@@ -209,7 +209,7 @@ Per-user credentials are written by the broker and read by the router. The stora
 
 When an external cache is configured, credentials are encrypted using AES-GCM before storage. The encryption key is derived from the existing session signing key (`--mcp-session-signing-key`) using HKDF (HMAC-based Key Derivation Function, [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869)), so no additional configuration is required. HKDF derives a cryptographically strong key using a context-specific salt, ensuring the encryption key is distinct from the signing key even though both originate from the same secret.
 
-Encryption is only applied when using an external cache store as the storage backend — it protects credentials in an external store that may be shared or persisted to disk. For the in-memory backend, encryption adds no value since a process memory dump would reveal the encryption key alongside the ciphertext and in order to be used to call a backend the token credential has to be in plain text in memory.
+Encryption is only applied when using an external cache store as the storage backend — it protects credentials in an external store that may be shared or persisted to disk. For the in-memory backend, encryption adds no value since a process memory dump would reveal the encryption key alongside the ciphertext and to be used to call a backend the token credential has to be in plain text in memory.
 
 #### Cache Schema
 
