@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -50,10 +51,11 @@ func createTestGateway(name, namespace string, hostname ...string) *gatewayv1.Ga
 		Port:     80,
 		Protocol: gatewayv1.HTTPProtocolType,
 	}
+	hn := gatewayv1.Hostname("test.example.com")
 	if len(hostname) > 0 && hostname[0] != "" {
-		hn := gatewayv1.Hostname(hostname[0])
-		listener.Hostname = &hn
+		hn = gatewayv1.Hostname(hostname[0])
 	}
+	listener.Hostname = &hn
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -64,6 +66,18 @@ func createTestGateway(name, namespace string, hostname ...string) *gatewayv1.Ga
 			Listeners:        []gatewayv1.Listener{listener},
 		},
 	}
+}
+
+// createTestGatewayAllowAll creates a Gateway that allows routes from all namespaces
+func createTestGatewayAllowAll(name, namespace string, hostname ...string) *gatewayv1.Gateway {
+	gw := createTestGateway(name, namespace, hostname...)
+	fromAll := gatewayv1.NamespacesFromAll
+	gw.Spec.Listeners[0].AllowedRoutes = &gatewayv1.AllowedRoutes{
+		Namespaces: &gatewayv1.RouteNamespaces{
+			From: &fromAll,
+		},
+	}
+	return gw
 }
 
 // createTestReferenceGrant creates a ReferenceGrant allowing MCPGatewayExtension to reference Gateways
@@ -129,27 +143,40 @@ func deleteTestGateway(ctx context.Context, name, namespace string) {
 	}
 }
 
-// forceDeleteTestMCPGatewayExtension removes the finalizer and deletes the MCPGatewayExtension without going through the reconciler
+// forceDeleteTestMCPGatewayExtension removes the finalizer and deletes the MCPGatewayExtension without going through the reconciler.
+// It also cleans up the session signing key secret since envtest does not run garbage collection.
 func forceDeleteTestMCPGatewayExtension(ctx context.Context, name, namespace string) {
 	nn := types.NamespacedName{Name: name, Namespace: namespace}
 	resource := &mcpv1alpha1.MCPGatewayExtension{}
 	err := testK8sClient.Get(ctx, nn, resource)
-	if errors.IsNotFound(err) {
-		return
+	if err != nil {
+		Expect(client.IgnoreNotFound(err)).To(Succeed())
+	} else {
+		if controllerutil.ContainsFinalizer(resource, mcpGatewayFinalizer) {
+			controllerutil.RemoveFinalizer(resource, mcpGatewayFinalizer)
+			Expect(testK8sClient.Update(ctx, resource)).To(Succeed())
+		}
+		Expect(client.IgnoreNotFound(testK8sClient.Delete(ctx, resource))).To(Succeed())
+		Eventually(func(g Gomega) {
+			err := testK8sClient.Get(ctx, nn, resource)
+			g.Expect(errors.IsNotFound(err)).To(BeTrue())
+		}, testTimeout, testRetryInterval).Should(Succeed())
 	}
-	Expect(err).NotTo(HaveOccurred())
 
-	if controllerutil.ContainsFinalizer(resource, mcpGatewayFinalizer) {
-		controllerutil.RemoveFinalizer(resource, mcpGatewayFinalizer)
-		Expect(testK8sClient.Update(ctx, resource)).To(Succeed())
+	// always clean up reconciler-created resources (envtest has no GC controller)
+	deleteAndWait := func(obj client.Object, key types.NamespacedName) {
+		if err := testK8sClient.Get(ctx, key, obj); err == nil {
+			Expect(client.IgnoreNotFound(testK8sClient.Delete(ctx, obj))).To(Succeed())
+			Eventually(func(g Gomega) {
+				err := testK8sClient.Get(ctx, key, obj)
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		}
 	}
-
-	Expect(client.IgnoreNotFound(testK8sClient.Delete(ctx, resource))).To(Succeed())
-
-	Eventually(func(g Gomega) {
-		err := testK8sClient.Get(ctx, nn, resource)
-		g.Expect(errors.IsNotFound(err)).To(BeTrue())
-	}, testTimeout, testRetryInterval).Should(Succeed())
+	deleteAndWait(&corev1.Secret{}, types.NamespacedName{Name: sessionSigningKeySecretName, Namespace: namespace})
+	deleteAndWait(&appsv1.Deployment{}, types.NamespacedName{Name: brokerRouterName, Namespace: namespace})
+	deleteAndWait(&corev1.Service{}, types.NamespacedName{Name: brokerRouterName, Namespace: namespace})
+	deleteAndWait(&gatewayv1.HTTPRoute{}, types.NamespacedName{Name: gatewayHTTPRouteName, Namespace: namespace})
 }
 
 // deleteTestReferenceGrant deletes a ReferenceGrant if it exists
@@ -186,7 +213,9 @@ func newTestReconciler() *MCPGatewayExtensionReconciler {
 		BrokerRouterImage:   DefaultBrokerRouterImage,
 		DirectAPIReader:     testK8sClient,
 		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
-			Client: testIndexedClient,
+			Client:          testIndexedClient,
+			DirectAPIReader: testK8sClient,
+			Logger:          slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		},
 		log: slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
@@ -198,6 +227,38 @@ func waitForCacheSync(ctx context.Context, nn types.NamespacedName) {
 		cached := &mcpv1alpha1.MCPGatewayExtension{}
 		g.Expect(testIndexedClient.Get(ctx, nn, cached)).To(Succeed())
 	}, testTimeout, testRetryInterval).Should(Succeed())
+}
+
+// setGatewayListenerStatus populates the gateway listener status so that the reconciler
+// can update the listener condition. In envtest no gateway controller does this automatically.
+func setGatewayListenerStatus(ctx context.Context, name, namespace, listenerName string) {
+	gw := &gatewayv1.Gateway{}
+	gwNN := types.NamespacedName{Name: name, Namespace: namespace}
+	Eventually(func(g Gomega) {
+		g.Expect(testK8sClient.Get(ctx, gwNN, gw)).To(Succeed())
+	}, testTimeout, testRetryInterval).Should(Succeed())
+
+	gw.Status.Listeners = []gatewayv1.ListenerStatus{
+		{
+			Name:           gatewayv1.SectionName(listenerName),
+			AttachedRoutes: 0,
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.ListenerConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.Now(),
+					Reason:             string(gatewayv1.ListenerReasonAccepted),
+				},
+			},
+			SupportedKinds: []gatewayv1.RouteGroupKind{
+				{
+					Group: ptr.To(gatewayv1.Group("gateway.networking.k8s.io")),
+					Kind:  "HTTPRoute",
+				},
+			},
+		},
+	}
+	Expect(testK8sClient.Status().Update(ctx, gw)).To(Succeed())
 }
 
 // setDeploymentStatus updates the broker-router deployment status to simulate readiness in envtest
@@ -422,7 +483,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 		BeforeEach(func() {
 			createTestNamespace(ctx, gatewayNamespace)
-			gw := createTestGateway(gatewayName, gatewayNamespace)
+			gw := createTestGatewayAllowAll(gatewayName, gatewayNamespace)
 			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
 			ext := createTestMCPGatewayExtension(resourceName, "default", gatewayName, gatewayNamespace)
 			Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
@@ -469,7 +530,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 		BeforeEach(func() {
 			createTestNamespace(ctx, gatewayNamespace)
-			gw := createTestGateway(gatewayName, gatewayNamespace)
+			gw := createTestGatewayAllowAll(gatewayName, gatewayNamespace)
 			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
 		})
 
@@ -502,9 +563,10 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
 
-				// simulate deployment readiness
+				// simulate deployment readiness and gateway listener status
 				var replicas, readyReplicas int32 = 1, 1
 				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+				setGatewayListenerStatus(ctx, gatewayName, gatewayNamespace, "http")
 
 				// reconcile again to pick up deployment readiness
 				Eventually(func(g Gomega) {
@@ -547,9 +609,10 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
 
-				// simulate deployment readiness
+				// simulate deployment readiness and gateway listener status
 				var replicas, readyReplicas int32 = 1, 1
 				setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+				setGatewayListenerStatus(ctx, gatewayName, gatewayNamespace, "http")
 
 				// reconcile again to pick up deployment readiness
 				Eventually(func(g Gomega) {
@@ -650,9 +713,10 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment)).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
-			// simulate deployment readiness
+			// simulate deployment readiness and gateway listener status
 			var replicas, readyReplicas int32 = 1, 1
 			setDeploymentStatus(ctx, "default", replicas, readyReplicas)
+			setGatewayListenerStatus(ctx, gatewayName, "default", "http")
 
 			// reconcile again to pick up deployment readiness
 			Eventually(func(g Gomega) {
@@ -726,15 +790,6 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 		AfterEach(func() {
 			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
 			deleteTestGateway(ctx, gatewayName, "default")
-			// clean up deployment and service
-			deployment := &appsv1.Deployment{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment); err == nil {
-				_ = testK8sClient.Delete(ctx, deployment)
-			}
-			service := &corev1.Service{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, service); err == nil {
-				_ = testK8sClient.Delete(ctx, service)
-			}
 		})
 
 		It("should create broker-router deployment and service", func() {
@@ -836,7 +891,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 		BeforeEach(func() {
 			createTestNamespace(ctx, gatewayNamespace)
-			gw := createTestGateway(gatewayName, gatewayNamespace)
+			gw := createTestGatewayAllowAll(gatewayName, gatewayNamespace)
 			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
 			refGrant := createTestReferenceGrant(refGrantName, gatewayNamespace, "default", nil)
 			Expect(testK8sClient.Create(ctx, refGrant)).To(Succeed())
@@ -848,21 +903,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
 			_ = deleteTestReferenceGrant(ctx, refGrantName, gatewayNamespace)
 			deleteTestGateway(ctx, gatewayName, gatewayNamespace)
-			// clean up EnvoyFilter
+			// clean up EnvoyFilter (not handled by forceDeleteTestMCPGatewayExtension)
 			envoyFilterList := &istionetv1alpha3.EnvoyFilterList{}
 			if err := testK8sClient.List(ctx, envoyFilterList, client.InNamespace(gatewayNamespace)); err == nil {
 				for _, ef := range envoyFilterList.Items {
 					_ = testK8sClient.Delete(ctx, ef)
 				}
-			}
-			// clean up deployment and service
-			deployment := &appsv1.Deployment{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment); err == nil {
-				_ = testK8sClient.Delete(ctx, deployment)
-			}
-			service := &corev1.Service{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, service); err == nil {
-				_ = testK8sClient.Delete(ctx, service)
 			}
 		})
 
@@ -1144,6 +1190,16 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 		}
 
 		BeforeEach(func() {
+			// ensure no stale HTTPRoute from previous tests
+			staleRoute := &gatewayv1.HTTPRoute{}
+			if err := testK8sClient.Get(ctx, httpRouteNN, staleRoute); err == nil {
+				Expect(testK8sClient.Delete(ctx, staleRoute)).To(Succeed())
+				Eventually(func(g Gomega) {
+					err := testK8sClient.Get(ctx, httpRouteNN, staleRoute)
+					g.Expect(errors.IsNotFound(err)).To(BeTrue())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+			}
+
 			gw := createTestGateway(gatewayName, "default", testHostname)
 			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
 			ext := createTestMCPGatewayExtension(resourceName, "default", gatewayName, "default")
@@ -1153,20 +1209,6 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 		AfterEach(func() {
 			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
 			deleteTestGateway(ctx, gatewayName, "default")
-			// clean up httproute
-			httpRoute := &gatewayv1.HTTPRoute{}
-			if err := testK8sClient.Get(ctx, httpRouteNN, httpRoute); err == nil {
-				_ = testK8sClient.Delete(ctx, httpRoute)
-			}
-			// clean up deployment and service
-			deployment := &appsv1.Deployment{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, deployment); err == nil {
-				_ = testK8sClient.Delete(ctx, deployment)
-			}
-			service := &corev1.Service{}
-			if err := testK8sClient.Get(ctx, types.NamespacedName{Name: brokerRouterName, Namespace: "default"}, service); err == nil {
-				_ = testK8sClient.Delete(ctx, service)
-			}
 		})
 
 		It("should create HTTPRoute with correct spec", func() {

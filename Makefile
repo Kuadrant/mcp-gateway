@@ -57,6 +57,7 @@ $(LOCALBIN):
 
 
 ENVTEST ?= $(LOCALBIN)/setup-envtest
+ENVTEST_K8S_VERSION ?= 1.31.0
 
 # Gateway API version for CRDs
 GATEWAY_API_VERSION ?= v1.4.1
@@ -556,9 +557,9 @@ test-unit: ## Run unit tests
 	go test -v -race ./...
 
 .PHONY: test-controller-integration
-test-controller-integration: envtest gateway-api-crds ## Run controller integration tests
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GINKGO) $(GINKGO_FLAGS) -tags=integration ./internal/controller
-  
+test-controller-integration: envtest ginkgo gateway-api-crds ## Run controller integration tests
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GINKGO) -v --race -tags=integration ./internal/controller
+
 
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.

@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -191,6 +192,11 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 		Scheme:             testK8sClient.Scheme(),
 		DirectAPIReader:    testK8sClient,
 		ConfigReaderWriter: configWriter,
+		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
+			Client:          testIndexedClient,
+			DirectAPIReader: testK8sClient,
+			Logger:          slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		},
 	}
 }
 
@@ -316,7 +322,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// verify RemoveMCPServer was called
-			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", httpRouteName, "default")))
+			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", "default", resourceName)))
 
 			Eventually(func(g Gomega) {
 				deleted := &mcpv1alpha1.MCPServerRegistration{}
