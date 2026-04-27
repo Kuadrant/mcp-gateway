@@ -297,7 +297,7 @@ deploy-example-minimal: install-crd ## Deploy MCPServerRegistration for everythi
 	@echo "Deploying MCPServerRegistration for everything server..."
 	kubectl apply -f config/samples/mcpserverregistration-everything-server.yaml
 	@echo "Waiting for MCPServerRegistration to be ready..."
-	@kubectl wait --for=condition=Ready mcpserverregistration/everything-server -n mcp-test --timeout=$(WAIT_TIME)
+	@kubectl wait --for=condition=Ready mcpserverregistration/everything-server -n mcp-test --timeout=240s
 
 # Build everything server image only
 build-everything-server: ## Build everything server Docker image
