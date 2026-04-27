@@ -117,7 +117,7 @@ jobs:
       - name: Run mcpchecker
         run: |
           echo "Installing mcpchecker..."
-          go install github.com/mcpchecker/mcpchecker/cmd/mcpchecker@latest
+          go install github.com/mcpchecker/mcpchecker/cmd/mcpchecker@v0.0.16
 
           echo "Running mcpchecker..."
           export PATH=$PATH:$(go env GOPATH)/bin
