@@ -18,7 +18,7 @@ The broker and router handle every MCP request. Allocations in these paths direc
 
 ### INFO logging in per-request paths
 
-`slog.Info` acquires the handler's write mutex. At thousands of req/s this serialises goroutines. Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only.
+`slog.Info` acquires the handler's write mutex. At thousands of req/s this serialises concurrent callers. Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only.
 
 ### Unconditional span attribute writes
 
