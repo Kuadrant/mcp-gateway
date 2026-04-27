@@ -151,7 +151,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()
 				for _, res := range resp {
 					if sendErr := stream.Send(res); sendErr != nil {
-						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", sendErr))
+						s.Logger.ErrorContext(ctx, "error sending response", "error", sendErr)
 					}
 				}
 				return err
@@ -166,7 +166,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				resp := responseBuilder.WithDoNothingResponse(false).Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
-						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
 						return err
 					}
 				}
