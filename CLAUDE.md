@@ -193,3 +193,18 @@ Test servers in `config/test-servers/`:
 - **Everything Server**: Typescript SDK (prompts, tools, resources, sampling)
 - **Conformance Server**: Typescript SDK conformance test server
 - **Custom Response Server**: Tests custom response handling
+
+## Performance
+
+Broker and router are hot paths. Avoid allocations in per-request code.
+
+- Use pointer maps (`map[string]*T`) not value maps -- value lookups copy the struct
+- Use `for i := range` not `for _, v := range` on large structs in hot loops
+- Use structured logging (`logger.Info("msg", "key", val)`) not `fmt.Sprintf`
+- Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only
+- Guard span attributes: `if span.IsRecording()` before `span.SetAttributes(...)`
+- Use injected `logger`, never package-level `slog.Info`/`slog.Error`
+
+Profiling: pprof on port 6060, `make perf-run-ramp` for load tests. See `tests/perf/`.
+
+Detailed explanations and rationale: `docs/design/performance.md`
