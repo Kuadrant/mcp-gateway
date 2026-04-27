@@ -26,11 +26,11 @@ To explore the code base, if the codebase-memory-mcp is configured, index the pr
 ```
 Client → Gateway (Envoy) → Router (ext_proc) → Broker → Upstream MCP Servers
                 ↑                                 ↑
-           Controller → ConfigMap ────────────────┘
+           Controller → Secret ──────────────────┘
 ```
 
-- Controller watches MCPServerRegistration CRDs, discovers backends via HTTPRoutes, writes ConfigMap
-- Broker reads ConfigMap, connects to upstream servers, federates tools with prefixes
+- Controller watches MCPServerRegistration CRDs, discovers backends via HTTPRoutes, writes config Secret
+- Broker reads config Secret, connects to upstream servers, federates tools with prefixes
 - Router parses MCP requests, adds auth headers, tells Envoy where to route
 - Tool Calls use a lazy initialization model where the router hairpins an initialize request back through Envoy to the backend MCP Server before continuing with the MCP tool call. This ensures initialization is only done when needed and that policies are applied to both the initialize and tool/call requests.
 - All MCP traffic flows through Envoy for consistent policies
@@ -102,7 +102,7 @@ Users authenticate based AuthPolicies applied on the Gateway Resource or the HTT
 ### Code Style
 
 - Minimal, DRY, terse comments (lowercase, only when necessary)
-- Idiomatic Go, leverage interfaces where appropriate use Go-specific plugins, language servers and agents if available
+- Idiomatic Go, leverage interfaces where appropriate
 - No emojis or AI-style formatting
 - Files must end with newline
 - Regularly run make lint to check for lint errors.
@@ -142,14 +142,7 @@ Users authenticate based AuthPolicies applied on the Gateway Resource or the HTT
 ```bash
 make lint               # Run all lint and style checks
 make test-unit          # Unit tests
-make test-e2e-ci        # E2E tests for CI environment
-make test-e2e           # E2E tests with local Kind cluster
-
-# Running specific E2E tests locally
-cd tests/e2e && go test -v -tags=e2e -run TestE2E -ginkgo.focus="test description" -timeout 5m
-
-# Alternative with ginkgo CLI
-ginkgo run -v --tags=e2e --focus="test description" tests/e2e/
+make test-controller-integration  # Controller integration tests (envtest)
 ```
 
 ### Version References
@@ -183,9 +176,9 @@ Docs and scripts on `main` always reference the latest published release version
 ### Test Servers
 
 Test servers in `config/test-servers/`:
-- **Server1**: Go SDK (tools: greet, time, slow, headers)
+- **Server1**: Go SDK (tools: greet, time, slow, headers, add_tool; also has a prompt and resource)
 - **Server2**: Go SDK (tools: hello_world, time, headers, auth1234, slow)
-- **Server3**: Python FastMCP (tools: time, add, dozen, pi, get_weather, slow)
+- **Server3**: Python FastMCP (tools: time, add, dozen, pi, get_weather, slow, get_headers)
 - **API Key Server**: Validates Bearer token authentication (tool: hello_world)
 - **Broken Server**: Intentionally broken server for testing error handling
 - **Custom Path Server**: Go SDK at `/v1/special/mcp` (tools: echo_custom, path_info, timestamp)
@@ -205,6 +198,6 @@ Broker and router are hot paths. Avoid allocations in per-request code.
 - Guard span attributes: `if span.IsRecording()` before `span.SetAttributes(...)`
 - Use injected `logger`, never package-level `slog.Info`/`slog.Error`
 
-Profiling: pprof on port 6060, `make perf-run-ramp` for load tests. See `tests/perf/`.
+Profiling: pprof on port 6060. See `tests/perf/` for load testing scripts and methodology.
 
 Detailed explanations and rationale: `docs/design/performance.md`

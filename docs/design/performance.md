@@ -32,9 +32,4 @@ Always use the injected `logger` instance so log levels are respected and tests 
 
 pprof is always available on port 6060 in the broker. Load testing and profile capture:
 
-```bash
-make perf-run-ramp    # ramp load test with automatic profile capture
-make perf-profile     # one-off snapshot
-```
-
-See `tests/perf/README.md` for full details and PR #797 for profiling methodology.
+See `tests/perf/` for load testing scripts and `tests/perf/README.md` for full details. PR #797 for profiling methodology.
