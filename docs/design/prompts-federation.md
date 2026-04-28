@@ -11,7 +11,8 @@ Add support for federating MCP Prompts through the gateway, following the same p
 - Support `prompts/list` and `prompts/get` MCP methods
 - Handle `notifications/prompts/list_changed` from upstream servers
 - Apply VirtualServer filtering to prompts
-- Apply authorization filtering to prompts via a generalized authorization header
+- Replace `x-authorized-tools` with a generalized `x-mcp-authorized` header covering tools and prompts
+- Apply JWT-based authorization filtering to both tools and prompts via the generalized header
 
 ## Non-Goals
 
@@ -32,6 +33,8 @@ Add support for federating MCP Prompts through the gateway, following the same p
 - Manager/broker/router: update all references to `GetPrefix()`, `ToolPrefix`, etc.
 - CRD manifests, Helm charts, samples, docs, tests
 - Run `make generate-all` to regenerate CRDs and sync Helm
+
+**Breaking change**: The `x-authorized-tools` header is replaced with `x-mcp-authorized`. AuthPolicy configurations that set this header must be updated to use the new header name and JWT claim format. See [Generalized Authorization Header](#generalized-authorization-header).
 
 All other changes (prompt federation, new CRD fields) are additive and non-breaking.
 
@@ -129,11 +132,19 @@ Enable `server.WithPromptCapabilities(true)` on the listening MCP server. Regist
 
 The manager constructor receives the listening server as both `ToolsAdderDeleter` and `PromptsAdderDeleter`.
 
+#### Authorization Header Generalization (`internal/broker/filtered_tools_handler.go`)
+
+The existing `x-authorized-tools` header and `allowed-tools` JWT claim are replaced with a generalized `x-mcp-authorized` header and `allowed-capabilities` claim. The JWT payload type changes from `map[string][]string` to `map[string]map[string][]string` (capability type → server name → names). See [Generalized Authorization Header](#generalized-authorization-header) for the full format.
+
+The parsing function (`parseAuthorizedToolsJWT` → `parseAuthorizedCapabilitiesJWT`) unmarshals the top-level map once, then each filter handler receives its `map[string][]string` slice via the appropriate key (`capabilities["tools"]`, `capabilities["prompts"]`). The `filterToolsByServerMap` function signature is unchanged.
+
+The `enforceToolFilter` flag is generalized to `enforceCapabilityFilter` — when set, a missing `x-mcp-authorized` header denies all capabilities (tools and prompts). The `--enforce-tool-filter` CLI flag is renamed to `--enforce-capability-filter`.
+
 #### Prompt Filtering (`internal/broker/filtered_prompts_handler.go`)
 
-New file mirroring `filtered_tools_handler.go`. Applies VirtualServer filtering and strips `kuadrant/id` gateway metadata from prompts before returning to clients.
+New file mirroring `filtered_tools_handler.go`. Applies both JWT-based authorization filtering (via `capabilities["prompts"]` from the `x-mcp-authorized` header) and VirtualServer filtering. Strips `kuadrant/id` gateway metadata from prompts before returning to clients.
 
-Initial implementation applies VirtualServer-level filtering only. Per-prompt authorization via JWT claims is deferred — see Security Considerations.
+`filterPromptsByServerMap` follows the same pattern as `filterToolsByServerMap` — receives `map[string][]string` (server name → prompt names), looks up each server's managed prompts, and returns only those in the allow list.
 
 #### Router (`internal/mcp-router/request_handlers.go`)
 
@@ -151,13 +162,118 @@ Initial implementation applies VirtualServer-level filtering only. Per-prompt au
 - Prompt filtering reuses the existing VirtualServer mechanism. Prompts not listed in a VirtualServer's `prompts` field are not exposed.
 - The `kuadrant/id` metadata added to prompts during federation is stripped before returning to clients, same as tools.
 - `prompts/get` routing uses the same client authentication flow as `tools/call` — the client provides credentials via AuthPolicy, and the gateway forwards the Authorization header to the upstream server. `credentialRef` is only used for broker-to-upstream connections (discovering tools/prompts), not for client-facing auth.
-- **Authorization header generalization**: The current `x-authorized-tools` header only covers tools. As prompts (and later resources) are federated, this should be generalized — e.g. an `x-mcp-authorized` header carrying a structured map (`tools`, `prompts`, `resources` per server). This avoids adding a new header for each federated capability. The initial implementation can add a separate `x-authorized-prompts` header, but the generalized approach should be considered for a follow-up.
-- **Per-prompt JWT claims**: The initial implementation does not include prompt-specific JWT claims. Tools and prompts are distinct capabilities — a user authorized for tools on a server should not implicitly have access to all prompts. Per-prompt authorization via JWT claims should be layered on as a follow-up.
+- **Authorization header generalization**: The `x-authorized-tools` header is replaced with `x-mcp-authorized` as part of this implementation. See [Generalized Authorization Header](#generalized-authorization-header) for format and semantics.
+- **Capability isolation**: Tools and prompts are distinct capabilities — authorization for tools on a server does not grant access to prompts on the same server. The `allowed-capabilities` JWT claim encodes them separately.
+
+### Generalized Authorization Header
+
+The current `x-authorized-tools` header carries a JWT with a single `allowed-tools` claim containing a `map[string][]string` (server name → tool names). As prompts and later resources are federated, adding a new header per capability (`x-authorized-prompts`, `x-authorized-resources`) doesn't scale.
+
+Replace `x-authorized-tools` with a single `x-mcp-authorized` header. The JWT claim changes from `allowed-tools` to `allowed-capabilities`, and the value type changes from `map[string][]string` to `map[string]map[string][]string` (capability type → server name → names). This is implemented as part of the prompts federation work, not as a follow-up.
+
+**Current format** (`x-authorized-tools` JWT, `allowed-tools` claim):
+
+```json
+{
+  "weather": ["get_forecast", "get_temperature"],
+  "github": ["list_repos"]
+}
+```
+
+**Proposed format** (`x-mcp-authorized` JWT, `allowed-capabilities` claim):
+
+```json
+{
+  "tools": {
+    "weather": ["get_forecast", "get_temperature"],
+    "github": ["list_repos"]
+  },
+  "prompts": {
+    "weather": ["weather_summary"],
+    "github": ["pr_review", "issue_triage"]
+  },
+  "resources": {
+    "github": ["repo://org/repo"]
+  }
+}
+```
+
+**Go type change**: The JWT parsing function signature stays the same per-capability — each filter handler (`filterToolsByServerMap`, `filterPromptsByServerMap`) still receives `map[string][]string`. The change is in the parsing layer, which unmarshals `map[string]map[string][]string` and hands each capability key to the relevant filter.
+
+**Enforcement semantics**: A missing capability key (e.g. no `"prompts"` key in the JWT) means the JWT makes no assertion about that capability — behavior depends on the enforcement flag, same as today. An empty map (`"prompts": {}`) explicitly denies all prompts.
+
+**Migration**: Since `x-authorized-tools` is a trusted internal header set by AuthPolicy (not by clients directly), migration is a coordinated update of the AuthPolicy Rego/Wasm and the broker's parsing code — no client-facing API change. AuthPolicy configurations that currently set `x-authorized-tools` with the `allowed-tools` claim must be updated to set `x-mcp-authorized` with `allowed-capabilities`. The authorization guide (`docs/guides/authorization.md`) is updated accordingly.
+
+**Scope of header rename**:
+- `internal/broker/filtered_tools_handler.go`: rename header constant, rename parsing function, update claim key and unmarshal type
+- `internal/broker/filtered_tools_handler_test.go`: update all test JWT payloads to use the new claim structure
+- `internal/broker/filtered_prompts_handler.go`: new file, reads `capabilities["prompts"]`
+- `internal/broker/broker.go`: rename `enforceToolFilter` to `enforceCapabilityFilter`
+- `cmd/mcp-broker-router/main.go`: rename CLI flag
+- `docs/guides/authorization.md`: update header name and JWT examples
+- `config/samples/oauth-token-exchange/tools-list-auth.yaml`: update AuthPolicy sample
+
+#### Keycloak Role Convention
+
+Per-capability authorization is driven by a naming convention on Keycloak client roles. Each MCP server is a Keycloak client. Currently, roles on that client map directly to tool names (e.g. `get_forecast`). To distinguish between capability types, roles are prefixed with the capability type and a colon:
+
+- `tool:get_forecast` — grants access to the `get_forecast` tool
+- `tool:get_temperature` — grants access to the `get_temperature` tool
+- `prompt:weather_summary` — grants access to the `weather_summary` prompt
+
+The Keycloak JWT `resource_access` claim carries these prefixed roles:
+
+```json
+{
+  "resource_access": {
+    "weather-server": {
+      "roles": [
+        "tool:get_forecast",
+        "tool:get_temperature",
+        "prompt:weather_summary"
+      ]
+    },
+    "github-server": {
+      "roles": [
+        "tool:list_repos",
+        "prompt:pr_review",
+        "prompt:issue_triage"
+      ]
+    }
+  }
+}
+```
+
+The AuthPolicy OPA Rego policy splits roles by prefix to build the `allowed-capabilities` map:
+
+```rego
+capabilities = {
+  "tools": { server: tools |
+    server := object.keys(input.auth.identity.resource_access)[_]
+    tools := [substring(r, count("tool:"), -1) |
+      r := input.auth.identity.resource_access[server].roles[_]
+      startswith(r, "tool:")
+    ]
+  },
+  "prompts": { server: prompts |
+    server := object.keys(input.auth.identity.resource_access)[_]
+    prompts := [substring(r, count("prompt:"), -1) |
+      r := input.auth.identity.resource_access[server].roles[_]
+      startswith(r, "prompt:")
+    ]
+  }
+}
+```
+
+Authorino then packages this into the `allowed-capabilities` claim of the `x-mcp-authorized` wristband JWT.
+
+**Migration for existing deployments**: Existing Keycloak roles (e.g. `get_forecast`) must be renamed to include the `tool:` prefix (e.g. `tool:get_forecast`). This is a one-time change in the Keycloak admin console or via the Keycloak API. Users without prompt roles are unaffected — the `prompts` key will be an empty map, and behavior depends on the enforcement flag.
+
 - No new RBAC or privilege escalation concerns — prompts follow the same access path as tools.
 
 ## Testing Strategy
 
-- **Unit tests**: MCPManager prompt discovery, diffing, conflict detection, prefix handling. Broker `FilterPrompts` hook. Router `PromptName()` extraction and `HandlePromptGet()` routing logic. Mirror existing tool test patterns in `manager_test.go`, `broker_test.go`, `request_handlers_test.go`.
+- **Unit tests**: MCPManager prompt discovery, diffing, conflict detection, prefix handling. Broker `FilterPrompts` hook. Router `PromptName()` extraction and `HandlePromptGet()` routing logic. `parseAuthorizedCapabilitiesJWT` parsing with the new `allowed-capabilities` claim structure. `filterPromptsByServerMap` filtering. Combined `x-mcp-authorized` + VirtualServer filtering for both tools and prompts. Mirror existing tool test patterns in `manager_test.go`, `broker_test.go`, `request_handlers_test.go`.
 - **Integration tests**: VirtualServer filtering applies to prompts.
 - **E2E tests**: Register servers with prompts, verify `prompts/list` returns prefixed names, call `prompts/get` and verify response, unregister and verify cleanup. Test with multiple servers to verify cross-server prefix isolation. Test virtual server prompt filtering.
 
