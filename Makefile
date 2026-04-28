@@ -603,6 +603,7 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
 	@echo "Local environment setup complete"
+	@echo "Run 'make envoy-admin-forward' to access the Envoy Admin UI."
 
 .PHONY: local-env-setup-olm
 local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gateway and Kuadrant via OLM
@@ -622,6 +623,7 @@ local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gate
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
 	@echo "Local OLM environment setup complete"
+	@echo "Run 'make envoy-admin-forward' to access the Envoy Admin UI."
 
 .PHONY: local-bare-setup
 local-bare-setup: setup-cluster-base ## Setup minimal cluster infrastructure (no MCP components)
@@ -647,6 +649,7 @@ dev: ## Setup cluster for local development (binaries run on host)
 	@echo "Ready for local development! Run these in separate terminals:"
 	@echo "  1. make run-mcp-broker-router"
 	@echo "  2. make dev-gateway-forward"
+	@echo "  3. make envoy-admin-forward"
 	@echo ""
 	@echo "Then test with: make dev-test"
 
@@ -700,6 +703,11 @@ kuadrant-configure: ## Apply Kuadrant configuration from config/kuadrant
 	@"$(MAKE)" -s -f build/kuadrant.mk kuadrant-configure-impl
 
 ##@ Debug
+
+.PHONY: envoy-admin-forward
+envoy-admin-forward: ## Port-forward the Envoy admin UI to localhost:15000
+	@echo "Envoy Admin UI available at: http://localhost:15000"
+	@kubectl port-forward -n gateway-system deployment/mcp-gateway-istio 15000:15000
 
 .PHONY: debug-envoy
 debug-envoy: ## Enable debug logging for Istio gateway
