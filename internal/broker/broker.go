@@ -64,8 +64,8 @@ type mcpBrokerImpl struct {
 
 	logger *slog.Logger
 
-	// enforceToolFilter if set will ensure only a filtered list of tools is returned this list is based on the x-authorized-tools trusted header
-	enforceToolFilter bool
+	// enforceCapabilityFilter if set will ensure only filtered capabilities are returned based on the x-mcp-authorized trusted header
+	enforceCapabilityFilter bool
 
 	// trustedHeadersPublicKey this is the key to verify that a trusted header came from the trusted source (the owner of the private key)
 	trustedHeadersPublicKey string
@@ -83,10 +83,10 @@ var _ MCPBroker = &mcpBrokerImpl{}
 // Option configures a broker instance
 type Option func(mb *mcpBrokerImpl)
 
-// WithEnforceToolFilter defines enforceToolFilter setting and is intended for use with the NewBroker function
-func WithEnforceToolFilter(enforce bool) Option {
+// WithEnforceCapabilityFilter defines enforceCapabilityFilter setting and is intended for use with the NewBroker function
+func WithEnforceCapabilityFilter(enforce bool) Option {
 	return func(mb *mcpBrokerImpl) {
-		mb.enforceToolFilter = enforce
+		mb.enforceCapabilityFilter = enforce
 	}
 }
 
@@ -111,7 +111,7 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
-// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceToolFilter
+// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
 		mcpServers:            map[config.UpstreamMCPID]*upstream.MCPManager{},

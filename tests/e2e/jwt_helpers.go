@@ -23,13 +23,16 @@ func GetTestHeaderSigningKey() string {
 	return testHeaderSigningKey
 }
 
-// CreateAuthorizedToolsJWT creates a signed JWT for the x-authorized-tools header
+// CreateAuthorizedCapabilitiesJWT creates a signed JWT for the x-mcp-authorized header
 // allowedTools is a map of server namespace/name to list of tool names
-func CreateAuthorizedToolsJWT(allowedTools map[string][]string) (string, error) {
+func CreateAuthorizedCapabilitiesJWT(allowedTools map[string][]string) (string, error) {
 	keyBytes := []byte(testHeaderSigningKey)
-	claimPayload, err := json.Marshal(allowedTools)
+	capabilities := map[string]map[string][]string{
+		"tools": allowedTools,
+	}
+	claimPayload, err := json.Marshal(capabilities)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal allowed tools: %w", err)
+		return "", fmt.Errorf("failed to marshal allowed capabilities: %w", err)
 	}
 
 	block, _ := pem.Decode(keyBytes)
@@ -43,7 +46,7 @@ func CreateAuthorizedToolsJWT(allowedTools map[string][]string) (string, error) 
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
-		"allowed-tools": string(claimPayload),
+		"allowed-capabilities": string(claimPayload),
 	})
 
 	jwtToken, err := token.SignedString(parsedKey)

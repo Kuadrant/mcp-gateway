@@ -26,7 +26,7 @@ MCP Client
 │  │  - JWT validation (Keycloak OIDC)      │  │
 │  │  - Token exchange (RFC 8693)           │  │
 │  │  - Tool-level RBAC                     │  │
-│  │  - x-authorized-tools header (signed)  │  │
+│  │  - x-mcp-authorized header (signed)  │  │
 │  └────────────────────────────────────────┘  │
 │                                              │
 │  ┌────────────────────────────────────────┐  │
@@ -54,7 +54,7 @@ MCP Client
 | Client → Gateway | Bearer token, MCP JSON-RPC body, custom headers |
 | Gateway → Router (ext_proc) | Request headers, buffered body |
 | Gateway → Upstream MCP Server | All client headers, MCP JSON-RPC body |
-| Gateway → Broker | MCP JSON-RPC body, gateway session JWT, `x-authorized-tools` signed header |
+| Gateway → Broker | MCP JSON-RPC body, gateway session JWT, `x-mcp-authorized` signed header |
 | Upstream MCP Server → Client | MCP JSON-RPC response body (streamed as-is), backend session IDs (rewritten to gateway session IDs) |
 
 ### Information shared with upstream MCP servers (model providers)
@@ -97,7 +97,7 @@ The client's Authorization header is always forwarded to upstream servers, allow
 
 ### Tool-level RBAC
 
-AuthPolicy can enforce per-tool access control using the `x-mcp-toolname` and `x-mcp-servername` headers set by the router. JWT claims (e.g., `resource_access`) are matched against the requested tool to produce an `x-authorized-tools` JWT signed header via Authorino. The broker verifies this signature and filters tool lists accordingly.  
+AuthPolicy can enforce per-tool access control using the `x-mcp-toolname` and `x-mcp-servername` headers set by the router. JWT claims (e.g., `resource_access`) are matched against the requested tool to produce an `x-mcp-authorized` JWT signed header via Authorino. The broker verifies this signature and filters tool lists accordingly.  
 
 ## Session Isolation
 

@@ -219,7 +219,7 @@ func TestGetServerInfo(t *testing.T) {
 
 func TestToolAnnotations(t *testing.T) {
 	b := NewBroker(logger,
-		WithEnforceToolFilter(true),
+		WithEnforceCapabilityFilter(true),
 		WithManagerTickerInterval(time.Microsecond),
 		WithTrustedHeadersPublicKey("abc"))
 	require.NotNil(t, b)

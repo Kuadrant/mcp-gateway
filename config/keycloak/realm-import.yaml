@@ -68,120 +68,120 @@ data:
           ],
           "mcp-test/test-server1": [
             {
-              "name": "greet"
+              "name": "tool:greet"
             },
             {
-              "name": "headers"
+              "name": "tool:headers"
             },
             {
-              "name": "slow"
+              "name": "tool:slow"
             },
             {
-              "name": "time"
+              "name": "tool:time"
             }
           ],
           "mcp-test/test-server2": [
             {
-              "name": "auth1234"
+              "name": "tool:auth1234"
             },
             {
-              "name": "headers"
+              "name": "tool:headers"
             },
             {
-              "name": "hello_world"
+              "name": "tool:hello_world"
             },
             {
-              "name": "slow"
+              "name": "tool:slow"
             },
             {
-              "name": "time"
+              "name": "tool:time"
             }
           ],
           "mcp-test/test-server3": [
             {
-              "name": "time"
+              "name": "tool:time"
             },
             {
-              "name": "add"
+              "name": "tool:add"
             },
             {
-              "name": "dozen"
+              "name": "tool:dozen"
             },
             {
-              "name": "pi"
+              "name": "tool:pi"
             }
           ],
           "mcp-test/oidc-server": [
             {
-              "name": "hello_world"
+              "name": "tool:hello_world"
             }
           ],
           "mcp-test/kubernetes-mcp-server": [
             {
-              "name": "configuration_contexts_list"
+              "name": "tool:configuration_contexts_list"
             },
             {
-              "name": "configuration_view"
+              "name": "tool:configuration_view"
             },
             {
-              "name": "events_list"
+              "name": "tool:events_list"
             },
             {
-              "name": "helm_install"
+              "name": "tool:helm_install"
             },
             {
-              "name": "helm_list"
+              "name": "tool:helm_list"
             },
             {
-              "name": "helm_uninstall"
+              "name": "tool:helm_uninstall"
             },
             {
-              "name": "namespaces_list"
+              "name": "tool:namespaces_list"
             },
             {
-              "name": "nodes_log"
+              "name": "tool:nodes_log"
             },
             {
-              "name": "nodes_stats_summary"
+              "name": "tool:nodes_stats_summary"
             },
             {
-              "name": "nodes_top"
+              "name": "tool:nodes_top"
             },
             {
-              "name": "pods_delete"
+              "name": "tool:pods_delete"
             },
             {
-              "name": "pods_exec"
+              "name": "tool:pods_exec"
             },
             {
-              "name": "pods_get"
+              "name": "tool:pods_get"
             },
             {
-              "name": "pods_list"
+              "name": "tool:pods_list"
             },
             {
-              "name": "pods_list_in_namespace"
+              "name": "tool:pods_list_in_namespace"
             },
             {
-              "name": "pods_log"
+              "name": "tool:pods_log"
             },
             {
-              "name": "pods_run"
+              "name": "tool:pods_run"
             },
             {
-              "name": "pods_top"
+              "name": "tool:pods_top"
             },
             {
-              "name": "resources_create_or_update"
+              "name": "tool:resources_create_or_update"
             },
             {
-              "name": "resources_delete"
+              "name": "tool:resources_delete"
             },
             {
-              "name": "resources_get"
+              "name": "tool:resources_get"
             },
             {
-              "name": "resources_list"
+              "name": "tool:resources_list"
             }
           ]
         }
@@ -199,16 +199,16 @@ data:
           "name": "accounting",
           "clientRoles": {
             "mcp-test/test-server1": [
-              "greet"
+              "tool:greet"
             ],
             "mcp-test/test-server2": [
-              "headers"
+              "tool:headers"
             ],
             "mcp-test/test-server3": [
-              "add"
+              "tool:add"
             ],
             "mcp-test/oidc-server": [
-              "hello_world"
+              "tool:hello_world"
             ]
           }
         },
@@ -216,28 +216,28 @@ data:
           "name": "engineering",
           "clientRoles": {
             "mcp-test/kubernetes-mcp-server": [
-              "configuration_contexts_list",
-              "configuration_view",
-              "events_list",
-              "helm_install",
-              "helm_list",
-              "helm_uninstall",
-              "namespaces_list",
-              "nodes_log",
-              "nodes_stats_summary",
-              "nodes_top",
-              "pods_delete",
-              "pods_exec",
-              "pods_get",
-              "pods_list",
-              "pods_list_in_namespace",
-              "pods_log",
-              "pods_run",
-              "pods_top",
-              "resources_create_or_update",
-              "resources_delete",
-              "resources_get",
-              "resources_list"
+              "tool:configuration_contexts_list",
+              "tool:configuration_view",
+              "tool:events_list",
+              "tool:helm_install",
+              "tool:helm_list",
+              "tool:helm_uninstall",
+              "tool:namespaces_list",
+              "tool:nodes_log",
+              "tool:nodes_stats_summary",
+              "tool:nodes_top",
+              "tool:pods_delete",
+              "tool:pods_exec",
+              "tool:pods_get",
+              "tool:pods_list",
+              "tool:pods_list_in_namespace",
+              "tool:pods_log",
+              "tool:pods_run",
+              "tool:pods_top",
+              "tool:resources_create_or_update",
+              "tool:resources_delete",
+              "tool:resources_get",
+              "tool:resources_list"
             ]
           }
         }
