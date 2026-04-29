@@ -1,21 +1,21 @@
 ## Trusted Header Public Key Configuration
 
-The MCP Broker can filter tools based on a signed JWT in the `x-authorized-tools` header. This enables identity-based tool filtering when integrated with an external authorization system.
+The MCP Broker can filter tools based on a signed JWT in the `x-mcp-authorized` header. This enables identity-based tool filtering when integrated with an external authorization system.
 
 ### How It Works
 
 1. An upstream authorization system validates the user's identity
-2. It creates a signed JWT containing the user's allowed tools in an `allowed-tools` claim
-3. This JWT is passed to the broker via the `x-authorized-tools` header
+2. It creates a signed JWT containing the user's allowed tools in an `allowed-capabilities` claim
+3. This JWT is passed to the broker via the `x-mcp-authorized` header
 4. The broker validates the JWT signature and filters `tools/list` responses accordingly
 
 ### JWT Payload Format
 
-The `allowed-tools` claim should contain a JSON object mapping server routes to tool arrays:
+The `allowed-capabilities` claim should contain a JSON object mapping server routes to tool arrays:
 
 ```json
 {
-  "allowed-tools": "{\"mcp-test/server1-route\":[\"tool_a\",\"tool_b\"],\"mcp-test/server2-route\":[\"tool_c\"]}",
+  "allowed-capabilities": "{\"tools\":{\"mcp-test/server1-route\":[\"tool_a\",\"tool_b\"],\"mcp-test/server2-route\":[\"tool_c\"]}}",
   "exp": 1760004918,
   "iat": 1760004618
 }
@@ -54,9 +54,9 @@ env:
         key: key
 ```
 
-When this environment variable is set, the broker will validate any `x-authorized-tools` header using ES256 and filter the tools list accordingly. If validation fails, an empty tools list is returned.
+When this environment variable is set, the broker will validate any `x-mcp-authorized` header using ES256 and filter the tools list accordingly. If validation fails, an empty tools list is returned.
 
 
 ### Example AuthPolicy that uses this method
 
-An example AuthPolicy that implements the `x-authorized-tools` can be found at [Sample Tool Filtering](../../config/samples/oauth-token-exchange/tools-list-auth.yaml)
+An example AuthPolicy that implements the `x-mcp-authorized` can be found at [Sample Tool Filtering](../../config/samples/oauth-token-exchange/tools-list-auth.yaml)

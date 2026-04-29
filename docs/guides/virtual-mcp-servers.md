@@ -166,7 +166,7 @@ Virtual MCP servers are a `tools/list` concept only. They filter which tools a c
 
 If you have [authentication](./authentication.md) and [user-based tool filtering](./user-based-tool-filter.md) configured, the broker applies two filters sequentially when handling a `tools/list` request with a virtual server header:
 
-1. **Identity-based filtering** -- the `x-authorized-tools` reduces the tool list to only tools the user has `resource_access` roles for
+1. **Identity-based filtering** -- the `x-mcp-authorized` reduces the tool list to only tools the user has `resource_access` roles for
 2. **Virtual server filtering** -- the `X-Mcp-Virtualserver` header further reduces the list to only tools defined in the MCPVirtualServer resource
 
 The result is the intersection of both filters. For example, if the `accounting` virtual server lists `test1_greet` and `test3_add`, but the user only has the `greet` role on `mcp-test/test-server1`, they will only see `test1_greet`.

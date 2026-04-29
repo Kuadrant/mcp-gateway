@@ -9,7 +9,7 @@ Tool revocation prevents a user or group from calling specific MCP tools. It bui
 Two enforcement points apply:
 
 - **`tools/call`**: The AuthPolicy's CEL expression checks the `x-mcp-toolname` header against the user's `resource_access` roles. A revoked tool returns 403 Forbidden.
-- **`tools/list`**: The broker filters the tools list using the signed `x-authorized-tools` header. A revoked tool no longer appears in the list.
+- **`tools/list`**: The broker filters the tools list using the signed `x-mcp-authorized` header. A revoked tool no longer appears in the list.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Two enforcement points apply:
 
 Remove the tool role from the user or group in your identity provider.
 
-In Keycloak, this is done by removing a client role mapping. The client name corresponds to the namespaced MCPServerRegistration (e.g., `mcp-test/server1-route`), and each role represents a tool name (e.g., `greet`, `headers`).
+In Keycloak, this is done by removing a client role mapping. The client name corresponds to the namespaced MCPServerRegistration (e.g., `mcp-test/server1-route`), and each role represents a tool name prefixed with `tool:` (e.g., `tool:greet`, `tool:headers`).
 
 To revoke a tool for a group:
 1. Go to **Groups** > select the group (e.g., `accounting`)
@@ -79,7 +79,7 @@ kubectl create secret generic trusted-headers-private-key \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### Update the AuthPolicy to generate the x-authorized-tools header
+### Update the AuthPolicy to generate the x-mcp-authorized header
 
 Delete the existing `mcp-auth-policy` and create a new version that adds authorization rules and a wristband response. The policy must be deleted first because the original uses `defaults.rules` while this version uses `rules`, and `kubectl apply` would merge both instead of replacing:
 
@@ -110,21 +110,21 @@ spec:
           patterns:
           - predicate: |
               !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
-      'authorized-tools':
+      'authorized-capabilities':
         opa:
           rego: |
             allow = true
-            tools = { server: roles | server := object.keys(input.auth.identity.resource_access)[_]; roles := object.get(input.auth.identity.resource_access, server, {}).roles }
+            capabilities = {"tools": { server: tools | server := object.keys(input.auth.identity.resource_access)[_]; tools := [substring(r, count("tool:"), -1) | r := input.auth.identity.resource_access[server].roles[_]; startswith(r, "tool:")] }}
           allValues: true
     response:
       success:
         headers:
-          x-authorized-tools:
+          x-mcp-authorized:
             wristband:
               issuer: 'authorino'
               customClaims:
-                'allowed-tools':
-                  selector: auth.authorization.authorized-tools.tools.@tostr
+                'allowed-capabilities':
+                  selector: auth.authorization.authorized-capabilities.capabilities.@tostr
               tokenDuration: 300
               signingKeyRefs:
                 - name: trusted-headers-private-key

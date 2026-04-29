@@ -674,9 +674,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred(), "tool calls should work once the server is back and ready")
 	})
 
-	It("[Happy] should filter tools based on x-authorized-tools JWT header", func() {
+	It("[Happy] should filter tools based on x-mcp-authorized JWT header", func() {
 		if !IsTrustedHeadersEnabled() {
-			Skip("trusted headers public key not configured - skipping x-authorized-tools test")
+			Skip("trusted headers public key not configured - skipping x-mcp-authorized test")
 		}
 
 		By("Creating an MCPServerRegistration with tools")
@@ -704,12 +704,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		allowedTools := map[string][]string{
 			fmt.Sprintf("%s/%s", registeredServer.Namespace, registeredServer.Name): {"hello_world"},
 		}
-		jwtToken, err := CreateAuthorizedToolsJWT(allowedTools)
+		jwtToken, err := CreateAuthorizedCapabilitiesJWT(allowedTools)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Creating a client with x-authorized-tools header")
+		By("Creating a client with x-mcp-authorized header")
 		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"X-Authorized-Tools": jwtToken,
+			"X-Mcp-Authorized": jwtToken,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer authorizedClient.Close()
@@ -719,7 +719,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			filteredTools, err := authorizedClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(filteredTools).NotTo(BeNil())
-			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from authorized tools header")
+			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from authorized capabilities header")
 			expectedToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "hello_world")
 			g.Expect(filteredTools.Tools[0].Name).To(Equal(expectedToolName))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())

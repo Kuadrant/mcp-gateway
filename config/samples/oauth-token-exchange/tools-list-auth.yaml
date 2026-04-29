@@ -22,21 +22,21 @@ spec:
           patterns:
           - predicate: |
               !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
-      'authorized-tools':
+      'authorized-capabilities':
         opa:
           rego: |
             allow = true
-            tools = { server: roles | server := object.keys(input.auth.identity.resource_access)[_]; roles := object.get(input.auth.identity.resource_access, server, {}).roles }
+            capabilities = {"tools": { server: tools | server := object.keys(input.auth.identity.resource_access)[_]; tools := [substring(r, count("tool:"), -1) | r := input.auth.identity.resource_access[server].roles[_]; startswith(r, "tool:")] }}
           allValues: true
     response:
       success:
         headers:
-          x-authorized-tools:
+          x-mcp-authorized:
             wristband:
               issuer: 'authorino'
               customClaims:
-                'allowed-tools':
-                  selector: auth.authorization.authorized-tools.tools.@tostr
+                'allowed-capabilities':
+                  selector: auth.authorization.authorized-capabilities.capabilities.@tostr
               tokenDuration: 300
               signingKeyRefs:
                 - name: trusted-headers-private-key
