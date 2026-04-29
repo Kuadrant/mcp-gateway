@@ -9,6 +9,10 @@ import (
 const (
 	mcpServerNameHeader   = "x-mcp-servername"
 	toolAnnotationsHeader = "x-mcp-annotation-hints"
+	toolReadOnlyHeader    = "x-mcp-tool-readonly"
+	toolDestructiveHeader = "x-mcp-tool-destructive"
+	toolIdempotentHeader  = "x-mcp-tool-idempotent"
+	toolOpenWorldHeader   = "x-mcp-tool-open-world"
 	toolHeader            = "x-mcp-toolname"
 	methodHeader          = "x-mcp-method"
 	sessionHeader         = "mcp-session-id"
@@ -131,6 +135,17 @@ func (hb *HeadersBuilder) WithToolAnnotations(annotations string) *HeadersBuilde
 		Header: &basepb.HeaderValue{
 			Key:      toolAnnotationsHeader,
 			RawValue: []byte(annotations),
+		},
+	})
+	return hb
+}
+
+// WithToolAnnotationHint sets one policy header for a known tool annotation hint.
+func (hb *HeadersBuilder) WithToolAnnotationHint(header, value string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      header,
+			RawValue: []byte(value),
 		},
 	})
 	return hb

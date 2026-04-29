@@ -10,6 +10,10 @@ func Test_Headers(t *testing.T) {
 	expected := map[string]string{
 		toolHeader:            "test_tool",
 		toolAnnotationsHeader: "destructive=true,idempotent=true,readOnly=false",
+		toolReadOnlyHeader:    "false",
+		toolDestructiveHeader: "true",
+		toolIdempotentHeader:  "true",
+		toolOpenWorldHeader:   "false",
 		authorityHeader:       "mcp1.mcp.local",
 		"authorization":       "auth",
 		methodHeader:          "tools/call",
@@ -26,6 +30,10 @@ func Test_Headers(t *testing.T) {
 		WithMCPSession(expected[sessionHeader]).
 		WithMCPToolName(expected[toolHeader]).
 		WithToolAnnotations(expected[toolAnnotationsHeader]).
+		WithToolAnnotationHint(toolReadOnlyHeader, expected[toolReadOnlyHeader]).
+		WithToolAnnotationHint(toolDestructiveHeader, expected[toolDestructiveHeader]).
+		WithToolAnnotationHint(toolIdempotentHeader, expected[toolIdempotentHeader]).
+		WithToolAnnotationHint(toolOpenWorldHeader, expected[toolOpenWorldHeader]).
 		WithPath("/mcp1").
 		Build()
 

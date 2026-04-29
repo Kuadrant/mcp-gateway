@@ -209,6 +209,38 @@ func TestMCPManager_GetStatus(t *testing.T) {
 	assert.Equal(t, expectedStatus.TotalTools, status.TotalTools)
 }
 
+func TestMCPManager_StatusIncludesToolAnnotationHints(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mock := newMockMCP("test-server", "test_")
+	mock.hasToolsCap = false
+	mock.tools = []mcp.Tool{
+		{
+			Name:        "read_status",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Annotations: mcp.ToolAnnotation{
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+			},
+		},
+		validTool("plain_tool"),
+	}
+
+	gateway := newMockToolsAdderDeleter()
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager.manage(context.Background(), eventTypeTimer)
+
+	status := manager.GetStatus()
+	assert.True(t, status.Ready)
+	assert.Equal(t, 2, status.TotalTools)
+	assert.Len(t, status.AnnotatedTools, 1)
+	assert.Equal(t, "read_status", status.AnnotatedTools[0].Name)
+	assert.True(t, *status.AnnotatedTools[0].ReadOnlyHint)
+	assert.False(t, *status.AnnotatedTools[0].DestructiveHint)
+	assert.True(t, *status.AnnotatedTools[0].IdempotentHint)
+	assert.Nil(t, status.AnnotatedTools[0].OpenWorldHint)
+}
+
 func TestMCPManager_GetManagedTools(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
