@@ -17,6 +17,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -247,6 +248,90 @@ func TestHandleRequestBody(t *testing.T) {
 	require.Equal(t,
 		`{"id":0,"jsonrpc":"2.0","method":"tools/call","params":{"name":"mytool","other":"other"}}`,
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
+}
+
+func TestHandleRequestBodyAddsToolAnnotationHeaders(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	require.NoError(t, err)
+	require.True(t, sessionAdded)
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:       "dummy",
+			URL:        "http://localhost:8080/mcp",
+			ToolPrefix: "s_",
+			Enabled:    true,
+			Hostname:   "localhost",
+		},
+	}
+
+	server := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers: serverConfigs,
+		},
+		JWTManager:   jwtManager,
+		Logger:       logger,
+		SessionCache: cache,
+		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+			return nil, fmt.Errorf("InitForClient should not be called when session exists")
+		},
+		Broker: newMockBrokerWithAnnotations(serverConfigs, map[string]string{
+			"s_status": "dummy",
+		}, map[string]mcp.ToolAnnotation{
+			"s_status": {
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+			},
+		}),
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params: map[string]any{
+			"name": "s_status",
+		},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      "mcp-session-id",
+					RawValue: []byte(validToken),
+				},
+			},
+		},
+	}
+
+	resp := server.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	headers := responseHeadersByName(rb.RequestBody.Response.HeaderMutation.SetHeaders)
+
+	require.Equal(t, "readOnly=true,destructive=false,idempotent=true", headers[toolAnnotationsHeader])
+	require.Equal(t, "true", headers[toolReadOnlyHeader])
+	require.Equal(t, "false", headers[toolDestructiveHeader])
+	require.Equal(t, "true", headers[toolIdempotentHeader])
+	require.NotContains(t, headers, toolOpenWorldHeader)
+}
+
+func responseHeadersByName(headers []*corev3.HeaderValueOption) map[string]string {
+	result := make(map[string]string, len(headers))
+	for _, header := range headers {
+		result[header.Header.Key] = string(header.Header.RawValue)
+	}
+	return result
 }
 
 func TestMCPRequest_isNotificationRequest(t *testing.T) {

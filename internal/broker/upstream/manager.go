@@ -52,6 +52,16 @@ type ServerValidationStatus struct {
 	TotalTools      int               `json:"totalTools"`
 	InvalidTools    int               `json:"invalidTools"`
 	InvalidToolList []InvalidToolInfo `json:"invalidToolList,omitempty"`
+	AnnotatedTools  []ToolHints       `json:"annotatedTools,omitempty"`
+}
+
+// ToolHints captures the MCP tool annotations the gateway can expose to policy.
+type ToolHints struct {
+	Name            string `json:"name"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
 
 // MCP defines the interface for the manager to interact with an MCP server
@@ -301,6 +311,7 @@ func (man *MCPManager) setStatus(err error, toolCount int, invalidTools []Invali
 	man.status.Name = man.MCPName()
 	man.status.InvalidTools = len(invalidTools)
 	man.status.InvalidToolList = invalidTools
+	man.status.AnnotatedTools = man.annotationHintsForStatus()
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
@@ -356,6 +367,37 @@ func (man *MCPManager) getTools(ctx context.Context) ([]mcp.Tool, []mcp.Tool, er
 		return tools, tools, fmt.Errorf("failed to get tools: %w", err)
 	}
 	return tools, res.Tools, nil
+}
+
+func (man *MCPManager) annotationHintsForStatus() []ToolHints {
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
+
+	hints := make([]ToolHints, 0)
+	for _, tool := range man.tools {
+		if hint, ok := toolHints(tool); ok {
+			hints = append(hints, hint)
+		}
+	}
+	return hints
+}
+
+func toolHints(tool mcp.Tool) (ToolHints, bool) {
+	annotation := tool.Annotations
+	if annotation.ReadOnlyHint == nil &&
+		annotation.DestructiveHint == nil &&
+		annotation.IdempotentHint == nil &&
+		annotation.OpenWorldHint == nil {
+		return ToolHints{}, false
+	}
+
+	return ToolHints{
+		Name:            tool.Name,
+		ReadOnlyHint:    annotation.ReadOnlyHint,
+		DestructiveHint: annotation.DestructiveHint,
+		IdempotentHint:  annotation.IdempotentHint,
+		OpenWorldHint:   annotation.OpenWorldHint,
+	}, true
 }
 
 // GetManagedTools returns a copy of all tools discovered from the upstream server.

@@ -11,6 +11,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -312,25 +313,7 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 		attribute.String("mcp.server.hostname", serverInfo.Hostname),
 	)
 	if annotations, hasAnnotations := s.Broker.ToolAnnotations(serverInfo.ID(), toolName); hasAnnotations {
-		// build header value (e.g. readOnly=true,destructive=false,openWorld=true)
-		var parts []string
-		push := func(key string, val *bool) {
-			if val == nil {
-				parts = append(parts, fmt.Sprintf("%s=unspecified", key))
-			} else if *val {
-				parts = append(parts, fmt.Sprintf("%s=true", key))
-			} else {
-				parts = append(parts, fmt.Sprintf("%s=false", key))
-			}
-		}
-
-		push("readOnly", annotations.ReadOnlyHint)
-		push("destructive", annotations.DestructiveHint)
-		push("idempotent", annotations.IdempotentHint)
-		push("openWorld", annotations.OpenWorldHint)
-
-		hintsHeader := strings.Join(parts, ",")
-		headers.WithToolAnnotations(hintsHeader)
+		addToolAnnotationHeaders(headers, annotations)
 	}
 
 	headers.WithMCPMethod(mcpReq.Method)
@@ -422,6 +405,28 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	}
 	calculatedResponse.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
 	return calculatedResponse.Build()
+}
+
+func addToolAnnotationHeaders(headers *HeadersBuilder, annotations mcp.ToolAnnotation) {
+	var parts []string
+	addHint := func(name, header string, val *bool) {
+		if val == nil {
+			return
+		}
+
+		value := fmt.Sprintf("%t", *val)
+		parts = append(parts, fmt.Sprintf("%s=%s", name, value))
+		headers.WithToolAnnotationHint(header, value)
+	}
+
+	addHint("readOnly", toolReadOnlyHeader, annotations.ReadOnlyHint)
+	addHint("destructive", toolDestructiveHeader, annotations.DestructiveHint)
+	addHint("idempotent", toolIdempotentHeader, annotations.IdempotentHint)
+	addHint("openWorld", toolOpenWorldHeader, annotations.OpenWorldHint)
+
+	if len(parts) > 0 {
+		headers.WithToolAnnotations(strings.Join(parts, ","))
+	}
 }
 
 // HandleElicitationResponse routes an elicitation response from the client to the correct backend server

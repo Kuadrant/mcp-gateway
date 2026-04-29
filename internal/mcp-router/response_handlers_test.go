@@ -24,7 +24,8 @@ type mockBrokerImpl struct {
 	svrConfigs []*config.MCPServer
 
 	// Map of tool name to server name
-	tool2svr map[string]string
+	tool2svr        map[string]string
+	toolAnnotations map[string]mcp.ToolAnnotation
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -477,6 +478,14 @@ func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) b
 	}
 }
 
+func newMockBrokerWithAnnotations(svrConfigs []*config.MCPServer, tool2svr map[string]string, annotations map[string]mcp.ToolAnnotation) broker.MCPBroker {
+	return &mockBrokerImpl{
+		svrConfigs:      svrConfigs,
+		tool2svr:        tool2svr,
+		toolAnnotations: annotations,
+	}
+}
+
 // GetServerInfo implements broker.MCPBroker.
 func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	svrName, ok := m.tool2svr[tool]
@@ -524,8 +533,9 @@ func (m *mockBrokerImpl) Shutdown(_ context.Context) error {
 }
 
 // ToolAnnotations implements broker.MCPBroker.
-func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, _ string) (mcp.ToolAnnotation, bool) {
-	return mcp.ToolAnnotation{}, false
+func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, tool string) (mcp.ToolAnnotation, bool) {
+	annotation, ok := m.toolAnnotations[tool]
+	return annotation, ok
 }
 
 // ValidateAllServers implements broker.MCPBroker.
