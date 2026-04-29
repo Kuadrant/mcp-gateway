@@ -21,4 +21,4 @@ The MCP Gateway is an early preview feature. This early preview feature is not c
 ## Get started
 
 Information and links to get you started:
-    - [Getting Started](https://docs.kuadrant.io/1.4.x/mcp-gateway/docs/guides/getting-started/)
+    - [Getting Started](./getting-started.md)
