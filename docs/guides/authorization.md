@@ -118,7 +118,22 @@ For `tools/call` requests, the router also exposes selected MCP tool annotation 
 | `x-mcp-tool-destructive` | `destructiveHint` |
 | `x-mcp-tool-idempotent` | `idempotentHint` |
 | `x-mcp-tool-open-world` | `openWorldHint` |
-| `x-mcp-annotation-hints` | comma-separated summary of the hints above |
+| `x-mcp-annotation-hints` | comma-separated `name=value` summary of the hints above |
+
+Each individual annotation header is only present when the upstream tool metadata includes that annotation. The value is the string `"true"` or `"false"`, matching the upstream annotation's boolean value. The combined `x-mcp-annotation-hints` header is only present when at least one annotation hint is present. Its value uses the same camel-case names as MCP annotations, has no spaces, and preserves the router order `readOnly`, `destructive`, `idempotent`, `openWorld`, for example `readOnly=true,destructive=false,idempotent=true`.
+
+For CEL predicates, check the header presence before treating an omitted hint as a decision:
+
+```yaml
+authorization:
+  'destructive-check':
+    patternMatching:
+      patterns:
+      - predicate: |
+          !has(request.headers['x-mcp-tool-destructive']) ||
+          request.headers['x-mcp-tool-destructive'] == 'false' ||
+          'admin' in (has(auth.identity.roles) ? auth.identity.roles : [])
+```
 
 These values are copied from the upstream MCP server's tool metadata. Treat them as policy hints, not gateway-verified facts. They are most useful when the platform trusts the upstream MCP server that published the annotations.
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -408,14 +409,14 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 }
 
 func addToolAnnotationHeaders(headers *HeadersBuilder, annotations mcp.ToolAnnotation) {
-	var parts []string
+	parts := make([]string, 0, 4)
 	addHint := func(name, header string, val *bool) {
 		if val == nil {
 			return
 		}
 
-		value := fmt.Sprintf("%t", *val)
-		parts = append(parts, fmt.Sprintf("%s=%s", name, value))
+		value := strconv.FormatBool(*val)
+		parts = append(parts, name+"="+value)
 		headers.WithToolAnnotationHint(header, value)
 	}
 

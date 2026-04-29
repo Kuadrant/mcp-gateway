@@ -55,7 +55,8 @@ type ServerValidationStatus struct {
 	AnnotatedTools  []ToolHints       `json:"annotatedTools,omitempty"`
 }
 
-// ToolHints captures the MCP tool annotations the gateway can expose to policy.
+// ToolHints captures upstream-provided MCP tool annotations in the status API.
+// These values are advisory metadata, not gateway-verified or enforced facts.
 type ToolHints struct {
 	Name            string `json:"name"`
 	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
@@ -373,9 +374,9 @@ func (man *MCPManager) annotationHintsForStatus() []ToolHints {
 	man.toolsLock.RLock()
 	defer man.toolsLock.RUnlock()
 
-	hints := make([]ToolHints, 0)
-	for _, tool := range man.tools {
-		if hint, ok := toolHints(tool); ok {
+	hints := make([]ToolHints, 0, len(man.tools))
+	for i := range man.tools {
+		if hint, ok := toolHints(man.tools[i]); ok {
 			hints = append(hints, hint)
 		}
 	}
