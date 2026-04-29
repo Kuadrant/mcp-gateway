@@ -724,6 +724,146 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(v.HTTPRouteNotFound(routeName, extNamespace)).To(Succeed())
 	})
 
+	It("[multi-gateway] MCPVirtualServer tool filtering is scoped to the gateway namespace", func() {
+		const (
+			teamAExtName = "vs-scope-team-a"
+			teamBExtName = "vs-scope-team-b"
+			teamAPrefix  = "team_a_"
+			teamBPrefix  = "team_b_"
+		)
+
+		ctx := context.Background()
+
+		By("Setting up MCPGatewayExtension for Team A on shared-gateway")
+		teamASetup := NewMCPGatewayExtensionSetup(k8sClient).
+			WithName(teamAExtName).
+			InNamespace(TeamANamespace).
+			WithNamespaceLabels(map[string]string{TeamANamespaceLabel: TeamANamespaceValue}).
+			TargetingGateway(SharedGatewayName, GatewayNamespace).
+			WithSectionName(TeamAMCPListenerName).
+			WithPublicHost(TeamAPublicHost).
+			Build()
+		teamASetup.Clean(ctx).Register(ctx)
+		defer teamASetup.TearDown(ctx)
+
+		By("Setting up MCPGatewayExtension for Team B on shared-gateway")
+		teamBSetup := NewMCPGatewayExtensionSetup(k8sClient).
+			WithName(teamBExtName).
+			InNamespace(TeamBNamespace).
+			WithNamespaceLabels(map[string]string{TeamANamespaceLabel: TeamBNamespaceValue}).
+			TargetingGateway(SharedGatewayName, GatewayNamespace).
+			WithSectionName(TeamBMCPListenerName).
+			WithPublicHost(TeamBPublicHost).
+			Build()
+		teamBSetup.Clean(ctx).Register(ctx)
+		defer teamBSetup.TearDown(ctx)
+
+		By("Verifying both MCPGatewayExtensions become ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, teamAExtName, TeamANamespace)).To(Succeed())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, teamBExtName, TeamBNamespace)).To(Succeed())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		By("Waiting for broker/router deployments to be ready")
+		Eventually(func(g Gomega) {
+			deployment := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway", Namespace: TeamANamespace}, deployment)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">=", 1))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			deployment := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway", Namespace: TeamBNamespace}, deployment)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">=", 1))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating MCPServerRegistration for Team A (using server1)")
+		teamAResources := NewTestResources("vs-team-a", k8sClient).
+			InNamespace(TeamANamespace).
+			WithToolPrefix(teamAPrefix).
+			ForInternalService("mcp-test-server1", 9090).
+			WithHostname("vs-team-a.team-a.mcp.local").
+			WithBackendNamespace(TestServerNameSpace).
+			WithParentGateway(SharedGatewayName, GatewayNamespace).
+			Build()
+		testResources = append(testResources, teamAResources.GetObjects()...)
+		teamAResources.Register(ctx)
+
+		By("Creating MCPServerRegistration for Team B (using server2)")
+		teamBResources := NewTestResources("vs-team-b", k8sClient).
+			InNamespace(TeamBNamespace).
+			WithToolPrefix(teamBPrefix).
+			ForInternalService("mcp-test-server2", 9090).
+			WithHostname("vs-team-b.team-b.mcp.local").
+			WithBackendNamespace(TestServerNameSpace).
+			WithParentGateway(SharedGatewayName, GatewayNamespace).
+			Build()
+		testResources = append(testResources, teamBResources.GetObjects()...)
+		teamBResources.Register(ctx)
+
+		By("Waiting for both servers to be registered")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, teamAResources.GetMCPServer().Name, TeamANamespace)).To(Succeed())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, teamBResources.GetMCPServer().Name, TeamBNamespace)).To(Succeed())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		By("Creating MCPVirtualServer in Team A namespace with a subset of team_a_ tools")
+		allowedTool := teamAPrefix + "greet"
+		virtualServer := BuildTestMCPVirtualServer("vs-filter-test", TeamANamespace, []string{allowedTool}).Build()
+		testResources = append(testResources, virtualServer)
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+
+		By("Connecting to Team A gateway with X-Mcp-Virtualserver header")
+		virtualServerHeader := TeamANamespace + "/" + virtualServer.Name
+		teamAFilteredClient, err := NewMCPGatewayClientWithHeaders(ctx, TeamAGatewayURL, map[string]string{
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer teamAFilteredClient.Close()
+
+		By("Verifying Team A gateway with VirtualServer header returns only the allowed tool")
+		Eventually(func(g Gomega) {
+			filteredTools, err := teamAFilteredClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredTools).NotTo(BeNil())
+			g.Expect(filteredTools.Tools).To(HaveLen(1), "expected exactly 1 tool from virtual server")
+			g.Expect(filteredTools.Tools[0].Name).To(Equal(allowedTool))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Connecting to Team B gateway without VirtualServer header")
+		var teamBClient *NotifyingMCPClient
+		Eventually(func(g Gomega) {
+			var err error
+			teamBClient, err = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(j mcp.JSONRPCNotification) {})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		defer teamBClient.Close()
+
+		By("Verifying Team B gateway is unaffected — sees all team_b_ tools")
+		Eventually(func(g Gomega) {
+			toolsList, err := teamBClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+
+			hasTeamBTools := false
+			for _, tool := range toolsList.Tools {
+				if strings.HasPrefix(tool.Name, teamBPrefix) {
+					hasTeamBTools = true
+				}
+			}
+			g.Expect(hasTeamBTools).To(BeTrue(), "Team B gateway should have team_b_ tools")
+			g.Expect(len(toolsList.Tools)).To(BeNumerically(">", 1), "Team B should see all its tools, not filtered by Team A's VirtualServer")
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
+
 	It("[multi-gateway] Each MCPGatewayExtension gets its own HTTPRoute", func() {
 		const (
 			teamAExtName = "httproute-team-a"

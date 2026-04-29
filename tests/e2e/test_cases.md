@@ -155,3 +155,7 @@
 ### [Happy] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
+
+### [multi-gateway] MCPVirtualServer tool filtering is scoped to the gateway namespace
+
+- When multiple isolated gateways are deployed via MCPGatewayExtensions in separate namespaces, and MCPVirtualServers are created in each namespace with different tool subsets, each gateway should only apply the VirtualServer filtering from its own namespace. A client connecting to Team A's gateway with Team A's VirtualServer header should see only the tools specified in that VirtualServer. Team B's gateway should be unaffected by Team A's VirtualServer — a client connecting without a VirtualServer header should see all of Team B's tools.

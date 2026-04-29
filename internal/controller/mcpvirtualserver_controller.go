@@ -78,13 +78,13 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	logger.V(1).Info("mcpvirtualserver generating config")
 
-	vsConfig, err := r.generateVirtualServerConfig(ctx)
+	vsConfig, err := r.generateVirtualServerConfig(ctx, mcpVS.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("mcpvirtualserver failed to generate virtual server config during reconcile %w", err)
 	}
 
 	logger.V(1).Info("mcpvirtualserver writing config")
-	if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, config.DefaultNamespaceName); err != nil {
+	if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, config.NamespaceName(mcpVS.Namespace)); err != nil {
 		if errors.IsConflict(err) {
 			logger.Info("mcpvirtualserver conflict on updating the config for virtual servers will retry in 5 seconds")
 			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -96,11 +96,11 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	return ctrl.Result{}, nil
 }
 
-func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context) ([]config.VirtualServerConfig, error) {
+func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context, namespace string) ([]config.VirtualServerConfig, error) {
 	log := log.FromContext(ctx)
 	virtualServers := []config.VirtualServerConfig{}
 	mcpVirtualServerList := &mcpv1alpha1.MCPVirtualServerList{}
-	if err := r.List(ctx, mcpVirtualServerList); err != nil {
+	if err := r.List(ctx, mcpVirtualServerList, client.InNamespace(namespace)); err != nil {
 		log.Error(err, "Failed to list MCPVirtualServers")
 		return virtualServers, err
 	}
