@@ -76,7 +76,9 @@ type MCPManager struct {
 	ticker *time.Ticker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
-	gatewayServer  ToolsAdderDeleter
+	
+	backoff       *backoff
+	gatewayServer ToolsAdderDeleter
 	// serverTools is an internal copy that contains the managed MCP's tools with prefixed names. It is these that are externally available via the gateway
 	serverTools []server.ServerTool
 	// tools is the original set from MCP server with no prefix
@@ -112,6 +114,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger 
 		gatewayServer:     gatewaySever,
 		tickerInterval:    tickerInterval,
 		ticker:            time.NewTicker(tickerInterval),
+		backoff:           newBackoff(DefaultBaseDelay, DefaultMaxDelay),
 		logger:            logger,
 		invalidToolPolicy: policy,
 		done:              make(chan struct{}),
@@ -140,7 +143,13 @@ func (man *MCPManager) Start(ctx context.Context) {
 			man.Stop()
 		case <-man.ticker.C:
 			man.logger.Debug("health check tick", "upstream mcp server", man.MCP.ID())
-			man.manage(ctx, eventTypeTimer)
+			if man.manage(ctx, eventTypeTimer) {
+				next := man.backoff.failure()
+				man.logger.Info("health check failed, backing off", "upstream mcp server", man.MCP.ID(), "nextRetry", next)
+				man.ticker.Reset(next)
+			} else {
+				man.ticker.Reset(man.backoff.success(man.tickerInterval))
+			}
 		case <-man.done:
 			man.logger.Debug("shutting down manager", "upstream mcp server", man.MCP.ID())
 			return
@@ -181,8 +190,9 @@ func (man *MCPManager) registerCallbacks(ctx context.Context) func() {
 	}
 }
 
-// manage should be the only entry point that triggers changes to tools
-func (man *MCPManager) manage(ctx context.Context, event eventType) {
+// manage should be the only entry point that triggers changes to tools.
+// returns true if the health check failed.
+func (man *MCPManager) manage(ctx context.Context, event eventType) bool {
 	man.logger.Debug("managing connection", "upstream mcp server", man.MCP.ID(), "event type", event)
 	var numberOfTools = 0
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
@@ -193,7 +203,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		// we call disconnect here as we may have connected but failed to initialize
 		_ = man.MCP.Disconnect()
 		man.setStatus(err, numberOfTools, nil)
-		return
+		return true
 	}
 	// there may be an active client so we also ping
 	if err := man.MCP.Ping(ctx); err != nil {
@@ -203,12 +213,12 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.removeAllTools()
 		_ = man.MCP.Disconnect()
 		man.setStatus(err, numberOfTools, nil)
-		return
+		return true
 	}
 
 	if !man.shouldFetchTools(event) {
 		man.logger.Debug("not fetching tools", "event", event, "upstream mcp server", man.MCP.ID(), "waiting for notification", notificationToolsListChanged)
-		return
+		return false
 	}
 
 	man.logger.Debug("fetching tools", "upstream mcp server", man.MCP.ID())
@@ -217,7 +227,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		err = fmt.Errorf("upstream mcp failed to list tools server %s : %w", man.MCP.ID(), err)
 		man.logger.Error("failed to list tools", "upstream mcp server", man.MCP.ID(), "error", err)
 		man.setStatus(err, numberOfTools, nil)
-		return
+		return true
 	}
 
 	// validate fetched tools
@@ -231,7 +241,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 			err = fmt.Errorf("upstream mcp %s rejected: %d invalid tools found", man.MCP.ID(), len(invalidTools))
 			man.removeAllTools()
 			man.setStatus(err, numberOfTools, invalidTools)
-			return
+			return true
 		}
 		// FilterOut: use only valid tools
 		fetched = validTools
@@ -243,7 +253,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		err = fmt.Errorf("upstream mcp failed to add tools to gateway %s : %w", man.MCP.ID(), err)
 		man.logger.Error("tool conflict detected", "upstream mcp server", man.MCP.ID(), "error", err)
 		man.setStatus(err, numberOfTools, invalidTools)
-		return
+		return true
 	}
 	man.toolsLock.Lock()
 	man.tools = fetched
@@ -274,6 +284,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("internal tools", "upstream mcp server", man.MCP.ID(), "total", len(man.serverTools))
 	man.toolsLock.Unlock()
 	man.setStatus(nil, numberOfTools, invalidTools)
+	return false
 }
 
 func (man *MCPManager) shouldFetchTools(event eventType) bool {
