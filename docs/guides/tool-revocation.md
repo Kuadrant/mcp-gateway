@@ -15,6 +15,7 @@ Two enforcement points apply:
 
 - [Authentication](./authentication.md) configured
 - [Authorization](./authorization.md) configured with tool-level AuthPolicy
+- [User-Based Tool Filtering](./user-based-tool-filter.md) configured if you want revoked tools to disappear from `tools/list`
 
 ## Step 1: Revoke Tool Access
 
@@ -36,7 +37,7 @@ After revoking a tool, verify that the user can no longer call it. Log out of an
 
 Open MCP Inspector and connect to your gateway's `/mcp` endpoint. Authenticate through the OAuth flow.
 
-Under **Tools > List Tools**, the revoked tool will still appear (this is expected — `tools/list` filtering is configured in Step 4). Try calling the revoked tool — the request should return 403 Forbidden.
+Under **Tools > List Tools**, the revoked tool will still appear unless you have also configured [user-based tool filtering](./user-based-tool-filter.md). Try calling the revoked tool — the request should return 403 Forbidden.
 
 ## Step 3: Understand When Revocation Takes Effect
 
@@ -52,124 +53,16 @@ To force faster revocation, reduce the access token lifespan in your identity pr
 
 ## Step 4: Enable tools/list Filtering
 
-By default, revoking a tool only blocks `tools/call` requests (returning 403). The revoked tool still appears in `tools/list` responses. To filter revoked tools from the list, the broker needs a signed header that carries the user's authorized tools.
+By default, revoking a tool only blocks `tools/call` requests. The revoked tool can still appear in `tools/list` responses until you also configure signed `x-authorized-tools` filtering.
 
-This step configures Authorino to generate that header using a wristband JWT signed with an ECDSA key pair.
+Follow [User-Based Tool Filtering](./user-based-tool-filter.md) to:
 
-### Generate an ECDSA key pair
+- generate the signing keys
+- create the public and private key secrets
+- configure `MCPGatewayExtension.spec.trustedHeadersKey`
+- apply an `AuthPolicy` that emits the signed `x-authorized-tools` header
 
-```bash
-openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
-openssl ec -in private-key.pem -pubout -out public-key.pem
-```
-
-### Create Kubernetes secrets
-
-The public key goes in the broker's namespace; the private key goes in Authorino's namespace:
-
-```bash
-kubectl create secret generic trusted-headers-public-key \
-  --from-file=key=public-key.pem \
-  -n mcp-system \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl create secret generic trusted-headers-private-key \
-  --from-file=key.pem=private-key.pem \
-  -n kuadrant-system \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-### Update the AuthPolicy to generate the x-authorized-tools header
-
-Delete the existing `mcp-auth-policy` and create a new version that adds authorization rules and a wristband response. The policy must be deleted first because the original uses `defaults.rules` while this version uses `rules`, and `kubectl apply` would merge both instead of replacing:
-
-```bash
-kubectl delete authpolicy mcp-auth-policy -n gateway-system --ignore-not-found
-kubectl create -f - <<EOF
-apiVersion: kuadrant.io/v1
-kind: AuthPolicy
-metadata:
-  name: mcp-auth-policy
-  namespace: gateway-system
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: Gateway
-    name: mcp-gateway
-    sectionName: mcp
-  when:
-    - predicate: "!request.path.contains('/.well-known')"
-  rules:
-    authentication:
-      'keycloak':
-        jwt:
-          issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
-    authorization:
-      'allow-mcp-method':
-        patternMatching:
-          patterns:
-          - predicate: |
-              !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
-      'authorized-tools':
-        opa:
-          rego: |
-            allow = true
-            tools = { server: roles | server := object.keys(input.auth.identity.resource_access)[_]; roles := object.get(input.auth.identity.resource_access, server, {}).roles }
-          allValues: true
-    response:
-      success:
-        headers:
-          x-authorized-tools:
-            wristband:
-              issuer: 'authorino'
-              customClaims:
-                'allowed-tools':
-                  selector: auth.authorization.authorized-tools.tools.@tostr
-              tokenDuration: 300
-              signingKeyRefs:
-                - name: trusted-headers-private-key
-                  algorithm: ES256
-      unauthenticated:
-        headers:
-          'WWW-Authenticate':
-            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
-        body:
-          value: |
-            {
-              "error": "Unauthorized",
-              "message": "Access denied: Authentication required."
-            }
-      unauthorized:
-        code: 401
-        headers:
-          'WWW-Authenticate':
-            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
-        body:
-          value: |
-            {
-              "error": "Forbidden",
-              "message": "Access denied: Unsupported method. New authentication required (401)."
-            }
-EOF
-```
-
-### Configure the broker to validate the signed header
-
-The patch triggers an automatic broker redeployment that loads the public key from the secret created earlier:
-
-```bash
-kubectl patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type='merge' \
-  -p='{"spec":{"trustedHeadersKey":{"secretName":"trusted-headers-public-key"}}}'
-
-kubectl rollout status deployment/mcp-gateway -n mcp-system --timeout=60s
-```
-
-Verify the AuthPolicy is enforced:
-
-```bash
-kubectl get authpolicy mcp-auth-policy -n gateway-system -o jsonpath='{.status.conditions[?(@.type=="Enforced")].status}'
-# Expected: True
-```
+Once that guide is complete, return here and verify that revoked tools no longer appear in the tool list for the affected user.
 
 ## Step 5: Verify tools/list Filtering
 
