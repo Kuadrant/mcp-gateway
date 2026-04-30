@@ -47,10 +47,10 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 
 	responses := response.WithResponseHeaderResponse(responseHeaderBuilder.Build()).Build()
 
-	// for tool calls where the client supports elicitation, switch response body
-	// mode to STREAMED so the ext_proc receives each SSE chunk and can rewrite
-	// elicitation request IDs.
-	if req != nil && req.isToolCall() && req.clientElicitation && len(responses) > 0 {
+	// switch response body to STREAMED for tool calls with elicitation (ID rewrite)
+	// and for A2A streaming methods (task ID extraction).
+	if req != nil && len(responses) > 0 &&
+		((req.isToolCall() && req.clientElicitation) || req.isA2AStreamingMethod()) {
 		responses[0].ModeOverride = &extprochttp.ProcessingMode{
 			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
 			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,

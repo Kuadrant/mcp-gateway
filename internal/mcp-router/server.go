@@ -28,6 +28,10 @@ type SessionCache interface {
 	KeyExists(ctx context.Context, key string) (bool, error)
 	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
+	// StoreTaskRoute records which backend server owns the given A2A task ID.
+	StoreTaskRoute(ctx context.Context, taskID, serverName string) error
+	// ResolveTaskRoute returns the backend server name for the given A2A task ID.
+	ResolveTaskRoute(ctx context.Context, taskID string) (string, error)
 }
 
 // InitForClient defines a function for initializing an MCP server for a client
@@ -59,7 +63,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		endOfStream         = false
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
-		rewriter            *sseRewriter // nil until a tool call response arrives
+		rewriter            *sseRewriter      // nil until a tool call response arrives
+		a2aExtractor        *a2aTaskExtractor // nil until an A2A streaming response arrives
 		bodyBuffer          []byte
 	)
 	span := trace.SpanFromContext(ctx)
@@ -259,6 +264,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 			}
 
+			if mcpRequest != nil && mcpRequest.isA2AStreamingMethod() && mcpRequest.serverName != "" {
+				a2aExtractor = &a2aTaskExtractor{
+					logger:     s.Logger,
+					serverName: mcpRequest.serverName,
+					cache:      s.SessionCache,
+				}
+			}
+
 			responses, _ := s.HandleResponseHeaders(ctx, r.ResponseHeaders, localRequestHeaders, mcpRequest)
 			for _, response := range responses {
 				s.Logger.DebugContext(ctx, "sending response header processing instructions to envoy", "response", response)
@@ -268,10 +281,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 			}
-			if rewriter != nil {
-				continue // tool call: response body is streamed
+			if rewriter != nil || a2aExtractor != nil {
+				continue // response body is streamed: keep goroutine alive
 			}
-			return nil // non-tool-call: response body is not streamed
+			return nil // non-streaming: response body is not intercepted
 		case *extProcV3.ProcessingRequest_ResponseBody:
 			body := r.ResponseBody.GetBody()
 			endOfStream := r.ResponseBody.GetEndOfStream()
@@ -283,7 +296,11 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					remaining := rewriter.Flush(ctx)
 					body = append(body, remaining...)
 				}
-
+			} else if a2aExtractor != nil {
+				a2aExtractor.Process(ctx, body) // extracts task ID; body passes through unchanged
+				if endOfStream {
+					a2aExtractor.Flush(ctx)
+				}
 			}
 
 			response := &extProcV3.ProcessingResponse{

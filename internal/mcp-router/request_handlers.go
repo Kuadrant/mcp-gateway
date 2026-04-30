@@ -68,6 +68,10 @@ const (
 	elicitationActionAccept  = "accept"
 	elicitationActionDecline = "decline"
 	elicitationActionCancel  = "cancel"
+
+	// a2aAgentHeader carries the target backend agent name for A2A requests.
+	// Set by the client or injected via an HTTPRoute header filter.
+	a2aAgentHeader = "x-a2a-agent"
 )
 
 // MCPRequest encapsulates a mcp protocol request to the gateway
@@ -129,6 +133,36 @@ func (mr *MCPRequest) isToolCall() bool {
 // isInitializeRequest returns true if the method is initialize or initialized
 func (mr *MCPRequest) isInitializeRequest() bool {
 	return mr.Method == "initialize" || mr.Method == "notifications/initialized"
+}
+
+// isA2AStreamingMethod returns true for A2A methods that produce an SSE response body.
+func (mr *MCPRequest) isA2AStreamingMethod() bool {
+	return mr.Method == "message/send" || mr.Method == "message/stream"
+}
+
+// isA2ATaskOperation returns true for A2A methods that address an existing task by ID.
+func (mr *MCPRequest) isA2ATaskOperation() bool {
+	switch mr.Method {
+	case "tasks/get", "tasks/cancel", "tasks/resubscribe":
+		return true
+	}
+	return false
+}
+
+// a2aTaskID returns the task ID from params.id for A2A task operations.
+func (mr *MCPRequest) a2aTaskID() string {
+	if mr.Params == nil {
+		return ""
+	}
+	id, ok := mr.Params["id"]
+	if !ok {
+		return ""
+	}
+	s, ok := id.(string)
+	if !ok {
+		return ""
+	}
+	return s
 }
 
 // clientSupportsElicitation checks if an initialize request declares elicitation support
@@ -220,6 +254,12 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	case mcpReq.Method == methodToolCall:
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
+	case mcpReq.isA2AStreamingMethod():
+		span.SetAttributes(attribute.String("mcp.route", "a2a-stream"))
+		return s.HandleA2AStreamingMethod(ctx, mcpReq)
+	case mcpReq.isA2ATaskOperation():
+		span.SetAttributes(attribute.String("mcp.route", "a2a-task-op"))
+		return s.HandleA2ATaskOperation(ctx, mcpReq)
 	default:
 		span.SetAttributes(attribute.String("mcp.route", "broker"))
 		return s.HandleNoneToolCall(ctx, mcpReq)
@@ -592,6 +632,140 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 	}
 	return remoteSessionID, nil
 
+}
+
+// HandleA2AStreamingMethod routes message/send and message/stream to the backend A2A agent
+// identified by the x-a2a-agent header. The response body is intercepted (via ModeOverride
+// set in HandleResponseHeaders) so the a2aTaskExtractor can capture the task ID.
+func (s *ExtProcServer) HandleA2AStreamingMethod(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
+	ctx, span := tracer().Start(ctx, "mcp-router.a2a-stream",
+		trace.WithAttributes(
+			attribute.String("mcp.method.name", mcpReq.Method),
+			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
+		),
+	)
+	defer span.End()
+
+	response := NewResponse()
+	agentName := mcpReq.GetSingleHeaderValue(a2aAgentHeader)
+	if agentName == "" {
+		s.Logger.ErrorContext(ctx, "missing x-a2a-agent header for A2A streaming method", "method", mcpReq.Method)
+		span.SetStatus(codes.Error, "missing agent header")
+		response.WithImmediateResponse(400, "missing x-a2a-agent header")
+		return response.Build()
+	}
+
+	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(agentName)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "a2a agent not found", "agent", agentName, "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "agent not found")
+		response.WithImmediateResponse(404, "a2a agent not found")
+		return response.Build()
+	}
+	// serverName must be set so the response-headers phase can create the a2aTaskExtractor.
+	mcpReq.serverName = mcpServerConfig.Name
+	span.SetAttributes(attribute.String("mcp.server", mcpServerConfig.Name))
+
+	headers := NewHeaders()
+	headers.WithAuthority(mcpServerConfig.Hostname)
+	headers.WithMCPServerName(mcpServerConfig.Name)
+	headers.WithMCPMethod(mcpReq.Method)
+
+	path, err := mcpServerConfig.Path()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to parse url for a2a backend", "error", err)
+		span.RecordError(err)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	headers.WithPath(path)
+
+	if exists, cacheErr := s.SessionCache.GetSession(ctx, mcpReq.GetSessionID()); cacheErr == nil {
+		if id, ok := exists[mcpServerConfig.Name]; ok {
+			headers.WithMCPSession(id)
+		}
+	}
+
+	body, err := mcpReq.ToBytes()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to marshal a2a request body", "error", err)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	headers.WithContentLength(len(body))
+	response.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
+	return response.Build()
+}
+
+// HandleA2ATaskOperation routes tasks/get, tasks/cancel, and tasks/resubscribe to the
+// backend A2A agent that owns the task, looked up via the session cache task-route index.
+func (s *ExtProcServer) HandleA2ATaskOperation(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
+	ctx, span := tracer().Start(ctx, "mcp-router.a2a-task-op",
+		trace.WithAttributes(
+			attribute.String("mcp.method.name", mcpReq.Method),
+			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
+		),
+	)
+	defer span.End()
+
+	response := NewResponse()
+	taskID := mcpReq.a2aTaskID()
+	if taskID == "" {
+		s.Logger.ErrorContext(ctx, "missing task id in A2A task operation", "method", mcpReq.Method)
+		span.SetStatus(codes.Error, "missing task id")
+		response.WithImmediateResponse(400, "missing task id")
+		return response.Build()
+	}
+	span.SetAttributes(attribute.String("a2a.task.id", taskID))
+
+	serverName, err := s.SessionCache.ResolveTaskRoute(ctx, taskID)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "task route not found", "taskID", taskID, "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "task not found")
+		response.WithImmediateResponse(404, "task not found")
+		return response.Build()
+	}
+	span.SetAttributes(attribute.String("mcp.server", serverName))
+
+	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(serverName)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "server not found for a2a task", "server", serverName, "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "server not found")
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+
+	headers := NewHeaders()
+	headers.WithAuthority(mcpServerConfig.Hostname)
+	headers.WithMCPServerName(mcpServerConfig.Name)
+	headers.WithMCPMethod(mcpReq.Method)
+
+	path, err := mcpServerConfig.Path()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to parse url for a2a task backend", "error", err)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	headers.WithPath(path)
+
+	if exists, cacheErr := s.SessionCache.GetSession(ctx, mcpReq.GetSessionID()); cacheErr == nil {
+		if id, ok := exists[mcpServerConfig.Name]; ok {
+			headers.WithMCPSession(id)
+		}
+	}
+
+	body, err := mcpReq.ToBytes()
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "failed to marshal a2a task op body", "error", err)
+		response.WithImmediateResponse(500, "internal error")
+		return response.Build()
+	}
+	headers.WithContentLength(len(body))
+	response.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
+	return response.Build()
 }
 
 // HandleNoneToolCall handles none tools calls such as initialize. The majority of these requests will be forwarded to the broker

@@ -3,12 +3,16 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	redis "github.com/redis/go-redis/v9"
 )
 
-const clientElicitationPrefix = "clientelicitation:"
+const (
+	clientElicitationPrefix = "clientelicitation:"
+	taskRoutePrefix         = "taskroute:"
+)
 
 // Cache implements a cache
 type Cache struct {
@@ -118,6 +122,33 @@ func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID strin
 		return false, err
 	}
 	return val == "1", nil
+}
+
+// StoreTaskRoute records which backend server owns a given A2A task ID.
+func (c *Cache) StoreTaskRoute(ctx context.Context, taskID, serverName string) error {
+	key := taskRoutePrefix + taskID
+	if c.inmemory != nil {
+		c.inmemory.Store(key, serverName)
+		return nil
+	}
+	return c.extClient.Set(ctx, key, serverName, 0).Err()
+}
+
+// ResolveTaskRoute returns the backend server name that owns the given A2A task ID.
+func (c *Cache) ResolveTaskRoute(ctx context.Context, taskID string) (string, error) {
+	key := taskRoutePrefix + taskID
+	if c.inmemory != nil {
+		val, ok := c.inmemory.Load(key)
+		if !ok {
+			return "", fmt.Errorf("task route not found: %s", taskID)
+		}
+		return val.(string), nil
+	}
+	val, err := c.extClient.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("task route not found: %s", taskID)
+	}
+	return val, err
 }
 
 // NewCache returns a new cache. Pass WithRedisClient to use an external redis

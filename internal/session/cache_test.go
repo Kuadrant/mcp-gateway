@@ -289,3 +289,34 @@ func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, sessions)
 }
+
+func TestInMemoryCache_StoreAndResolveTaskRoute(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	taskID := "task-abc-123"
+	serverName := "weather-agent"
+
+	// missing returns error
+	_, err = cache.ResolveTaskRoute(ctx, taskID)
+	require.Error(t, err)
+
+	// store and resolve
+	require.NoError(t, cache.StoreTaskRoute(ctx, taskID, serverName))
+	got, err := cache.ResolveTaskRoute(ctx, taskID)
+	require.NoError(t, err)
+	require.Equal(t, serverName, got)
+}
+
+func TestInMemoryCache_TaskRouteIsolatedFromSession(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	// storing a task route must not pollute the session namespace
+	require.NoError(t, cache.StoreTaskRoute(ctx, "task-1", "agent-a"))
+	sessions, err := cache.GetSession(ctx, "task-1")
+	require.NoError(t, err)
+	require.Empty(t, sessions)
+}
