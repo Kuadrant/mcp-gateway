@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -1237,6 +1238,22 @@ func TestBuildGatewayHTTPRoute(t *testing.T) {
 			}
 			if parentRef.SectionName == nil || string(*parentRef.SectionName) != tt.mcpExt.Spec.TargetRef.SectionName {
 				t.Errorf("parentRef sectionName = %v, want %q", parentRef.SectionName, tt.mcpExt.Spec.TargetRef.SectionName)
+			}
+			if len(route.Spec.Rules) != 2 {
+				t.Fatalf("expected 2 rules, got %d", len(route.Spec.Rules))
+			}
+			gotPaths := []string{}
+			for _, rule := range route.Spec.Rules {
+				if len(rule.Matches) == 0 || rule.Matches[0].Path == nil || rule.Matches[0].Path.Value == nil {
+					t.Fatalf("expected rule with path match, got %#v", rule)
+				}
+				gotPaths = append(gotPaths, *rule.Matches[0].Path.Value)
+			}
+			if !slices.Contains(gotPaths, "/mcp") {
+				t.Errorf("expected /mcp rule, got paths %v", gotPaths)
+			}
+			if !slices.Contains(gotPaths, "/.well-known/oauth-protected-resource") {
+				t.Errorf("expected /.well-known/oauth-protected-resource rule, got paths %v", gotPaths)
 			}
 		})
 	}

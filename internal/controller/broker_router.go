@@ -516,7 +516,8 @@ func mergeEnvVars(desired, existing []corev1.EnvVar) []corev1.EnvVar {
 func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
-	pathValue := "/mcp"
+	mcpPathValue := "/mcp"
+	oauthProtectedResourcePathValue := "/.well-known/oauth-protected-resource"
 	port := gatewayv1.PortNumber(brokerHTTPPort)
 	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
 	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
@@ -548,7 +549,27 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha
 						{
 							Path: &gatewayv1.HTTPPathMatch{
 								Type:  &pathType,
-								Value: &pathValue,
+								Value: &mcpPathValue,
+							},
+						},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: gatewayv1.ObjectName(brokerRouterName),
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{
+							Path: &gatewayv1.HTTPPathMatch{
+								Type:  &pathType,
+								Value: &oauthProtectedResourcePathValue,
 							},
 						},
 					},
