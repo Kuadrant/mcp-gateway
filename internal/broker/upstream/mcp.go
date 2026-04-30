@@ -11,9 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// MCPServer represents a connection to an upstream MCP server. It wraps the
-// configuration and client, managing the connection lifecycle and storing
-// initialization state from the MCP handshake.
+// MCPServer represents a connection to an upstream MCP server.
 type MCPServer struct {
 	*config.MCPServer
 	client   *client.Client
@@ -39,9 +37,7 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 	return up
 }
 
-// GetConfig return the config for the backend mcp server
 func (up *MCPServer) GetConfig() config.MCPServer {
-	// return a copy rather than the original
 	return config.MCPServer{
 		Name:       up.Name,
 		URL:        up.URL,
@@ -52,22 +48,18 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 	}
 }
 
-// ProtocolInfo returns the initialize result with the protocol information stored in it
 func (up *MCPServer) ProtocolInfo() *mcp.InitializeResult {
 	return up.init
 }
 
-// GetPrefix returns the specific tool prefix
 func (up *MCPServer) GetPrefix() string {
 	return up.ToolPrefix
 }
 
-// GetName returns the name of the MCP Server
 func (up *MCPServer) GetName() string {
 	return up.Name
 }
 
-// SupportsToolsListChanged validates the mcp server supports tools/list_changed notifications
 func (up *MCPServer) SupportsToolsListChanged() bool {
 	if up.init == nil {
 		return false
@@ -80,14 +72,29 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // the MCP initialization handshake. If already connected, this is a no-op.
 // The initialization result is stored for later validation of protocol version
 // and capabilities.
+// NOTE: includes reconnection and stale session handling logic
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
+	//  Check if existing client is still valid
 	up.clientMu.RLock()
-	if up.client != nil {
-		up.clientMu.RUnlock()
-		//if we already have a valid connection nothing to do
-		return nil
+	existingClient := up.client
+	if existingClient != nil {
+		if err := existingClient.Ping(ctx); err == nil {
+			up.clientMu.RUnlock()
+			return nil
+		}
 	}
 	up.clientMu.RUnlock()
+
+	//  Cleanup stale client
+	up.clientMu.Lock()
+	if up.client == existingClient {
+		if up.client != nil {
+			_ = up.client.Close()
+			up.client = nil
+			up.init = nil
+		}
+	}
+	up.clientMu.Unlock()
 
 	options := []transport.StreamableHTTPCOption{
 		transport.WithContinuousListening(),
@@ -99,18 +106,34 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 
+	// set new client
 	up.clientMu.Lock()
 	up.client = httpClient
 	up.clientMu.Unlock()
 
-	// call on connection to register handlers etc
+	currentClient := httpClient
+
+	//  Safe connection lost handler (no stale callback bug)
+	httpClient.OnConnectionLost(func(err error) {
+		up.clientMu.Lock()
+		defer up.clientMu.Unlock()
+
+		if up.client == currentClient {
+			_ = up.client.Close()
+			up.client = nil
+			up.init = nil
+		}
+	})
+
+	// register handlers etc
 	onConnection()
 
-	// Start the client before initialize to listen for notifications
-	err = httpClient.Start(ctx)
-	if err != nil {
+	// start listening (SSE etc)
+	if err := httpClient.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start streamable client: %w", err)
 	}
+
+	// initialize session
 	initResp, err := httpClient.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
@@ -129,16 +152,23 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		},
 	})
 	if err != nil {
+		//  Cleanup on init failure
+		up.clientMu.Lock()
+		if up.client == currentClient {
+			_ = up.client.Close()
+			up.client = nil
+			up.init = nil
+		}
+		up.clientMu.Unlock()
+
 		return fmt.Errorf("failed to initialize client for upstream %s : %w", up.ID(), err)
 	}
-	// whenever we do an init store the response and session id for validation a future use
-	up.init = initResp
 
+	up.init = initResp
 	return nil
 }
 
-// Disconnect closes the connection to the upstream MCP server. If no client
-// connection exists, this is a no-op and returns nil. It will unset the the client if it exists
+// Disconnect closes connection
 func (up *MCPServer) Disconnect() error {
 	up.clientMu.Lock()
 	defer up.clientMu.Unlock()
@@ -150,10 +180,10 @@ func (up *MCPServer) Disconnect() error {
 		}
 	}
 	up.client = nil
+	up.init = nil
 	return nil
 }
 
-// OnNotification allows registering a notification handler func with the client
 func (up *MCPServer) OnNotification(handler func(notification mcp.JSONRPCNotification)) {
 	up.clientMu.RLock()
 	defer up.clientMu.RUnlock()
@@ -163,7 +193,6 @@ func (up *MCPServer) OnNotification(handler func(notification mcp.JSONRPCNotific
 	}
 }
 
-// OnConnectionLost allows registering a connection lost handler with the client
 func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	up.clientMu.RLock()
 	defer up.clientMu.RUnlock()
@@ -173,7 +202,6 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}
 }
 
-// Ping sends a ping request to the upstream MCP server to check connectivity
 func (up *MCPServer) Ping(ctx context.Context) error {
 	up.clientMu.RLock()
 	defer up.clientMu.RUnlock()
@@ -184,7 +212,6 @@ func (up *MCPServer) Ping(ctx context.Context) error {
 	return up.client.Ping(ctx)
 }
 
-// ListTools retrieves the list of available tools from the upstream MCP server
 func (up *MCPServer) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
 	up.clientMu.RLock()
 	defer up.clientMu.RUnlock()
