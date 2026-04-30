@@ -1,0 +1,40 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: dev-tools
+  namespace: mcp-test
+spec:
+  description: "Developer-focused tools from the Go SDK test servers"
+  tools:
+  - test1_greet
+  - test1_headers
+  - test2_hello_world
+  - test2_headers
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: data-tools
+  namespace: mcp-test
+spec:
+  description: "Data and utility tools from the Python FastMCP server"
+  tools:
+  - test2_time
+  - test3_time
+  - test3_add
+  - test3_dozen
+  - test3_pi
+  - test3_get_weather
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: operations-tools
+  namespace: mcp-test
+spec:
+  description: "Backend-authenticated and custom path tools"
+  tools:
+  - apikey_hello_world
+  - custompath_echo_custom
+  - custompath_path_info
+  - custompath_timestamp

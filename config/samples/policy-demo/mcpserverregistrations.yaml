@@ -1,0 +1,73 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server1
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test1_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server1-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server2
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test2_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server2-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-server3
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: test3_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-server3-route
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: api-key-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: apikey_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-api-key-server-route
+  credentialRef:
+    name: api-key-server-credentials
+    key: token
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: custom-path-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  path: /v1/special/mcp
+  toolPrefix: custompath_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-custom-path-server
