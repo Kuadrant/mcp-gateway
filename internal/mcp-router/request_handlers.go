@@ -563,7 +563,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		if err := clientHandle.Close(); err != nil {
 			s.Logger.DebugContext(ctx, "failed to close client connection", "err", err)
 		}
-		if err := s.SessionCache.DeleteSessions(context.Background(), mcpReq.GetSessionID()); err != nil {
+		if err := s.SessionCache.RemoveServerSession(context.Background(), mcpReq.GetSessionID(), mcpServerConfig.Name); err != nil {
 			s.Logger.DebugContext(ctx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
 		}
 		s.sessionTimers.Delete(timerKey)
