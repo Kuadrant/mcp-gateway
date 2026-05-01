@@ -19,7 +19,14 @@ spec:
         patternMatching:
           patterns:
           - predicate: |
-              request.headers['x-mcp-toolname'] in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+              request.headers['x-mcp-method'] != 'tools/call' || (
+                request.headers['x-mcp-toolname'] in (
+                  has(auth.identity.resource_access) &&
+                  auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername'])
+                    ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles
+                    : []
+                )
+              )
     response:
       unauthenticated:
         headers:
