@@ -62,6 +62,20 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// credentialURLElicitation enables per-user credential collection via URL elicitation.
+	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+	// to collect credentials from capable clients at tool-call time.
+	// +optional
+	CredentialURLElicitation *CredentialURLElicitationConfig `json:"credentialURLElicitation,omitempty"`
+}
+
+// CredentialURLElicitationConfig configures per-user credential collection via URL elicitation.
+type CredentialURLElicitationConfig struct {
+	// url overrides the default broker credential page URL.
+	// When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+	// +optional
+	URL string `json:"url,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

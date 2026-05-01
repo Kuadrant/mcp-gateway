@@ -386,6 +386,12 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		Enabled: true,
 	}
 
+	if mcpsr.Spec.CredentialURLElicitation != nil {
+		serverConfig.CredentialURLElicitation = &config.CredentialURLElicitationConfig{
+			URL: mcpsr.Spec.CredentialURLElicitation.URL,
+		}
+	}
+
 	// add credential env var if configured
 	if mcpsr.Spec.CredentialRef != nil {
 		secret := &corev1.Secret{}

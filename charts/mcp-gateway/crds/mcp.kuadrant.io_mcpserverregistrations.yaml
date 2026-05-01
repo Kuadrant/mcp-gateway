@@ -90,6 +90,18 @@ spec:
                 required:
                 - name
                 type: object
+              credentialURLElicitation:
+                description: |-
+                  credentialURLElicitation enables per-user credential collection via URL elicitation.
+                  When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+                  to collect credentials from capable clients at tool-call time.
+                properties:
+                  url:
+                    description: |-
+                      url overrides the default broker credential page URL.
+                      When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+                    type: string
+                type: object
               path:
                 default: /mcp
                 description: |-
