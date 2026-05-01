@@ -9,6 +9,10 @@
 ## Conformance Tests
 MCP conformance tests verify that the gateway correctly implements the Model Context Protocol specification. These tests are sourced from the official `@modelcontextprotocol/conformance` npm package maintained by Anthropic.
 
+## Useful test servers for inspecting responses
+
+Server1 and Server2 both offer tools for inspecting headers, which is useful for validating what was passed through to the backend MCP.
+
 **Test scenarios currently run in CI** (`.github/workflows/conformance.yaml`):
 - `server-initialize`: Server initialization handshake
 - `tools-list`: Tool listing and discovery
