@@ -66,6 +66,9 @@ Add the flag early so all subsequent work is gated behind it.
 - [ ] Controller propagates to config Secret
 - [ ] Unit test: controller includes elicitation config when set, omits when not set
 
+**Documentation (from `documentation.md`):**
+- API Reference Update: `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
+
 **Verification:** `make generate-all && make lint && make test-unit`
 
 ---
@@ -120,7 +123,14 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 - [ ] Invalid/missing elicitation_id returns error
 - [ ] Session mismatch between request JWT and elicitation ID returns error
 - [ ] Endpoint only registered when `--enable-elicitation` is true
-- [ ] E2E: hit `/credentials` endpoint, store a token, verify it's retrievable from cache
+
+**E2E test cases (from `e2e_test_cases.md`):**
+- `[URLElicitation] Broker credential page rejects invalid elicitation ID`
+- `[URLElicitation,Security] Broker credential page rejects session mismatch`
+- `[URLElicitation,Security] Credential page rejects mismatched session (phishing prevention)`
+
+**Documentation (from `documentation.md`):**
+- Guide section: "When I want to protect the token page from unauthorized access" — session JWT binding, custom header CORS protection, AuthPolicy as additional layer
 
 **Verification:** `make test-unit && make test-e2e`
 
@@ -148,7 +158,23 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 - [ ] Standard error returned on miss without capability
 - [ ] Feature flag disabled → existing behavior unchanged
 - [ ] URL in -32042 uses external URL when `credentialURLElicitation.url` is set
-- [ ] E2E: full flow — call without token → get -32042 → provide token via page → retry succeeds
+
+**E2E test cases (from `e2e_test_cases.md`):**
+- `[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client`
+- `[Happy,URLElicitation] Token provided via broker page is used for upstream auth`
+- `[Happy,URLElicitation] Full elicitation round-trip with token validation`
+- `[URLElicitation] Cached token reused across multiple tool calls`
+- `[URLElicitation] Elicitation with external URL returns configured URL`
+- `[URLElicitation] Non-elicitation-capable client gets standard error on missing token`
+- `[Happy,URLElicitation] Non-elicitation-capable client with Authorization header succeeds`
+- `[URLElicitation] Elicitation-capable client with Authorization header bypasses cache`
+- `[URLElicitation] Elicitation disabled via feature flag has no effect`
+- `[Happy,URLElicitation] Server without credentialURLElicitation is unaffected`
+
+**Documentation (from `documentation.md`):**
+- Guide section: "When I want to securely collect per-user tokens for an upstream MCP server" — adding `credentialURLElicitation`, enabling the feature, user experience flow, prerequisites
+- Guide section: "When I want to use my own credential UI instead of the built-in page" — external URL config, AuthPolicy on upstream route, differences from default flow
+- Guide section: "When I have automated agents that can't use a browser" — automatic capability-based behavior, agents passing Authorization header, 401 handling for agents
 
 **Verification:** `make test-unit && make test-e2e`
 
@@ -170,23 +196,51 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 - [ ] 401 without elicitation capability → standard 401 pass-through
 - [ ] 401 from non-elicitation server → no change (existing behavior)
 - [ ] Feature flag disabled → 401 passed through as-is
-- [ ] E2E: cached token is invalid → upstream returns 401 → token deleted → re-elicitation triggered
+
+**E2E test cases (from `e2e_test_cases.md`):**
+- `[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation`
+
+**Documentation (from `documentation.md`):**
+- Guide section: "When a user's token expires and they need to provide a new one" — 401 invalidation, JWT expiry detection, user experience
+- Security Architecture Update (`docs/design/security-architecture.md`): token data flow, encryption at rest, session scoping, identity verification, known risks
 
 **Verification:** `make test-unit && make test-e2e`
 
 ---
 
-### Task 7: Documentation (part of CONNLINK-998)
+### Task 7: Documentation review and assembly (part of CONNLINK-998)
+
+Documentation sections are written inline with their implementation tasks (Tasks 2, 4, 5, 6). This task assembles the final `docs/guides/url-elicitation.md` from those sections and does a consistency pass.
 
 **Files:**
-- `docs/guides/url-elicitation.md` (new) — user-facing guide
-- `docs/design/security-architecture.md` — update with token data boundaries
-- `docs/reference/mcpserverregistration.md` — update API reference for `credentialURLElicitation` field
+- `docs/guides/url-elicitation.md` (new) — assemble from sections written in Tasks 4–6
+- `docs/guides/README.md` — add entry for new guide
 
 **Acceptance criteria:**
-- [ ] Guide covers both broker page and external URL patterns
-- [ ] Security doc covers token isolation and known risks
-- [ ] API reference updated
+- [ ] Guide sections from Tasks 4–6 assembled into coherent guide
+- [ ] Guide follows `docs/CLAUDE.md` conventions (numbered steps, prerequisites, next steps)
+- [ ] API reference updated (done in Task 2)
+- [ ] Security architecture updated (done in Task 6)
+- [ ] Guide added to `docs/guides/README.md`
+
+### Task 8: Remaining e2e test cases
+
+Cross-cutting tests that span multiple components and are best added after Tasks 3–6 are complete.
+
+**Files:**
+- `tests/e2e/elicitation_test.go` — add remaining e2e test cases
+
+**E2E test cases (from `e2e_test_cases.md`):**
+- `[URLElicitation] Expired JWT token treated as cache miss`
+- `[URLElicitation] Opaque token not subject to expiry check`
+
+**Acceptance criteria:**
+- [ ] Expired JWT stored in cache → next tool call deletes it, returns -32042
+- [ ] Opaque PAT stored in cache → returned without expiry check, forwarded to upstream
+
+**Verification:** `make test-e2e`
+
+---
 
 ## Verification (full)
 
