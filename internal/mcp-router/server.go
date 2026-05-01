@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -43,7 +44,8 @@ type ExtProcServer struct {
 	ElicitationMap     idmap.Map
 	MaxRequestBodySize int
 	//TODO this should not be needed
-	Broker broker.MCPBroker
+	Broker        broker.MCPBroker
+	sessionTimers sync.Map
 }
 
 // OnConfigChange is used to register the router for config changes

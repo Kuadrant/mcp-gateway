@@ -391,6 +391,12 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	// we have the correct session to route back to
 	mcpReq.backendSessionID = remoteMCPSeverSession
 
+	if t, ok := s.sessionTimers.Load(mcpReq.GetSessionID() + ":" + mcpReq.serverName); ok {
+		if expiresAt, terr := s.JWTManager.GetExpiresIn(mcpReq.GetSessionID()); terr == nil {
+			t.(*time.Timer).Reset(time.Until(expiresAt))
+		}
+	}
+
 	headers.WithMCPSession(remoteMCPSeverSession)
 	// reset the host name now we have identified the correct tool and backend
 	headers.WithAuthority(serverInfo.Hostname)
@@ -551,14 +557,16 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		initSpan.SetStatus(codes.Error, "failed to initialize backend session")
 		return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
 	}
+	timerKey := mcpReq.GetSessionID() + ":" + mcpServerConfig.Name
 	var sessionCloser = func() {
 		s.Logger.DebugContext(ctx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
 		if err := clientHandle.Close(); err != nil {
 			s.Logger.DebugContext(ctx, "failed to close client connection", "err", err)
 		}
-		if err := s.SessionCache.DeleteSessions(ctx, mcpReq.GetSessionID()); err != nil {
+		if err := s.SessionCache.DeleteSessions(context.Background(), mcpReq.GetSessionID()); err != nil {
 			s.Logger.DebugContext(ctx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
 		}
+		s.sessionTimers.Delete(timerKey)
 	}
 	// close connection with remote backend and delete any sessions when our gateway session expires
 	expiresAt, err := s.JWTManager.GetExpiresIn(mcpReq.GetSessionID())
@@ -568,7 +576,8 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		sessionCloser()
 		return "", NewRouterError(404, fmt.Errorf("invalid session"))
 	}
-	time.AfterFunc(time.Until(expiresAt), sessionCloser)
+	timer := time.AfterFunc(time.Until(expiresAt), sessionCloser)
+	s.sessionTimers.Store(timerKey, timer)
 	remoteSessionID := clientHandle.GetSessionId()
 	s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
 	{
