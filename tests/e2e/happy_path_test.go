@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
@@ -762,6 +763,69 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		GinkgoWriter.Println("MCPServerRegistration status message:", msg)
 		Expect(msg).To(ContainSubstring("unsupported protocol version"))
+	})
+
+	It("[Happy] tool execution timeout policy enforced at the gateway", func() {
+		regPrefix := "tto_"
+		registration := NewMCPServerResources("tool-timeout-policy", "mcp-test-server1.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+			WithToolPrefix(regPrefix).
+			WithTimeouts(&mcpv1alpha1.MCPServerTimeouts{ToolCall: "1s"}).
+			Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		regServer := registration.Register(ctx)
+
+		By("Waiting for registration ready with server1 tools")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReadyWithToolsCount(ctx, k8sClient, regServer.Name, regServer.Namespace, 5)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		sessionID, err := mcpInitialize(gatewayURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(gatewayURL, sessionID, nil)).To(Succeed())
+
+		slowTool := regPrefix + "slow"
+		timeTool := regPrefix + "time"
+
+		By("slow tool exceeds gateway timeout → JSON-RPC -32001")
+		status, rawBody, err := mcpToolsCallRaw(gatewayURL, sessionID, slowTool, map[string]any{"seconds": 30}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		code, ms, toolField, perr := parseToolCallGatewayTimeoutError(status, rawBody)
+		Expect(perr).NotTo(HaveOccurred(), "body=%s", rawBody)
+		Expect(code).To(Equal(-32001))
+		Expect(ms).To(Equal(int64(1000)))
+		Expect(toolField).To(Equal(slowTool))
+
+		By("another tool on same server still succeeds in the same session")
+		stTime, _, err := mcpCallTool(gatewayURL, sessionID, timeTool, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stTime).To(Equal(http.StatusOK))
+
+		By("per-tool override allows slow to complete")
+		regFresh := &mcpv1alpha1.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(regServer), regFresh)).To(Succeed())
+		perToolPatch := client.MergeFrom(regFresh.DeepCopy())
+		regFresh.Spec.Timeouts.PerTool = []mcpv1alpha1.ToolTimeout{
+			{Name: "slow", ToolCall: "30s"},
+		}
+		Expect(k8sClient.Patch(ctx, regFresh, perToolPatch)).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			st, _, callErr := mcpCallTool(gatewayURL, sessionID, slowTool, map[string]any{"seconds": 3}, nil)
+			g.Expect(callErr).NotTo(HaveOccurred())
+			g.Expect(st).To(Equal(http.StatusOK))
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		By("removing timeouts restores long-running slow without gateway timeout error")
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(regServer), regFresh)).To(Succeed())
+		clearPatch := client.MergeFrom(regFresh.DeepCopy())
+		regFresh.Spec.Timeouts = nil
+		Expect(k8sClient.Patch(ctx, regFresh, clearPatch)).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			st, _, callErr := mcpCallTool(gatewayURL, sessionID, slowTool, map[string]any{"seconds": 2}, nil)
+			g.Expect(callErr).NotTo(HaveOccurred())
+			g.Expect(st).To(Equal(http.StatusOK))
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 	})
 
 	It("[Happy] should report tool conflicts in MCPServerRegistration status when same prefix is used", func() {

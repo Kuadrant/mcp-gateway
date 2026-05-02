@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
@@ -124,6 +126,33 @@ func TestBuildToolTimeoutSSEEvent(t *testing.T) {
 		}
 	default:
 		t.Errorf("id has unexpected type %T", v)
+	}
+}
+
+func TestEnvoyMarkedUpstreamRequestTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		h    []*corev3.HeaderValue
+		want bool
+	}{
+		{name: "nil map", h: nil, want: false},
+		{name: "empty", h: []*corev3.HeaderValue{}, want: false},
+		{name: "UT flag", h: []*corev3.HeaderValue{{Key: "x-envoy-response-flags", RawValue: []byte("UT")}}, want: true},
+		{name: "UT combined", h: []*corev3.HeaderValue{{Key: "x-envoy-response-flags", RawValue: []byte("UO,UT")}}, want: true},
+		{name: "code details rq_timeout", h: []*corev3.HeaderValue{{Key: "x-envoy-response-code-details", RawValue: []byte("upstream_rq_timeout")}}, want: true},
+		{name: "code details alternate", h: []*corev3.HeaderValue{{Key: "x-envoy-response-code-details", RawValue: []byte("upstream_request_timeout")}}, want: true},
+		{name: "504 alone", h: []*corev3.HeaderValue{{Key: ":status", RawValue: []byte("504")}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var hm *corev3.HeaderMap
+			if tt.h != nil {
+				hm = &corev3.HeaderMap{Headers: tt.h}
+			}
+			if got := envoyMarkedUpstreamRequestTimeout(hm); got != tt.want {
+				t.Fatalf("envoyMarkedUpstreamRequestTimeout() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

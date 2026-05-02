@@ -38,6 +38,7 @@ type TestResourcesBuilder struct {
 	credentialKey    string
 	httpRoute        *gatewayapiv1.HTTPRoute
 	mcpServer        *mcpv1alpha1.MCPServerRegistration
+	timeouts         *mcpv1alpha1.MCPServerTimeouts
 	serviceEntry     *istionetv1beta1.ServiceEntry
 	destinationRule  *istionetv1beta1.DestinationRule
 	isExternal       bool
@@ -137,6 +138,12 @@ func (b *TestResourcesBuilder) WithRegistrationName(name string) *TestResourcesB
 	return b
 }
 
+// WithTimeouts sets MCPServerRegistration.spec.timeouts (gateway tool-call timeout policy).
+func (b *TestResourcesBuilder) WithTimeouts(t *mcpv1alpha1.MCPServerTimeouts) *TestResourcesBuilder {
+	b.timeouts = t
+	return b
+}
+
 // WithCredential sets the credential secret
 func (b *TestResourcesBuilder) WithCredential(secret *corev1.Secret, key string) *TestResourcesBuilder {
 	b.credential = secret
@@ -181,6 +188,9 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 			Name: b.credential.Name,
 			Key:  b.credentialKey,
 		}
+	}
+	if b.timeouts != nil {
+		b.mcpServer.Spec.Timeouts = b.timeouts
 	}
 	return b
 }

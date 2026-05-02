@@ -346,8 +346,9 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 
 	// Apply gateway-enforced upstream timeout when the server has a timeout policy configured.
 	// Per-tool overrides win over the server-wide default; see config.ServerTimeouts.ResolveToolCallTimeout.
-	// Envoy converts a 504 Gateway Timeout, which the response handler then transforms into
-	// a structured MCP JSON-RPC error so clients get a clean failure mode instead of a hang.
+	// Envoy converts an enforced rq_timeout to 504 with UT / upstream_rq_timeout details;
+	// the response handler transforms only those into a structured MCP JSON-RPC error so
+	// clients get a clean failure mode instead of a hang.
 	if d, ok := serverInfo.Timeouts.ResolveToolCallTimeout(upstreamToolName); ok {
 		ms := d.Milliseconds()
 		if ms < 1 {

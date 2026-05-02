@@ -493,6 +493,8 @@ func TestHandleResponseHeaders_504TimeoutTransformsToJSONRPCError(t *testing.T) 
 		Headers: &corev3.HeaderMap{
 			Headers: []*corev3.HeaderValue{
 				{Key: ":status", RawValue: []byte("504")},
+				// Envoy-only signal: upstream rq_timeout (not an application-generated 504).
+				{Key: "x-envoy-response-flags", RawValue: []byte("UT")},
 			},
 		},
 	}
@@ -537,6 +539,50 @@ func TestHandleResponseHeaders_504TimeoutTransformsToJSONRPCError(t *testing.T) 
 	}
 	require.True(t, sawSession, "missing mcp-session-id header in immediate response")
 	require.True(t, sawCT, "missing text/event-stream content-type in immediate response")
+}
+
+func TestHandleResponseHeaders_504WithTimeoutPolicyButNoEnvoyTimeoutSignalPassesThrough(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	gatewaySessionID := "gateway-session-opaque-504"
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("504")},
+				// Upstream (or another hop) returned 504 without Envoy rq_timeout attribution.
+			},
+		},
+	}
+
+	mcpReq := &MCPRequest{
+		ID:                1,
+		JSONRPC:           "2.0",
+		Method:            "tools/call",
+		Params:            map[string]any{"name": "x"},
+		sessionID:         gatewaySessionID,
+		toolCallTimeoutMS: 500,
+	}
+
+	responses, err := srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+	_, ok := responses[0].Response.(*eppb.ProcessingResponse_ResponseHeaders)
+	require.True(t, ok, "expected normal ResponseHeaders passthrough, got %T", responses[0].Response)
 }
 
 func TestHandleResponseHeaders_504WithoutTimeoutPolicyPassesThrough(t *testing.T) {

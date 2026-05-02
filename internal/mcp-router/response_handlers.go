@@ -49,11 +49,11 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 		}
 	}
 
-	// When Envoy returns 504 Gateway Timeout for a tool call we know enforced a
-	// timeout policy, replace the upstream response with a structured JSON-RPC error
-	// so MCP clients get a clean failure mode instead of a generic 504 with an
-	// opaque body.
-	if status == "504" && req != nil && req.isToolCall() && req.toolCallTimeoutMS > 0 {
+	// When Envoy returns 504 because it enforced our per-request rq_timeout (see
+	// x-envoy-upstream-rq-timeout-ms), replace the response with a JSON-RPC error.
+	// Do not rewrite arbitrary 504s from the upstream app or other timeouts.
+	if status == "504" && req != nil && req.isToolCall() && req.toolCallTimeoutMS > 0 &&
+		envoyMarkedUpstreamRequestTimeout(responseHeaders.Headers) {
 		_, span := tracer().Start(ctx, "mcp-router.tool-call.timeout",
 			trace.WithAttributes(
 				attribute.String("mcp.server", req.serverName),

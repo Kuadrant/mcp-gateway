@@ -169,6 +169,79 @@ func mcpCallTool(url, sessionID, toolName string, args map[string]any, headers m
 	return resp.StatusCode, callResult.Content, nil
 }
 
+// mcpToolsCallRaw posts tools/call and returns HTTP status and raw body (no JSON-RPC parsing).
+func mcpToolsCallRaw(url, sessionID, toolName string, args map[string]any, headers map[string]string) (int, string, error) {
+	params := map[string]any{"name": toolName}
+	if len(args) > 0 {
+		params["arguments"] = args
+	}
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  params,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to marshal tools/call: %w", err)
+	}
+
+	resp, err := mcpPost(url, sessionID, body, headers)
+	if err != nil {
+		return 0, "", fmt.Errorf("tools/call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", fmt.Errorf("read body: %w", err)
+	}
+	return resp.StatusCode, string(rawBody), nil
+}
+
+// parseToolCallGatewayTimeoutError extracts JSON-RPC error -32001 from a tools/call response
+// body (SSE event or plain JSON). Expects HTTP 200 from the gateway timeout substitution path.
+func parseToolCallGatewayTimeoutError(httpStatus int, body string) (code int, timeoutMs int64, tool string, err error) {
+	if httpStatus != http.StatusOK {
+		return 0, 0, "", fmt.Errorf("unexpected HTTP status %d: %s", httpStatus, body)
+	}
+	payload := strings.TrimSpace(body)
+	if p, sseErr := extractFirstSSEDataLine(payload); sseErr == nil {
+		payload = p
+	}
+	var msg struct {
+		Error *struct {
+			Code    int `json:"code"`
+			Message string `json:"message"`
+			Data    struct {
+				TimeoutMS int64  `json:"timeoutMs"`
+				Tool      string `json:"tool"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+		return 0, 0, "", fmt.Errorf("parse JSON-RPC: %w (payload %q)", err, payload)
+	}
+	if msg.Error == nil {
+		return 0, 0, "", fmt.Errorf("no JSON-RPC error in response: %s", body)
+	}
+	return msg.Error.Code, msg.Error.Data.TimeoutMS, msg.Error.Data.Tool, nil
+}
+
+func extractFirstSSEDataLine(body string) (string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			return strings.TrimPrefix(line, "data: "), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("no SSE data line in body")
+}
+
 func mcpRawPost(url, sessionID string, body []byte, headers map[string]string) (int, string, http.Header, error) {
 	resp, err := mcpPost(url, sessionID, body, headers)
 	if err != nil {
