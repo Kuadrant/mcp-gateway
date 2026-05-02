@@ -15,6 +15,10 @@ const (
 	authorityHeader       = ":authority"
 	authorizationHeader   = "authorization"
 	mcpTarget             = "mcp-target"
+	// upstreamTimeoutHeader is the well-known Envoy request header used to override the
+	// upstream request timeout for a single request.
+	// See https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter#x-envoy-upstream-rq-timeout-ms.
+	upstreamTimeoutHeader = "x-envoy-upstream-rq-timeout-ms"
 	// RoutingKey is an internal header used to authenticate a request from the router
 	RoutingKey = "router-key"
 )
@@ -153,6 +157,19 @@ func (hb *HeadersBuilder) WithPath(path string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      ":path",
 			RawValue: []byte(path),
+		},
+	})
+	return hb
+}
+
+// WithUpstreamRequestTimeoutMS sets the Envoy x-envoy-upstream-rq-timeout-ms header
+// so the upstream request is bounded by the supplied number of milliseconds.
+// timeoutMS must be > 0; callers should resolve the effective timeout before invoking.
+func (hb *HeadersBuilder) WithUpstreamRequestTimeoutMS(timeoutMS int64) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      upstreamTimeoutHeader,
+			RawValue: []byte(fmt.Sprintf("%d", timeoutMS)),
 		},
 	})
 	return hb

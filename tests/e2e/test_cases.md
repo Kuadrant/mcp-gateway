@@ -155,3 +155,9 @@
 ### [Happy] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
+
+### [Happy] Tool execution timeout policy enforced at the gateway
+
+- When an MCPServerRegistration has a `spec.timeouts.toolCall` of `1s` configured for a backend that exposes a `slow` tool which sleeps longer than the budget, the gateway should abort the upstream `tools/call` and return an SSE response containing a JSON-RPC error with `code: -32001`, a message that mentions the tool name and the enforced timeout, and a `data` object that carries the resolved `timeoutMs`. A second tool on the same server that completes within the budget should still succeed normally, demonstrating the policy applies per-call without affecting other tools or breaking the session.
+
+- When the same MCPServerRegistration also defines a `spec.timeouts.perTool` override for the slow tool with a generous duration (e.g. `30s`), invoking that tool should succeed even though the server-wide default would have timed it out. This proves per-tool overrides take precedence over the server-wide default. Removing the `spec.timeouts` block entirely should restore the previous behaviour of no gateway-side enforcement.

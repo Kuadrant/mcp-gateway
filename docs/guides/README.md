@@ -12,6 +12,7 @@
     - [MCP Server Configuration](./register-mcp-servers.md)
     - [Virtual MCP Servers](./virtual-mcp-servers.md)
     - [External MCP Servers](./external-mcp-server.md)
+    - [Configure Tool Execution Timeouts](./configure-tool-timeouts.md)
 - [Authentication](./authentication.md)
 - [Authorization](./authorization.md)
 - [Scaling](./scaling.md)

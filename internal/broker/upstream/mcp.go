@@ -49,6 +49,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Enabled:    up.Enabled,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
+		Timeouts:   up.Timeouts,
 	}
 }
 

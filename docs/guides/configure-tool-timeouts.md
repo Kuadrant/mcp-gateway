@@ -1,0 +1,100 @@
+# Configure tool execution timeouts
+
+The MCP Gateway can enforce a per-server or per-tool execution timeout for `tools/call` requests. When a tool exceeds its budget, the gateway aborts the upstream request and returns a structured JSON-RPC error to the client instead of letting the request hang or rely on transport-level defaults.
+
+This guide walks through:
+
+- enabling a default timeout for every tool routed through an MCP server
+- overriding the default for individual tools that need more time
+- understanding the failure mode that clients observe when a timeout fires
+
+## Prerequisites
+
+- You have an MCP Gateway up and running and at least one `MCPServerRegistration` already serving traffic. If you are starting from zero, follow the [MCP Server Registration guide](./register-mcp-servers.md) first.
+
+## Apply a server-wide default
+
+The simplest configuration applies one timeout to every tool federated from a backend. Add a `timeouts.toolCall` field to the existing `MCPServerRegistration`:
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: weather-service
+  namespace: mcp-test
+spec:
+  toolPrefix: weather_
+  targetRef:
+    kind: HTTPRoute
+    name: weather-route
+  timeouts:
+    toolCall: 10s
+```
+
+The duration is parsed by Go's [`time.ParseDuration`](https://pkg.go.dev/time#ParseDuration), so values like `500ms`, `10s`, `1m30s`, or `2h` are all valid. The value must be greater than zero; the controller surfaces a parsing or validation error in the resource's `Ready` condition if it is not.
+
+Once applied, the gateway sets the `x-envoy-upstream-rq-timeout-ms` header on every `tools/call` it routes to this server, so Envoy aborts the upstream request when the budget is exceeded.
+
+## Override the timeout for specific tools
+
+Some tools (long-running queries, heavy generation steps) legitimately need more time than the default. Add `perTool` entries to override the default for those tools without raising the budget for everything else. Names match the **upstream** tool name as advertised by the backend - that is, *without* the registration's `toolPrefix`:
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: weather-service
+  namespace: mcp-test
+spec:
+  toolPrefix: weather_
+  targetRef:
+    kind: HTTPRoute
+    name: weather-route
+  timeouts:
+    toolCall: 10s
+    perTool:
+      - name: forecast_long_range   # client invokes this as weather_forecast_long_range
+        toolCall: 1m
+      - name: snapshot
+        toolCall: 2s
+```
+
+Resolution rules:
+
+1. If the invoked tool matches an entry in `perTool`, that entry's duration is used.
+2. Otherwise, the server-wide `toolCall` value applies.
+3. If neither is set, no gateway-side timeout is enforced and the request follows the gateway's underlying transport defaults.
+
+## What clients observe on a timeout
+
+When the gateway aborts a tool call, the client receives an HTTP 200 with an SSE message that carries a JSON-RPC error so existing MCP clients can parse it without special status-code handling:
+
+```text
+event: message
+data: {"jsonrpc":"2.0","id":42,"error":{"code":-32001,"message":"Tool call \"forecast_long_range\" timed out after 60000ms (gateway timeout policy)","data":{"timeoutMs":60000,"tool":"forecast_long_range"}}}
+```
+
+Key pieces:
+
+- **HTTP 200 + JSON-RPC error**: matches how the gateway surfaces other application-level failures (for example "tool not found"), so MCP clients don't need a separate code path for timeouts.
+- **`code: -32001`**: an MCP-specific server error code reserved for gateway-enforced timeouts.
+- **`data.timeoutMs` / `data.tool`**: structured fields you can surface in client telemetry to attribute slowness to a specific tool.
+
+## Observing timeouts in OpenTelemetry
+
+When enforcement is active, the router adds the following span attributes on the `mcp-router.tool-call` span:
+
+- `mcp.tool.timeout_ms` - the resolved budget in milliseconds.
+- `mcp.tool.timeout_source` - either `perTool` or `server`, indicating which level of the policy applied.
+
+When a tool actually times out, an additional `mcp-router.tool-call.timeout` span is recorded with status `Error` and `error.type=tool_call_timeout`. This makes timeouts trivial to alert on in Grafana, Honeycomb, or any other OTel-compatible backend.
+
+## Removing the policy
+
+Removing the `timeouts` block (or setting it to an empty object) disables enforcement for that server. The change is picked up on the next reconcile cycle and propagated to the running broker and router.
+
+## Troubleshooting
+
+- **`Ready=False, message=invalid spec.timeouts ...`**: the controller could not parse one of the duration strings. Check the value matches the [Go duration format](https://pkg.go.dev/time#ParseDuration) and is greater than zero.
+- **Timeout fires too early on slow networks**: the budget covers the entire upstream request, including connection time. If you intentionally proxy through a slow upstream, raise the value or add a `perTool` override for that specific tool.
+- **Timeout never fires**: confirm the `Ready` condition is `True` and that the per-tool name in `perTool` matches the unprefixed upstream name (the same name returned by `tools/list` from the backend, *not* the prefixed name your clients see).

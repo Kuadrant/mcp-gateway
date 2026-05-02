@@ -62,6 +62,47 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// timeouts configures upstream request timeouts for tool calls routed to this server.
+	// When omitted, no gateway-enforced timeout is applied and tool calls inherit the
+	// gateway's underlying transport defaults.
+	// +optional
+	Timeouts *MCPServerTimeouts `json:"timeouts,omitempty"`
+}
+
+// MCPServerTimeouts configures gateway-enforced execution timeouts for an MCP server.
+// Per-tool overrides take precedence over the server-wide default.
+type MCPServerTimeouts struct {
+	// toolCall is the default timeout applied to every tools/call routed to this server.
+	// The value is a Go-style duration string (for example "10s", "500ms", "1m30s").
+	// Must be greater than zero. When unset, no default tool-call timeout is applied.
+	// +optional
+	// +kubebuilder:validation:Pattern=^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+	ToolCall string `json:"toolCall,omitempty"`
+
+	// perTool is a list of overrides for individual tools. The "name" field must match
+	// the upstream tool name as advertised by the backend MCP server (i.e. without the
+	// MCPServerRegistration's toolPrefix). Per-tool overrides win over `toolCall`.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=256
+	PerTool []ToolTimeout `json:"perTool,omitempty"`
+}
+
+// ToolTimeout overrides the server-wide tool-call timeout for a specific tool.
+type ToolTimeout struct {
+	// name of the upstream tool (the unprefixed name as reported by tools/list).
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name"`
+
+	// toolCall is the timeout applied when this tool is invoked. Format is a Go-style
+	// duration string (for example "30s", "2m"). Must be greater than zero.
+	// +required
+	// +kubebuilder:validation:Pattern=^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+	ToolCall string `json:"toolCall"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

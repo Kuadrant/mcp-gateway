@@ -127,6 +127,50 @@ spec:
                 required:
                 - name
                 type: object
+              timeouts:
+                description: |-
+                  timeouts configures upstream request timeouts for tool calls routed to this server.
+                  When omitted, no gateway-enforced timeout is applied and tool calls inherit the
+                  gateway's underlying transport defaults.
+                properties:
+                  perTool:
+                    description: |-
+                      perTool is a list of overrides for individual tools. The "name" field must match
+                      the upstream tool name as advertised by the backend MCP server (i.e. without the
+                      MCPServerRegistration's toolPrefix). Per-tool overrides win over `toolCall`.
+                    items:
+                      description: ToolTimeout overrides the server-wide tool-call
+                        timeout for a specific tool.
+                      properties:
+                        name:
+                          description: name of the upstream tool (the unprefixed
+                            name as reported by tools/list).
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        toolCall:
+                          description: |-
+                            toolCall is the timeout applied when this tool is invoked. Format is a Go-style
+                            duration string (for example "30s", "2m"). Must be greater than zero.
+                          pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                          type: string
+                      required:
+                      - name
+                      - toolCall
+                      type: object
+                    maxItems: 256
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  toolCall:
+                    description: |-
+                      toolCall is the default timeout applied to every tools/call routed to this server.
+                      The value is a Go-style duration string (for example "10s", "500ms", "1m30s").
+                      Must be greater than zero. When unset, no default tool-call timeout is applied.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                type: object
               toolPrefix:
                 description: |-
                   toolPrefix is the prefix to add to all federated tools from referenced servers.

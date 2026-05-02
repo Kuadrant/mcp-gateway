@@ -377,11 +377,16 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 	}
 
 	serverName := mcpServerName(mcpsr)
+	timeouts, err := buildServerTimeouts(mcpsr.Spec.Timeouts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid spec.timeouts for %s: %w", serverName, err)
+	}
 	serverConfig := config.MCPServer{
 		Name:       serverName,
 		URL:        serverInfo.Endpoint,
 		Hostname:   serverInfo.Hostname,
 		ToolPrefix: mcpsr.Spec.ToolPrefix,
+		Timeouts:   timeouts,
 		// TODO implement add to MCPServerRegistration CRD
 		Enabled: true,
 	}

@@ -3,8 +3,12 @@ package mcprouter
 import (
 	"context"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // HandleResponseHeaders handles response headers for session ID reverse mapping
@@ -43,6 +47,38 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 			// not much we can do here log and continue
 			s.Logger.ErrorContext(ctx, "failed to remove server session ", "server", req.serverName, "session", req.GetSessionID())
 		}
+	}
+
+	// When Envoy returns 504 Gateway Timeout for a tool call we know enforced a
+	// timeout policy, replace the upstream response with a structured JSON-RPC error
+	// so MCP clients get a clean failure mode instead of a generic 504 with an
+	// opaque body.
+	if status == "504" && req != nil && req.isToolCall() && req.toolCallTimeoutMS > 0 {
+		_, span := tracer().Start(ctx, "mcp-router.tool-call.timeout",
+			trace.WithAttributes(
+				attribute.String("mcp.server", req.serverName),
+				attribute.String("gen_ai.tool.name", req.ToolName()),
+				attribute.Int64("mcp.tool.timeout_ms", req.toolCallTimeoutMS),
+			),
+		)
+		span.SetStatus(codes.Error, "tool call timed out")
+		span.SetAttributes(attribute.String("error.type", "tool_call_timeout"))
+		span.End()
+		s.Logger.InfoContext(ctx, "tool call exceeded gateway timeout policy",
+			"server", req.serverName,
+			"tool", req.ToolName(),
+			"timeout_ms", req.toolCallTimeoutMS,
+			"session", req.GetSessionID(),
+		)
+		setHeaders := []*corev3.HeaderValueOption{
+			{Header: &corev3.HeaderValue{Key: sessionHeader, RawValue: []byte(gatewaySessionID)}},
+			{Header: &corev3.HeaderValue{Key: "content-type", RawValue: []byte("text/event-stream")}},
+		}
+		body := buildToolTimeoutSSEEvent(req.ID, req.ToolName(), req.toolCallTimeoutMS)
+		// Returning HTTP 200 with a JSON-RPC error mirrors how HandleToolCall reports
+		// other application-level failures (see "Tool not found" path) and lets
+		// existing MCP clients parse the error without special status-code handling.
+		return response.WithImmediateJSONRPCResponse(200, setHeaders, string(body)).Build(), nil
 	}
 
 	responses := response.WithResponseHeaderResponse(responseHeaderBuilder.Build()).Build()

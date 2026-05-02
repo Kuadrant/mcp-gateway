@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -247,6 +248,145 @@ func TestHandleRequestBody(t *testing.T) {
 	require.Equal(t,
 		`{"id":0,"jsonrpc":"2.0","method":"tools/call","params":{"name":"mytool","other":"other"}}`,
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
+}
+
+func TestHandleRequestBody_TimeoutPolicySetsEnvoyHeader(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+	validToken := jwtManager.Generate()
+
+	// Pre-populate the session cache so InitForClient is not invoked.
+	added, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	require.NoError(t, err)
+	require.True(t, added)
+
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+		return nil, fmt.Errorf("InitForClient should not be called")
+	}
+
+	// 5s server-wide default with a 30s override for the "slow" tool. We invoke
+	// "fast" so the server-wide default applies and Envoy gets 5000ms.
+	timeouts := &config.ServerTimeouts{
+		ToolCall: 5 * time.Second,
+		PerTool: map[string]time.Duration{
+			"slow": 30 * time.Second,
+		},
+	}
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:       "dummy",
+			URL:        "http://localhost:8080/mcp",
+			ToolPrefix: "s_",
+			Enabled:    true,
+			Hostname:   "localhost",
+			Timeouts:   timeouts,
+		},
+	}
+
+	server := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{Servers: serverConfigs},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker: newMockBroker(serverConfigs, map[string]string{
+			"s_fast": "dummy",
+		}),
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params: map[string]any{
+			"name": "s_fast",
+		},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			},
+		},
+	}
+
+	resp := server.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	rb, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	require.True(t, ok)
+	require.NotNil(t, rb.RequestBody.Response)
+
+	var (
+		sawTimeoutHeader bool
+		timeoutValue     string
+	)
+	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+		if h.Header.Key == upstreamTimeoutHeader {
+			sawTimeoutHeader = true
+			timeoutValue = string(h.Header.RawValue)
+		}
+	}
+	require.True(t, sawTimeoutHeader, "expected %s header on tool call with a configured timeout", upstreamTimeoutHeader)
+	require.Equal(t, "5000", timeoutValue, "server-wide default 5s should resolve to 5000ms")
+	require.Equal(t, int64(5000), data.toolCallTimeoutMS,
+		"router should record the resolved timeout on the request for response-phase use")
+}
+
+func TestHandleRequestBody_NoTimeoutPolicyOmitsEnvoyHeader(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+	validToken := jwtManager.Generate()
+	_, err = cache.AddSession(context.Background(), validToken, "dummy", "session")
+	require.NoError(t, err)
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:       "dummy",
+			URL:        "http://localhost:8080/mcp",
+			ToolPrefix: "s_",
+			Enabled:    true,
+			Hostname:   "localhost",
+		},
+	}
+	server := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{Servers: serverConfigs},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+			return nil, fmt.Errorf("should not be called")
+		},
+		Broker: newMockBroker(serverConfigs, map[string]string{"s_fast": "dummy"}),
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params:  map[string]any{"name": "s_fast"},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			},
+		},
+	}
+
+	resp := server.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+		if h.Header.Key == upstreamTimeoutHeader {
+			t.Fatalf("did not expect %s header when no timeout is configured", upstreamTimeoutHeader)
+		}
+	}
+	require.Zero(t, data.toolCallTimeoutMS)
 }
 
 func TestMCPRequest_isNotificationRequest(t *testing.T) {

@@ -470,6 +470,120 @@ func TestHandleResponseHeaders_SkipsElicitationForHairpinInit(t *testing.T) {
 	require.False(t, val)
 }
 
+func TestHandleResponseHeaders_504TimeoutTransformsToJSONRPCError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	gatewaySessionID := "gateway-session-504"
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("504")},
+			},
+		},
+	}
+
+	mcpReq := &MCPRequest{
+		ID:                42,
+		JSONRPC:           "2.0",
+		Method:            "tools/call",
+		Params:            map[string]any{"name": "slow_tool"},
+		sessionID:         gatewaySessionID,
+		serverName:        "test/server",
+		toolCallTimeoutMS: 750,
+	}
+
+	responses, err := srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+
+	imm, ok := responses[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok, "expected ImmediateResponse, got %T", responses[0].Response)
+	require.NotNil(t, imm.ImmediateResponse)
+
+	// Replace 504 with HTTP 200 carrying a JSON-RPC error so MCP clients can parse it.
+	require.Equal(t, int32(200), int32(imm.ImmediateResponse.Status.Code))
+
+	body := string(imm.ImmediateResponse.Body)
+	require.Contains(t, body, "event: message")
+	require.Contains(t, body, `"code":-32001`)
+	require.Contains(t, body, `"timeoutMs":750`)
+	require.Contains(t, body, `"tool":"slow_tool"`)
+	require.Contains(t, body, `"id":42`)
+
+	// Headers must preserve mcp-session-id and advertise SSE so the client doesn't trip on content-type.
+	var sawSession, sawCT bool
+	for _, h := range imm.ImmediateResponse.Headers.SetHeaders {
+		switch h.Header.Key {
+		case "mcp-session-id":
+			sawSession = string(h.Header.RawValue) == gatewaySessionID
+		case "content-type":
+			sawCT = string(h.Header.RawValue) == "text/event-stream"
+		}
+	}
+	require.True(t, sawSession, "missing mcp-session-id header in immediate response")
+	require.True(t, sawCT, "missing text/event-stream content-type in immediate response")
+}
+
+func TestHandleResponseHeaders_504WithoutTimeoutPolicyPassesThrough(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	gatewaySessionID := "gateway-session-noop"
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("504")},
+			},
+		},
+	}
+
+	// toolCallTimeoutMS == 0 means no gateway-enforced timeout; the 504 came from
+	// somewhere else (e.g. an upstream-defined route timeout) and we should not
+	// rewrite it as a "tool timed out" payload.
+	mcpReq := &MCPRequest{
+		ID:        "abc",
+		JSONRPC:   "2.0",
+		Method:    "tools/call",
+		Params:    map[string]any{"name": "slow_tool"},
+		sessionID: gatewaySessionID,
+	}
+
+	responses, err := srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+	_, ok := responses[0].Response.(*eppb.ProcessingResponse_ResponseHeaders)
+	require.True(t, ok, "expected normal ResponseHeaders, got %T", responses[0].Response)
+}
+
 func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) broker.MCPBroker {
 	return &mockBrokerImpl{
 		svrConfigs: svrConfigs,

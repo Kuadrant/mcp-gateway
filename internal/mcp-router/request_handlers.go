@@ -83,6 +83,10 @@ type MCPRequest struct {
 	serverName        string            `json:"-"`
 	backendSessionID  string            `json:"-"`
 	clientElicitation bool              `json:"-"`
+	// toolCallTimeoutMS is the gateway-enforced upstream tool-call timeout, in milliseconds.
+	// Zero means no per-request timeout was applied. Set during routing so the response
+	// phase can include it in the JSON-RPC error payload returned on a 504.
+	toolCallTimeoutMS int64 `json:"-"`
 }
 
 // GetSingleHeaderValue returns a single header value
@@ -339,6 +343,30 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	headers.WithMCPToolName(upstreamToolName)
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
+
+	// Apply gateway-enforced upstream timeout when the server has a timeout policy configured.
+	// Per-tool overrides win over the server-wide default; see config.ServerTimeouts.ResolveToolCallTimeout.
+	// Envoy converts a 504 Gateway Timeout, which the response handler then transforms into
+	// a structured MCP JSON-RPC error so clients get a clean failure mode instead of a hang.
+	if d, ok := serverInfo.Timeouts.ResolveToolCallTimeout(upstreamToolName); ok {
+		ms := d.Milliseconds()
+		if ms < 1 {
+			ms = 1
+		}
+		headers.WithUpstreamRequestTimeoutMS(ms)
+		mcpReq.toolCallTimeoutMS = ms
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int64("mcp.tool.timeout_ms", ms),
+				attribute.String("mcp.tool.timeout_source", timeoutSourceFor(serverInfo.Timeouts, upstreamToolName)),
+			)
+		}
+		s.Logger.DebugContext(ctx, "applying upstream tool-call timeout",
+			"server", serverInfo.Name,
+			"tool", upstreamToolName,
+			"timeout_ms", ms,
+		)
+	}
 
 	// create a new session with backend mcp if one doesn't exist
 	var exists map[string]string
