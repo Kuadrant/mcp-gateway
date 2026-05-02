@@ -615,6 +615,10 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 				s.Logger.WarnContext(ctx, "unexpected remote initialize request. Key does not match. Rejecting", "sent headers", mcpReq.Headers)
 				return response.WithImmediateResponse(400, "bad request").Build()
 			}
+			if !s.RoutingConfig.IsRegisteredHostname(remoteInitializeTarget) {
+				s.Logger.WarnContext(ctx, "rejecting init request for unregistered host", "target", remoteInitializeTarget)
+				return response.WithImmediateResponse(400, "bad request").Build()
+			}
 
 			s.Logger.DebugContext(ctx, "HandleMCPBrokerRequest initialize request", "target", remoteInitializeTarget, "call", mcpReq.Method)
 			headers.WithAuthority(remoteInitializeTarget)

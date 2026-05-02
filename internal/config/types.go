@@ -42,6 +42,18 @@ func (config *MCPServersConfig) Notify(ctx context.Context) {
 	}
 }
 
+// IsRegisteredHostname returns true if host matches a registered server's Hostname.
+func (config *MCPServersConfig) IsRegisteredHostname(host string) bool {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	for _, server := range config.Servers {
+		if server.Hostname == host {
+			return true
+		}
+	}
+	return false
+}
+
 // GetServerConfigByName get the routing config by server name
 func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPServer, error) {
 	config.lock.RLock()
