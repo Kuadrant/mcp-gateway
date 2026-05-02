@@ -28,6 +28,11 @@ type MCPBroker interface {
 	// Returns server info for a given tool name
 	GetServerInfo(tool string) (*config.MCPServer, error)
 
+	// GetServerInfoByResourceURI returns the upstream that owns the given federated resource URI.
+	// The URI is the gateway-facing form ('<prefix>+<scheme>://...'); see the
+	// resource-federation design doc for the URI namespacing scheme.
+	GetServerInfoByResourceURI(uri string) (*config.MCPServer, error)
+
 	// MCPServer gets an MCP server that federates the upstreams known to this MCPBroker
 	MCPServer() *server.MCPServer
 
@@ -149,11 +154,24 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		mcpBkr.FilterTools(ctx, id, message, result)
 	})
 
+	hooks.AddAfterListResources(func(ctx context.Context, id any, message *mcp.ListResourcesRequest, result *mcp.ListResourcesResult) {
+		mcpBkr.FilterResources(ctx, id, message, result)
+	})
+
+	hooks.AddAfterListResourceTemplates(func(ctx context.Context, id any, message *mcp.ListResourceTemplatesRequest, result *mcp.ListResourceTemplatesResult) {
+		mcpBkr.FilterResourceTemplates(ctx, id, message, result)
+	})
+
 	mcpBkr.listeningMCPServer = server.NewMCPServer(
 		"Kuadrant MCP Gateway",
 		"0.0.1",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
+		// subscribe=false, listChanged=false: per docs/design/resource-federation.md
+		// (Non-Goals), client-facing subscription and list-changed brokering are deferred
+		// to a follow-up PR. The capability is advertised so clients call resources/list
+		// and resources/templates/list, which the broker federates.
+		server.WithResourceCapabilities(false, false),
 	)
 	return mcpBkr
 }
@@ -193,7 +211,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
@@ -262,6 +280,30 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	}
 
 	return nil, fmt.Errorf("tool name %q doesn't match any configured server", tool)
+}
+
+// GetServerInfoByResourceURI implements MCPBroker by providing a lookup of the server
+// that owns a given federated resource URI. The URI is the gateway-facing form
+// ('<prefix>+<scheme>://...'). The lookup is exact-match against each manager's
+// servedResourcesMap; concrete resources only. Resource-template lookups (RFC 6570
+// pattern matching against an incoming concrete URI) are deferred to a follow-up PR
+// — see docs/design/resource-federation.md, Non-Goals.
+func (m *mcpBrokerImpl) GetServerInfoByResourceURI(uri string) (*config.MCPServer, error) {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+
+	for _, upstream := range m.mcpServers {
+		if r := upstream.GetServedManagedResource(uri); r != nil {
+			m.logger.Debug("found matching server for resource",
+				"uri", uri,
+				"serverPrefix", upstream.MCP.GetPrefix(),
+				"serverName", upstream.MCP.GetName())
+			retval := upstream.MCP.GetConfig()
+			return &retval, nil
+		}
+	}
+
+	return nil, fmt.Errorf("resource uri %q doesn't match any configured server", uri)
 }
 
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {

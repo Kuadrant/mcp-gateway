@@ -12,6 +12,7 @@ import (
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".status.discoveredTools",description="Number of discovered tools"
+// +kubebuilder:printcolumn:name="Resources",type="integer",JSONPath=".status.discoveredResources",description="Number of discovered resources"
 // +kubebuilder:printcolumn:name="Credentials",type="string",JSONPath=".spec.credentialRef.name"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
@@ -43,9 +44,13 @@ type MCPServerRegistrationSpec struct {
 	// +required
 	TargetRef TargetReference `json:"targetRef,omitzero"`
 
-	// toolPrefix is the prefix to add to all federated tools from referenced servers.
-	// This helps avoid naming conflicts when aggregating tools from multiple sources.
-	// For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
+	// toolPrefix is the prefix used to namespace federated capabilities from this server.
+	// It is prepended to tool names ('weather_get_forecast') and to the URI scheme of
+	// federated resources ('weather_+file:///forecast.json'), preserving the original URI
+	// in a reversible, RFC 3986-compliant form. This avoids naming and URI collisions
+	// when aggregating capabilities from multiple sources. For example, if two servers
+	// both expose a 'search' tool or a 'file:///config' resource, prefixes like
+	// 'server1_' and 'server2_' let them coexist.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="toolPrefix is immutable once set"
 	ToolPrefix string `json:"toolPrefix,omitempty"`
@@ -118,6 +123,11 @@ type MCPServerRegistrationStatus struct {
 	// discoveredTools is the number of tools discovered from this MCPServerRegistration.
 	// +optional
 	DiscoveredTools int32 `json:"discoveredTools,omitempty"`
+
+	// discoveredResources is the number of resources (excluding resource templates) discovered
+	// from this MCPServerRegistration and made available to clients via the gateway.
+	// +optional
+	DiscoveredResources int32 `json:"discoveredResources,omitempty"`
 }
 
 // +kubebuilder:object:root=true

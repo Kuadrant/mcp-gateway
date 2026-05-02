@@ -60,9 +60,10 @@ func NewRouterErrorf(code int32, format string, args ...any) *RouterError {
 }
 
 const (
-	methodToolCall    = "tools/call"
-	methodInitialize  = "initialize"
-	methodInitialized = "notification/initialized"
+	methodToolCall      = "tools/call"
+	methodResourcesRead = "resources/read"
+	methodInitialize    = "initialize"
+	methodInitialized   = "notification/initialized"
 
 	elicitationResultAction  = "action"
 	elicitationActionAccept  = "accept"
@@ -123,7 +124,14 @@ func (mr *MCPRequest) isNotificationRequest() bool {
 
 // isToolCall will check if the request is a tool call request
 func (mr *MCPRequest) isToolCall() bool {
-	return mr.Method == "tools/call"
+	return mr.Method == methodToolCall
+}
+
+// isResourceRead reports whether this is a resources/read request. The router
+// dispatches reads on a separate path so it can rewrite the federated URI
+// before forwarding the request upstream.
+func (mr *MCPRequest) isResourceRead() bool {
+	return mr.Method == methodResourcesRead
 }
 
 // isInitializeRequest returns true if the method is initialize or initialized
@@ -189,6 +197,30 @@ func (mr *MCPRequest) ReWriteToolName(actualTool string) {
 	mr.Params["name"] = actualTool
 }
 
+// ResourceURI returns the params.uri value of a resources/read request. Returns
+// "" for any other method or when the params shape is unexpected.
+func (mr *MCPRequest) ResourceURI() string {
+	if !mr.isResourceRead() {
+		return ""
+	}
+	uri, ok := mr.Params["uri"]
+	if !ok {
+		return ""
+	}
+	s, ok := uri.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// ReWriteResourceURI replaces params.uri with the upstream form of the URI
+// (gateway prefix stripped) before the request is forwarded. Mirrors
+// ReWriteToolName for resources.
+func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
+	mr.Params["uri"] = actualURI
+}
+
 // ToBytes marshals the data ready to send on
 func (mr *MCPRequest) ToBytes() ([]byte, error) {
 	return json.Marshal(mr)
@@ -220,6 +252,9 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	case mcpReq.Method == methodToolCall:
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
+	case mcpReq.Method == methodResourcesRead:
+		span.SetAttributes(attribute.String("mcp.route", "resource-read"))
+		return s.HandleResourceRead(ctx, mcpReq)
 	default:
 		span.SetAttributes(attribute.String("mcp.route", "broker"))
 		return s.HandleNoneToolCall(ctx, mcpReq)

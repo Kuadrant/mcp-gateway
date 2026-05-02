@@ -73,6 +73,18 @@
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
 - When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked
 
+### [Happy] Federate MCP resources from multiple servers
+
+- When two MCPServerRegistration resources reference backends that expose MCP `resources/list`, the gateway should advertise the `resources` capability in its `initialize` response and a `resources/list` request should return resources from every registered server. Each resource URI must be in its federated form: the upstream URI scheme prefixed with `<toolPrefix>+` (for example, `weather_+file:///forecast.json`). The gateway must not expose the gateway-internal `kuadrant/id` `_meta` marker to clients. The MCPServerRegistration `status.discoveredResources` field should report the count of concrete resources discovered from that backend.
+
+### [Happy] Read a federated MCP resource
+
+- When a client issues a `resources/read` request with a federated URI (`<toolPrefix>+<scheme>://...`), the gateway must route the request to the upstream that owns the underlying URI scheme, strip the `<toolPrefix>+` prefix from the URI before forwarding, and return the upstream's `ReadResourceResult` to the client unchanged. A `resources/read` for a URI that does not match any registered server must return a JSON-RPC error with code `-32002` ("Resource not found") and HTTP `200`.
+
+### [Happy] Federate MCP resource templates
+
+- When a backend exposes MCP `resources/templates/list`, the gateway should include the templates in its own `resources/templates/list` response. Each template's `uriTemplate` string must have its scheme rewritten to the federated form (`<toolPrefix>+<scheme>...`) so clients can construct federated URIs that round-trip through the gateway via `resources/read`.
+
 ### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
 
 - As a platform admin having deployed multiple instances of the MCP Gateway using the MCPGatewayExtension resource, I should see that they become ready once I have created a valid referencegrant. Once the MCPGatewayExtension is valid, there should be a unique deployment of the mcp gateway in the same namespace as the MCPGatewayExtension resources

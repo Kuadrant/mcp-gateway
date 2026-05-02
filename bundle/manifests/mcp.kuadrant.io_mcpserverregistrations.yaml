@@ -38,6 +38,10 @@ spec:
       jsonPath: .status.discoveredTools
       name: Tools
       type: integer
+    - description: Number of discovered resources
+      jsonPath: .status.discoveredResources
+      name: Resources
+      type: integer
     - jsonPath: .spec.credentialRef.name
       name: Credentials
       type: string
@@ -129,9 +133,13 @@ spec:
                 type: object
               toolPrefix:
                 description: |-
-                  toolPrefix is the prefix to add to all federated tools from referenced servers.
-                  This helps avoid naming conflicts when aggregating tools from multiple sources.
-                  For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
+                  toolPrefix is the prefix used to namespace federated capabilities from this server.
+                  It is prepended to tool names ('weather_get_forecast') and to the URI scheme of
+                  federated resources ('weather_+file:///forecast.json'), preserving the original URI
+                  in a reversible, RFC 3986-compliant form. This avoids naming and URI collisions
+                  when aggregating capabilities from multiple sources. For example, if two servers
+                  both expose a 'search' tool or a 'file:///config' resource, prefixes like
+                  'server1_' and 'server2_' let them coexist.
                 type: string
                 x-kubernetes-validations:
                 - message: toolPrefix is immutable once set
@@ -204,6 +212,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveredResources:
+                description: |-
+                  discoveredResources is the number of resources (excluding resource templates) discovered
+                  from this MCPServerRegistration and made available to clients via the gateway.
+                format: int32
+                type: integer
               discoveredTools:
                 description: discoveredTools is the number of tools discovered from
                   this MCPServerRegistration.

@@ -10,6 +10,7 @@ const (
 	mcpServerNameHeader   = "x-mcp-servername"
 	toolAnnotationsHeader = "x-mcp-annotation-hints"
 	toolHeader            = "x-mcp-toolname"
+	resourceURIHeader     = "x-mcp-resource-uri"
 	methodHeader          = "x-mcp-method"
 	sessionHeader         = "mcp-session-id"
 	authorityHeader       = ":authority"
@@ -87,6 +88,21 @@ func (hb *HeadersBuilder) WithMCPToolName(toolName string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      toolHeader,
 			RawValue: []byte(toolName),
+		},
+	})
+	return hb
+}
+
+// WithMCPResourceURI sets the x-mcp-resource-uri header. The value is the
+// upstream resource URI (i.e. with the gateway prefix already stripped). It
+// mirrors WithMCPToolName for the resources/read path so OTel collectors and
+// downstream policy plug-ins can attribute requests by resource without parsing
+// the JSON-RPC body.
+func (hb *HeadersBuilder) WithMCPResourceURI(uri string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      resourceURIHeader,
+			RawValue: []byte(uri),
 		},
 	})
 	return hb

@@ -25,6 +25,10 @@ type mockBrokerImpl struct {
 
 	// Map of tool name to server name
 	tool2svr map[string]string
+
+	// Map of federated resource URI to server name. Optional; nil means GetServerInfoByResourceURI
+	// returns the historical not-implemented error.
+	uri2svr map[string]string
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -491,6 +495,21 @@ func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	}
 
 	return nil, fmt.Errorf("failed to get server %q for tool %q", svrName, tool)
+}
+
+// GetServerInfoByResourceURI implements broker.MCPBroker. Tests opting into
+// resource-read coverage populate uri2svr with federated URI → server-name fixtures.
+func (m *mockBrokerImpl) GetServerInfoByResourceURI(uri string) (*config.MCPServer, error) {
+	svrName, ok := m.uri2svr[uri]
+	if !ok {
+		return nil, fmt.Errorf("No server for resource uri %q", uri)
+	}
+	for _, svrInfo := range m.svrConfigs {
+		if svrName == svrInfo.Name {
+			return svrInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get server %q for resource uri %q", svrName, uri)
 }
 
 // GetVirtualSeverByHeader implements broker.MCPBroker.

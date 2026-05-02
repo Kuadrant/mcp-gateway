@@ -75,6 +75,24 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 	return up.init.Capabilities.Tools.ListChanged
 }
 
+// SupportsResources reports whether the upstream advertises the resources capability.
+// We use this to skip discovery on backends that do not implement resources at all,
+// avoiding spurious -32601 method-not-found errors.
+func (up *MCPServer) SupportsResources() bool {
+	if up.init == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources != nil
+}
+
+// SupportsResourcesListChanged validates the mcp server supports resources/list_changed notifications
+func (up *MCPServer) SupportsResourcesListChanged() bool {
+	if up.init == nil || up.init.Capabilities.Resources == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources.ListChanged
+}
+
 // Connect establishes a connection to the upstream MCP server. It creates a
 // streamable HTTP client, starts it for continuous listening, and performs
 // the MCP initialization handshake. If already connected, this is a no-op.
@@ -193,4 +211,28 @@ func (up *MCPServer) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*
 		return nil, fmt.Errorf("client not connected")
 	}
 	return up.client.ListTools(ctx, req)
+}
+
+// ListResources retrieves the list of concrete resources from the upstream MCP server.
+// Pagination is handled by the underlying mcp-go client.
+func (up *MCPServer) ListResources(ctx context.Context, req mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+
+	if up.client == nil {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return up.client.ListResources(ctx, req)
+}
+
+// ListResourceTemplates retrieves the list of resource templates from the upstream MCP server.
+// Pagination is handled by the underlying mcp-go client.
+func (up *MCPServer) ListResourceTemplates(ctx context.Context, req mcp.ListResourceTemplatesRequest) (*mcp.ListResourceTemplatesResult, error) {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+
+	if up.client == nil {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return up.client.ListResourceTemplates(ctx, req)
 }
