@@ -50,10 +50,11 @@ func GetDeploymentGeneration(namespace, name string) (string, error) {
 // has actually started (generation changes) then wait for it to complete.
 func WaitForDeploymentReplicas(namespace, name string, replicas int, prevGeneration string) error {
 	// wait for generation to change (confirming the spec mutation was picked up)
-	Eventually(func() string {
-		gen, _ := GetDeploymentGeneration(namespace, name)
-		return gen
-	}, "30s", "1s").ShouldNot(Equal(prevGeneration),
+	Eventually(func(g Gomega) {
+		gen, err := GetDeploymentGeneration(namespace, name)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(gen).NotTo(Equal(prevGeneration))
+	}, "30s", "1s").Should(Succeed(),
 		fmt.Sprintf("deployment %s generation did not change from %s", name, prevGeneration))
 
 	// now rollout status will correctly block on the new rollout
