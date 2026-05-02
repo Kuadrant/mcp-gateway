@@ -1349,7 +1349,7 @@ func TestFilterManagedEnvVars(t *testing.T) {
 			name: "only managed vars returned",
 			env: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 				{Name: "CACHE_CONNECTION_STRING", Value: "redis://localhost"},
 			},
 			want: []corev1.EnvVar{
@@ -1360,7 +1360,7 @@ func TestFilterManagedEnvVars(t *testing.T) {
 		{
 			name: "no managed vars",
 			env: []corev1.EnvVar{
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 			want: nil,
 		},
@@ -1398,23 +1398,23 @@ func TestMergeEnvVars(t *testing.T) {
 			desired: []corev1.EnvVar{{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"}},
 			existing: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "old-key"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+				{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 			},
 			want: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+				{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 			},
 		},
 		{
 			name:    "no desired managed vars still preserves user vars",
 			desired: nil,
 			existing: []corev1.EnvVar{
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 			want: []corev1.EnvVar{
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 		},
 	}
@@ -1447,14 +1447,130 @@ func TestDeploymentNeedsUpdate_UserEnvVarsIgnored(t *testing.T) {
 	desired := base()
 	existing := base()
 	existing.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{
-		{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-		{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+		{Name: "LOG_LEVEL", Value: "debug"},
+		{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 	}
 
 	needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
 	if needsUpdate {
 		t.Error("deploymentNeedsUpdate() should not trigger for user-added env vars")
 	}
+}
+
+func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{BrokerRouterImage: "test-image:latest"}
+
+	base := func() *mcpv1alpha1.MCPGatewayExtension {
+		return &mcpv1alpha1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "mcp-system", UID: "test-uid"},
+			Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name: "mcp-gateway", Namespace: "gateway-system", SectionName: "mcp",
+				},
+			},
+		}
+	}
+
+	t.Run("no oauth config sets no oauth env vars", func(t *testing.T) {
+		dep := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
+		env := dep.Spec.Template.Spec.Containers[0].Env
+		for _, e := range env {
+			if strings.HasPrefix(e.Name, "OAUTH_") {
+				t.Errorf("unexpected env var %q when oauthProtectedResource is nil", e.Name)
+			}
+		}
+	})
+
+	t.Run("all defaults applied when only authorizationServers set", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		envMap := make(map[string]string)
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		if envMap["OAUTH_RESOURCE_NAME"] != "MCP Gateway" {
+			t.Errorf("OAUTH_RESOURCE_NAME = %q, want %q", envMap["OAUTH_RESOURCE_NAME"], "MCP Gateway")
+		}
+		if envMap["OAUTH_RESOURCE"] != "https://mcp.example.com/mcp" {
+			t.Errorf("OAUTH_RESOURCE = %q, want %q", envMap["OAUTH_RESOURCE"], "https://mcp.example.com/mcp")
+		}
+		if envMap["OAUTH_AUTHORIZATION_SERVERS"] != "https://keycloak.example.com/realms/mcp" {
+			t.Errorf("OAUTH_AUTHORIZATION_SERVERS = %q", envMap["OAUTH_AUTHORIZATION_SERVERS"])
+		}
+		if envMap["OAUTH_BEARER_METHODS_SUPPORTED"] != "header" {
+			t.Errorf("OAUTH_BEARER_METHODS_SUPPORTED = %q, want %q", envMap["OAUTH_BEARER_METHODS_SUPPORTED"], "header")
+		}
+		if envMap["OAUTH_SCOPES_SUPPORTED"] != "basic" {
+			t.Errorf("OAUTH_SCOPES_SUPPORTED = %q, want %q", envMap["OAUTH_SCOPES_SUPPORTED"], "basic")
+		}
+	})
+
+	t.Run("explicit values override defaults", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			ResourceName:           "My MCP",
+			Resource:               "http://mcp.127-0-0-1.sslip.io:8001/mcp",
+			AuthorizationServers:   []string{"https://auth1.example.com", "https://auth2.example.com"},
+			BearerMethodsSupported: []string{"header", "body"},
+			ScopesSupported:        []string{"basic", "groups", "roles"},
+		}
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		envMap := make(map[string]string)
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		if envMap["OAUTH_RESOURCE_NAME"] != "My MCP" {
+			t.Errorf("OAUTH_RESOURCE_NAME = %q, want %q", envMap["OAUTH_RESOURCE_NAME"], "My MCP")
+		}
+		if envMap["OAUTH_RESOURCE"] != "http://mcp.127-0-0-1.sslip.io:8001/mcp" {
+			t.Errorf("OAUTH_RESOURCE = %q", envMap["OAUTH_RESOURCE"])
+		}
+		if envMap["OAUTH_AUTHORIZATION_SERVERS"] != "https://auth1.example.com,https://auth2.example.com" {
+			t.Errorf("OAUTH_AUTHORIZATION_SERVERS = %q", envMap["OAUTH_AUTHORIZATION_SERVERS"])
+		}
+		if envMap["OAUTH_BEARER_METHODS_SUPPORTED"] != "header,body" {
+			t.Errorf("OAUTH_BEARER_METHODS_SUPPORTED = %q", envMap["OAUTH_BEARER_METHODS_SUPPORTED"])
+		}
+		if envMap["OAUTH_SCOPES_SUPPORTED"] != "basic,groups,roles" {
+			t.Errorf("OAUTH_SCOPES_SUPPORTED = %q", envMap["OAUTH_SCOPES_SUPPORTED"])
+		}
+	})
+
+	t.Run("oauth env change triggers deployment update", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		desired := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+
+		mcpExt2 := base()
+		mcpExt2.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://other-auth.example.com/realms/mcp"},
+		}
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", "internal:8080")
+
+		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
+		if !needsUpdate {
+			t.Error("deploymentNeedsUpdate() should trigger when oauth authorization servers change")
+		}
+	})
+
+	t.Run("removing oauth config triggers deployment update", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		desired := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+
+		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
+		if !needsUpdate {
+			t.Error("deploymentNeedsUpdate() should trigger when oauthProtectedResource is removed")
+		}
+	})
 }
 
 func TestHTTPRouteNeedsUpdate(t *testing.T) {

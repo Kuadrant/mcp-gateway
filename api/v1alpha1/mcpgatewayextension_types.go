@@ -93,6 +93,41 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// oauthProtectedResource configures the OAuth protected resource metadata
+	// served at /.well-known/oauth-protected-resource. When set, the controller
+	// injects the corresponding OAUTH_* env vars into the broker-router deployment.
+	// +optional
+	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
+}
+
+// OAuthProtectedResource configures the OAuth protected resource metadata
+// served at /.well-known/oauth-protected-resource.
+type OAuthProtectedResource struct {
+	// resourceName is the human-readable name for this resource.
+	// Defaults to "MCP Gateway".
+	// +optional
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// resource is the URI of the protected resource.
+	// Defaults to https://<publicHost>/mcp.
+	// +optional
+	Resource string `json:"resource,omitempty"`
+
+	// authorizationServers lists the OAuth authorization server URLs.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	AuthorizationServers []string `json:"authorizationServers"`
+
+	// bearerMethodsSupported lists the supported bearer token methods.
+	// Defaults to ["header"].
+	// +optional
+	BearerMethodsSupported []string `json:"bearerMethodsSupported,omitempty"`
+
+	// scopesSupported lists the supported OAuth scopes.
+	// Defaults to ["basic"].
+	// +optional
+	ScopesSupported []string `json:"scopesSupported,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.

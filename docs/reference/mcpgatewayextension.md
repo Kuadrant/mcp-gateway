@@ -5,6 +5,7 @@
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [TrustedHeadersKey](#trustedheaderskey)
 - [SessionStore](#sessionstore)
+- [OAuthProtectedResource](#oauthprotectedresource)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
 
 ## MCPGatewayExtension
@@ -25,6 +26,7 @@
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
+| `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
 
 ## MCPGatewayExtensionTargetReference
 
@@ -48,6 +50,16 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `secretName` | String | Yes | Name of the secret containing a `CACHE_CONNECTION_STRING` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
+
+## OAuthProtectedResource
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `authorizationServers` | []String | Yes | OAuth authorization server URLs. Injected as `OAUTH_AUTHORIZATION_SERVERS` (comma-separated) |
+| `resourceName` | String | No | Human-readable name for this resource. Defaults to `"MCP Gateway"`. Injected as `OAUTH_RESOURCE_NAME` |
+| `resource` | String | No | URI of the protected resource. Defaults to `https://<publicHost>/mcp`. Injected as `OAUTH_RESOURCE` |
+| `bearerMethodsSupported` | []String | No | Supported bearer token methods. Defaults to `["header"]`. Injected as `OAUTH_BEARER_METHODS_SUPPORTED` (comma-separated) |
+| `scopesSupported` | []String | No | Supported OAuth scopes. Defaults to `["basic"]`. Injected as `OAUTH_SCOPES_SUPPORTED` (comma-separated) |
 
 ## MCPGatewayExtensionStatus
 
