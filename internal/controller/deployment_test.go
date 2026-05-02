@@ -1512,3 +1512,135 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBrokerRouterDeployment_HealthProbes(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
+	container := deployment.Spec.Template.Spec.Containers[0]
+
+	if container.LivenessProbe == nil {
+		t.Fatal("expected LivenessProbe to be set")
+	}
+	if container.LivenessProbe.HTTPGet == nil {
+		t.Fatal("expected LivenessProbe HTTPGet to be set")
+	}
+	if container.LivenessProbe.HTTPGet.Path != "/healthz" {
+		t.Errorf("LivenessProbe path = %q, want /healthz", container.LivenessProbe.HTTPGet.Path)
+	}
+	if container.LivenessProbe.HTTPGet.Port.IntVal != brokerHTTPPort {
+		t.Errorf("LivenessProbe port = %d, want %d", container.LivenessProbe.HTTPGet.Port.IntVal, brokerHTTPPort)
+	}
+
+	if container.ReadinessProbe == nil {
+		t.Fatal("expected ReadinessProbe to be set")
+	}
+	if container.ReadinessProbe.HTTPGet == nil {
+		t.Fatal("expected ReadinessProbe HTTPGet to be set")
+	}
+	if container.ReadinessProbe.HTTPGet.Path != "/readyz" {
+		t.Errorf("ReadinessProbe path = %q, want /readyz", container.ReadinessProbe.HTTPGet.Path)
+	}
+	if container.ReadinessProbe.HTTPGet.Port.IntVal != brokerHTTPPort {
+		t.Errorf("ReadinessProbe port = %d, want %d", container.ReadinessProbe.HTTPGet.Port.IntVal, brokerHTTPPort)
+	}
+}
+
+func TestDeploymentNeedsUpdate_ProbeChanges(t *testing.T) {
+	baseWithProbes := func() *appsv1.Deployment {
+		return &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "mcp-gateway",
+								Image: "test:latest",
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz",
+											Port: intstr.FromInt(brokerHTTPPort),
+										},
+									},
+									InitialDelaySeconds: 10,
+									PeriodSeconds:       30,
+								},
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/readyz",
+											Port: intstr.FromInt(brokerHTTPPort),
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       10,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name     string
+		modify   func(d *appsv1.Deployment)
+		expected bool
+	}{
+		{
+			name:     "probes unchanged",
+			modify:   func(_ *appsv1.Deployment) {},
+			expected: false,
+		},
+		{
+			name: "liveness probe path changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].LivenessProbe.HTTPGet.Path = "/other"
+			},
+			expected: true,
+		},
+		{
+			name: "readiness probe removed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].ReadinessProbe = nil
+			},
+			expected: true,
+		},
+		{
+			name: "both probes absent on existing deployment",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].LivenessProbe = nil
+				d.Spec.Template.Spec.Containers[0].ReadinessProbe = nil
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := baseWithProbes()
+			existing := baseWithProbes()
+			tt.modify(existing)
+			result, reason := deploymentNeedsUpdate(desired, existing)
+			if result != tt.expected {
+				t.Errorf("deploymentNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
+			}
+		})
+	}
+}

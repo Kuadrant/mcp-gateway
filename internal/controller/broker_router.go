@@ -166,6 +166,26 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 									ReadOnly:  true,
 								},
 							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(brokerHTTPPort),
+									},
+								},
+								InitialDelaySeconds: 10,
+								PeriodSeconds:       30,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/readyz",
+										Port: intstr.FromInt(brokerHTTPPort),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
 						},
 					},
 					Volumes: []corev1.Volume{
@@ -447,6 +467,12 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	}
 	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
 		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existing.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes)
+	}
+	if !equality.Semantic.DeepEqual(desiredContainer.LivenessProbe, existingContainer.LivenessProbe) {
+		return true, "livenessProbe changed"
+	}
+	if !equality.Semantic.DeepEqual(desiredContainer.ReadinessProbe, existingContainer.ReadinessProbe) {
+		return true, "readinessProbe changed"
 	}
 	// only compare env vars the controller manages; user-added env vars are preserved
 	desiredEnv := filterManagedEnvVars(desiredContainer.Env)

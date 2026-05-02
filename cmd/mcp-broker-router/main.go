@@ -348,11 +348,28 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.Handle("/readyz", readyzHandler(mcpBroker))
 	mux.HandleFunc("/status", mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
 	mux.Handle("/mcp", streamableHTTPServer)
 
 	return httpSrv, streamableHTTPServer
+}
+
+// readyzHandler returns 503 when upstream MCP servers are configured but none are healthy,
+// blocking traffic during the startup window before connections are established.
+func readyzHandler(b broker.MCPBroker) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		s := b.ValidateAllServers()
+		if s.TotalServers > 0 && s.HealthyServers == 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
