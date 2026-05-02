@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
@@ -18,9 +19,10 @@ import (
 type MockResourcesAdderDeleter struct {
 	resources         map[string]*server.ServerResource
 	templates         []server.ServerResourceTemplate
-	addCalls          int
-	delCalls          int
-	addTemplateCalls  int
+	addCalls           int
+	delCalls           int
+	addTemplateCalls   int
+	setTemplateCalls   int
 }
 
 func newMockResourcesAdderDeleter() *MockResourcesAdderDeleter {
@@ -46,6 +48,11 @@ func (m *MockResourcesAdderDeleter) DeleteResources(uris ...string) {
 func (m *MockResourcesAdderDeleter) AddResourceTemplates(templates ...server.ServerResourceTemplate) {
 	m.addTemplateCalls++
 	m.templates = append(m.templates, templates...)
+}
+
+func (m *MockResourcesAdderDeleter) SetResourceTemplates(templates ...server.ServerResourceTemplate) {
+	m.setTemplateCalls++
+	m.templates = append([]server.ServerResourceTemplate(nil), templates...)
 }
 
 func TestPrefixedURI(t *testing.T) {
@@ -109,7 +116,7 @@ func TestStripURIPrefix_RoundTrip(t *testing.T) {
 func TestMCPManager_GetServedManagedResource(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test", "weather_")
-	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	manager.SetResourcesForTesting([]mcp.Resource{
 		{URI: "file:///forecast.json", Name: "forecast"},
@@ -131,7 +138,7 @@ func TestMCPManager_GetServedManagedResource(t *testing.T) {
 func TestMCPManager_GetManagedResources_ReturnsCopy(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test", "p_")
-	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	manager.SetResourcesForTesting([]mcp.Resource{{URI: "file:///x", Name: "x"}})
 
@@ -145,7 +152,7 @@ func TestMCPManager_GetManagedResources_ReturnsCopy(t *testing.T) {
 func TestMCPManager_diffResources(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test", "weather_")
-	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	old := []mcp.Resource{
 		{URI: "file:///a", Name: "a"},
@@ -171,7 +178,7 @@ func TestMCPManager_manageResources_NoSupport(t *testing.T) {
 	mock := newMockMCP("no-resources", "")
 	mock.hasResourcesCap = false
 	gateway := newMockResourcesAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	r, tpl, err := manager.manageResources(context.Background(), eventTypeTimer)
 	assert.NoError(t, err)
@@ -200,7 +207,7 @@ func TestMCPManager_manageResources_FederatesAndPrefixes(t *testing.T) {
 		},
 	}
 	gateway := newMockResourcesAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	count, tplCount, err := manager.manageResources(context.Background(), eventTypeTimer)
 	assert.NoError(t, err)
@@ -210,6 +217,7 @@ func TestMCPManager_manageResources_FederatesAndPrefixes(t *testing.T) {
 	// gateway should hold the prefixed URIs
 	assert.Contains(t, gateway.resources, "weather_+file:///forecast.json")
 	assert.Contains(t, gateway.resources, "weather_+embedded:info")
+	require.Equal(t, 1, gateway.setTemplateCalls)
 	if assert.Len(t, gateway.templates, 1) {
 		raw := gateway.templates[0].Template.URITemplate.Template.Raw()
 		assert.Equal(t, "weather_+file:///{name}.json", raw)
@@ -225,7 +233,7 @@ func TestMCPManager_manageResources_PropagatesListError(t *testing.T) {
 	mock.hasResourcesCap = true
 	mock.listResourcesErr = errors.New("upstream boom")
 	gateway := newMockResourcesAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	_, _, err := manager.manageResources(context.Background(), eventTypeTimer)
 	assert.Error(t, err)
@@ -238,7 +246,7 @@ func TestMCPManager_removeAllResources_ClearsGateway(t *testing.T) {
 	mock.hasResourcesCap = true
 	mock.resources = []mcp.Resource{{URI: "file:///x", Name: "x"}}
 	gateway := newMockResourcesAdderDeleter()
-	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 
 	_, _, err := manager.manageResources(context.Background(), eventTypeTimer)
 	assert.NoError(t, err)
@@ -247,4 +255,26 @@ func TestMCPManager_removeAllResources_ClearsGateway(t *testing.T) {
 	manager.removeAllResources()
 	assert.Empty(t, gateway.resources)
 	assert.Empty(t, manager.GetManagedResources())
+	assert.Equal(t, 2, gateway.setTemplateCalls)
+}
+
+func TestFindResourceConflicts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mock := newMockMCP("test", "p_")
+	mock.hasResourcesCap = true
+	gateway := newMockResourcesAdderDeleter()
+	wantErr := errors.New("collision")
+	manager := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil,
+		func(_ config.UpstreamMCPID, uris []string) error {
+			if len(uris) > 0 && uris[0] == "p_+file:///x" {
+				return wantErr
+			}
+			return nil
+		})
+
+	candidates := []server.ServerResource{{Resource: mcp.Resource{URI: "p_+file:///x"}}}
+	assert.ErrorIs(t, manager.findResourceConflicts(candidates), wantErr)
+
+	managerNil := NewUpstreamMCPManager(mock, nil, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
+	assert.NoError(t, managerNil.findResourceConflicts(candidates))
 }

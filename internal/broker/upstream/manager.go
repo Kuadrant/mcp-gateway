@@ -33,13 +33,14 @@ type ToolsAdderDeleter interface {
 }
 
 // ResourcesAdderDeleter defines the interface for interacting with the gateway's
-// resource registry. Mirrors ToolsAdderDeleter. mcp-go does not expose template
-// deletion, so AddResourceTemplates is purely additive — see resource-federation
-// design doc.
+// resource registry. Concrete resources use AddResources/DeleteResources; templates
+// are reconciled broker-wide via SetResourceTemplates so removals propagate.
 type ResourcesAdderDeleter interface {
 	AddResources(resources ...server.ServerResource)
 	DeleteResources(uris ...string)
 	AddResourceTemplates(templates ...server.ServerResourceTemplate)
+	// SetResourceTemplates replaces all templates on the gateway listening server (mcp-go).
+	SetResourceTemplates(templates ...server.ServerResourceTemplate)
 }
 
 const (
@@ -117,11 +118,18 @@ type MCPManager struct {
 	resourcesMap       map[string]*mcp.Resource
 	servedResourcesMap map[string]*mcp.Resource
 	// resourceTemplates is the upstream template set; serverResourceTemplates is the
-	// federated set served via the gateway. mcp-go has no per-template delete API,
-	// so we use SetResourceTemplates wholesale on each refresh.
-	resourceTemplates []mcp.ResourceTemplate
+	// federated ServerResourceTemplate slice last fetched from upstream (for broker-wide reconcile).
+	resourceTemplates       []mcp.ResourceTemplate
+	serverResourceTemplates []server.ServerResourceTemplate
 	// resourcesLock protects all resource and template fields above
 	resourcesLock sync.RWMutex
+
+	// reconcileGatewayTemplates merges templates from every upstream manager via the broker.
+	// When nil (unit tests), scheduleTemplateReconcile applies SetResourceTemplates for this manager only.
+	reconcileGatewayTemplates func()
+
+	// resourceConflictCheck rejects federated URIs already owned by another upstream manager.
+	resourceConflictCheck func(owner config.UpstreamMCPID, federatedURIs []string) error
 
 	logger *slog.Logger
 
@@ -140,26 +148,31 @@ const DefaultTickerInterval = time.Minute * 1
 // gatewayTools and gatewayResources are typically the same listening *server.MCPServer
 // — passing them as separate interfaces documents which surface each federation path uses.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewayTools ToolsAdderDeleter, gatewayResources ResourcesAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) *MCPManager {
+func NewUpstreamMCPManager(upstream MCP, gatewayTools ToolsAdderDeleter, gatewayResources ResourcesAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy,
+	reconcileGatewayTemplates func(),
+	resourceConflictCheck func(owner config.UpstreamMCPID, federatedURIs []string) error,
+) *MCPManager {
 	if tickerInterval <= 0 {
 		tickerInterval = DefaultTickerInterval
 	}
 
 	return &MCPManager{
-		MCP:                upstream,
-		gatewayServer:      gatewayTools,
-		gatewayResources:   gatewayResources,
-		tickerInterval:     tickerInterval,
-		ticker:             time.NewTicker(tickerInterval),
-		logger:             logger,
-		invalidToolPolicy:  policy,
-		done:               make(chan struct{}),
-		toolsMap:           map[string]*mcp.Tool{},
-		servedToolsMap:     map[string]*mcp.Tool{},
-		serverTools:        []server.ServerTool{},
-		resourcesMap:       map[string]*mcp.Resource{},
-		servedResourcesMap: map[string]*mcp.Resource{},
-		serverResources:    []server.ServerResource{},
+		MCP:                       upstream,
+		gatewayServer:             gatewayTools,
+		gatewayResources:          gatewayResources,
+		reconcileGatewayTemplates: reconcileGatewayTemplates,
+		resourceConflictCheck:     resourceConflictCheck,
+		tickerInterval:            tickerInterval,
+		ticker:                    time.NewTicker(tickerInterval),
+		logger:                    logger,
+		invalidToolPolicy:         policy,
+		done:                      make(chan struct{}),
+		toolsMap:                  map[string]*mcp.Tool{},
+		servedToolsMap:            map[string]*mcp.Tool{},
+		serverTools:               []server.ServerTool{},
+		resourcesMap:              map[string]*mcp.Resource{},
+		servedResourcesMap:        map[string]*mcp.Resource{},
+		serverResources:           []server.ServerResource{},
 	}
 }
 
@@ -379,24 +392,44 @@ func (man *MCPManager) manageResources(ctx context.Context, event eventType) (in
 	resourceCount := len(fetched)
 	man.resourcesLock.Unlock()
 
-	// resource templates: mcp-go has no per-template delete; we merge via AddResourceTemplates.
-	// Removed upstream templates may remain until broker-level reconcile — see design doc.
+	// resource templates: broker calls SetResourceTemplates with the merged view from
+	// every upstream manager so removals propagate (see scheduleTemplateReconcile).
 	templates, templateErr := man.getResourceTemplates(ctx)
 	if templateErr != nil {
 		return resourceCount, 0, fmt.Errorf("upstream mcp failed to list resource templates server %s : %w", man.MCP.ID(), templateErr)
 	}
+	serverTemplates := make([]server.ServerResourceTemplate, 0, len(templates))
+	for i := range templates {
+		serverTemplates = append(serverTemplates, man.templateToServerTemplate(templates[i]))
+	}
 	man.resourcesLock.Lock()
 	man.resourceTemplates = templates
+	man.serverResourceTemplates = serverTemplates
 	templateCount := len(templates)
 	man.resourcesLock.Unlock()
-	if len(templates) > 0 {
-		serverTemplates := make([]server.ServerResourceTemplate, 0, len(templates))
-		for i := range templates {
-			serverTemplates = append(serverTemplates, man.templateToServerTemplate(templates[i]))
-		}
-		man.gatewayResources.AddResourceTemplates(serverTemplates...)
-	}
+	man.scheduleTemplateReconcile()
 	return resourceCount, templateCount, nil
+}
+
+func (man *MCPManager) scheduleTemplateReconcile() {
+	if man.gatewayResources == nil {
+		return
+	}
+	if man.reconcileGatewayTemplates != nil {
+		man.reconcileGatewayTemplates()
+		return
+	}
+	tpl := man.ExportFederatedResourceTemplates()
+	man.gatewayResources.SetResourceTemplates(tpl...)
+}
+
+// ExportFederatedResourceTemplates returns a copy of federated templates last synced from upstream.
+func (man *MCPManager) ExportFederatedResourceTemplates() []server.ServerResourceTemplate {
+	man.resourcesLock.RLock()
+	defer man.resourcesLock.RUnlock()
+	out := make([]server.ServerResourceTemplate, len(man.serverResourceTemplates))
+	copy(out, man.serverResourceTemplates)
+	return out
 }
 
 func (man *MCPManager) shouldFetchTools(event eventType) bool {
@@ -752,27 +785,16 @@ func (man *MCPManager) diffResources(oldResources, newResources []mcp.Resource) 
 	return added, removed
 }
 
-// findResourceConflicts is the resource counterpart to findToolConflicts but is
-// intentionally a stub in this PR.
-//
-// Tool conflict detection works because mcp-go's *server.MCPServer exposes a public
-// ListTools(); the manager walks it and compares against the candidate set's prefixed
-// names. mcp-go has no equivalent ListResources() on the server — see the same
-// discussion in prompts-federation.md — so cross-manager URI conflict detection
-// must live at the broker layer, which has visibility into every manager's
-// servedResourcesMap. The follow-up PR that adds JWT-based resource authorization
-// will introduce broker.findResourceConflicts as part of broker.OnConfigChange's
-// validation pass, mirroring the prompts plan.
-//
-// In the single-manager and unique-prefix-per-manager cases (the common case) no
-// federated URI collision is possible because the prefix uniquely identifies the
-// owning server. Operators who reuse a prefix across registrations and trip a true
-// collision will see the symptom as a non-deterministic backend selection by
-// GetServerInfoByResourceURI. The design doc calls this out under URI Namespacing
-// → Conflict detection.
+// findResourceConflicts rejects federated URIs already registered by another upstream manager.
 func (man *MCPManager) findResourceConflicts(candidates []server.ServerResource) error {
-	_ = candidates
-	return nil
+	if man.resourceConflictCheck == nil || len(candidates) == 0 {
+		return nil
+	}
+	uris := make([]string, len(candidates))
+	for i := range candidates {
+		uris[i] = candidates[i].Resource.URI
+	}
+	return man.resourceConflictCheck(man.MCP.ID(), uris)
 }
 
 // GetManagedResources returns a copy of all resources discovered from the upstream
@@ -810,7 +832,6 @@ func (man *MCPManager) SetResourcesForTesting(resources []mcp.Resource) {
 
 func (man *MCPManager) removeAllResources() {
 	man.resourcesLock.Lock()
-	defer man.resourcesLock.Unlock()
 	if man.gatewayResources != nil && len(man.serverResources) > 0 {
 		urisToRemove := make([]string, 0, len(man.serverResources))
 		for _, r := range man.serverResources {
@@ -822,7 +843,8 @@ func (man *MCPManager) removeAllResources() {
 	man.resources = []mcp.Resource{}
 	man.resourcesMap = map[string]*mcp.Resource{}
 	man.servedResourcesMap = map[string]*mcp.Resource{}
-	// templates: mcp-go offers no per-template delete and we share the gateway server
-	// with sibling managers, so we do not unregister templates here (would affect siblings).
 	man.resourceTemplates = nil
+	man.serverResourceTemplates = nil
+	man.resourcesLock.Unlock()
+	man.scheduleTemplateReconcile()
 }

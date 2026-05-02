@@ -211,7 +211,9 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy,
+				m.reconcileGatewayResourceTemplates,
+				m.checkResourceURIConflicts)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
@@ -226,6 +228,37 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	}
 	m.vsLock.Unlock()
 	m.logger.Debug("Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+}
+
+func (m *mcpBrokerImpl) reconcileGatewayResourceTemplates() {
+	m.mcpLock.RLock()
+	managers := make([]*upstream.MCPManager, 0, len(m.mcpServers))
+	for _, mgr := range m.mcpServers {
+		managers = append(managers, mgr)
+	}
+	m.mcpLock.RUnlock()
+
+	var merged []server.ServerResourceTemplate
+	for _, mgr := range managers {
+		merged = append(merged, mgr.ExportFederatedResourceTemplates()...)
+	}
+	m.listeningMCPServer.SetResourceTemplates(merged...)
+}
+
+func (m *mcpBrokerImpl) checkResourceURIConflicts(owner config.UpstreamMCPID, federatedURIs []string) error {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	for _, uri := range federatedURIs {
+		for id, mgr := range m.mcpServers {
+			if id == owner {
+				continue
+			}
+			if mgr.GetServedManagedResource(uri) != nil {
+				return fmt.Errorf("federated resource URI %q already registered by upstream %s", uri, id)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {

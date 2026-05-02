@@ -11,7 +11,7 @@ This document deliberately mirrors [prompts-federation.md](prompts-federation.md
 - Federate resources from multiple upstream MCP servers through a single gateway endpoint
 - Federate resource **templates** alongside concrete resources
 - Reuse the existing per-server prefix (`toolPrefix`, slated to be renamed to `prefix` in [#842](https://github.com/Kuadrant/mcp-gateway/pull/842)) as a URI-scheme prefix for resources — no new CRD fields
-- Document collision semantics: different `toolPrefix` values guarantee distinct federated URIs; duplicate-prefix misconfiguration is detectable for tools today but **resource collision detection is deferred** (manager stub — see [Conflict detection](#conflict-detection))
+- Document collision semantics: different `toolPrefix` values guarantee distinct federated URIs; duplicate-prefix overlap on the **same federated resource URI** is rejected via **`findResourceConflicts`** and broker **`checkResourceURIConflicts`** (same intent as tool conflicts — see [Conflict detection](#conflict-detection))
 - Surface a `status.discoveredResources` counter on `MCPServerRegistration` and an aggregate `totalResources` per server on the broker `/status` endpoint
 - Strip gateway-internal `_meta` (`kuadrant/id`) from federated resources before they reach clients
 
@@ -58,13 +58,11 @@ The scheme-plus strategy is the only option that is RFC-conformant, scheme-agnos
 
 Two backends with **different prefixes** cannot collide on federated URIs (the rewritten scheme differs).
 
-For **duplicate-prefix** registrations exposing the same upstream URI, tools fail fast today via `findToolConflicts`. Resources do **not** yet: `MCPManager.findResourceConflicts` is intentionally a **stub** that always returns `nil` because mcp-go exposes no `ListResources()` on the listening `server.MCPServer`, so the manager cannot walk the gateway’s aggregated resource view the way it does for tools. A follow-up will add broker-side validation (mirroring the prompts plan) during config reconciliation.
-
-Until then, duplicate-prefix + duplicate upstream URI yields **non-deterministic** routing in `GetServerInfoByResourceURI` (whichever manager wins the map lookup). Operators should keep prefixes unique per upstream registration.
+For **duplicate-prefix** registrations exposing the same federated URI as resources already served by another upstream, **`findResourceConflicts`** consults the broker: each manager registers candidates against **`checkResourceURIConflicts`**, which scans sibling managers’ `servedResourcesMap` keys before `AddResources` runs — analogous spirit to **`findToolConflicts`** / `ListTools()` on tools.
 
 #### Resource templates on the shared gateway server
 
-Concrete resources use `AddResources` / `DeleteResources`, so removals propagate. **Resource templates** use `AddResourceTemplates`, which in mcp-go is **merge-only** — there is no public per-template delete. When an upstream **drops** a template, or returns an **empty** template list after previously publishing templates, stale federated templates can remain on the gateway until a broader reconcile exists (for example a broker-owned `SetResourceTemplates` merge across all managers) or the process restarts. Same limitation applies when `removeAllResources` runs: templates are deliberately **not** cleared because sibling managers share the listening server. This PR documents the gap; fixing it cleanly is follow-up work tied to mcp-go API or a broker-level aggregate.
+Concrete resources use `AddResources` / `DeleteResources`, so removals propagate. **Templates**: each upstream manager stores its federated `ServerResourceTemplate` slice locally; after every refresh or teardown it notifies the broker’s **`reconcileGatewayResourceTemplates`**, which merges all upstream snapshots and calls **`SetResourceTemplates(...)`** on the listening `server.MCPServer`. That replaces the entire gateway template registry every reconcile so upstream removals disappear exactly like concrete resources (see mcp-go `SetResourceTemplates`).
 
 ### Architecture Changes
 
@@ -128,19 +126,21 @@ Add `ListResources()`, `ListResourceTemplates()`, `ReadResource()`, and `Support
 
 #### MCPManager (`internal/broker/upstream/manager.go`)
 
-Add a `ResourcesAdderDeleter` interface mirroring `ToolsAdderDeleter`. The mcp-go `server.MCPServer` implements `AddResources()`/`DeleteResources()` for concrete resources and `AddResourceTemplates()` for templates (**additive**; no delete — see [Resource templates](#resource-templates-on-the-shared-gateway-server)), so the broker's listening server satisfies this interface.
+Add a `ResourcesAdderDeleter` interface mirroring tools resource mutation (`AddResources`, `DeleteResources`, `AddResourceTemplates`, `SetResourceTemplates`). The mcp-go `server.MCPServer` satisfies it.
 
-> **Note**: mcp-go does **not** expose a public `ListResources()` on the server (matching the prompts gap noted in [prompts-federation.md](prompts-federation.md)). The manager maintains its own `resourcesMap` and `servedResourcesMap` for lookups, the same way it does for tools.
+> **Note**: mcp-go does **not** expose a public `ListResources()` on the server for reads (matching the prompts gap noted in [prompts-federation.md](prompts-federation.md)). The manager maintains its own `resourcesMap` and `servedResourcesMap`; **`findResourceConflicts`** delegates cross-manager checks to the broker callback described above.
 
-The manager gets resource-parallel versions of the existing tool methods: discovery (`getResources`, `getResourceTemplates`), URI prefixing (`resourceToServerResource`, `templateToServerTemplate`, `prefixedURI`), diffing (`diffResources`), a **stub** `findResourceConflicts` (always accepts), and cleanup (`removeAllResources`). Concrete-resource add/remove matches tools; template federation is additive-only per the mcp-go limitation above.
+The manager gets resource-parallel discovery (`getResources`, `getResourceTemplates`), URI prefixing (`resourceToServerResource`, `templateToServerTemplate`, `prefixedURI`), diffing (`diffResources`), **`findResourceConflicts`**, cleanup (`removeAllResources`), and **`scheduleTemplateReconcile`** so templates stay aligned via **`SetResourceTemplates`**.
 
 The `manage()` loop is extended to discover resources after tools, and `registerCallbacks()` adds a handler for `notifications/resources/list_changed` (re-discovery only; not yet forwarded to clients — see Non-Goals). Status reporting adds `TotalResources`.
 
+The manager constructor receives the listening server as both `ToolsAdderDeleter` and `ResourcesAdderDeleter`.
+
 #### Broker (`internal/broker/broker.go`)
 
-Enable `server.WithResourceCapabilities(false, false)` on the listening MCP server (subscribe and listChanged set to `false` until those follow-ups land). Register `AddAfterListResources` and `AddAfterListResourceTemplates` hooks that strip `kuadrant/id` from each resource's `_meta` before returning to clients. Add `GetServerInfoByResourceURI(uri string)` to the `MCPBroker` interface — same pattern as `GetServerInfo()` for tools, searching managers by federated URI.
+Implements **`reconcileGatewayResourceTemplates`** (merge all managers → **`listeningMCPServer.SetResourceTemplates`**) and **`checkResourceURIConflicts`** wired into each `NewUpstreamMCPManager`.
 
-The manager constructor receives the listening server as both `ToolsAdderDeleter` and `ResourcesAdderDeleter`.
+Enable `server.WithResourceCapabilities(false, false)` on the listening MCP server (subscribe and listChanged set to `false` until those follow-ups land). Register `AddAfterListResources` and `AddAfterListResourceTemplates` hooks that strip `kuadrant/id` from each resource's `_meta` before returning to clients. Add `GetServerInfoByResourceURI(uri string)` to the `MCPBroker` interface — same pattern as `GetServerInfo()` for tools, searching managers by federated URI.
 
 #### Router (`internal/mcp-router/`)
 
@@ -177,11 +177,12 @@ There is no client-facing API change beyond `resources/list`/`resources/read` re
     - `removeGatewayMetaResources` strips `kuadrant/id` and tolerates nil meta
     - Router `ResourceURI()` extraction, `HandleResourceRead` happy path, prefix strip, missing URI, unknown URI
     - `HeadersBuilder.WithMCPResourceURI`
-    - Regression: `upstream.MCPServer.GetConfig()` propagates all federated fields (we have been bitten by shallow copies before)
+    - `findResourceConflicts` / broker `checkResourceURIConflicts` duplicate federated URI
+    - Template reconcile (`scheduleTemplateReconcile` → `SetResourceTemplates`)
 - **E2E** (`tests/e2e/test_cases.md`):
     - List federated resources from two backends with different prefixes; verify both appear with prefixed schemes
     - Read a federated resource end-to-end and verify the upstream sees the unprefixed URI
-    - (Follow-up once broker-side `findResourceConflicts` exists) two backends sharing a prefix that collide on the same upstream URI; verify conflict status
+    - Two backends sharing a prefix that advertise the same concrete federated resource URI; verify the second registration fails resource discovery / surfaces conflict (parity with tool conflicts where applicable)
 
 ## References
 

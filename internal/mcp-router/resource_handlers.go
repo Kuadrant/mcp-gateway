@@ -2,6 +2,7 @@ package mcprouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -10,7 +11,6 @@ import (
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // HandleResourceRead routes a resources/read request to the upstream that owns
@@ -23,19 +23,22 @@ import (
 func (s *ExtProcServer) HandleResourceRead(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
 	federatedURI := mcpReq.ResourceURI()
 
-	ctx, span := tracer().Start(ctx, "mcp-router.resource-read",
-		trace.WithAttributes(
+	ctx, span := tracer().Start(ctx, "mcp-router.resource-read")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
 			attribute.String("mcp.resource.uri", federatedURI),
 			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
-		),
-	)
-	defer span.End()
+		)
+	}
 
 	calculatedResponse := NewResponse()
 	if federatedURI == "" {
 		s.Logger.ErrorContext(ctx, "[EXT-PROC] HandleRequestBody no uri set in resources/read")
 		span.SetStatus(codes.Error, "no resource uri set")
-		span.SetAttributes(attribute.String("error.type", "missing_resource_uri"))
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("error.type", "missing_resource_uri"))
+		}
 		calculatedResponse.WithImmediateResponse(400, "no resource uri set")
 		return calculatedResponse.Build()
 	}
@@ -43,7 +46,9 @@ func (s *ExtProcServer) HandleResourceRead(ctx context.Context, mcpReq *MCPReque
 		s.Logger.ErrorContext(ctx, "session validation failed", "session", mcpReq.GetSessionID(), "error", sessionErr)
 		span.RecordError(sessionErr)
 		span.SetStatus(codes.Error, sessionErr.Error())
-		span.SetAttributes(attribute.String("error.type", "invalid_session"))
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("error.type", "invalid_session"))
+		}
 		calculatedResponse.WithImmediateResponse(sessionErr.Code(), sessionErr.Error())
 		return calculatedResponse.Build()
 	}
@@ -51,11 +56,10 @@ func (s *ExtProcServer) HandleResourceRead(ctx context.Context, mcpReq *MCPReque
 	headers := NewHeaders()
 	var serverInfo *config.MCPServer
 	{
-		_, infoSpan := tracer().Start(ctx, "mcp-router.broker.get-server-info-by-resource",
-			trace.WithAttributes(
-				attribute.String("mcp.resource.uri", federatedURI),
-			),
-		)
+		_, infoSpan := tracer().Start(ctx, "mcp-router.broker.get-server-info-by-resource")
+		if infoSpan.IsRecording() {
+			infoSpan.SetAttributes(attribute.String("mcp.resource.uri", federatedURI))
+		}
 		var infoErr error
 		serverInfo, infoErr = s.Broker.GetServerInfoByResourceURI(federatedURI)
 		if infoErr != nil {
@@ -67,29 +71,30 @@ func (s *ExtProcServer) HandleResourceRead(ctx context.Context, mcpReq *MCPReque
 			s.Logger.DebugContext(ctx, "no server for resource", "uri", federatedURI)
 			span.RecordError(infoErr)
 			span.SetStatus(codes.Error, "resource not found")
-			span.SetAttributes(attribute.String("error.type", "resource_not_found"))
-			// JSON-RPC application error -32002 = "Resource not found" per MCP spec.
-			// Returned as an SSE message so the framing matches what the broker would produce.
+			if span.IsRecording() {
+				span.SetAttributes(attribute.String("error.type", "resource_not_found"))
+			}
+			sseBody := buildResourceNotFoundSSEBody(mcpReq.ID)
 			calculatedResponse.WithImmediateJSONRPCResponse(200,
 				[]*corev3.HeaderValueOption{
 					{
 						Header: &corev3.HeaderValue{
-							Key:   "mcp-session-id",
-							Value: mcpReq.GetSessionID(),
+							Key:      "mcp-session-id",
+							RawValue: []byte(mcpReq.GetSessionID()),
 						},
 					},
 				},
-				`
-event: message
-data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},"jsonrpc":"2.0"}`)
+				sseBody)
 			return calculatedResponse.Build()
 		}
 	}
 
-	span.SetAttributes(
-		attribute.String("mcp.server", serverInfo.Name),
-		attribute.String("mcp.server.hostname", serverInfo.Hostname),
-	)
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("mcp.server", serverInfo.Name),
+			attribute.String("mcp.server.hostname", serverInfo.Hostname),
+		)
+	}
 
 	// strip "<prefix>+" from the URI scheme. CutPrefix on "<prefix>+" works
 	// because prefixedURI in the broker (see internal/broker/upstream/manager.go)
@@ -117,7 +122,9 @@ data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},
 		s.Logger.ErrorContext(ctx, "failed to get session from cache", "error", cacheErr)
 		span.RecordError(cacheErr)
 		span.SetStatus(codes.Error, "session cache error")
-		span.SetAttributes(attribute.String("error.type", "session_cache_error"))
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("error.type", "session_cache_error"))
+		}
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}
@@ -138,7 +145,9 @@ data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},
 			s.Logger.ErrorContext(ctx, "failed to get remote mcp server session id ", "error ", initErr)
 			span.RecordError(initErr)
 			span.SetStatus(codes.Error, "session initialization failed")
-			span.SetAttributes(attribute.String("error.type", "session_init_error"))
+			if span.IsRecording() {
+				span.SetAttributes(attribute.String("error.type", "session_init_error"))
+			}
 			return calculatedResponse.Build()
 		}
 		remoteMCPSeverSession = id
@@ -152,7 +161,9 @@ data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},
 		s.Logger.ErrorContext(ctx, "failed to marshal body to bytes ", "error ", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "body marshal failed")
-		span.SetAttributes(attribute.String("error.type", "marshal_error"))
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("error.type", "marshal_error"))
+		}
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}
@@ -161,7 +172,9 @@ data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},
 		s.Logger.ErrorContext(ctx, "failed to parse url for backend ", "error ", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "path parse failed")
-		span.SetAttributes(attribute.String("error.type", "path_parse_error"))
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("error.type", "path_parse_error"))
+		}
 		calculatedResponse.WithImmediateResponse(500, "internal error")
 		return calculatedResponse.Build()
 	}
@@ -174,4 +187,20 @@ data: {"error":{"code":-32002,"message":"MCP error -32002: Resource not found"},
 	}
 	calculatedResponse.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
 	return calculatedResponse.Build()
+}
+
+func buildResourceNotFoundSSEBody(id any) string {
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    -32002,
+			"message": "MCP error -32002: Resource not found",
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "event: message\ndata: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"MCP error -32002: Resource not found\"}}\n\n"
+	}
+	return "event: message\ndata: " + string(b) + "\n\n"
 }

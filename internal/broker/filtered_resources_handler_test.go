@@ -84,7 +84,7 @@ func TestGetServerInfoByResourceURI(t *testing.T) {
 		URL:        "http://weather.local/mcp",
 	}
 	weather := upstream.NewUpstreamMCP(weatherCfg)
-	weatherMgr := upstream.NewUpstreamMCPManager(weather, nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	weatherMgr := upstream.NewUpstreamMCPManager(weather, nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 	weatherMgr.SetResourcesForTesting([]mcp.Resource{
 		{URI: "file:///forecast.json", Name: "forecast"},
 	})
@@ -95,7 +95,7 @@ func TestGetServerInfoByResourceURI(t *testing.T) {
 		URL:        "http://other.local/mcp",
 	}
 	other := upstream.NewUpstreamMCP(otherCfg)
-	otherMgr := upstream.NewUpstreamMCPManager(other, nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	otherMgr := upstream.NewUpstreamMCPManager(other, nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut, nil, nil)
 	otherMgr.SetResourcesForTesting([]mcp.Resource{
 		{URI: "file:///config.json", Name: "config"},
 	})

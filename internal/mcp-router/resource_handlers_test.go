@@ -209,4 +209,5 @@ func TestHandleResourceRead_UnknownURIReturnsJSONRPCError(t *testing.T) {
 	body := string(ir.ImmediateResponse.Body)
 	require.Contains(t, body, `"code":-32002`)
 	require.Contains(t, body, "Resource not found")
+	require.Contains(t, body, `"id":1`)
 }
