@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -575,6 +577,104 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			}
 			g.Expect(foundNewTool).To(BeTrueBecause("the dynamically added tool %s should be in the tools list", dynamicToolName))
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should deliver progress notifications without buffering for concurrent slow tools", func() {
+		By("Registering server1 which has the slow tool")
+		registration := NewMCPServerResourcesWithDefaults("concurrent-progress-test", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).Error().NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating two clients with progress notification handlers that record arrival timestamps")
+		var mu sync.Mutex
+		var start time.Time
+		client1Notifs := []time.Duration{}
+		client2Notifs := []time.Duration{}
+
+		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(n mcp.JSONRPCNotification) {
+			if n.Method == "notifications/progress" {
+				mu.Lock()
+				client1Notifs = append(client1Notifs, time.Since(start))
+				mu.Unlock()
+				GinkgoWriter.Println("client 1 received progress notification at", time.Since(start))
+			}
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer client1.Close()
+
+		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(n mcp.JSONRPCNotification) {
+			if n.Method == "notifications/progress" {
+				mu.Lock()
+				client2Notifs = append(client2Notifs, time.Since(start))
+				mu.Unlock()
+				GinkgoWriter.Println("client 2 received progress notification at", time.Since(start))
+			}
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer client2.Close()
+
+		slowToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "slow")
+		const toolDurationSeconds = 4
+
+		By("Calling slow tool on both clients concurrently with progress tokens")
+		start = time.Now()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			res, callErr := client1.CallTool(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Name:      slowToolName,
+					Arguments: map[string]any{"seconds": toolDurationSeconds},
+					Meta:      &mcp.Meta{ProgressToken: "client1-token"},
+				},
+			})
+			Expect(callErr).NotTo(HaveOccurred())
+			Expect(res).NotTo(BeNil())
+		}()
+		go func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			res, callErr := client2.CallTool(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{
+					Name:      slowToolName,
+					Arguments: map[string]any{"seconds": toolDurationSeconds},
+					Meta:      &mcp.Meta{ProgressToken: "client2-token"},
+				},
+			})
+			Expect(callErr).NotTo(HaveOccurred())
+			Expect(res).NotTo(BeNil())
+		}()
+		wg.Wait()
+
+		By("Verifying both clients received multiple progress notifications during execution")
+		mu.Lock()
+		defer mu.Unlock()
+
+		Expect(len(client1Notifs)).To(BeNumerically(">=", 2), "client1 should have received multiple progress notifications")
+		Expect(len(client2Notifs)).To(BeNumerically(">=", 2), "client2 should have received multiple progress notifications")
+
+		// proving "not buffered": at least one notification must arrive well before the tool finishes.
+		// the slow tool emits one notification per second; if delivery were buffered until completion
+		// the first notification would land at or after toolDurationSeconds.
+		bufferingThreshold := time.Duration(toolDurationSeconds-1) * time.Second
+		Expect(client1Notifs[0]).To(BeNumerically("<", bufferingThreshold),
+			"client1 first progress notification should arrive before the tool completes (got %v)", client1Notifs[0])
+		Expect(client2Notifs[0]).To(BeNumerically("<", bufferingThreshold),
+			"client2 first progress notification should arrive before the tool completes (got %v)", client2Notifs[0])
 	})
 
 	// Note this is a complex test as it scales up and down the server. It can take quite a while to run.
