@@ -241,6 +241,12 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 // HandleToolCall will handle an MCP Tool Call
 func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
 	toolName := mcpReq.ToolName()
+	//  Audit metadata headers
+passThroughHeaders := map[string]string{
+    "x-mcp-toolname": toolName,
+    "x-mcp-method":   mcpReq.Method,
+    "x-mcp-session":  mcpReq.GetSessionID(),
+}
 
 	ctx, span := tracer().Start(ctx, "mcp-router.tool-call",
 		trace.WithAttributes(
