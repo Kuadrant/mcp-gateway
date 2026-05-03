@@ -1,5 +1,9 @@
 name: Performance Tests
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -83,8 +87,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mcp-performance-reports
+          # Include both k6 metrics and generated report summaries
           path: |
-            # Include both k6 metrics and generated report summaries
             out/perf/
             tests/perf/results/
           if-no-files-found: warn
