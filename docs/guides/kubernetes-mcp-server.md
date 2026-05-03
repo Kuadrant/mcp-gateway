@@ -14,25 +14,20 @@ In this use case, the Kubernetes MCP server does not handle authentication for t
 
 ### ❶ Run the Kubernetes MCP server
 
-First, clone and build the Kubernetes MCP server:
+You can run the Kubernetes MCP server as a container. It needs access to your `.kube/config` to interact with Kubernetes clusters.
 
 ```sh
-git clone https://github.com/containers/kubernetes-mcp-server.git
-cd kubernetes-mcp-server
-make build
+docker run -d --name kubernetes-mcp \
+  -p 9999:9999 \
+  -v ~/.kube/config:/root/.kube/config:ro \
+  quay.io/containers/kubernetes_mcp_server:latest --port 9999
 ```
 
-Run the MCP server (for example, on port 9999):
-
-```sh
-./kubernetes-mcp-server --port 9999
-```
-
-> **Note:** If running locally and connecting from a cluster, ensure the port is accessible (e.g., using a tunnel or host-to-cluster networking).
+> **Note:** If you prefer to run it as a binary, you can download it from the [releases page](https://github.com/containers/kubernetes-mcp-server/releases).
 
 ### ❸ Register the MCP server with the MCP Gateway
 
-Add a dedicated gateway listener for the MCP server. Replace `<HOST_IP_OR_HOSTNAME>` with the address where the Kubernetes MCP server is reachable from the cluster (e.g., `host.docker.internal` for Docker Desktop/Kind):
+Add a dedicated gateway listener for the MCP server. Replace `<HOST_IP_OR_HOSTNAME>` with the address where the Kubernetes MCP server is reachable from the cluster (e.g., `host.docker.internal` for local development environments):
 
 ```sh
 export SERVER_HOST="<HOST_IP_OR_HOSTNAME>"
@@ -56,14 +51,14 @@ kubectl patch gateway mcp-gateway -n gateway-system --type json -p="[
 ]"
 ```
 
-Create a route, external service and `MCPServerRegistration` custom resource:
+Create a route, external service, and `MCPServerRegistration` custom resource. If you are using Istio as your Gateway API provider, also include the `ServiceEntry`:
 
-```yaml
+```sh
+kubectl apply -n mcp-test -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: kubernetes-mcp
-  namespace: mcp-test
 spec:
   parentRefs:
   - group: gateway.networking.k8s.io
@@ -87,7 +82,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kubernetes-mcp-external
-  namespace: mcp-test
 spec:
   type: ExternalName
   externalName: "<HOST_IP_OR_HOSTNAME>"
@@ -98,17 +92,31 @@ spec:
     protocol: TCP
     appProtocol: http
 ---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: kubernetes-mcp
+spec:
+  hosts:
+  - "<HOST_IP_OR_HOSTNAME>"
+  ports:
+  - number: 9999
+    name: http
+    protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
   name: kubernetes-mcp-server
-  namespace: mcp-test
 spec:
   toolPrefix: kube_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: kubernetes-mcp
+EOF
 ```
 
 To verify the setup, you can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector). Connect the inspector to your MCP Gateway endpoint (e.g., `http://mcp.example.com/mcp`).
