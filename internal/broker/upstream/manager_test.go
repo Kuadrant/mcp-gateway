@@ -335,7 +335,7 @@ func TestMCPManager_setStatus(t *testing.T) {
 			manager := NewUpstreamMCPManager(mock, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			manager.serverTools = make([]server.ServerTool, tc.numServerTools)
 
-			manager.setStatus(tc.err, tc.totalTools, nil)
+			manager.setStatus(tc.err, "TestReason", tc.totalTools, nil)
 
 			assert.Equal(t, string(mock.id), manager.status.ID)
 			assert.Equal(t, "test-server", manager.status.Name)
@@ -985,4 +985,66 @@ func TestMCPManager_manage_AllValidTools(t *testing.T) {
 	assert.Equal(t, 0, status.InvalidTools)
 	assert.Empty(t, status.InvalidToolList)
 	assert.Len(t, gateway.tools, 2)
+}
+
+func TestMCPManager_manage_DisabledReEnabled(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasToolsCap = false
+	gateway := newMockToolsAdderDeleter()
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+
+	// 1. Start as Enabled
+	manager.manage(context.Background(), eventTypeTimer)
+	status := manager.GetStatus()
+	assert.True(t, status.Ready)
+	assert.Equal(t, 1, status.TotalTools)
+	assert.Len(t, gateway.tools, 1)
+
+	// 2. Disable the server
+	mock.cfg.State = config.MCPServerStateDisabled
+	manager.manage(context.Background(), eventTypeTimer)
+	status = manager.GetStatus()
+	assert.False(t, status.Ready)
+	assert.Equal(t, "Disabled", status.Reason)
+	assert.Equal(t, "mcp server is disabled", status.Message)
+	assert.Len(t, gateway.tools, 0, "tools should be removed when disabled")
+	assert.False(t, mock.connected, "should be disconnected when disabled")
+
+	// 3. Re-enable the server
+	mock.cfg.State = config.MCPServerStateEnabled
+	manager.manage(context.Background(), eventTypeTimer)
+	status = manager.GetStatus()
+	assert.True(t, status.Ready)
+	assert.Equal(t, "Ready", status.Reason)
+	assert.Equal(t, 1, status.TotalTools)
+	assert.Len(t, gateway.tools, 1, "tools should be re-added when enabled")
+	assert.True(t, mock.connected, "should be re-connected when enabled")
+}
+
+func TestMCPManager_manage_InitialDisabled(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.cfg.State = config.MCPServerStateDisabled
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasToolsCap = false
+	gateway := newMockToolsAdderDeleter()
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+
+	// Start as Disabled
+	manager.manage(context.Background(), eventTypeTimer)
+	status := manager.GetStatus()
+	assert.False(t, status.Ready)
+	assert.Equal(t, "Disabled", status.Reason)
+	assert.Len(t, gateway.tools, 0)
+	assert.False(t, mock.connected)
+
+	// Re-enable
+	mock.cfg.State = config.MCPServerStateEnabled
+	manager.manage(context.Background(), eventTypeTimer)
+	status = manager.GetStatus()
+	assert.True(t, status.Ready)
+	assert.Equal(t, 1, status.TotalTools)
+	assert.True(t, mock.connected)
 }

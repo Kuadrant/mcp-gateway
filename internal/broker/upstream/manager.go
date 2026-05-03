@@ -49,6 +49,7 @@ type ServerValidationStatus struct {
 	LastValidated   time.Time         `json:"lastValidated"`
 	Message         string            `json:"message"`
 	Ready           bool              `json:"ready"`
+	Reason          string            `json:"reason"`
 	TotalTools      int               `json:"totalTools"`
 	InvalidTools    int               `json:"invalidTools"`
 	InvalidToolList []InvalidToolInfo `json:"invalidToolList,omitempty"`
@@ -187,10 +188,14 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	var numberOfTools = 0
 
 	if man.MCP.GetConfig().State != config.MCPServerStateEnabled {
+		if man.status.Reason == "Disabled" {
+			// already disabled, nothing to do
+			return
+		}
 		man.logger.Info("mcp server is disabled", "upstream mcp server", man.MCP.ID())
 		man.removeAllTools()
 		_ = man.MCP.Disconnect()
-		man.setStatus(fmt.Errorf("mcp server is disabled"), 0, nil)
+		man.setStatus(fmt.Errorf("mcp server is disabled"), "Disabled", 0, nil)
 		return
 	}
 
@@ -201,7 +206,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.removeAllTools()
 		// we call disconnect here as we may have connected but failed to initialize
 		_ = man.MCP.Disconnect()
-		man.setStatus(err, numberOfTools, nil)
+		man.setStatus(err, "ConnectionError", numberOfTools, nil)
 		return
 	}
 	// there may be an active client so we also ping
@@ -211,7 +216,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.Error("ping failed", "upstream mcp server", man.MCP.ID(), "error", err)
 		man.removeAllTools()
 		_ = man.MCP.Disconnect()
-		man.setStatus(err, numberOfTools, nil)
+		man.setStatus(err, "PingError", numberOfTools, nil)
 		return
 	}
 
@@ -225,7 +230,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	if err != nil {
 		err = fmt.Errorf("upstream mcp failed to list tools server %s : %w", man.MCP.ID(), err)
 		man.logger.Error("failed to list tools", "upstream mcp server", man.MCP.ID(), "error", err)
-		man.setStatus(err, numberOfTools, nil)
+		man.setStatus(err, "FetchToolsError", numberOfTools, nil)
 		return
 	}
 
@@ -239,7 +244,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		if man.invalidToolPolicy == mcpv1alpha1.InvalidToolPolicyRejectServer {
 			err = fmt.Errorf("upstream mcp %s rejected: %d invalid tools found", man.MCP.ID(), len(invalidTools))
 			man.removeAllTools()
-			man.setStatus(err, numberOfTools, invalidTools)
+			man.setStatus(err, "FetchToolsError", numberOfTools, invalidTools)
 			return
 		}
 		// FilterOut: use only valid tools
@@ -251,7 +256,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	if err := man.findToolConflicts(toAdd); err != nil {
 		err = fmt.Errorf("upstream mcp failed to add tools to gateway %s : %w", man.MCP.ID(), err)
 		man.logger.Error("tool conflict detected", "upstream mcp server", man.MCP.ID(), "error", err)
-		man.setStatus(err, numberOfTools, invalidTools)
+		man.setStatus(err, "ConnectionError", numberOfTools, invalidTools)
 		return
 	}
 	man.toolsLock.Lock()
@@ -282,7 +287,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.serverTools = append(man.serverTools, toAdd...)
 	man.logger.Debug("internal tools", "upstream mcp server", man.MCP.ID(), "total", len(man.serverTools))
 	man.toolsLock.Unlock()
-	man.setStatus(nil, numberOfTools, invalidTools)
+	man.setStatus(nil, "Ready", numberOfTools, invalidTools)
 }
 
 func (man *MCPManager) shouldFetchTools(event eventType) bool {
@@ -304,7 +309,7 @@ func (man *MCPManager) GetStatus() ServerValidationStatus {
 	return man.status
 }
 
-func (man *MCPManager) setStatus(err error, toolCount int, invalidTools []InvalidToolInfo) {
+func (man *MCPManager) setStatus(err error, reason string, toolCount int, invalidTools []InvalidToolInfo) {
 	man.status.ID = string(man.MCP.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()
@@ -313,10 +318,12 @@ func (man *MCPManager) setStatus(err error, toolCount int, invalidTools []Invali
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
+		man.status.Reason = reason
 		return
 	}
 	man.status.TotalTools = toolCount
 	man.status.Ready = true
+	man.status.Reason = reason
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d", len(man.serverTools))
 }
 
