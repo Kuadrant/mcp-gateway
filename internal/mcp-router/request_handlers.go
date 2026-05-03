@@ -241,12 +241,6 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 // HandleToolCall will handle an MCP Tool Call
 func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
 	toolName := mcpReq.ToolName()
-	//  Audit metadata headers
-	passThroughHeaders := map[string]string{
-		"x-mcp-toolname": toolName,
-		"x-mcp-method":   mcpReq.Method,
-		"x-mcp-session":  mcpReq.GetSessionID(),
-	}
 
 	ctx, span := tracer().Start(ctx, "mcp-router.tool-call",
 		trace.WithAttributes(
@@ -533,9 +527,19 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			}
 		}
 		// ensure these gateway heades are set
-		passThroughHeaders["x-mcp-method"] = mcpReq.Method
-		passThroughHeaders["x-mcp-servername"] = mcpReq.serverName
-		passThroughHeaders["x-mcp-toolname"] = mcpReq.ToolName()
+		toolName := mcpReq.ToolName()
+
+		if toolName != "" {
+			passThroughHeaders["x-mcp-toolname"] = toolName
+		}
+
+		if mcpReq.Method != "" {
+			passThroughHeaders["x-mcp-method"] = mcpReq.Method
+		}
+
+		if sessionID := mcpReq.GetSessionID(); sessionID != "" {
+			passThroughHeaders["x-mcp-session"] = sessionID
+		}
 		passThroughHeaders["user-agent"] = "mcp-router"
 	}
 	s.Logger.DebugContext(ctx, "initializing target as no mcp-session-id found for client", "server ", mcpReq.serverName, "with passthrough headers", passThroughHeaders)
