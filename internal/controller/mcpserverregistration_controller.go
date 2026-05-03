@@ -377,13 +377,17 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 	}
 
 	serverName := mcpServerName(mcpsr)
+	state := mcpsr.Spec.State
+	if state == "" {
+		state = mcpv1alpha1.MCPServerStateEnabled
+	}
+
 	serverConfig := config.MCPServer{
 		Name:       serverName,
 		URL:        serverInfo.Endpoint,
 		Hostname:   serverInfo.Hostname,
 		ToolPrefix: mcpsr.Spec.ToolPrefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		State:      state,
 	}
 
 	// add credential env var if configured

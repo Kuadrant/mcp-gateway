@@ -102,7 +102,7 @@ func newMockMCP(name, prefix string) *MockMCP {
 		name:            name,
 		prefix:          prefix,
 		id:              id,
-		cfg:             &config.MCPServer{Name: name, ToolPrefix: prefix, URL: "http://mock/mcp"},
+		cfg:             &config.MCPServer{Name: name, ToolPrefix: prefix, URL: "http://mock/mcp", State: config.MCPServerStateEnabled},
 		protocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 		hasToolsCap:     true,
 		tools:           []mcp.Tool{{Name: "mock_tool", InputSchema: mcp.ToolInputSchema{Type: "object"}}},

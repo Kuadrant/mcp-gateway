@@ -188,7 +188,7 @@ func TestHandleRequestBody(t *testing.T) {
 			Name:       "dummy",
 			URL:        "http://localhost:8080/mcp",
 			ToolPrefix: "s_",
-			Enabled:    true,
+			State:      "Enabled",
 			Hostname:   "localhost",
 		},
 	}
@@ -763,7 +763,7 @@ func TestHandleElicitationResponse(t *testing.T) {
 				Name:       "weather-server",
 				URL:        "http://weather.mcp.local:8080/mcp",
 				ToolPrefix: "weather_",
-				Enabled:    true,
+				State:      "Enabled",
 				Hostname:   "weather.mcp.local",
 			},
 		}

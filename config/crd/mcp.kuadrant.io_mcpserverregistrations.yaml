@@ -97,6 +97,13 @@ spec:
                   If not specified, defaults to "/mcp".
                   This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
                 type: string
+              state:
+                default: Enabled
+                description: State defines the lifecycle state of the MCP server
+                enum:
+                - Enabled
+                - Disabled
+                type: string
               targetRef:
                 description: |-
                   targetRef specifies an HTTPRoute that points to a backend MCP server.

@@ -185,6 +185,15 @@ func (man *MCPManager) registerCallbacks(ctx context.Context) func() {
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("managing connection", "upstream mcp server", man.MCP.ID(), "event type", event)
 	var numberOfTools = 0
+
+	if man.MCP.GetConfig().State != config.MCPServerStateEnabled {
+		man.logger.Info("mcp server is disabled", "upstream mcp server", man.MCP.ID())
+		man.removeAllTools()
+		_ = man.MCP.Disconnect()
+		man.setStatus(fmt.Errorf("mcp server is disabled"), 0, nil)
+		return
+	}
+
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.MCP.ID())
 	if err := man.MCP.Connect(ctx, man.registerCallbacks(ctx)); err != nil {

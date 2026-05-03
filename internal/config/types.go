@@ -8,6 +8,11 @@ import (
 	"sync"
 )
 
+const (
+	MCPServerStateEnabled  string = "Enabled"
+	MCPServerStateDisabled string = "Disabled"
+)
+
 // UpstreamMCPID is used as type for identifying individual upstreams
 type UpstreamMCPID string
 
@@ -63,7 +68,7 @@ type MCPServer struct {
 	ToolPrefix string      `json:"toolPrefix,omitempty" yaml:"toolPrefix,omitempty"`
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
-	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	State      string      `json:"state"                yaml:"state"`
 }
 
 // ID returns a unique id for the a registered server
@@ -77,7 +82,8 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		existingConfig.State != mcpServer.State
 }
 
 // Path returns the path part of the mcp url

@@ -4,6 +4,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	MCPServerStateEnabled  string = "Enabled"
+	MCPServerStateDisabled string = "Disabled"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
@@ -62,6 +67,11 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// State defines the lifecycle state of the MCP server
+	// +kubebuilder:validation:Enum=Enabled;Disabled
+	// +kubebuilder:default=Enabled
+	State string `json:"state,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

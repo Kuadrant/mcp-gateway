@@ -12,7 +12,7 @@ func TestNewUpstreamMCP(t *testing.T) {
 		Name:       "test-server",
 		URL:        "http://localhost:8088/mcp",
 		ToolPrefix: "",
-		Enabled:    true,
+		State:      "Enabled",
 		Hostname:   "dummy",
 	}
 	up := NewUpstreamMCP(&testServer)

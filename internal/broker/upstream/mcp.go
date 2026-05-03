@@ -46,7 +46,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Name:       up.Name,
 		URL:        up.URL,
 		ToolPrefix: up.ToolPrefix,
-		Enabled:    up.Enabled,
+		State:      up.State,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
 	}

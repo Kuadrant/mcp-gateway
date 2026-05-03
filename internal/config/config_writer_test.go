@@ -38,7 +38,7 @@ func TestUpsertMCPServer(t *testing.T) {
 		{
 			name: "creates secret if not exists",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_", Enabled: true},
+				{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_", State: "Enabled"},
 			},
 			expectedCount:  1,
 			expectedServer: MCPServer{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_"},
@@ -46,8 +46,8 @@ func TestUpsertMCPServer(t *testing.T) {
 		{
 			name: "updates existing server",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://old.local:8080/mcp", ToolPrefix: "old_", Enabled: true},
-				{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_", Enabled: true},
+				{Name: "test-server", URL: "http://old.local:8080/mcp", ToolPrefix: "old_", State: "Enabled"},
+				{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_", State: "Enabled"},
 			},
 			expectedCount:  1,
 			expectedServer: MCPServer{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_"},
@@ -55,8 +55,8 @@ func TestUpsertMCPServer(t *testing.T) {
 		{
 			name: "appends new server",
 			serversToAdd: []MCPServer{
-				{Name: "server1", URL: "http://s1.local/mcp", Enabled: true},
-				{Name: "server2", URL: "http://s2.local/mcp", Enabled: true},
+				{Name: "server1", URL: "http://s1.local/mcp", State: "Enabled"},
+				{Name: "server2", URL: "http://s2.local/mcp", State: "Enabled"},
 			},
 			expectedCount: 2,
 		},
@@ -113,8 +113,8 @@ func TestRemoveMCPServer_RemovesFromConfig(t *testing.T) {
 	namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
 
 	// insert two servers
-	server1 := MCPServer{Name: "server1", URL: "http://s1.local/mcp", Enabled: true}
-	server2 := MCPServer{Name: "server2", URL: "http://s2.local/mcp", Enabled: true}
+	server1 := MCPServer{Name: "server1", URL: "http://s1.local/mcp", State: "Enabled"}
+	server2 := MCPServer{Name: "server2", URL: "http://s2.local/mcp", State: "Enabled"}
 	if err := srw.UpsertMCPServer(ctx, server1, namespaceName); err != nil {
 		t.Fatalf("UpsertMCPServer server1 failed: %v", err)
 	}
