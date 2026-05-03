@@ -41,7 +41,7 @@ This is a technical limitation due to the complexity of implementing a fan-out a
 - Connection lifecycle management and reconnection logic for multiple fan-out connections
 - Resource overhead of maintaining many concurrent connections
 
-Progress updates are streamed as events within tool call POST responses by the mcp-go library, which naturally aligns with the client's authentication context and tool call lifecycle. Elicitation support is planned but not yet implemented.
+Progress updates are streamed as events within tool call POST responses by the mcp-go library, which naturally aligns with the client's authentication context and tool call lifecycle. Elicitation support is partially implemented (form mode supported; URL mode flows are pass-through).
 
 ### Solution
 
@@ -267,7 +267,7 @@ The request ID mapping created for the original `elicitation/create` is cleaned 
 ```
 
 **`URLElicitationRequiredError` (code -32042)**: When a request cannot proceed until URL mode elicitation is completed, the backend server returns this error response. The gateway does not need to rewrite this because:
-- It is an error response, not an `elicitation/create` request — request ID rewriting does not apply
+- It is an error response, not an `elicitation/create` request - request ID rewriting does not apply
 - The JSON-RPC `id` in the error matches the client's original request ID, which the gateway does not modify for tool call requests
 - The `elicitationId` and `url` fields inside `error.data` are opaque to the gateway
 
@@ -337,3 +337,111 @@ The request ID mapping created for the original `elicitation/create` is cleaned 
 ### Resolved Questions
 
 1. **Elicitation Mapping Cleanup**: Mappings persist for the tool call duration and are removed when the response stream ends. In Redis-backed deployments, a 1-hour TTL acts as a safety net for orphaned entries.
+
+---
+
+## Implementation Plan
+
+> **Note**: This implementation plan represents the logical build order of the notification system.  
+> Several phases (such as state change handling, progress updates, and elicitation form mode) are already implemented.  
+> Subsequent phases focus on validating, extending, and stabilizing existing functionality rather than building from scratch.
+
+This plan outlines a logical build order for contributors working on notification-related features. 
+It ensures foundational components are implemented before dependent features.
+
+### Phase 1: Core Notification Infrastructure
+
+- Establish persistent SSE connections from broker -> backend MCP servers
+- Perform capability detection via `initialize`
+- Send `notifications/initialized`
+- Implement reconnection logic for backend connections
+
+---
+
+### Phase 2: State Change Event Handling
+
+- Receive events like `notifications/tools/list_changed`
+- Forward events to all connected clients
+- Maintain SSE connections with clients
+
+---
+
+### Phase 3: Client Connection Management
+
+- Track and manage active client connections
+- Handle disconnects and cleanup
+- Ensure stable fan-out of events
+
+---
+
+### Phase 4: Client-Specific Event Handling
+
+- Ensure POST streaming works correctly
+- Support progress updates (via mcp-go)
+
+---
+
+### Phase 5: Elicitation Request Mapping
+
+- Implement request ID rewriting for `elicitation/create`
+- Maintain mapping:
+  - gateway ID -> backend ID (bidirectional mapping)
+  - session association
+- Route client responses correctly
+
+---
+
+### Phase 6: Failure Handling & Stability
+
+- Add retry with exponential backoff
+- Handle session invalidation
+- Recover from network failures
+
+---
+
+### Phase 7: Future Extensions
+
+- Support additional notification types (resources, prompts, roots)
+- Explore subscription-based models
+
+---
+
+## Dependency Graph
+
+Feature dependencies:
+
+- Core SSE Infrastructure -> required for all notifications
+- Event handling -> depends on SSE infra
+- Client management -> required for broadcasting
+- Request mapping -> required for elicitation
+
+Flow:
+
+Core SSE Infrastructure
+    ↓
+State Change Event Handling
+    ↓
+Client Connection Management
+    ↓
+Event Broadcasting
+    ↓
+Elicitation Mapping
+    ↓
+Advanced Features
+
+---
+
+## Design Decisions Summary
+
+- State change events use broker authentication
+- Client-specific events use POST streaming
+- No per-client upstream SSE connections
+- Request ID rewriting limited to `elicitation/create`
+
+---
+
+## Open Questions Resolution
+
+- Per-client upstream connections -> Not supported (scaling issue)
+- All notification types -> Only safe broadcast events supported
+- Mapping cleanup -> TTL-based cleanup (Redis)
