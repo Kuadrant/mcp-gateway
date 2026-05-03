@@ -12,7 +12,7 @@ This guide demonstrates how to add the [Kubernetes MCP server](https://github.co
 
 In this use case, the Kubernetes MCP server does not handle authentication for the client. It uses the access from the current `.kube/config` file to connect to the known Kubernetes clusters when tools are called.
 
-### ❶ Run the Kubernetes MCP server
+### Step 1: Run the Kubernetes MCP server
 
 You can run the Kubernetes MCP server as a container. It needs access to your `.kube/config` to interact with Kubernetes clusters.
 
@@ -25,7 +25,7 @@ docker run -d --name kubernetes-mcp \
 
 > **Note:** If you prefer to run it as a binary, you can download it from the [releases page](https://github.com/containers/kubernetes-mcp-server/releases).
 
-### ❸ Register the MCP server with the MCP Gateway
+### Step 2: Register the MCP server with the MCP Gateway
 
 Add a dedicated gateway listener for the MCP server. Replace `<HOST_IP_OR_HOSTNAME>` with the address where the Kubernetes MCP server is reachable from the cluster (e.g., `host.docker.internal` for local development environments):
 
@@ -151,11 +151,11 @@ The accessible Kubernetes API servers accept same-domain OIDC access tokens, whi
 
 **Requisite:** You have successfully completed [Use case 1: No auth](#use-case-1-no-auth).
 
-### ❶ Enable auth in the MCP Gateway
+### Step 1: Enable auth in the MCP Gateway
 
 Ensure that your MCP Gateway is configured with an authentication provider (e.g., Keycloak or Authorino). You will need an OIDC issuer and credentials for token exchange.
 
-### ❷ Create an AuthPolicy for the Kubernetes MCP server route
+### Step 2: Create an AuthPolicy for the Kubernetes MCP server route
 
 ```sh
 kubectl apply -f -<<EOF
@@ -247,7 +247,7 @@ spec:
 EOF
 ```
 
-### ❸ Authorize the `mcp` Keycloak user for the Kubernetes API server
+### Step 3: Authorize the `mcp` Keycloak user for the Kubernetes API server
 
 ```sh
 kubectl apply -f -<<EOF
@@ -266,7 +266,7 @@ subjects:
 EOF
 ```
 
-### ❹ Try the MCP server with OIDC authentication
+### Step 4: Try the MCP server with OIDC authentication
 
 Connect to the MCP Gateway using the MCP Inspector as before.
 
