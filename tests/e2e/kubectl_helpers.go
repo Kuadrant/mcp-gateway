@@ -48,7 +48,7 @@ func GetDeploymentGeneration(namespace, name string) (string, error) {
 // with the expected number of ready replicas. It requires the caller to pass
 // the generation from before any changes, so it can detect when the rollout
 // has actually started (generation changes) then wait for it to complete.
-func WaitForDeploymentReplicas(namespace, name string, replicas int, prevGeneration string) error {
+func WaitForDeploymentReplicas(namespace, name string, replicas int, prevGeneration string) {
 	// wait for generation to change (confirming the spec mutation was picked up)
 	Eventually(func(g Gomega) {
 		gen, err := GetDeploymentGeneration(namespace, name)
@@ -60,20 +60,16 @@ func WaitForDeploymentReplicas(namespace, name string, replicas int, prevGenerat
 	// now rollout status will correctly block on the new rollout
 	cmd := exec.Command("kubectl", "rollout", "status", "deployment", name,
 		"-n", namespace, "--timeout=120s")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("deployment %s rollout not complete: %s: %w", name, string(output), err)
-	}
+	output, err := cmd.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("deployment %s rollout not complete: %s", name, string(output)))
 
 	// confirm exact ready replica count
 	cmd = exec.Command("kubectl", "wait", "deployment", name,
 		"-n", namespace,
 		fmt.Sprintf("--for=jsonpath={.status.readyReplicas}=%d", replicas),
 		"--timeout=120s")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("deployment %s readyReplicas != %d: %s: %w",
-			name, replicas, string(output), err)
-	}
-	return nil
+	output, err = cmd.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("deployment %s readyReplicas != %d: %s", name, replicas, string(output)))
 }
 
 // RestartDeploymentAndWait triggers a rollout restart on a deployment and waits

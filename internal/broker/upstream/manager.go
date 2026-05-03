@@ -312,7 +312,7 @@ func (man *MCPManager) setStatus(err error, toolCount int, invalidTools []Invali
 	}
 	man.status.TotalTools = toolCount
 	man.status.Ready = true
-	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d", len(man.serverTools))
+	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d", toolCount)
 }
 
 func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
@@ -398,6 +398,8 @@ func (man *MCPManager) SetToolsForTesting(tools []mcp.Tool) {
 // SetStatusForTesting sets the status directly for testing purposes.
 // This bypasses the normal status update flow and should only be used in tests.
 func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
+	man.statusLock.Lock()
+	defer man.statusLock.Unlock()
 	man.status = status
 }
 

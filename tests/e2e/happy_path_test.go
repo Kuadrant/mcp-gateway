@@ -312,7 +312,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 		By("Waiting for gateway rollout after enabling Redis")
-		Expect(WaitForDeploymentReplicas(SystemNamespace, deploymentName, 1, gen)).To(Succeed())
+		WaitForDeploymentReplicas(SystemNamespace, deploymentName, 1, gen)
 
 		By("Initializing a raw HTTP session with the gateway")
 		var sessionID string
