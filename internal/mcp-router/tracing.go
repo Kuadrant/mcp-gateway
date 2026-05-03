@@ -50,6 +50,7 @@ func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String("mcp.method.name", mcpReq.Method),
 		attribute.String("jsonrpc.protocol.version", mcpReq.JSONRPC),
+		attribute.String("component", "mcp-router"),
 	}
 
 	if mcpReq.ID != nil {

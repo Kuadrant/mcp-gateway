@@ -381,14 +381,15 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 		id, err := s.initializeMCPSeverSession(ctx, mcpReq)
 		if err != nil {
 			var routerErr *RouterError
+			statusCode := int32(500)
 			if errors.As(err, &routerErr) {
+				statusCode = routerErr.Code()
 				calculatedResponse.WithImmediateResponse(routerErr.Code(), routerErr.Error())
 			} else {
 				calculatedResponse.WithImmediateResponse(500, "internal error")
 			}
 			s.Logger.ErrorContext(ctx, "failed to get remote mcp server session id ", "error ", err)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "session initialization failed")
+			recordBackendError(span, err, statusCode)
 			span.SetAttributes(attribute.String("error.type", "session_init_error"))
 			return calculatedResponse.Build()
 		}
