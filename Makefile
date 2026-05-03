@@ -212,24 +212,6 @@ install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
 # Deploy mcp-gateway components (controller deploys broker-router via MCPGatewayExtension)
 deploy: install-crd deploy-namespaces deploy-controller ## Deploy controller to mcp-system namespace
 
-# Deploy a new gateway httproute and broker instance configured to work with the new gateway
-deploy-gateway-instance-helm: install-crd ## Deploy only the broker/router (without controller)
-
-	$(KUBECTL) create ns $(MCP_GATEWAY_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	$(HELM) install mcp-gateway ./charts/mcp-gateway \
-  --namespace $(MCP_GATEWAY_NAMESPACE) \
-  --set gateway.create=true \
-  --set gateway.name=$(MCP_GATEWAY_NAME) \
-  --set gateway.namespace=gateway-system \
-  --set envoyFilter.create=true \
-  --set controller.enabled=false \
-  --set envoyFilter.namespace=istio-system \
-  --set envoyFilter.name=$(MCP_GATEWAY_NAMESPACE) \
-  --set broker.checkInterval=10\
-  --set gateway.publicHost=$(MCP_GATEWAY_HOST) \
-  --set gateway.nodePort.create=true \
-  --set mcpGatewayExtension.gatewayRef.name=$(MCP_GATEWAY_NAME) \
-  --set mcpGatewayExtension.gatewayRef.namespace=gateway-system
 
 .PHONY: deploy-redis
 deploy-redis: ## deploy redis to mcp-system namespace
