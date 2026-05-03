@@ -215,13 +215,22 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	s.Logger.DebugContext(ctx, "HandleMCPRequest ", "session id", mcpReq.GetSessionID())
 	switch {
 	case mcpReq.isElicitationResponse():
-		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
+		span.SetAttributes(
+			attribute.String("mcp.route", "elicitation-response"),
+			attribute.Bool("decision.allowed", true),
+		)
 		return s.HandleElicitationResponse(ctx, mcpReq)
 	case mcpReq.Method == methodToolCall:
-		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
+		span.SetAttributes(
+			attribute.String("mcp.route", "tool-call"),
+			attribute.Bool("decision.allowed", true),
+		)
 		return s.HandleToolCall(ctx, mcpReq)
 	default:
-		span.SetAttributes(attribute.String("mcp.route", "broker"))
+		span.SetAttributes(
+			attribute.String("mcp.route", "broker"),
+			attribute.Bool("decision.allowed", true),
+		)
 		return s.HandleNoneToolCall(ctx, mcpReq)
 	}
 }
@@ -253,17 +262,15 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 	calculatedResponse := NewResponse()
 	// handle tools call
 	if toolName == "" {
+		err := fmt.Errorf("no tool name set in tools/call")
 		s.Logger.ErrorContext(ctx, "[EXT-PROC] HandleRequestBody no tool name set in tools/call")
-		span.SetStatus(codes.Error, "no tool name set")
-		span.SetAttributes(attribute.String("error.type", "missing_tool_name"))
+		recordImmediateResponse(span, err, 400)
 		calculatedResponse.WithImmediateResponse(400, "no tool name set")
 		return calculatedResponse.Build()
 	}
 	if sessionErr := s.validateSession(mcpReq.GetSessionID()); sessionErr != nil {
 		s.Logger.ErrorContext(ctx, "session validation failed", "session", mcpReq.GetSessionID(), "error", sessionErr)
-		span.RecordError(sessionErr)
-		span.SetStatus(codes.Error, sessionErr.Error())
-		span.SetAttributes(attribute.String("error.type", "invalid_session"))
+		recordImmediateResponse(span, sessionErr, sessionErr.Code())
 		calculatedResponse.WithImmediateResponse(sessionErr.Code(), sessionErr.Error())
 		return calculatedResponse.Build()
 	}

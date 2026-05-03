@@ -340,6 +340,116 @@ func TestProcessSpanEnded(t *testing.T) {
 	require.True(t, found, "expected mcp-router.process span to be recorded")
 }
 
+func TestProcessSpan_ImmediateResponseEvent(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prev)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	srv := newTestServer(t)
+
+	// send an invalid body to trigger a 400 immediate response, then a recv error to end the loop
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`not json`),
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{immediateResponse(typev3.StatusCode_BadRequest)},
+		},
+		{msgErr: fmt.Errorf("stream closed")},
+	})
+
+	err := srv.Process(mock)
+	require.Error(t, err)
+	mock.verifyAllResponsesConsumed()
+
+	spans := exporter.GetSpans()
+	var processSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "mcp-router.process" {
+			processSpan = &spans[i]
+			break
+		}
+	}
+	require.NotNil(t, processSpan, "expected mcp-router.process span")
+
+	foundEvent := false
+	for _, e := range processSpan.Events {
+		if e.Name == "immediate_response" {
+			foundEvent = true
+			break
+		}
+	}
+	require.True(t, foundEvent, "expected immediate_response event on span")
+}
+
+func TestProcessSpan_Backend404Event(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prev)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	srv := newTestServer(t)
+
+	// drive through request headers then a 404 response headers — simulates backend returning 404
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extProcV3.HttpHeaders{
+						Headers: &corev3.HeaderMap{
+							Headers: []*corev3.HeaderValue{
+								{Key: ":status", RawValue: []byte("404")},
+							},
+						},
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{Response: &extProcV3.ProcessingResponse_ResponseHeaders{
+					ResponseHeaders: &extProcV3.HeadersResponse{},
+				}},
+			},
+		},
+	})
+
+	require.NoError(t, srv.Process(mock))
+	mock.verifyAllResponsesConsumed()
+
+	spans := exporter.GetSpans()
+	var processSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "mcp-router.process" {
+			processSpan = &spans[i]
+		}
+	}
+	require.NotNil(t, processSpan, "expected mcp-router.process span")
+
+	foundEvent := false
+	for _, e := range processSpan.Events {
+		if e.Name == "backend_404" {
+			foundEvent = true
+			break
+		}
+	}
+	require.True(t, foundEvent, "expected backend_404 event on span when backend returns 404")
+}
+
 func TestProcess_StreamedBodyMultipleChunks(t *testing.T) {
 	srv := newTestServer(t)
 

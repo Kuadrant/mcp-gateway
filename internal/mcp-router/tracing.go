@@ -65,7 +65,10 @@ func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	}
 
 	if toolName := mcpReq.ToolName(); toolName != "" {
-		attrs = append(attrs, attribute.String("gen_ai.tool.name", toolName))
+		attrs = append(attrs,
+			attribute.String("gen_ai.tool.name", toolName),
+			attribute.String("mcp.tool", toolName),
+		)
 	}
 
 	attrs = append(attrs, attribute.String("gen_ai.operation.name", mcpReq.Method))
@@ -77,6 +80,33 @@ func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	}
 
 	return attrs
+}
+
+// recordImmediateResponse records an ext-proc immediate response as a span event
+// and sets the error status and source attributes.
+func recordImmediateResponse(span trace.Span, err error, statusCode int32) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	span.AddEvent("immediate_response", trace.WithAttributes(
+		attribute.Int("http.status_code", int(statusCode)),
+		attribute.String("message", err.Error()),
+	))
+	span.SetAttributes(
+		attribute.String("error.type", fmt.Sprintf("%T", err)),
+		attribute.String("error_source", "ext-proc"),
+		attribute.Int("http.status_code", int(statusCode)),
+	)
+}
+
+// recordBackendError records an error originating from a backend MCP server.
+func recordBackendError(span trace.Span, err error, statusCode int32) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	span.SetAttributes(
+		attribute.String("error.type", fmt.Sprintf("%T", err)),
+		attribute.String("error_source", "backend"),
+		attribute.Int("http.status_code", int(statusCode)),
+	)
 }
 
 func recordError(span trace.Span, err error, statusCode int32) {

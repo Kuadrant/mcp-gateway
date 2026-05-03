@@ -77,7 +77,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		case *extProcV3.ProcessingRequest_RequestHeaders:
 			if r.RequestHeaders == nil {
 				err := fmt.Errorf("no request headers present")
-				recordError(span, err, 500)
+				recordImmediateResponse(span, err, 500)
 				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
 				for _, res := range resp {
 					if sendErr := stream.Send(res); sendErr != nil {
@@ -132,7 +132,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			if localRequestHeaders == nil || localRequestHeaders.Headers == nil {
 				err := fmt.Errorf("request body received before headers")
 				s.Logger.ErrorContext(ctx, err.Error())
-				recordError(span, err, 500)
+				recordImmediateResponse(span, err, 500)
 				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
 				for _, res := range resp {
 					if sendErr := stream.Send(res); sendErr != nil {
@@ -147,7 +147,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			if s.MaxRequestBodySize > 0 && len(bodyBuffer)+len(r.RequestBody.Body) > s.MaxRequestBodySize {
 				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(bodyBuffer)+len(r.RequestBody.Body), s.MaxRequestBodySize)
 				s.Logger.ErrorContext(ctx, err.Error(), "request id", requestID)
-				recordError(span, err, 413)
+				recordImmediateResponse(span, err, 413)
 				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()
 				for _, res := range resp {
 					if sendErr := stream.Send(res); sendErr != nil {
@@ -187,7 +187,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 			if err := json.Unmarshal(bodyBuffer, &mcpRequest); err != nil {
 				s.Logger.ErrorContext(ctx, "error unmarshalling request body", "error", err)
-				recordError(span, err, 400)
+				recordImmediateResponse(span, err, 400)
 				resp := responseBuilder.WithImmediateResponse(400, "invalid request body").Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
@@ -199,7 +199,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 			if _, err := mcpRequest.Validate(); err != nil {
 				s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
-				recordError(span, err, 400)
+				recordImmediateResponse(span, err, 400)
 				resp := responseBuilder.WithImmediateResponse(400, "invalid mcp request").Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
@@ -229,7 +229,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		case *extProcV3.ProcessingRequest_ResponseHeaders:
 			if r.ResponseHeaders == nil || localRequestHeaders == nil {
 				err := fmt.Errorf("no response headers or request headers")
-				recordError(span, err, 500)
+				recordImmediateResponse(span, err, 500)
 				resp := responseBuilder.WithImmediateResponse(500, "internal error").Build()
 				for _, res := range resp {
 					if sendErr := stream.Send(res); sendErr != nil {
@@ -241,7 +241,23 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_ResponseHeaders", "request id:", requestID)
 
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
-			span.SetAttributes(attribute.String("http.status_code", statusCode))
+			if span.IsRecording() {
+				span.SetAttributes(attribute.String("http.status_code", statusCode))
+				if rcd := getSingleValueHeader(r.ResponseHeaders.Headers, "x-envoy-response-code-details"); rcd != "" {
+					span.SetAttributes(attribute.String("response_code_details", rcd))
+				}
+				if statusCode == "404" {
+					eventAttrs := []attribute.KeyValue{}
+					if mcpRequest != nil {
+						eventAttrs = append(eventAttrs,
+							attribute.String("mcp.server", mcpRequest.serverName),
+							attribute.String("mcp.session.id", mcpRequest.GetSessionID()),
+						)
+					}
+					span.AddEvent("backend_404", trace.WithAttributes(eventAttrs...))
+					span.SetAttributes(attribute.String("error_source", "backend"))
+				}
+			}
 
 			if mcpRequest != nil && mcpRequest.isToolCall() {
 				clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpRequest.GetSessionID())
