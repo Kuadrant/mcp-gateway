@@ -2,23 +2,29 @@
 
 This guide explains how to connect the MCP Gateway to a private internal MCP server that requires authentication using the `credentialRef` field in the `MCPServerRegistration` resource.
 
+## Prerequisites
+
+Before starting, ensure you have:
+- **MCP Gateway**: Installed and running in your Kubernetes cluster.
+- **Access Permissions**: Permissions to create `Secrets`, `HTTPRoutes`, and `MCPServerRegistration` resources in your namespace.
+- **Connectivity**: An `HTTPRoute` already configured and pointing to your internal MCP server.
+- **Internal MCP Server**: Reachable from within the cluster.
 
 ## Overview
 
-When an internal MCP server (running inside your Kubernetes cluster) is protected by authentication (e.g., a static API key or a shared token), the MCP Gateway can securely store and inject these credentials into the request flow.
+When an internal MCP server is protected by authentication (e.g., a static API key or a shared token), the MCP Gateway can securely store and inject these credentials into the request flow.
 
 The process involves:
 1. Creating a Kubernetes Secret containing the credential.
 2. Labeling the Secret so the MCP Gateway can access it.
 3. Referencing the Secret in your `MCPServerRegistration`.
 
-
 ## 1. Create the Credential Secret
 
 First, create a Secret containing your authentication token. 
 
 > [!IMPORTANT]
-> The Secret **must** have the label `mcp.kuadrant.io/secret: "true"`. Without this label, the MCP Gateway will not be able to read the credential.
+> The Secret **must** have the label `mcp.kuadrant.io/secret: "true"`. Without this label, the MCP Gateway will not be able to read the credential for security reasons.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -34,7 +40,6 @@ stringData:
   token: "Bearer your-secret-api-key"
 EOF
 ```
-
 
 ## 2. Register the MCP Server
 
@@ -59,6 +64,19 @@ spec:
 EOF
 ```
 
+## 3. Verify the Registration
+
+After creating the resource, verify that the MCP Gateway has successfully processed the registration and discovered the tools.
+
+```bash
+# Check the status of the registration
+kubectl get mcpserverregistration -n mcp-test
+
+# Describe the resource to see status conditions
+kubectl describe mcpserverregistration internal-api-key-server -n mcp-test
+```
+
+The `Status` field should indicate that the server is `Enabled` and that tools have been discovered.
 
 ## How it Works
 
@@ -69,8 +87,14 @@ EOF
    - **Router**: (Envoy external processor) injects the `Authorization` header into requests sent to the upstream MCP server.
 4. **Security**: Credentials are never exposed in the `MCPServerRegistration` spec or in the gateway logs.
 
-
 ## Troubleshooting
 
 - **Validation Error**: If you get a validation error when applying the `MCPServerRegistration`, double-check that your Secret has the `mcp.kuadrant.io/secret: "true"` label.
 - **Unauthorized Errors**: If the gateway logs show `401 Unauthorized` when connecting to the upstream server, ensure the `key` in `credentialRef` matches the key used in the Secret's `stringData` (in this example, `token`).
+- **Resource Not Found**: Ensure the `HTTPRoute` referenced in `targetRef` exists and is in the same namespace or accessible according to your Gateway's `allowedRoutes` policy.
+
+## Next Steps
+
+- [Connecting to External MCP Servers](./external-mcp-server.md)
+- [Kubernetes MCP Server Integration](./kubernetes-mcp-server.md)
+- [Troubleshooting Authentication Issues](../troubleshooting/auth.md)
