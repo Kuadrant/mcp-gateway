@@ -91,9 +91,10 @@ type MCPManager struct {
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
 
-	stopOnce sync.Once     // ensures Stop() is only executed once
-	done     chan struct{} // triggers the exit of the select and routine
-	status   ServerValidationStatus
+	stopOnce   sync.Once     // ensures Stop() is only executed once
+	done       chan struct{} // triggers the exit of the select and routine
+	status     ServerValidationStatus
+	statusLock sync.RWMutex // protects status
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
@@ -290,12 +291,15 @@ func (man *MCPManager) shouldFetchTools(event eventType) bool {
 }
 
 // GetStatus returns the current status of the MCP Server
-// no locking is done here as it is expected to be called multiple times
 func (man *MCPManager) GetStatus() ServerValidationStatus {
+	man.statusLock.RLock()
+	defer man.statusLock.RUnlock()
 	return man.status
 }
 
 func (man *MCPManager) setStatus(err error, toolCount int, invalidTools []InvalidToolInfo) {
+	man.statusLock.Lock()
+	defer man.statusLock.Unlock()
 	man.status.ID = string(man.MCP.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()
