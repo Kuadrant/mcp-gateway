@@ -552,7 +552,7 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1a
 	}
 
 	condition := metav1.Condition{
-		Type:               "Programmed",
+		Type:               "mcp.kuadrant.io/Programmed",
 		ObservedGeneration: httpRoute.Generation,
 		LastTransitionTime: metav1.Now(),
 	}
@@ -561,19 +561,26 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1a
 	condition.Reason = "InUseByMCPServerRegistration"
 	// We don't include the MCP Server in the status because >1 MCPServerRegistration may reference the same HTTPRoute
 	condition.Message = "HTTPRoute is referenced by at least one MCPServerRegistration"
+	
 	var changed bool
 	for i := range httpRoute.Status.Parents {
+		var conditionChanged bool
 		if mcpsr.DeletionTimestamp != nil {
-			changed = meta.RemoveStatusCondition(&httpRoute.Status.Parents[i].Conditions, "Programmed")
+			conditionChanged = meta.RemoveStatusCondition(&httpRoute.Status.Parents[i].Conditions, condition.Type)
 		} else {
-			changed = meta.SetStatusCondition(&httpRoute.Status.Parents[i].Conditions, condition)
+			conditionChanged = meta.SetStatusCondition(&httpRoute.Status.Parents[i].Conditions, condition)
 		}
-		if changed {
-			if err := r.Status().Update(ctx, httpRoute); err != nil {
-				return err
-			}
+		if conditionChanged {
+			changed = true
 		}
 	}
+
+	if changed {
+		if err := r.Status().Update(ctx, httpRoute); err != nil {
+			return err
+		}
+	}
+
 	return nil
 
 }
