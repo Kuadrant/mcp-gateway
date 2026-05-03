@@ -599,16 +599,17 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating two clients with progress notification handlers that record arrival timestamps")
 		var mu sync.Mutex
-		var start time.Time
+		start := time.Now()
 		client1Notifs := []time.Duration{}
 		client2Notifs := []time.Duration{}
 
 		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(n mcp.JSONRPCNotification) {
 			if n.Method == "notifications/progress" {
+				elapsed := time.Since(start)
 				mu.Lock()
-				client1Notifs = append(client1Notifs, time.Since(start))
+				client1Notifs = append(client1Notifs, elapsed)
 				mu.Unlock()
-				GinkgoWriter.Println("client 1 received progress notification at", time.Since(start))
+				GinkgoWriter.Println("client 1 received progress notification at", elapsed)
 			}
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -616,10 +617,11 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(n mcp.JSONRPCNotification) {
 			if n.Method == "notifications/progress" {
+				elapsed := time.Since(start)
 				mu.Lock()
-				client2Notifs = append(client2Notifs, time.Since(start))
+				client2Notifs = append(client2Notifs, elapsed)
 				mu.Unlock()
-				GinkgoWriter.Println("client 2 received progress notification at", time.Since(start))
+				GinkgoWriter.Println("client 2 received progress notification at", elapsed)
 			}
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -629,7 +631,6 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		const toolDurationSeconds = 4
 
 		By("Calling slow tool on both clients concurrently with progress tokens")
-		start = time.Now()
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
@@ -661,20 +662,20 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		wg.Wait()
 
 		By("Verifying both clients received multiple progress notifications during execution")
-		mu.Lock()
-		defer mu.Unlock()
-
-		Expect(len(client1Notifs)).To(BeNumerically(">=", 2), "client1 should have received multiple progress notifications")
-		Expect(len(client2Notifs)).To(BeNumerically(">=", 2), "client2 should have received multiple progress notifications")
-
 		// proving "not buffered": at least one notification must arrive well before the tool finishes.
 		// the slow tool emits one notification per second; if delivery were buffered until completion
 		// the first notification would land at or after toolDurationSeconds.
 		bufferingThreshold := time.Duration(toolDurationSeconds-1) * time.Second
-		Expect(client1Notifs[0]).To(BeNumerically("<", bufferingThreshold),
-			"client1 first progress notification should arrive before the tool completes (got %v)", client1Notifs[0])
-		Expect(client2Notifs[0]).To(BeNumerically("<", bufferingThreshold),
-			"client2 first progress notification should arrive before the tool completes (got %v)", client2Notifs[0])
+		Eventually(func(g Gomega) {
+			mu.Lock()
+			defer mu.Unlock()
+			g.Expect(len(client1Notifs)).To(BeNumerically(">=", 2), "client1 should have received multiple progress notifications")
+			g.Expect(len(client2Notifs)).To(BeNumerically(">=", 2), "client2 should have received multiple progress notifications")
+			g.Expect(client1Notifs[0]).To(BeNumerically("<", bufferingThreshold),
+				"client1 first progress notification should arrive before the tool completes (got %v)", client1Notifs[0])
+			g.Expect(client2Notifs[0]).To(BeNumerically("<", bufferingThreshold),
+				"client2 first progress notification should arrive before the tool completes (got %v)", client2Notifs[0])
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
 	// Note this is a complex test as it scales up and down the server. It can take quite a while to run.
