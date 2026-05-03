@@ -24,11 +24,22 @@ istio-install: $(HELM) # Install Istio using Sail operator
 		--wait \
 		--timeout=300s \
 		https://github.com/istio-ecosystem/sail-operator/releases/download/$(SAIL_VERSION)/sail-operator-$(SAIL_VERSION).tgz
-	kubectl apply -f config/istio/istio.yaml
+	@echo "Applying minimal Istio configuration..."
+	@kubectl apply -f - <<EOF
+apiVersion: install.istio.io/v1alpha1
+kind: Istio
+metadata:
+  name: default
+  namespace: $(ISTIO_NAMESPACE)
+spec:
+  values:
+    meshConfig:
+      accessLogFile: /dev/stdout
+EOF
 	kubectl -n $(ISTIO_NAMESPACE) wait --for=condition=Ready istio/default --timeout=300s
 
 .PHONY: istio-uninstall
 istio-uninstall: $(HELM) # Uninstall Istio and Sail operator
-	- kubectl delete -f config/istio/istio.yaml
+	- kubectl delete istio/default -n $(ISTIO_NAMESPACE)
 	$(HELM) uninstall sail-operator -n $(ISTIO_NAMESPACE)
 	- kubectl delete namespace $(ISTIO_NAMESPACE)

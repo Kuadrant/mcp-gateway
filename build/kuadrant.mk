@@ -34,7 +34,13 @@ kuadrant-install-impl: $(HELM)
 		echo "Kuadrant CR already exists, skipping."; \
 	else \
 		echo "Instantiating Kuadrant in namespace $$KUADRANT_NS..."; \
-		$(KUBECTL) apply -f config/kuadrant/kuadrant.yaml -n $$KUADRANT_NS; \
+		$(KUBECTL) apply -f - <<EOF
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: $$KUADRANT_NS
+EOF; \
 		echo "Kuadrant CR created."; \
 	fi
 
@@ -47,9 +53,8 @@ kuadrant-uninstall-impl: $(HELM)
 	@kubectl delete namespace $(KUADRANT_NAMESPACE)
 
 .PHONY: kuadrant-configure
-kuadrant-configure-impl: $(KUSTOMIZE)
-	@echo "Applying Kuadrant configuration..."
-	@$(KUSTOMIZE) build config/kuadrant | kubectl apply -f -
+kuadrant-configure-impl:
+	@echo "Kuadrant configuration is now handled during installation."
 
 .PHONY: kuadrant-status
 kuadrant-status-impl:

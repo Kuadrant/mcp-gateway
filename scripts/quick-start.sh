@@ -74,7 +74,7 @@ fi
 
 output "Step 2: Install Gateway API CRDs and Istio (Gateway API provider)"
 
-kubectl apply -k "${REPO}/config/gateway-api?ref=${GIT_REF}"
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 
 helm repo add istio https://istio-release.storage.googleapis.com/charts
 helm repo update istio
@@ -83,7 +83,7 @@ helm upgrade --install istiod istio/istiod -n istio-system --wait
 
 output "Step 3: Create the Gateway and NodePort service"
 
-kubectl apply -k "${REPO}/config/istio/gateway?ref=${GIT_REF}"
+kubectl apply -k "${REPO}/config/dev?ref=${GIT_REF}"
 
 output "Step 4: Install MCP Gateway CRDs, controller, and MCPGatewayExtension"
 

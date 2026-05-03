@@ -30,7 +30,7 @@ If the command returns "no matching resources found", wait a few seconds and ret
 
 ## Next Steps
 
-Installing via OLM deploys the operator only. To deploy the MCP Gateway itself, create an `MCPGatewayExtension` resource. See [Manual Resource Creation](./isolated-gateway-deployment.md#manual-resource-creation) for details.
+Installing via OLM deploys the operator only. To deploy the MCP Gateway itself, create an `MCPGatewayExtension` resource. See [MCPGatewayExtension Reference](../reference/mcpgatewayextension.md) for details.
 
 ## Uninstall
 

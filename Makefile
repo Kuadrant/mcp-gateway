@@ -593,9 +593,9 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
-local-env-setup: setup-cluster-base ## Setup complete local demo environment with Kind, Istio, MCP Gateway, and test servers
+local-env-setup: setup-cluster-base ## [DEV ONLY] Setup local environment with Kind, Istio, MCP Gateway, and test servers
 	@echo "========================================="
-	@echo "Setting up Local Demo Environment"
+	@echo "Setting up Local Development Environment"
 	@echo "========================================="
 	"$(MAKE)" deploy-gateway
 	"$(MAKE)" deploy
@@ -603,12 +603,12 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
-	@echo "Local environment setup complete"
+	@echo "Local development environment setup complete"
 
 .PHONY: local-env-setup-olm
-local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gateway and Kuadrant via OLM
+local-env-setup-olm: setup-cluster-base ## [DEV ONLY] Setup local environment with MCP Gateway and Kuadrant via OLM
 	@echo "========================================="
-	@echo "Setting up Local OLM Environment"
+	@echo "Setting up Local OLM Development Environment"
 	@echo "========================================="
 	"$(MAKE)" deploy-gateway
 	"$(MAKE)" deploy-namespaces

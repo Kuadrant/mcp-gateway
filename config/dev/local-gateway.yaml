@@ -1,3 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-system
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -6,12 +10,12 @@ metadata:
     istio: ingressgateway
     gateway.io/name: mcp-gateway
   name: mcp-gateway
-  namespace: gateway-system  
+  namespace: gateway-system
 spec:
   gatewayClassName: istio
   listeners:
-    - name: mcp # gateway listener
-      hostname: 'mcp.127-0-0-1.sslip.io' #public accessibly MCP host one used by client
+    - name: mcp
+      hostname: 'mcp.127-0-0-1.sslip.io'
       port: 8080
       protocol: HTTP
       allowedRoutes:
@@ -20,10 +24,10 @@ spec:
     - name: mcps
       port: 8080
       protocol: HTTP
-      hostname: '*.mcp.local' # this hostname can be any wildcard. It is here to simplify routing, ensure the MCP Server routes attach to this listener only, can be protected by the AuthPolicy and routed to via envoy and the MCPRouter.
+      hostname: '*.mcp.local'
       allowedRoutes:
         namespaces:
-          from: All #any namespace can register an MCP server route
+          from: All
     - name: mcp-server1-route-ext
       hostname: 'server1.127-0-0-1.sslip.io'
       port: 8080
@@ -66,3 +70,47 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-gateway-extension
+  namespace: gateway-system
+spec:
+  from:
+    - group: mcp.kuadrant.io
+      kind: MCPGatewayExtension
+      namespace: mcp-system
+  to:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: mcp-gateway
+    istio.io/dataplane-mode: none
+  name: mcp-gateway-np
+  namespace: gateway-system
+spec:
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ports:
+  - appProtocol: http
+    name: mcp
+    nodePort: 30080
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  - appProtocol: http
+    name: keycloak
+    nodePort: 30089
+    port: 8002
+    protocol: TCP
+    targetPort: 8002
+  selector:
+    gateway.networking.k8s.io/gateway-name: mcp-gateway
+  sessionAffinity: None
+  type: NodePort

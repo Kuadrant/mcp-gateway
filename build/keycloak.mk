@@ -9,19 +9,19 @@ keycloak-install-impl:
 	@echo "Note: Using kubectl deployment due to Helm chart issues"
 	@# Create namespace if it doesn't exist
 	@kubectl create namespace $(KEYCLOAK_NAMESPACE) 2>/dev/null || echo "Namespace $(KEYCLOAK_NAMESPACE) already exists"
-	@kubectl apply -f config/keycloak/realm-import.yaml
-	@kubectl apply -f config/keycloak/deployment.yaml
+	@kubectl apply -f tests/e2e/assets/keycloak/realm-import.yaml
+	@kubectl apply -f tests/e2e/assets/keycloak/deployment.yaml
 	@echo "Waiting for Keycloak to be ready..."
 	@kubectl wait --for=condition=ready pod -l app=keycloak -n $(KEYCLOAK_NAMESPACE) --timeout=120s || true
 	@echo ""
 	@echo "Patching Gateway for the Keycloak route..."
-	@kubectl patch gateway mcp-gateway -n gateway-system --type json -p "$$(cat config/keycloak/patch-gateway.json)"
+	@kubectl patch gateway mcp-gateway -n gateway-system --type json -p "$$(cat tests/e2e/assets/keycloak/patch-gateway.json)"
 	@echo ""
 	@echo "Creating HTTPRoute"
-	@kubectl apply -f config/keycloak/httproute.yaml
+	@kubectl apply -f tests/e2e/assets/keycloak/httproute.yaml
 	@echo ""
 	@echo "Requesting a certificate for Keycloak..."
-	@kubectl apply -f config/keycloak/certificate.yaml
+	@kubectl apply -f tests/e2e/assets/keycloak/certificate.yaml
 	@for i in $$(seq 1 30); do kubectl get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 && break; echo "Waiting for TLS cert secret..."; sleep 2; done; \
 		kubectl get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 || { echo "ERROR: TLS cert secret not created after 60s"; exit 1; }
 	@echo ""
@@ -65,9 +65,9 @@ keycloak-install-impl:
 keycloak-uninstall: # Uninstall Keycloak
 	@idx=$$(kubectl get gateway mcp-gateway -n gateway-system -o json | jq -r '.spec.listeners | map(.name=="keycloak") | index(true)') && \
 		kubectl patch gateway mcp-gateway -n gateway-system --type='json' -p="[{\"op\":\"remove\",\"path\":\"/spec/listeners/$${idx}\"}]"
-	@kubectl delete -f config/keycloak/httproute.yaml 2>/dev/null || true
-	@kubectl delete -f config/keycloak/deployment.yaml 2>/dev/null || true
-	@kubectl delete -f config/keycloak/realm-import.yaml 2>/dev/null || true
+	@kubectl delete -f tests/e2e/assets/keycloak/httproute.yaml 2>/dev/null || true
+	@kubectl delete -f tests/e2e/assets/keycloak/deployment.yaml 2>/dev/null || true
+	@kubectl delete -f tests/e2e/assets/keycloak/realm-import.yaml 2>/dev/null || true
 	@kubectl delete namespace $(KEYCLOAK_NAMESPACE) 2>/dev/null || true
 
 keycloak-status-impl:

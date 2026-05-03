@@ -38,7 +38,7 @@ auth-example-setup: cert-manager-install kuadrant-install keycloak-install ## Se
 	@echo "✅ AuthPolicy configurations applied"
 	@echo ""
 	@echo "Step 4/6: Configuring CORS rules for the OpenID Connect Client Registration endpoint..."
-	@kubectl apply -f ./config/keycloak/preflight_envoyfilter.yaml
+	@kubectl apply -f tests/e2e/assets/keycloak/preflight_envoyfilter.yaml
 	@echo "✅ CORS configured"
 	@echo ""
 	@echo "Step 5/6: Patch Authorino deployment to be able to connect to Keycloak..."

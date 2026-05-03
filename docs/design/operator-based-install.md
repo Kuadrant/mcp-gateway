@@ -2,7 +2,7 @@
 
 ## Summary
 
-Operator-based deployment for MCP Gateway instances using MCPGatewayExtension as the operand. Automates setup, configuration, and lifecycle management of gateway instances with OLM compatibility. Builds on the design described in [isolated gateway deployment](./isolated-gateway-deployment.md).
+Operator-based deployment for MCP Gateway instances using MCPGatewayExtension as the operand. Automates setup, configuration, and lifecycle management of gateway instances with OLM compatibility. Builds on the design for isolated gateway deployments.
 
 ## Goals
 
@@ -218,7 +218,7 @@ stringData:
 
 #### Reconciliation of a Valid MCPGatewayExtension
 
-For the most part the existing reconciliation of the MCPGatewayExtensions will remain the same. It will continue to inform what namespace and which MCP routing configuration should be created/deleted for a given gateway instance. A valid MCPGatewayExtension will change from one that targets a gateway to one that targets a unique listener with a unique port (one per listener). Conflict will be dealt with as described in [isolated gateway deployment](./isolated-gateway-deployment.md).
+For the most part the existing reconciliation of the MCPGatewayExtensions will remain the same. It will continue to inform what namespace and which MCP routing configuration should be created/deleted for a given gateway instance. A valid MCPGatewayExtension will change from one that targets a gateway to one that targets a unique listener with a unique port (one per listener). Conflict will be dealt with by the controller (oldest extension wins).
 
 New logic will be added to the existing controller to take the following actions when a MCPGatewayExtension is reconciled:
 

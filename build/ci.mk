@@ -33,14 +33,14 @@ ci-auth-setup: cert-manager-install kuadrant-install ## Setup auth infrastructur
 	@echo "Setting up auth infrastructure for CI..."
 	# deploy Keycloak
 	$(KUBECTL) create namespace keycloak 2>/dev/null || true
-	$(KUBECTL) apply -f config/keycloak/realm-import.yaml
-	$(KUBECTL) apply -f config/keycloak/deployment.yaml
+	$(KUBECTL) apply -f tests/e2e/assets/keycloak/realm-import.yaml
+	$(KUBECTL) apply -f tests/e2e/assets/keycloak/deployment.yaml
 	$(KUBECTL) wait --for=condition=ready pod -l app=keycloak -n keycloak --timeout=300s
 	# add Keycloak listener to gateway
-	$(KUBECTL) patch gateway mcp-gateway -n gateway-system --type json -p "$$(cat config/keycloak/patch-gateway.json)"
-	$(KUBECTL) apply -f config/keycloak/httproute.yaml
+	$(KUBECTL) patch gateway mcp-gateway -n gateway-system --type json -p "$$(cat tests/e2e/assets/keycloak/patch-gateway.json)"
+	$(KUBECTL) apply -f tests/e2e/assets/keycloak/httproute.yaml
 	# issue TLS cert via cert-manager
-	$(KUBECTL) apply -f config/keycloak/certificate.yaml
+	$(KUBECTL) apply -f tests/e2e/assets/keycloak/certificate.yaml
 	@for i in $$(seq 1 30); do $(KUBECTL) get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 && break; echo "Waiting for TLS cert..."; sleep 2; done; \
 		$(KUBECTL) get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 || { echo "ERROR: TLS cert secret not created after 60s"; exit 1; }
 	# extract CA cert for Authorino
