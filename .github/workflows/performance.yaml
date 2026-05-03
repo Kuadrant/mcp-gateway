@@ -1,0 +1,100 @@
+name: Performance Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      perf_users:
+        description: 'Number of users for steady-state test'
+        required: true
+        default: '64'
+      perf_duration:
+        description: 'Duration of steady-state test'
+        required: true
+        default: '2m'
+      perf_max_users:
+        description: 'Maximum users for ramp-up test'
+        required: true
+        default: '1024'
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  performance:
+    name: Run Performance Test Suite (Manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install kind
+        run: |
+          # Pinned version for environment stability
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Create Kind cluster
+        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+
+      - name: Setup Performance Environment
+        run: |
+          make ci-setup
+          make perf-setup
+        env:
+          PERF_USERS: ${{ github.event.inputs.perf_users }}
+          PERF_DURATION: ${{ github.event.inputs.perf_duration }}
+          PERF_MAX_USERS: ${{ github.event.inputs.perf_max_users }}
+
+      - name: Run Steady State Performance Test
+        run: make perf-run-steady
+        env:
+          PERF_USERS: ${{ github.event.inputs.perf_users }}
+          PERF_DURATION: ${{ github.event.inputs.perf_duration }}
+
+      - name: Run Ramp Up Performance Test
+        run: make perf-run-ramp
+        env:
+          PERF_MAX_USERS: ${{ github.event.inputs.perf_max_users }}
+
+      - name: Upload Performance Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-performance-reports
+          path: |
+            # Include both k6 metrics and generated report summaries
+            out/perf/
+            tests/perf/results/
+          if-no-files-found: warn
+
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name mcp-gateway
+
+      # Future Storage: Add logic here to push metrics to a database or dashboard
+      # e.g., POST to an internal metrics API for baseline comparison
+      # - name: Store Baseline Metrics
+      #   run: |
+      #     echo "Metric storage placeholder"
