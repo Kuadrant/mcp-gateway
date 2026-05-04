@@ -113,6 +113,13 @@ func (m *MockMCP) Ping(_ context.Context) error {
 	return m.pingErr
 }
 
+func (m *MockMCP) IsEnabled() bool {
+	if m.cfg == nil {
+		return true
+	}
+	return m.cfg.State == "" || m.cfg.State == string(mcpv1alpha1.ServerStateEnabled)
+}
+
 func (m *MockMCP) ProtocolInfo() *mcp.InitializeResult {
 	result := &mcp.InitializeResult{
 		ProtocolVersion: m.protocolVersion,

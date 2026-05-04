@@ -21,6 +21,7 @@
 | `prefix` | String | No | Prefix added to all federated tools from referenced servers. Avoids naming conflicts when aggregating tools from multiple sources (e.g. `server1_search` and `server2_search`). Immutable once set |
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
 | `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
+| `state` | String | No | Desired operational state of the server. Enum: `Enabled` (default), `Disabled`. When set to `Disabled`, the broker stops connecting to the server and removes its tools from the gateway. The server can be re-enabled at any time by setting this field back to `Enabled` |
 
 ## TargetReference
 

@@ -1055,4 +1055,60 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
 	})
+
+	It("[Happy] should disable and re-enable an MCPServerRegistration", func() {
+		By("Creating an MCPServerRegistration with default state (Enabled)")
+		registration := NewMCPServerResourcesWithDefaults("disable-enable-test", k8sClient).WithToolPrefix("distest_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready and tools are present")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s tools should exist", registeredServer.Spec.ToolPrefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Disabling the MCPServerRegistration by patching spec.state to Disabled")
+		patch := client.MergeFrom(registeredServer.DeepCopy())
+		registeredServer.Spec.State = mcpv1alpha1.ServerStateDisabled
+		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
+
+		By("Verifying tools are removed from the gateway's tool list")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalseBecause("%s tools should be removed when disabled", registeredServer.Spec.ToolPrefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying MCPServerRegistration status is Ready=False with reason Disabled")
+		Eventually(func(g Gomega) {
+			err := VerifyMCPServerRegistrationNotReadyWithReason(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace, "server is disabled")
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		By("Re-enabling the MCPServerRegistration by patching spec.state back to Enabled")
+		patch = client.MergeFrom(registeredServer.DeepCopy())
+		registeredServer.Spec.State = mcpv1alpha1.ServerStateEnabled
+		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
+
+		By("Verifying tools return to the gateway's tool list")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s tools should return after re-enabling", registeredServer.Spec.ToolPrefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying MCPServerRegistration status is Ready=True after re-enabling")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
 })

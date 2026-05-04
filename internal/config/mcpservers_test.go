@@ -245,16 +245,16 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 				Prefix:     "s1_",
 				Hostname:   "server1.local",
 				Credential: "CRED_VAR",
-				Enabled:    true,
+				State:      "Enabled",
 			},
 			existing: MCPServer{
 				Name:       "server1",
 				Prefix:     "s1_",
 				Hostname:   "server1.local",
 				Credential: "CRED_VAR",
-				Enabled:    false,
+				State:      "Disabled",
 			},
-			expectChanged: false,
+			expectChanged: true,
 		},
 	}
 
