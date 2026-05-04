@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -212,6 +213,61 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 			}, func() error {
 				return nil
 			}, nil
+	}
+}
+
+// RunServerWithListener is like RunServer but accepts a pre-existing net.Listener,
+// eliminating the TOCTOU race between port selection and server bind.
+// The caller must not close ln before calling this function.
+func RunServerWithListener(transport string, ln net.Listener, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
+	hooks := &server.Hooks{}
+	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
+		log.Printf("Client %s connected", session.SessionID())
+	})
+	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+		log.Printf("Client %s disconnected", session.SessionID())
+	})
+	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
+		log.Printf("Processing %s request", method)
+	})
+	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
+		log.Printf("Error in %s: %v", method, err)
+	})
+
+	s := server.NewMCPServer(
+		"Demo rocket",
+		"1.0.0",
+		server.WithHooks(hooks),
+		server.WithToolCapabilities(true),
+	)
+	for _, tool := range testTools {
+		s.AddTools(tool)
+	}
+
+	switch transport {
+	case "http":
+		mux := http.NewServeMux()
+		httpServer := &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 3 * time.Second,
+		}
+		streamOpts = append(streamOpts, server.WithStreamableHTTPServer(httpServer))
+		streamableHTTPServer := server.NewStreamableHTTPServer(s, streamOpts...)
+		mux.Handle("/mcp", streamableHTTPServer)
+		mux.HandleFunc("/admin/forget", forgetFuncFactory(s))
+		mux.HandleFunc("/admin/deleteTool", deleteToolFactory(s))
+		mux.HandleFunc("/admin/addTool", addToolFactory(s))
+
+		return func() error {
+				fmt.Printf("Serving HTTPStreamable on http://%s/mcp\n", ln.Addr())
+				return httpServer.Serve(ln)
+			}, func() error {
+				shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 1*time.Second)
+				defer shutdownRelease()
+				return streamableHTTPServer.Shutdown(shutdownCtx)
+			}, nil
+	default:
+		return RunServer(transport, "", streamOpts...)
 	}
 }
 

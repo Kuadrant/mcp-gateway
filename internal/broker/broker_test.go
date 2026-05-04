@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -18,23 +19,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	// MCPPort is the port the test server should listen on (TODO make dynamic?)
-	MCPPort = "8088"
-
-	// MCPAddr is the URL the client will use to contact the test server
-	MCPAddr = "http://localhost:8088/mcp"
-
-	// MCPAddrForgetAddr is the URL the client will use to force the server to forget a session
-	MCPAddrForgetAddr = "http://localhost:8088/admin/forget"
+var (
+	mcpAddr           string
+	mcpAddrForgetAddr string
 )
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 // TestMain starts an MCP server that we will run actual tests against
 func TestMain(m *testing.M) {
+	// Bind to localhost:0 so the OS assigns a free port, then keep the
+	// listener open and hand it directly to RunServerWithListener to avoid
+	// the TOCTOU race of close-then-rebind.
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get free port: %v\n", err)
+		os.Exit(1)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	mcpAddr = fmt.Sprintf("http://localhost:%d/mcp", port)
+	mcpAddrForgetAddr = fmt.Sprintf("http://localhost:%d/admin/forget", port)
+
 	// Start an MCP server to test our broker client logic
-	startFunc, shutdownFunc, err := server2.RunServer("http", MCPPort)
+	startFunc, shutdownFunc, err := server2.RunServerWithListener("http", ln)
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Server setup error: %v\n", err)
@@ -66,7 +73,7 @@ func TestOnConfigChange(t *testing.T) {
 	conf := &config.MCPServersConfig{}
 	server1 := &config.MCPServer{
 		Name:       "test1",
-		URL:        MCPAddr,
+		URL:        mcpAddr,
 		ToolPrefix: "_test1",
 	}
 	virtualServer1 := &config.VirtualServer{
