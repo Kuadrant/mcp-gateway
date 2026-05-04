@@ -7,6 +7,9 @@ endif
 ifeq ($(ARCH),aarch64)
     ARCH = arm64
 endif
+ifeq ($(ARCH),ppc64le)
+    ARCH = ppc64le
+endif
 
 LOG_LEVEL ?= -4
 
@@ -290,8 +293,8 @@ load-image: kind ## Load the mcp-gateway image into the kind cluster
 
 .PHONY: build-image
 build-image: kind ## Build the mcp-gateway image
-	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --build-arg LDFLAGS="$(LDFLAGS)" -t $(GATEWAY_IMG) .
-	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --file Dockerfile.controller -t $(IMAGE_TAG_BASE):$(IMAGE_TAG) .
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --network=host --build-arg LDFLAGS="$(LDFLAGS)" -t $(GATEWAY_IMG) .
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) --network=host --file Dockerfile.controller -t $(IMAGE_TAG_BASE):$(IMAGE_TAG) .
 
 # Deploy example MCPServerRegistration
 deploy-example: install-crd ## Deploy example MCPServerRegistration resource
@@ -558,7 +561,7 @@ reload: build docker-build kind ## Build, load to Kind, and restart both control
 
 # Build multi-platform image
 docker-buildx: ## Build multi-platform container image
-	$(CONTAINER_ENGINE) buildx build --platform linux/amd64,linux/arm64 $(CONTAINER_ENGINE_EXTRA_FLAGS) -t mcp-gateway:local .
+	$(CONTAINER_ENGINE) buildx build --platform linux/amd64,linux/arm64,linux/ppc64le $(CONTAINER_ENGINE_EXTRA_FLAGS) -t mcp-gateway:local .
 
 # Download dependencies
 deps:

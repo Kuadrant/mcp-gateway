@@ -128,8 +128,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64,linux/s390x
+          file: ./${{ matrix.dockerfile }}          
+          platforms: linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
           push: ${{ github.event_name != 'pull_request' }}
           provenance: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -196,8 +196,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./bundle.Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/s390x
+          file: ./bundle.Dockerfile          
+          platforms: linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
           push: true
           provenance: false
           tags: |
