@@ -382,8 +382,8 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		URL:        serverInfo.Endpoint,
 		Hostname:   serverInfo.Hostname,
 		ToolPrefix: mcpsr.Spec.ToolPrefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		Enabled:    true,
+		Tags:       mcpsr.Spec.Tags,
 	}
 
 	// add credential env var if configured

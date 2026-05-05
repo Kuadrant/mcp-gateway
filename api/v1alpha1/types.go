@@ -62,6 +62,12 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// tags is an optional list of arbitrary labels for this MCP server.
+	// Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+	// +optional
+	// +listType=atomic
+	Tags []string `json:"tags,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

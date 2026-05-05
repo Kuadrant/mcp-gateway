@@ -97,6 +97,14 @@ spec:
                   If not specified, defaults to "/mcp".
                   This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
                 type: string
+              tags:
+                description: |-
+                  tags is an optional list of arbitrary labels for this MCP server.
+                  Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               targetRef:
                 description: |-
                   targetRef specifies an HTTPRoute that points to a backend MCP server.

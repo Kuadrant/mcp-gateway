@@ -64,6 +64,7 @@ type MCPServer struct {
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Tags       []string    `json:"tags,omitempty"       yaml:"tags,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -72,12 +73,21 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, hostname, or credential variable.
+// This means having a different name, prefix, hostname, credential, or tags.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
-	return existingConfig.Name != mcpServer.Name ||
+	if existingConfig.Name != mcpServer.Name ||
 		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		len(existingConfig.Tags) != len(mcpServer.Tags) {
+		return true
+	}
+	for i := range mcpServer.Tags {
+		if existingConfig.Tags[i] != mcpServer.Tags[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // Path returns the path part of the mcp url

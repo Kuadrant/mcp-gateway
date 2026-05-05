@@ -155,6 +155,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 	)
+	mcpBkr.registerTagsTools()
 	return mcpBkr
 }
 

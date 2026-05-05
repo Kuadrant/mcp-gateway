@@ -42,6 +42,11 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 // GetConfig return the config for the backend mcp server
 func (up *MCPServer) GetConfig() config.MCPServer {
 	// return a copy rather than the original
+	var tags []string
+	if len(up.Tags) > 0 {
+		tags = make([]string, len(up.Tags))
+		copy(tags, up.Tags)
+	}
 	return config.MCPServer{
 		Name:       up.Name,
 		URL:        up.URL,
@@ -49,6 +54,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Enabled:    up.Enabled,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
+		Tags:       tags,
 	}
 }
 
