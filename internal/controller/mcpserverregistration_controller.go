@@ -248,7 +248,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: 60 * time.Second}, nil
 
 }
 
