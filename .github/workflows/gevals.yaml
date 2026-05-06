@@ -44,10 +44,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -78,11 +78,11 @@ jobs:
 
       - name: Setup Fallback LLM (Ollama)
         if: env.OPENAI_API_KEY == ''
-        uses: ai-action/setup-ollama@v2
+        uses: ai-action/setup-ollama@17d66f4293c10df3a798400c3eeb0093ba9b8881 # v2.0.40
 
       - name: Cache Ollama Models
         if: env.OPENAI_API_KEY == ''
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.ollama
           key: ${{ runner.os }}-ollama-qwen2.5-1.5b
@@ -136,7 +136,7 @@ jobs:
 
       - name: Upload Evaluation Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mcpchecker-results
           path: mcpchecker-*-out.json

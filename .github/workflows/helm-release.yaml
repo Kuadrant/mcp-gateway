@@ -31,7 +31,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
     - name: Determine versions
       id: versions
@@ -70,7 +70,7 @@ jobs:
         fi
 
     - name: Install Helm
-      uses: azure/setup-helm@v4
+      uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
       with:
         version: '3.14.0'
 
@@ -145,7 +145,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
     - name: Create and push git tag
       run: |
