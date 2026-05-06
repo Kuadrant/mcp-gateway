@@ -34,12 +34,16 @@ func (m *mcpBrokerImpl) registerTagsTools() {
 
 func (m *mcpBrokerImpl) handleListTags() (*mcp.CallToolResult, error) {
 	m.mcpLock.RLock()
-	defer m.mcpLock.RUnlock()
+	serverTags := make([][]string, 0, len(m.mcpServers))
+	for _, mgr := range m.mcpServers {
+		serverTags = append(serverTags, mgr.MCP.GetConfig().Tags)
+	}
+	m.mcpLock.RUnlock()
 
 	seen := map[string]struct{}{}
 	var tags []string
-	for _, mgr := range m.mcpServers {
-		for _, tag := range mgr.MCP.GetConfig().Tags {
+	for _, tagsForServer := range serverTags {
+		for _, tag := range tagsForServer {
 			if _, ok := seen[tag]; !ok {
 				seen[tag] = struct{}{}
 				tags = append(tags, tag)
@@ -76,18 +80,31 @@ func (m *mcpBrokerImpl) handleFilterToolsByTags(req mcp.CallToolRequest) (*mcp.C
 		filterTags = append(filterTags, s)
 	}
 
+	type serverSnapshot struct {
+		tags      []string
+		prefix    string
+		tools     []mcp.Tool
+	}
 	m.mcpLock.RLock()
-	defer m.mcpLock.RUnlock()
-
-	var matched []mcp.Tool
+	snapshots := make([]serverSnapshot, 0, len(m.mcpServers))
 	for _, mgr := range m.mcpServers {
 		cfg := mgr.MCP.GetConfig()
-		if !hasAllTags(cfg.Tags, filterTags) {
+		snapshots = append(snapshots, serverSnapshot{
+			tags:   cfg.Tags,
+			prefix: cfg.ToolPrefix,
+			tools:  mgr.GetManagedTools(),
+		})
+	}
+	m.mcpLock.RUnlock()
+
+	var matched []mcp.Tool
+	for _, snap := range snapshots {
+		if !hasAllTags(snap.tags, filterTags) {
 			continue
 		}
-		for _, tool := range mgr.GetManagedTools() {
+		for _, tool := range snap.tools {
 			t := tool
-			t.Name = cfg.ToolPrefix + t.Name
+			t.Name = snap.prefix + t.Name
 			matched = append(matched, t)
 		}
 	}

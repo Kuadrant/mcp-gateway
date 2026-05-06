@@ -82,9 +82,16 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		len(existingConfig.Tags) != len(mcpServer.Tags) {
 		return true
 	}
-	for i := range mcpServer.Tags {
-		if existingConfig.Tags[i] != mcpServer.Tags[i] {
-			return true
+	if len(mcpServer.Tags) > 0 {
+		counts := make(map[string]int, len(mcpServer.Tags))
+		for _, t := range existingConfig.Tags {
+			counts[t]++
+		}
+		for _, t := range mcpServer.Tags {
+			counts[t]--
+			if counts[t] < 0 {
+				return true
+			}
 		}
 	}
 	return false

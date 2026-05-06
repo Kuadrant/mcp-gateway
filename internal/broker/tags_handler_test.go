@@ -32,7 +32,7 @@ func TestHandleListTags_deduplicates(t *testing.T) {
 
 	var tags []string
 	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &tags))
-	require.ElementsMatch(t, []string{"finance", "hr", "prod"}, tags)
+	require.Equal(t, []string{"finance", "hr", "prod"}, tags)
 }
 
 func TestHandleFilterToolsByTags_match(t *testing.T) {
