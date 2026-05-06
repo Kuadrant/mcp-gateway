@@ -28,7 +28,7 @@ jobs:
     name: Unit Tests
     strategy:
       matrix:
-        go-version: [1.22.x]
+        go-version: [1.25.x]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     defaults:
@@ -39,8 +39,6 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: ${{ matrix.go-version }}
-        env:
-          GOTOOLCHAIN: auto
         id: go
       - name: Check out code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
