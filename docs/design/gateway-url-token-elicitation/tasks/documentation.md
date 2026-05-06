@@ -6,7 +6,7 @@ Documentation for URL elicitation, organized by user goals. Each section maps to
 
 ### When I want to securely collect per-user tokens for an upstream MCP server
 
-When a platform operator has an upstream MCP server that requires each user to authenticate with their own token, they want to enable URL elicitation so that the gateway collects tokens at runtime without exposing them to the MCP client or LLM context.
+When a platform engineer has an upstream MCP server that requires each user to authenticate with their own token, they want to enable URL elicitation so that the gateway collects tokens at runtime without exposing them to the MCP client or LLM context.
 
 **Cover:**
 - Adding `credentialURLElicitation: {}` to an MCPServerRegistration

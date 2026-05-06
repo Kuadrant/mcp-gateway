@@ -45,7 +45,7 @@ Job stories capture _when_ a situation arises, _what_ the actor wants, and _why_
 When <actor> <context>, they want <action/outcome> so that <benefit>.
 ```
 
-Cover the key personas: platform operator, MCP client user, non-interactive agent. Include both the happy path and important edge cases (expired tokens, existing infrastructure, agents that can't use a browser).
+Cover the key personas: platform engineer, MCP client user, MCP Developer, non-interactive agent. Include both the happy path and important edge cases (expired tokens, existing infrastructure, agents that can't use a browser).
 
 ## Implementation Plan (`tasks/tasks.md`)
 
