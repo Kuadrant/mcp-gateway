@@ -731,7 +731,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 			"processing_mode": map[string]any{
 				"request_header_mode":   "SEND",
 				"response_header_mode":  "SEND",
-				"request_body_mode":     "BUFFERED",
+				"request_body_mode":     "STREAMED",
 				"response_body_mode":    "NONE",
 				"request_trailer_mode":  "SKIP",
 				"response_trailer_mode": "SKIP",

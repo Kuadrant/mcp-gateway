@@ -54,7 +54,7 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 		responses[0].ModeOverride = &extprochttp.ProcessingMode{
 			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
 			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
-			RequestBodyMode:     extprochttp.ProcessingMode_BUFFERED,
+			RequestBodyMode:     extprochttp.ProcessingMode_STREAMED,
 			ResponseBodyMode:    extprochttp.ProcessingMode_STREAMED,
 			RequestTrailerMode:  extprochttp.ProcessingMode_SKIP,
 			ResponseTrailerMode: extprochttp.ProcessingMode_SKIP,

@@ -70,6 +70,7 @@ var (
 	logFormat                 string
 	enforceToolFilteringFlag  bool
 	invalidToolPolicyFlag     string
+	maxRequestBodySize        int
 )
 
 func main() {
@@ -136,6 +137,7 @@ func main() {
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
 	flag.BoolVar(&enforceToolFilteringFlag, "enforce-tool-filtering", false, "when enabled an x-authorized-tools header will be needed to return any tools")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
+	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -356,13 +358,14 @@ func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *sessi
 
 	grpcSrv := grpc.NewServer()
 	server := &mcpRouter.ExtProcServer{
-		RoutingConfig:  mcpConfig,
-		Logger:         logger.With("component", "router"),
-		JWTManager:     jwtManager,
-		InitForClient:  clients.Initialize,
-		SessionCache:   sessionCache,
-		ElicitationMap: elicitationMap,
-		Broker:         broker, // TODO we shouldn't need a handle to broker in the router
+		RoutingConfig:      mcpConfig,
+		Logger:             logger.With("component", "router"),
+		JWTManager:         jwtManager,
+		InitForClient:      clients.Initialize,
+		SessionCache:       sessionCache,
+		ElicitationMap:     elicitationMap,
+		Broker:             broker, // TODO we shouldn't need a handle to broker in the router
+		MaxRequestBodySize: maxRequestBodySize,
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

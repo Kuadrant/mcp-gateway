@@ -35,12 +35,13 @@ type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig  *config.MCPServersConfig
-	JWTManager     *session.JWTManager
-	Logger         *slog.Logger
-	InitForClient  InitForClient
-	SessionCache   SessionCache
-	ElicitationMap idmap.Map
+	RoutingConfig      *config.MCPServersConfig
+	JWTManager         *session.JWTManager
+	Logger             *slog.Logger
+	InitForClient      InitForClient
+	SessionCache       SessionCache
+	ElicitationMap     idmap.Map
+	MaxRequestBodySize int
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 }
@@ -59,6 +60,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
 		rewriter            *sseRewriter // nil until a tool call response arrives
+		bodyBuffer          []byte
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -140,8 +142,39 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				return err
 			}
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
-			// It is highly unlikely we would hit this situation as envoy skips this step if no body present. However it doesn't hurt to be defensive here just in case
-			if len(r.RequestBody.Body) == 0 {
+
+			// enforce max body size before allocating memory for the chunk
+			if s.MaxRequestBodySize > 0 && len(bodyBuffer)+len(r.RequestBody.Body) > s.MaxRequestBodySize {
+				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(bodyBuffer)+len(r.RequestBody.Body), s.MaxRequestBodySize)
+				s.Logger.ErrorContext(ctx, err.Error(), "request id", requestID)
+				recordError(span, err, 413)
+				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()
+				for _, res := range resp {
+					if sendErr := stream.Send(res); sendErr != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", sendErr))
+					}
+				}
+				return err
+			}
+
+			// accumulate streamed body chunk
+			bodyBuffer = append(bodyBuffer, r.RequestBody.Body...)
+
+			if !r.RequestBody.EndOfStream {
+				// intermediate chunk: acknowledge and wait for more data
+				s.Logger.DebugContext(ctx, "received body chunk, waiting for more", "request id", requestID, "buffer_size", len(bodyBuffer))
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, fmt.Sprintf("Error sending response: %v", err))
+						return err
+					}
+				}
+				continue
+			}
+
+			// EndOfStream: all chunks received, process complete body
+			if len(bodyBuffer) == 0 {
 				s.Logger.DebugContext(ctx, "empty request body, skipping", "request id", requestID)
 				resp := responseBuilder.WithDoNothingResponse(false).Build()
 				for _, res := range resp {
@@ -152,7 +185,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				continue
 			}
-			if err := json.Unmarshal(r.RequestBody.Body, &mcpRequest); err != nil {
+			if err := json.Unmarshal(bodyBuffer, &mcpRequest); err != nil {
 				s.Logger.ErrorContext(ctx, "error unmarshalling request body", "error", err)
 				recordError(span, err, 400)
 				resp := responseBuilder.WithImmediateResponse(400, "invalid request body").Build()
