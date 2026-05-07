@@ -1,0 +1,14 @@
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: perf-mock-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  toolPrefix: mock_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: perf-mock-server-route

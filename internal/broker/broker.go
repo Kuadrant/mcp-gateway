@@ -130,19 +130,19 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
 		// Note that AddOnRegisterSession is for GET, not POST, for a session.
 		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
-		slog.Info("Broker: Gateway client session connected with session", "gatewaySessionID", session.SessionID())
+		mcpBkr.logger.Debug("gateway client session connected", "gatewaySessionID", session.SessionID())
 	})
 
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		slog.Info("Broker: Gateway client session unregister ", "gatewaySessionID", session.SessionID())
+		mcpBkr.logger.Debug("gateway client session unregistered", "gatewaySessionID", session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
-		slog.Info("Processing request", "method", method)
+		mcpBkr.logger.Debug("processing request", "method", method)
 	})
 
 	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
-		slog.Info("MCP server error", "method", method, "error", err)
+		mcpBkr.logger.Error("mcp server error", "method", method, "error", err)
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
@@ -252,7 +252,7 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	for _, upstream := range m.mcpServers {
 		t := upstream.GetServedManagedTool(tool)
 		if t != nil {
-			slog.Info("[EXT-PROC] Found matching server",
+			m.logger.Debug("found matching server",
 				"toolName", tool,
 				"serverPrefix", upstream.MCP.GetPrefix(),
 				"serverName", upstream.MCP.GetName())

@@ -33,7 +33,7 @@ spec:
             - --mcp-broker-public-address=0.0.0.0:8080
             - --mcp-gateway-public-host=mcp.127-0-0-1.sslip.io
             - --mcp-router-address=0.0.0.0:50051
-            - --log-level=-4 # info level
+            - --log-level=0
           volumeMounts:
             - name: config-volume
               mountPath: /config
@@ -46,6 +46,9 @@ spec:
               protocol: TCP
             - name: grpc
               containerPort: 50051
+              protocol: TCP
+            - name: pprof
+              containerPort: 6060
               protocol: TCP
           resources:
             requests:

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -36,7 +37,9 @@ func TestTracingHandler_WithSpan(t *testing.T) {
 	otel.SetTracerProvider(tp)
 
 	var buf bytes.Buffer
-	logger := NewTracingLogger(&buf, nil, true, nil)
+	lp := sdklog.NewLoggerProvider()
+	defer func() { _ = lp.Shutdown(context.Background()) }()
+	logger := NewTracingLogger(&buf, nil, true, lp)
 
 	ctx, span := otel.Tracer("test").Start(context.Background(), "test-span")
 	defer span.End()
@@ -58,7 +61,7 @@ func TestTracingHandler_WithSpan(t *testing.T) {
 func TestTracingHandler_WithAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	baseHandler := slog.NewJSONHandler(&buf, nil)
-	handler := NewTracingHandler(baseHandler)
+	handler := NewTracingHandler(baseHandler, true)
 
 	newHandler := handler.WithAttrs([]slog.Attr{slog.String("component", "test")})
 	if _, ok := newHandler.(*TracingHandler); !ok {
@@ -69,7 +72,7 @@ func TestTracingHandler_WithAttrs(t *testing.T) {
 func TestTracingHandler_WithGroup(t *testing.T) {
 	var buf bytes.Buffer
 	baseHandler := slog.NewJSONHandler(&buf, nil)
-	handler := NewTracingHandler(baseHandler)
+	handler := NewTracingHandler(baseHandler, true)
 
 	newHandler := handler.WithGroup("mygroup")
 	if _, ok := newHandler.(*TracingHandler); !ok {
@@ -81,7 +84,7 @@ func TestTracingHandler_Enabled(t *testing.T) {
 	var buf bytes.Buffer
 	opts := &slog.HandlerOptions{Level: slog.LevelWarn}
 	baseHandler := slog.NewJSONHandler(&buf, opts)
-	handler := NewTracingHandler(baseHandler)
+	handler := NewTracingHandler(baseHandler, true)
 
 	ctx := context.Background()
 
