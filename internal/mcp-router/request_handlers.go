@@ -591,6 +591,10 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		if storeErr != nil {
 			s.Logger.ErrorContext(ctx, "failed to add remote session to cache", "error", storeErr)
 			// again if this fails it is likely terminal due to a network connection error
+			s.connections.Delete(connKey)
+			if err := clientHandle.Close(); err != nil {
+				s.Logger.ErrorContext(ctx, "failed to close connection after AddSession failure", "error", err)
+			}
 			return "", NewRouterError(500, fmt.Errorf("internal error"))
 		}
 	}
