@@ -48,7 +48,7 @@ BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(IMAGE_TAG)
 CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:$(IMAGE_TAG)
 CHANNELS ?= preview
 DEFAULT_CHANNEL ?= preview
-INSTALL_OLM ?= false
+
 
 ## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
@@ -64,6 +64,11 @@ GATEWAY_API_VERSION ?= v1.4.1
 # The KIND cluster name must match ./build/kind.mk
 KIND_CLUSTER_NAME ?= mcp-gateway
 MCP_GATEWAY_NAMESPACE ?= mcp-system
+
+# Detect the namespace where Kuadrant is installed (kuadrant-system for Helm, mcp-system for OLM).
+# Usage in recipes: $(call detect-kuadrant-ns) sets $$KUADRANT_NS
+detect-kuadrant-ns = if kubectl get namespace kuadrant-system >/dev/null 2>&1; then KUADRANT_NS=kuadrant-system; else KUADRANT_NS=mcp-system; fi
+
 MCP_GATEWAY_SUBDOMAIN ?= mcp
 MCP_GATEWAY_HOST ?= $(MCP_GATEWAY_SUBDOMAIN).127-0-0-1.sslip.io
 MCP_GATEWAY_NAME ?= mcp-gateway
@@ -589,24 +594,32 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	@echo "========================================="
 	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
-	# Deploy single gateway for local demo
 	"$(MAKE)" deploy-gateway
-ifeq ($(INSTALL_OLM),true)
-	# Deploy controller via OLM (default)
-	"$(MAKE)" deploy-namespaces
-	kubectl apply -f config/mcp-gateway/overlays/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
-	"$(MAKE)" deploy-olm
-	kubectl apply -k config/mcp-gateway/base/ -n $(MCP_GATEWAY_NAMESPACE)
-	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
-else
-	# Deploy controller via kustomize (non-OLM fallback)
 	"$(MAKE)" deploy
-endif
 	"${MAKE}" add-jwt-key
 	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
 	@echo "Local environment setup complete"
+
+.PHONY: local-env-setup-olm
+local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gateway and Kuadrant via OLM
+	@echo "========================================="
+	@echo "Setting up Local OLM Environment"
+	@echo "========================================="
+	"$(MAKE)" deploy-gateway
+	"$(MAKE)" deploy-namespaces
+	kubectl apply -f config/mcp-gateway/overlays/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	"$(MAKE)" cert-manager-install
+	"$(MAKE)" deploy-olm
+	"$(MAKE)" deploy-kuadrant-catalog
+	# apply MCPGatewayExtension CR and HTTPRoute (not OLM resources — those are in deploy-olm)
+	kubectl apply -k config/mcp-gateway/base/ -n $(MCP_GATEWAY_NAMESPACE)
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
+	"${MAKE}" add-jwt-key
+	"$(MAKE)" deploy-everything-server
+	"$(MAKE)" deploy-example-minimal
+	@echo "Local OLM environment setup complete"
 
 .PHONY: local-bare-setup
 local-bare-setup: setup-cluster-base ## Setup minimal cluster infrastructure (no MCP components)

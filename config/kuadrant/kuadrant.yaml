@@ -2,4 +2,3 @@ apiVersion: kuadrant.io/v1beta1
 kind: Kuadrant
 metadata:
   name: kuadrant
-  namespace: kuadrant-system

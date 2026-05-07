@@ -79,7 +79,7 @@ This will start MCP Inspector and automatically open it with the correct URL for
 
 ## Example OAuth setup: Keycloak as an ACL Server
 
-After running the Quick start above, configure OAuth authentication with a single command:
+After running the Quick start above (either `make local-env-setup` or `make local-env-setup-olm`), configure OAuth authentication with a single command:
 
 ```bash
 make auth-example-setup
