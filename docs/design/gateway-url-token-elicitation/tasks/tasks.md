@@ -59,15 +59,11 @@ Add the flag early so all subsequent work is gated behind it.
 - `internal/config/types.go` — add `CredentialURLElicitationConfig` struct
 - `internal/controller/mcpserverregistration_controller.go:386` — propagate field from CRD to config
 - Run `make generate-all` to regenerate deepcopy, CRDs, sync Helm
-- `docs/reference/mcpserverregistration.md` — update API reference
 
 **Acceptance criteria:**
 - [ ] CRD accepts `credentialURLElicitation` with optional `url` field
 - [ ] Controller propagates to config Secret
 - [ ] Unit test: controller includes elicitation config when set, omits when not set
-
-**Documentation (from `documentation.md`):**
-- API Reference Update: `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
 
 **Verification:** `make generate-all && make lint && make test-unit`
 
