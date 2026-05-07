@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 
 	redis "github.com/redis/go-redis/v9"
@@ -73,9 +74,9 @@ func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession str
 		if val, ok := c.inmemory.Load(key); ok {
 			existing = val.(map[string]string)
 		}
-		next := make(map[string]string, len(existing)+1)
-		for k, v := range existing {
-			next[k] = v
+		next := maps.Clone(existing)
+		if next == nil {
+			next = map[string]string{}
 		}
 		next[mcpServerID] = mcpSession
 		c.inmemory.Store(key, next)
@@ -97,12 +98,8 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 			return nil
 		}
 		existing := val.(map[string]string)
-		next := make(map[string]string, len(existing))
-		for k, v := range existing {
-			if k != mcpServerID {
-				next[k] = v
-			}
-		}
+		next := maps.Clone(existing)
+		delete(next, mcpServerID)
 		c.inmemory.Store(key, next)
 		return nil
 	}
