@@ -1,6 +1,6 @@
 module github.com/Kuadrant/mcp-gateway
 
-go 1.25.5
+go 1.25.9
 
 require (
 	github.com/caitlinelfring/go-env-default v1.1.0
