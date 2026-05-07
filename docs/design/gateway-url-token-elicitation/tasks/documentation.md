@@ -16,7 +16,7 @@ When a platform engineer has an upstream MCP server that requires each user to a
 
 ### When I want to use my own credential UI instead of the built-in page
 
-When a platform operator already has credential infrastructure (e.g., Vault web UI), they want to direct users there instead of the broker's built-in page so that tokens are managed in their existing system.
+When a platform engineer already has credential infrastructure (e.g., Vault web UI), they want to direct users there instead of the broker's built-in page so that tokens are managed in their existing system.
 
 **Cover:**
 - Setting `credentialURLElicitation.url` to an external URL
@@ -25,7 +25,7 @@ When a platform operator already has credential infrastructure (e.g., Vault web 
 
 ### When I want to protect the token page from unauthorized access
 
-When a platform operator deploys URL elicitation, they want to ensure only the authenticated user who triggered the elicitation can submit a token, so that attackers cannot inject credentials into other users' sessions.
+When a platform engineer deploys URL elicitation, they want to ensure only the authenticated user who triggered the elicitation can submit a token, so that attackers cannot inject credentials into other users' sessions.
 
 **Cover:**
 - How session JWT binding prevents cross-session token injection (broker verifies session JWT matches elicitation ID)
@@ -35,7 +35,7 @@ When a platform operator deploys URL elicitation, they want to ensure only the a
 
 ### When I have automated agents that can't use a browser
 
-When a platform operator has both interactive users and automated agents (CI/CD, agent-to-agent) calling the same MCP servers, they want agents to work without being blocked by elicitation prompts.
+When a platform engineer has both interactive users and automated agents (CI/CD, agent-to-agent) calling the same MCP servers, they want agents to work without being blocked by elicitation prompts.
 
 **Cover:**
 - No configuration needed — behavior is automatic based on client capabilities
@@ -68,7 +68,7 @@ When a security reviewer or contributor needs to assess the token handling in UR
 
 ### When I need to know the exact field names and types for URL elicitation
 
-When a platform operator is writing MCPServerRegistration YAML, they want to know the exact API surface for `credentialURLElicitation`.
+When a platform engineer is writing MCPServerRegistration YAML, they want to know the exact API surface for `credentialURLElicitation`.
 
 **Cover:**
 - `credentialURLElicitation` object (optional)

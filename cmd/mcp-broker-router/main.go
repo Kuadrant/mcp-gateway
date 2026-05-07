@@ -139,7 +139,7 @@ func main() {
 	flag.BoolVar(&enforceCapabilityFilteringFlag, "enforce-capability-filtering", false, "when enabled an x-mcp-authorized header will be needed to return any capabilities (tools, prompts)")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
-	flag.BoolVar(&enableURLElicitationFlag, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
+	flag.BoolVar(&enableURLElicitationFlag, "enable-url-elicitation", true, "enable URL elicitation for per-user credential collection")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}

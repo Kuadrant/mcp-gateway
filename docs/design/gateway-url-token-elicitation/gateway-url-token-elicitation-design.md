@@ -33,7 +33,7 @@ Enable the MCP Gateway to dynamically request per-user credentials at client too
 
 ### When I need per-user upstream tokens without exposing them to the LLM
 
-When a platform operator registers an upstream MCP server that requires per-user tokens (e.g., GitHub PATs), they want the gateway to securely collect tokens at runtime so that tokens never pass through the MCP client or appear in LLM context.
+When a platform engineer registers an upstream MCP server that requires per-user tokens (e.g., GitHub PATs), they want the gateway to securely collect tokens at runtime so that tokens never pass through the MCP client or appear in LLM context.
 
 ### When a user calls a tool that requires a token they haven't provided yet
 
@@ -45,7 +45,7 @@ When an upstream server rejects a cached token with a 401, the user wants the ga
 
 ### When I have existing credential infrastructure
 
-When a platform operator already has credential infrastructure (e.g., Vault), they want to point the elicitation URL at their own UI instead of the broker's built-in page, so that tokens are stored in their existing system and an AuthPolicy handles injection.
+When a platform engineer already has credential infrastructure (e.g., Vault), they want to point the elicitation URL at their own UI instead of the broker's built-in page, so that tokens are stored in their existing system and an AuthPolicy handles injection.
 
 ### When a non-interactive agent calls a tool on an elicitation-configured server
 
@@ -53,7 +53,7 @@ When a CI/CD pipeline or automated agent calls a tool on a server that requires 
 
 ### When I want to gate the token page behind authentication
 
-When a platform operator deploys the gateway with URL elicitation, they want the `/credentials` page to be protected by the same OIDC AuthPolicy as the gateway route, so that only the authenticated user who triggered the elicitation can provide a token for their session.
+When a platform engineer deploys the gateway with URL elicitation, they want the `/credentials` page to be protected by the same OIDC AuthPolicy as the gateway route, so that only the authenticated user who triggered the elicitation can provide a token for their session.
 
 ## Design
 
