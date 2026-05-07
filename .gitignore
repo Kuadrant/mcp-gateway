@@ -27,7 +27,6 @@ go.work
 go.work.sum
 
 # env file
-.env
 
 # Editor/IDE
 .idea/
@@ -49,3 +48,5 @@ docs/plans/
 catalog/mcp-gateway-catalog/
 catalog/mcp-gateway-catalog.Dockerfile
 tests/perf/mock-server/mock-server
+config.bat
+node_modules
