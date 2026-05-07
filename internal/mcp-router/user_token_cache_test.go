@@ -109,6 +109,13 @@ func TestMemoryTokenCache_ValidJWTReturned(t *testing.T) {
 	}
 }
 
+func TestDeriveEncryptionKey_ShortKeyRejected(t *testing.T) {
+	_, err := deriveEncryptionKey([]byte("short"))
+	if err == nil {
+		t.Fatal("expected error for signing key shorter than 16 bytes")
+	}
+}
+
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	signingKey := []byte("test-signing-key-for-encryption")
 	key, err := deriveEncryptionKey(signingKey)
@@ -139,8 +146,8 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestDecryptWithWrongKey(t *testing.T) {
-	key1, _ := deriveEncryptionKey([]byte("key-one"))
-	key2, _ := deriveEncryptionKey([]byte("key-two"))
+	key1, _ := deriveEncryptionKey([]byte("key-one-long-enough"))
+	key2, _ := deriveEncryptionKey([]byte("key-two-long-enough"))
 
 	ciphertext, _ := encrypt(key1, "secret")
 	_, err := decrypt(key2, ciphertext)
@@ -168,8 +175,8 @@ func TestCheckJWTExpiry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := checkJWTExpiry(tt.token); got != tt.expired {
-				t.Errorf("checkJWTExpiry() = %v, want %v", got, tt.expired)
+			if got := checkUpstreamJWTExpiry(tt.token); got != tt.expired {
+				t.Errorf("checkUpstreamJWTExpiry() = %v, want %v", got, tt.expired)
 			}
 		})
 	}

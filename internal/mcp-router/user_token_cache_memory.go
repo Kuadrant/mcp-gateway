@@ -24,8 +24,8 @@ func (c *memoryTokenCache) GetUserToken(ctx context.Context, sessionID, serverNa
 		return "", false, nil
 	}
 	token := val.(string)
-	if checkJWTExpiry(token) {
-		_ = c.DeleteUserToken(ctx, sessionID, serverName)
+	if checkUpstreamJWTExpiry(token) {
+		_ = c.DeleteUserToken(ctx, sessionID, serverName) // sync.Map delete cannot fail
 		return "", false, nil
 	}
 	return token, true, nil

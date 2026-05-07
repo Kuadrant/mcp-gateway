@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -11,6 +13,8 @@ import (
 type redisTokenCache struct {
 	client        *redis.Client
 	encryptionKey []byte
+	sessionTTL    time.Duration
+	logger        *slog.Logger
 }
 
 func redisKey(sessionID string) string {
@@ -22,7 +26,11 @@ func (c *redisTokenCache) SetUserToken(ctx context.Context, sessionID, serverNam
 	if err != nil {
 		return fmt.Errorf("encrypting user token: %w", err)
 	}
-	return c.client.HSet(ctx, redisKey(sessionID), serverName, encrypted).Err()
+	key := redisKey(sessionID)
+	if err := c.client.HSet(ctx, key, serverName, encrypted).Err(); err != nil {
+		return err
+	}
+	return c.client.Expire(ctx, key, c.sessionTTL).Err()
 }
 
 func (c *redisTokenCache) GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error) {
@@ -37,8 +45,10 @@ func (c *redisTokenCache) GetUserToken(ctx context.Context, sessionID, serverNam
 	if err != nil {
 		return "", false, fmt.Errorf("decrypting user token: %w", err)
 	}
-	if checkJWTExpiry(token) {
-		_ = c.DeleteUserToken(ctx, sessionID, serverName)
+	if checkUpstreamJWTExpiry(token) {
+		if err := c.DeleteUserToken(ctx, sessionID, serverName); err != nil {
+			c.logger.Debug("failed to delete expired upstream JWT from cache", "session", sessionID, "server", serverName, "error", err)
+		}
 		return "", false, nil
 	}
 	return token, true, nil
@@ -50,7 +60,8 @@ func (c *redisTokenCache) DeleteUserToken(ctx context.Context, sessionID, server
 
 // NewRedisUserTokenCache returns a Redis-backed UserTokenCache with AES-GCM encryption.
 // signingKey is the session JWT signing key; an encryption key is derived from it via HKDF.
-func NewRedisUserTokenCache(client *redis.Client, signingKey []byte) (UserTokenCache, error) {
+// sessionTTL sets the Redis key expiry matching the session JWT lifetime.
+func NewRedisUserTokenCache(client *redis.Client, signingKey []byte, sessionTTL time.Duration, logger *slog.Logger) (UserTokenCache, error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client is required")
 	}
@@ -61,5 +72,7 @@ func NewRedisUserTokenCache(client *redis.Client, signingKey []byte) (UserTokenC
 	return &redisTokenCache{
 		client:        client,
 		encryptionKey: encKey,
+		sessionTTL:    sessionTTL,
+		logger:        logger,
 	}, nil
 }
