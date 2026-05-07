@@ -631,12 +631,10 @@ local-env-teardown: ## Tear down the local Kind cluster
 
 
 .PHONY: add-jwt-key
-add-jwt-key: #add the public key needed to validate any incoming jwt based headers such as x-allowed-tools
-	@for i in 1 2 3 4 5; do \
-		kubectl get deployment/$(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) -o yaml | \
-		bin/yq '.spec.template.spec.containers[0].env += [{"name":"TRUSTED_HEADER_PUBLIC_KEY","valueFrom":{"secretKeyRef":{"name":"trusted-headers-public-key","key":"key"}}}] | .spec.template.spec.containers[0].env |= unique_by(.name)' | \
-		kubectl apply -f - && break || (echo "Retry $$i/5 failed, waiting 2s..." && sleep 2); \
-	done
+add-jwt-key: #add the public key needed to validate any incoming jwt based headers such as x-mcp-authorized
+	@kubectl apply -f config/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	@kubectl patch mcpgatewayextension mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --type='merge' \
+		-p='{"spec":{"trustedHeadersKey":{"secretName":"trusted-headers-public-key"}}}'
 
 .PHONY: dev
 dev: ## Setup cluster for local development (binaries run on host)
