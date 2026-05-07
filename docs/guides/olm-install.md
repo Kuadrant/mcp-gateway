@@ -46,13 +46,13 @@ The default `local-env-setup` target uses kustomize:
 make local-env-setup
 ```
 
-To use the OLM-based deployment instead:
+To use the OLM-based deployment instead (installs both MCP Gateway and Kuadrant via OLM):
 
 ```bash
-make local-env-setup INSTALL_OLM=true
+make local-env-setup-olm
 ```
 
-This builds the bundle and catalog images locally, loads them into the Kind cluster, and sets `imagePullPolicy: Never` on the CatalogSource so no remote registry is needed.
+This builds the bundle and catalog images locally, loads them into the Kind cluster, deploys the Kuadrant OLM catalog, and lets OLM resolve Kuadrant as a dependency automatically.
 
 ## Available Make Targets
 
@@ -66,4 +66,6 @@ This builds the bundle and catalog images locally, loads them into the Kind clus
 | `make olm-install` | Install OLM on the cluster |
 | `make olm-uninstall` | Uninstall OLM from the cluster |
 | `make deploy-olm` | Deploy controller via OLM on local cluster |
+| `make deploy-kuadrant-catalog` | Deploy Kuadrant OLM catalog from upstream |
+| `make local-env-setup-olm` | Full local setup with MCP Gateway and Kuadrant via OLM |
 | `make undeploy-olm` | Remove OLM-deployed controller |

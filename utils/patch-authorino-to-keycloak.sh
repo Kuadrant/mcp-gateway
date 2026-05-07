@@ -3,11 +3,13 @@
 # Patches the Authorino deployment to resolve Keycloak's external test domain name to the MCP gateway IP
 # and accept its TLS certificate – used for demos, do not use in production
 
-echo "Patching Authorino to trust Keycloak's TLS certificate..."
+AUTHORINO_NS="${1:-kuadrant-system}"
 
-kubectl create configmap mcp-gateway-keycloak-cert -n kuadrant-system --from-file=keycloak.crt=./out/certs/ca.crt
+echo "Patching Authorino in namespace $AUTHORINO_NS to trust Keycloak's TLS certificate..."
 
-kubectl patch authorino authorino -n kuadrant-system --type merge -p '
+kubectl create configmap mcp-gateway-keycloak-cert -n "$AUTHORINO_NS" --from-file=keycloak.crt=./out/certs/ca.crt --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl patch authorino authorino -n "$AUTHORINO_NS" --type merge -p '
 {
   "spec": {
     "volumes": {
@@ -39,6 +41,6 @@ if [[ -z "$GATEWAY_IP" ]]; then
   exit 1
 fi
 
-kubectl patch deployment authorino -n kuadrant-system --type='json' -p="$(cat config/keycloak/patch-hostaliases.json | envsubst)"
+kubectl patch deployment authorino -n "$AUTHORINO_NS" --type='json' -p="$(cat config/keycloak/patch-hostaliases.json | envsubst)"
 
-kubectl wait --for=condition=available --timeout=90s deployment/authorino -n kuadrant-system
+kubectl wait --for=condition=available --timeout=90s deployment/authorino -n "$AUTHORINO_NS"

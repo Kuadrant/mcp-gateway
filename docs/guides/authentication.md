@@ -113,7 +113,7 @@ helm install kuadrant-operator kuadrant/kuadrant-operator \
 	--timeout=600s \
 	--namespace kuadrant-system;
 
-kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/kuadrant/kuadrant.yaml
+kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/config/kuadrant/kuadrant.yaml -n kuadrant-system
 
 kubectl wait --for=condition=available --timeout=90s deployment/authorino -n kuadrant-system
 

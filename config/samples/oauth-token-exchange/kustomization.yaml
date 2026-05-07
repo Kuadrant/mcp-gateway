@@ -5,4 +5,3 @@ resources:
 - tools-list-auth.yaml
 - tools-call-auth.yaml
 - trusted-header-public-key.yaml
-- trusted-headers-private-key.yaml
