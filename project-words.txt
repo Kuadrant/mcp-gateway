@@ -72,6 +72,7 @@ Elicitations
 elif
 emceepea
 emicklei
+EMFILE
 EMKAB
 endpointslices
 envoyfilter
@@ -150,6 +151,7 @@ infobip
 ingester
 ingressgateway
 inmemory
+inotify
 installplan
 integration
 intialise
@@ -348,6 +350,7 @@ SPIFFE
 SQAY
 Srbu
 sslip
+startswith
 statefulness
 stdr
 streamable
@@ -381,6 +384,7 @@ omitempty
 Errorf
 authpolicies
 Unmarshal
+unmarshals
 unmarshalling
 Unregistration
 upserted

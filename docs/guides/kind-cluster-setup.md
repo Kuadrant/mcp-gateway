@@ -9,6 +9,14 @@ This guide walks through setting up a local Kind cluster with the essential prer
 - [Helm](https://helm.sh/docs/intro/install/) installed
 - [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) installed
 
+> **Note:** On Linux hosts the broker uses fsnotify, which consumes inotify instances. Kind defaults to `fs.inotify.max_user_instances=128`, and Kubernetes system components consume most of those slots, which can cause the broker pod to exit on startup with `EMFILE` ("too many open files"). After creating the cluster, raise the limit on the Kind node:
+>
+> ```shell
+> <container-runtime> exec <kind-node-name> sysctl fs.inotify.max_user_instances=1024
+> ```
+>
+> See [Troubleshooting: Broker Crashes on Startup](./troubleshooting.md#broker-crashes-on-startup-with-exit-code-1-inotify-limit-on-kind) for details.
+
 ## Step 1: Create Kind Cluster
 
 ```bash
