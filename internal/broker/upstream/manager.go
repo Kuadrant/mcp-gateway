@@ -80,11 +80,9 @@ type MCPManager struct {
 	// serverTools is an internal copy that contains the managed MCP's tools with prefixed names. It is these that are externally available via the gateway
 	serverTools []server.ServerTool
 	// tools is the original set from MCP server with no prefix
-	tools []mcp.Tool
-	// toolsMap is a map of from tool name to tool for quick look up
-	toolsMap map[string]mcp.Tool
-	//servedToolsMap is a map of the served tools names (including prefix if any)
-	servedToolsMap map[string]mcp.Tool
+	tools          []mcp.Tool
+	toolsMap       map[string]*mcp.Tool
+	servedToolsMap map[string]*mcp.Tool
 	// toolsLock protects tools, serverTools
 	toolsLock sync.RWMutex
 
@@ -117,8 +115,8 @@ func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger 
 		logger:            logger,
 		invalidToolPolicy: policy,
 		done:              make(chan struct{}),
-		toolsMap:          map[string]mcp.Tool{},
-		servedToolsMap:    map[string]mcp.Tool{},
+		toolsMap:          map[string]*mcp.Tool{},
+		servedToolsMap:    map[string]*mcp.Tool{},
 		serverTools:       []server.ServerTool{},
 	}
 }
@@ -251,13 +249,12 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.tools = fetched
 	numberOfTools = len(fetched)
 	// set a tools map for quick look up by other functions
-	man.toolsMap = map[string]mcp.Tool{}
-	man.servedToolsMap = map[string]mcp.Tool{}
-	// we always use any prefix here as it is what the client will call
-	for _, newTool := range fetched {
-		man.toolsMap[newTool.Name] = newTool
-		toolName := prefixedName(man.MCP.GetPrefix(), newTool.Name)
-		man.servedToolsMap[toolName] = newTool
+	man.toolsMap = make(map[string]*mcp.Tool, len(fetched))
+	man.servedToolsMap = make(map[string]*mcp.Tool, len(fetched))
+	for i := range fetched {
+		man.toolsMap[fetched[i].Name] = &fetched[i]
+		toolName := prefixedName(man.MCP.GetPrefix(), fetched[i].Name)
+		man.servedToolsMap[toolName] = &fetched[i]
 	}
 	// serverTools will have the prefix if one is set
 	man.logger.Debug("updating gateway tools", "upstream mcp server", man.MCP.ID(), "adding", len(toAdd), "removing", len(toRemove))
@@ -371,16 +368,13 @@ func (man *MCPManager) GetManagedTools() []mcp.Tool {
 	return result
 }
 
-// GetServedManagedTool will return the tool if present that is actually beng served by the gateway.
+// GetServedManagedTool will return the tool if present that is actually being served by the gateway.
 // It expects a prefixed tool if a prefix is present.
+// returns the map pointer directly to avoid per-lookup alloc -- callers must not modify.
 func (man *MCPManager) GetServedManagedTool(toolName string) *mcp.Tool {
 	man.toolsLock.RLock()
 	defer man.toolsLock.RUnlock()
-	tool, ok := man.servedToolsMap[toolName]
-	if ok {
-		return &tool
-	}
-	return nil
+	return man.servedToolsMap[toolName]
 }
 
 // SetToolsForTesting sets the tools directly for testing purposes.
@@ -391,9 +385,9 @@ func (man *MCPManager) SetToolsForTesting(tools []mcp.Tool) {
 	defer man.toolsLock.Unlock()
 	man.tools = tools
 	// set a tools map for quick look up by other functions
-	for _, newTool := range tools {
-		man.toolsMap[newTool.Name] = newTool
-		man.servedToolsMap[prefixedName(man.MCP.GetPrefix(), newTool.Name)] = newTool
+	for i := range tools {
+		man.toolsMap[tools[i].Name] = &tools[i]
+		man.servedToolsMap[prefixedName(man.MCP.GetPrefix(), tools[i].Name)] = &tools[i]
 	}
 }
 
@@ -414,8 +408,8 @@ func (man *MCPManager) removeAllTools() {
 	}
 	man.serverTools = []server.ServerTool{}
 	man.tools = []mcp.Tool{}
-	man.toolsMap = map[string]mcp.Tool{}
-	man.servedToolsMap = map[string]mcp.Tool{}
+	man.toolsMap = map[string]*mcp.Tool{}
+	man.servedToolsMap = map[string]*mcp.Tool{}
 	man.gatewayServer.DeleteTools(toolsToRemove...)
 	man.logger.Debug("removed all tools", "upstream mcp server", man.MCP.ID(), "count", len(toolsToRemove))
 }

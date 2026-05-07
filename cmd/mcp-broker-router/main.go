@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	_ "net/http/pprof" //nolint:gosec // G108: intentional pprof endpoint for performance profiling
 	"os"
 	"os/signal"
 	"sync"
@@ -255,6 +256,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("[grpc] listen error: %v", err)
 	}
+
+	go func() {
+		pprofAddr := "0.0.0.0:6060"
+		logger.Info("[pprof] starting profiling server", "listening", pprofAddr)
+		pprofSrv := &http.Server{
+			Addr:              pprofAddr,
+			Handler:           nil,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		if err := pprofSrv.ListenAndServe(); err != nil {
+			logger.Error("pprof server error", "error", err)
+		}
+	}()
 
 	go func() {
 		logger.Info("[grpc] starting MCP Router", "listening", grpcAddr)

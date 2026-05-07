@@ -48,3 +48,4 @@ docs/plans/
 # Generated OLM catalog artifacts
 catalog/mcp-gateway-catalog/
 catalog/mcp-gateway-catalog.Dockerfile
+tests/perf/mock-server/mock-server

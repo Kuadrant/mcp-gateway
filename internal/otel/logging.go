@@ -11,14 +11,16 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TracingHandler wraps an slog.Handler to add trace_id and span_id from context
+// TracingHandler wraps an slog.Handler to add trace_id and span_id from context.
+// when tracing is not configured, it passes through to the underlying handler directly.
 type TracingHandler struct {
-	handler slog.Handler
+	handler       slog.Handler
+	tracingActive bool
 }
 
 // NewTracingHandler creates a new TracingHandler wrapping the given handler
-func NewTracingHandler(handler slog.Handler) *TracingHandler {
-	return &TracingHandler{handler: handler}
+func NewTracingHandler(handler slog.Handler, tracingActive bool) *TracingHandler {
+	return &TracingHandler{handler: handler, tracingActive: tracingActive}
 }
 
 // Enabled reports whether the handler handles records at the given level
@@ -26,8 +28,12 @@ func (h *TracingHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.handler.Enabled(ctx, level)
 }
 
-// Handle adds trace context to the record and delegates to the wrapped handler
+// Handle adds trace context to the record and delegates to the wrapped handler.
+// skips span context extraction entirely when tracing is not configured.
 func (h *TracingHandler) Handle(ctx context.Context, record slog.Record) error {
+	if !h.tracingActive {
+		return h.handler.Handle(ctx, record)
+	}
 	span := trace.SpanFromContext(ctx)
 	if span.IsRecording() {
 		spanCtx := span.SpanContext()
@@ -43,12 +49,12 @@ func (h *TracingHandler) Handle(ctx context.Context, record slog.Record) error {
 
 // WithAttrs returns a new handler with the given attributes
 func (h *TracingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &TracingHandler{handler: h.handler.WithAttrs(attrs)}
+	return &TracingHandler{handler: h.handler.WithAttrs(attrs), tracingActive: h.tracingActive}
 }
 
 // WithGroup returns a new handler with the given group name
 func (h *TracingHandler) WithGroup(name string) slog.Handler {
-	return &TracingHandler{handler: h.handler.WithGroup(name)}
+	return &TracingHandler{handler: h.handler.WithGroup(name), tracingActive: h.tracingActive}
 }
 
 // MultiHandler sends logs to multiple handlers simultaneously
@@ -109,7 +115,8 @@ func NewTracingLogger(w io.Writer, opts *slog.HandlerOptions, jsonFormat bool, l
 	} else {
 		baseHandler = slog.NewTextHandler(w, opts)
 	}
-	stdoutHandler := NewTracingHandler(baseHandler)
+	tracingActive := loggerProvider != nil
+	stdoutHandler := NewTracingHandler(baseHandler, tracingActive)
 
 	if loggerProvider == nil {
 		return slog.New(stdoutHandler)
