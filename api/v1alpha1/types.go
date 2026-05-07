@@ -17,6 +17,7 @@ import (
 
 // MCPServerRegistration defines a collection of MCP (Model Context Protocol) servers to be aggregated by the gateway.
 // It enables discovery and federation of tools from multiple backend MCP servers through HTTPRoute references, providing a declarative way to configure which MCP servers should be accessible through the gateway.
+// +kubebuilder:printcolumn:name="Category",type="string",JSONPath=".spec.category",description="Categories for tool discovery"
 type MCPServerRegistration struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -62,6 +63,20 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// category specifies the categories this MCP server belongs to.
+	// This is used for tool discovery and filtering.
+	// +optional
+	// +kubebuilder:default={"uncategorised"}
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=set
+	Category []string `json:"category,omitempty"`
+
+	// hint provides a short descriptive hint about the tools provided by this server.
+	// This helps agents understand what kind of tools are available before listing them.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Hint string `json:"hint,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

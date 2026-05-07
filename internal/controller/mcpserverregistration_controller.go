@@ -378,10 +378,12 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	serverName := mcpServerName(mcpsr)
 	serverConfig := config.MCPServer{
-		Name:     serverName,
+		Name:       serverName,
 		URL:      serverInfo.Endpoint,
 		Hostname: serverInfo.Hostname,
 		Prefix:   mcpsr.Spec.Prefix,
+		Categories: mcpsr.Spec.Category,
+		Hint:       mcpsr.Spec.Hint,
 		// TODO implement add to MCPServerRegistration CRD
 		Enabled: true,
 	}

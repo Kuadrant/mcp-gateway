@@ -75,6 +75,11 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// discoveryToolsEnabled is a kill switch for discover_tools and select_tools
+	discoveryToolsEnabled bool
+	// discoveryToolThreshold is the tool count above which hiding activates
+	discoveryToolThreshold int
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -111,6 +116,20 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
+// WithDiscoveryToolsEnabled sets whether discovery tools are enabled
+func WithDiscoveryToolsEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolsEnabled = enabled
+	}
+}
+
+// WithDiscoveryToolThreshold sets the threshold for tool discovery
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolThreshold = threshold
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -118,6 +137,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		logger:                logger,
 		virtualServers:        map[string]*config.VirtualServer{},
 		managerTickerInterval: time.Second * 60,
+		discoveryToolsEnabled: true,
 	}
 
 	for _, option := range opts {

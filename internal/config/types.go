@@ -64,6 +64,8 @@ type MCPServer struct {
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Categories []string    `json:"category,omitempty"   yaml:"category,omitempty"`
+	Hint       string      `json:"hint,omitempty"       yaml:"hint,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -77,7 +79,21 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		!slicesEqual(existingConfig.Categories, mcpServer.Categories) ||
+		existingConfig.Hint != mcpServer.Hint
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Path returns the path part of the mcp url

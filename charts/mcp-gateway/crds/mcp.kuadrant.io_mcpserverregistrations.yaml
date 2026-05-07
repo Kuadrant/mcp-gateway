@@ -44,6 +44,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    - description: Categories for tool discovery
+      jsonPath: .spec.category
+      name: Category
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -71,6 +75,17 @@ spec:
           spec:
             description: spec defines the desired state of MCPServerRegistration.
             properties:
+              category:
+                default:
+                - uncategorised
+                description: |-
+                  category specifies the categories this MCP server belongs to.
+                  This is used for tool discovery and filtering.
+                items:
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: set
               credentialRef:
                 description: |-
                   credentialRef references a Secret containing authentication credentials for the MCP server.
@@ -90,6 +105,12 @@ spec:
                 required:
                 - name
                 type: object
+              hint:
+                description: |-
+                  hint provides a short descriptive hint about the tools provided by this server.
+                  This helps agents understand what kind of tools are available before listing them.
+                maxLength: 256
+                type: string
               path:
                 default: /mcp
                 description: |-
