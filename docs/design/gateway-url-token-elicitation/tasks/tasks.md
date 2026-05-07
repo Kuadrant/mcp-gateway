@@ -211,11 +211,12 @@ Documentation sections are written inline with their implementation tasks (Tasks
 **Files:**
 - `docs/guides/url-elicitation.md` (new) — assemble from sections written in Tasks 4–6
 - `docs/guides/README.md` — add entry for new guide
+- `docs/reference/mcpserverregistration.md` — update API reference with `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
 
 **Acceptance criteria:**
 - [ ] Guide sections from Tasks 4–6 assembled into coherent guide
 - [ ] Guide follows `docs/CLAUDE.md` conventions (numbered steps, prerequisites, next steps)
-- [ ] API reference updated (done in Task 2)
+- [ ] API reference updated with `credentialURLElicitation` fields
 - [ ] Security architecture updated (done in Task 6)
 - [ ] Guide added to `docs/guides/README.md`
 

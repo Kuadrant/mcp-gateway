@@ -55,23 +55,23 @@ func init() {
 }
 
 var (
-	mcpRouterAddrFlag         string
-	mcpBrokerAddrFlag         string
-	mcpRoutePublicHost        string
-	mcpRoutePrivateHost       string
-	mcpRouterKey              string
-	cacheConnectionStringFlag string
-	mcpConfigFile             string
-	jwtSigningKeyFlag         string
-	sessionDurationInMins     int64
-	brokerWriteTimeoutSecs    int64
-	managerTickerIntervalSecs int64
-	loglevel                  int
-	logFormat                 string
+	mcpRouterAddrFlag              string
+	mcpBrokerAddrFlag              string
+	mcpRoutePublicHost             string
+	mcpRoutePrivateHost            string
+	mcpRouterKey                   string
+	cacheConnectionStringFlag      string
+	mcpConfigFile                  string
+	jwtSigningKeyFlag              string
+	sessionDurationInMins          int64
+	brokerWriteTimeoutSecs         int64
+	managerTickerIntervalSecs      int64
+	loglevel                       int
+	logFormat                      string
 	enforceCapabilityFilteringFlag bool
-	invalidToolPolicyFlag     string
-	maxRequestBodySize        int
-	enableURLElicitationFlag  bool
+	invalidToolPolicyFlag          string
+	maxRequestBodySize             int
+	enableURLElicitationFlag       bool
 )
 
 func main() {
