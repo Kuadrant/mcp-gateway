@@ -33,24 +33,28 @@ The credential resolution (Task 5) will reuse this flow — call `GetClientElici
 
 Tasks are ordered by dependency. Each task maps to a Jira story.
 
-### Task 1: Feature flag `--enable-elicitation` (part of CONNLINK-997)
+Tasks 1 and 2 are complete on branch `ute-crds-feature-flag` and will merge after the remaining tasks are done. Tasks 3–8 build on `main` and will be rebased onto Tasks 1+2 before final merge.
 
-Add the flag early so all subsequent work is gated behind it.
+### Task 1: Feature flag `--enable-url-elicitation` (part of CONNLINK-997) — DONE
+
+Branch: `ute-crds-feature-flag`
 
 **Files:**
-- `cmd/mcp-broker-router/main.go` — add `--enable-elicitation` flag (default: false), pass to ExtProcServer and Broker
+- `cmd/mcp-broker-router/main.go` — add `--enable-url-elicitation` flag (default: true), pass to ExtProcServer and Broker
 - `internal/mcp-router/server.go` — add `ElicitationEnabled bool` field to `ExtProcServer`
 - `internal/broker/broker.go` — add `ElicitationEnabled bool` field
 
 **Acceptance criteria:**
-- [ ] Flag parsed and plumbed to router and broker
-- [ ] When disabled, no elicitation behavior changes (verified by existing tests passing)
+- [x] Flag parsed and plumbed to router and broker
+- [x] When disabled, no elicitation behavior changes (verified by existing tests passing)
 
 **Verification:** `make test-unit` passes, `--help` shows the flag
 
 ---
 
-### Task 2: CRD + config types (CONNLINK-995)
+### Task 2: CRD + config types (CONNLINK-995) — DONE
+
+Branch: `ute-crds-feature-flag`
 
 **Files:**
 - `api/v1alpha1/types.go` — add `CredentialURLElicitation *CredentialURLElicitationConfig` to `MCPServerRegistrationSpec`
@@ -59,15 +63,11 @@ Add the flag early so all subsequent work is gated behind it.
 - `internal/config/types.go` — add `CredentialURLElicitationConfig` struct
 - `internal/controller/mcpserverregistration_controller.go:386` — propagate field from CRD to config
 - Run `make generate-all` to regenerate deepcopy, CRDs, sync Helm
-- `docs/reference/mcpserverregistration.md` — update API reference
 
 **Acceptance criteria:**
-- [ ] CRD accepts `credentialURLElicitation` with optional `url` field
-- [ ] Controller propagates to config Secret
+- [x] CRD accepts `credentialURLElicitation` with optional `url` field
+- [x] Controller propagates to config Secret
 - [ ] Unit test: controller includes elicitation config when set, omits when not set
-
-**Documentation (from `documentation.md`):**
-- API Reference Update: `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
 
 **Verification:** `make generate-all && make lint && make test-unit`
 
@@ -106,42 +106,14 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 
 ---
 
-### Task 4: Broker token page (CONNLINK-998)
+### Task 4: Router token resolution + elicitation trigger (CONNLINK-997)
 
-**Files:**
-- `internal/broker/credentials.go` (new) — HTTP handler for token page
-  - `GET /credentials?server=<name>&elicitation_id=<id>` — renders HTML form
-  - `POST /credentials` — stores token in cache, returns success
-- `internal/broker/credentials_test.go` (new) — unit tests
-- `cmd/mcp-broker-router/main.go` — register `/credentials` endpoint (gated behind `--enable-elicitation`)
-- `internal/broker/broker.go` — broker needs access to `UserTokenCache`
-
-**Acceptance criteria:**
-- [ ] GET renders form showing server name
-- [ ] POST verifies the session JWT on the request matches the session ID in the elicitation ID before storing
-- [ ] POST stores token in cache keyed by session ID and server name
-- [ ] Invalid/missing elicitation_id returns error
-- [ ] Session mismatch between request JWT and elicitation ID returns error
-- [ ] Endpoint only registered when `--enable-elicitation` is true
-
-**E2E test cases (from `e2e_test_cases.md`):**
-- `[URLElicitation] Broker credential page rejects invalid elicitation ID`
-- `[URLElicitation,Security] Broker credential page rejects session mismatch`
-- `[URLElicitation,Security] Credential page rejects mismatched session (phishing prevention)`
-
-**Documentation (from `documentation.md`):**
-- Guide section: "When I want to protect the token page from unauthorized access" — session JWT binding, custom header CORS protection, AuthPolicy as additional layer
-
-**Verification:** `make test-unit && make test-e2e`
-
----
-
-### Task 5: Router token resolution + elicitation trigger (CONNLINK-997)
+Depends on: Task 3. Core router logic — can be unit-tested with mock cache before the broker page exists.
 
 **Files:**
 - `internal/mcp-router/request_handlers.go` — modify `HandleToolCall` to add token resolution:
   1. Check if server has `CredentialURLElicitation` config — if not, skip (existing behavior)
-  2. If `--enable-elicitation` is false, skip (existing behavior)
+  2. If `--enable-url-elicitation` is false, skip (existing behavior)
   3. Check `Authorization` header from client request — if present, use as-is (no token injection needed)
   4. Check `UserTokenCache.GetUserToken(sessionID, serverName)` — if hit, inject via `headers.WithAuth()`
   5. On cache miss, check client elicitation capability via `SessionCache.GetClientElicitation(ctx, gatewaySessionID)` (already stored during initialize handshake in `HandleResponseHeaders`)
@@ -180,14 +152,48 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 
 ---
 
+### Task 5: Broker token page (CONNLINK-998)
+
+Depends on: Task 3. Independent of Task 4 — touches broker, not router.
+
+**Files:**
+- `internal/broker/credentials.go` (new) — HTTP handler for token page
+  - `GET /credentials?server=<name>&elicitation_id=<id>` — renders HTML form
+  - `POST /credentials` — stores token in cache, returns success
+- `internal/broker/credentials_test.go` (new) — unit tests
+- `cmd/mcp-broker-router/main.go` — register `/credentials` endpoint (gated behind `--enable-url-elicitation`)
+- `internal/broker/broker.go` — broker needs access to `UserTokenCache`
+
+**Acceptance criteria:**
+- [ ] GET renders form showing server name
+- [ ] POST verifies the session JWT on the request matches the session ID in the elicitation ID before storing
+- [ ] POST stores token in cache keyed by session ID and server name
+- [ ] Invalid/missing elicitation_id returns error
+- [ ] Session mismatch between request JWT and elicitation ID returns error
+- [ ] Endpoint only registered when `--enable-url-elicitation` is true
+
+**E2E test cases (from `e2e_test_cases.md`):**
+- `[URLElicitation] Broker credential page rejects invalid elicitation ID`
+- `[URLElicitation,Security] Broker credential page rejects session mismatch`
+- `[URLElicitation,Security] Credential page rejects mismatched session (phishing prevention)`
+
+**Documentation (from `documentation.md`):**
+- Guide section: "When I want to protect the token page from unauthorized access" — session JWT binding, custom header CORS protection, AuthPolicy as additional layer
+
+**Verification:** `make test-unit && make test-e2e`
+
+---
+
 ### Task 6: Router 401 invalidation + re-elicitation (CONNLINK-999)
+
+Depends on: Task 4 (reuses the -32042 helper).
 
 **Files:**
 - `internal/mcp-router/response_handlers.go` — modify `HandleResponseHeaders` to handle 401:
-  1. If status is 401 and server has `CredentialURLElicitation` config and `--enable-elicitation`:
+  1. If status is 401 and server has `CredentialURLElicitation` config and `--enable-url-elicitation`:
      - Delete cached token via `UserTokenCache.DeleteUserToken`
-     - Check client capability via `SessionCache.GetClientElicitation(ctx, gatewaySessionID)` (same flow as Task 5)
-     - If client supports elicitation → return `-32042` immediate response (reuse helper from Task 5)
+     - Check client capability via `SessionCache.GetClientElicitation(ctx, gatewaySessionID)` (same flow as Task 4)
+     - If client supports elicitation → return `-32042` immediate response (reuse helper from Task 4)
      - If not → pass 401 through as-is
 - `internal/mcp-router/response_handlers_test.go` — unit tests
 
@@ -210,11 +216,12 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 
 ### Task 7: Documentation review and assembly (part of CONNLINK-998)
 
-Documentation sections are written inline with their implementation tasks (Tasks 2, 4, 5, 6). This task assembles the final `docs/guides/url-elicitation.md` from those sections and does a consistency pass.
+Documentation sections are written inline with their implementation tasks (Tasks 4, 5, 6). This task assembles the final `docs/guides/url-elicitation.md` from those sections and does a consistency pass.
 
 **Files:**
 - `docs/guides/url-elicitation.md` (new) — assemble from sections written in Tasks 4–6
 - `docs/guides/README.md` — add entry for new guide
+- `docs/reference/mcpserverregistration.md` — update API reference with `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
 
 **Acceptance criteria:**
 - [ ] Guide sections from Tasks 4–6 assembled into coherent guide
