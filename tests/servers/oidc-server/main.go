@@ -87,8 +87,8 @@ func (a *authMiddleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		var claims struct {
-			Aud string `json:"aud"`
-			Sub string `json:"sub"`
+			Aud interface{} `json:"aud"` // can be string or []string
+			Sub string      `json:"sub"`
 		}
 		if err := accessToken.Claims(&claims); err != nil {
 			log.Printf("Failed to parse claims: %v", err)
@@ -96,8 +96,22 @@ func (a *authMiddleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		if claims.Aud != a.ExpectedAud {
-			log.Printf("Invalid audience: %s", claims.Aud)
+		// check audience - handle both string and array
+		audMatch := false
+		switch aud := claims.Aud.(type) {
+		case string:
+			audMatch = aud == a.ExpectedAud
+		case []interface{}:
+			for _, audItem := range aud {
+				if str, ok := audItem.(string); ok && str == a.ExpectedAud {
+					audMatch = true
+					break
+				}
+			}
+		}
+
+		if !audMatch {
+			log.Printf("Invalid audience: %v", claims.Aud)
 			http.Error(w, `{"error": "Unauthorized: invalid audience"}`, http.StatusUnauthorized)
 			return
 		}
