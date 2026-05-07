@@ -310,6 +310,78 @@ func TestHandleResponseHeaders_404WithMultipleServerSessions(t *testing.T) {
 	require.False(t, exists)
 }
 
+type mockMCPClient struct {
+	closed bool
+}
+
+func (m *mockMCPClient) Close() error {
+	m.closed = true
+	return nil
+}
+
+func (m *mockMCPClient) GetSessionId() string {
+	return "mock-session"
+}
+
+func TestHandleResponseHeaders_404ClosesConnection(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	server := &ExtProcServer{
+		Logger:       logger,
+		SessionCache: cache,
+		Broker:       newMockBroker(nil, map[string]string{}),
+	}
+
+	gatewaySessionID := "gateway-session-123"
+	serverName := "test-server"
+
+	// Add a mock connection to the registry
+	mockClient := &mockMCPClient{}
+	connKey := gatewaySessionID + ":" + serverName
+	server.connections.Store(connKey, mockClient)
+
+	// request headers with gateway session ID
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      "mcp-session-id",
+					RawValue: []byte(gatewaySessionID),
+				},
+			},
+		},
+	}
+
+	// response headers with 404 status
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      ":status",
+					RawValue: []byte("404"),
+				},
+			},
+		},
+	}
+
+	// create MCP request with server name
+	mcpReq := &MCPRequest{
+		sessionID:  gatewaySessionID,
+		serverName: serverName,
+		Method:     "tools/call",
+	}
+
+	_, err = server.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+
+	// Verify the connection was closed and removed from the registry
+	require.True(t, mockClient.closed, "connection should be closed")
+	_, exists := server.connections.Load(connKey)
+	require.False(t, exists, "connection should be removed from registry")
+}
+
 func TestHandleResponseHeaders_SuccessStatusDoesNotRemoveSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cache, err := session.NewCache()
