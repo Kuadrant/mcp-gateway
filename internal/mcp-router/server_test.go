@@ -67,7 +67,8 @@ func TestProcess_InvalidBody(t *testing.T) {
 			msg: &extProcV3.ProcessingRequest{
 				Request: &extProcV3.ProcessingRequest_RequestBody{
 					RequestBody: &extProcV3.HttpBody{
-						Body: []byte("{}"),
+						Body:        []byte("{}"),
+						EndOfStream: true,
 					},
 				},
 			},
@@ -102,7 +103,8 @@ func TestProcess_HappyPath(t *testing.T) {
 			msg: &extProcV3.ProcessingRequest{
 				Request: &extProcV3.ProcessingRequest_RequestBody{
 					RequestBody: &extProcV3.HttpBody{
-						Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`),
+						Body:        []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`),
+						EndOfStream: true,
 					},
 				},
 			},
@@ -140,7 +142,8 @@ func TestProcess_EmptyBody(t *testing.T) {
 			msg: &extProcV3.ProcessingRequest{
 				Request: &extProcV3.ProcessingRequest_RequestBody{
 					RequestBody: &extProcV3.HttpBody{
-						Body: []byte{},
+						Body:        []byte{},
+						EndOfStream: true,
 					},
 				},
 			},
@@ -171,7 +174,8 @@ func TestProcess_UnmarshalError(t *testing.T) {
 			msg: &extProcV3.ProcessingRequest{
 				Request: &extProcV3.ProcessingRequest_RequestBody{
 					RequestBody: &extProcV3.HttpBody{
-						Body: []byte("not json at all"),
+						Body:        []byte("not json at all"),
+						EndOfStream: true,
 					},
 				},
 			},
@@ -334,6 +338,187 @@ func TestProcessSpanEnded(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected mcp-router.process span to be recorded")
+}
+
+func TestProcess_StreamedBodyMultipleChunks(t *testing.T) {
+	srv := newTestServer(t)
+
+	// do-nothing body response for intermediate chunks
+	doNothingBody := &extProcV3.ProcessingResponse{
+		Response: &extProcV3.ProcessingResponse_RequestBody{
+			RequestBody: &extProcV3.BodyResponse{
+				Response: &extProcV3.CommonResponse{},
+			},
+		},
+	}
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		// chunk 1: partial body, EndOfStream=false
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`{"jsonrpc":"2.0",`),
+						EndOfStream: false,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{doNothingBody},
+		},
+		// chunk 2: partial body, EndOfStream=false
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`"method":"initialize",`),
+						EndOfStream: false,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{doNothingBody},
+		},
+		// chunk 3: final body, EndOfStream=true — triggers routing
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`"id":1}`),
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{
+									SetHeaders: []*corev3.HeaderValueOption{
+										{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte("initialize")}},
+										{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		responseHeadersStep(),
+	})
+
+	err := srv.Process(mock)
+	require.NoError(t, err)
+	mock.verifyAllResponsesConsumed()
+}
+
+func TestProcess_StreamedBodyExceedsMaxSize(t *testing.T) {
+	srv := newTestServer(t)
+	srv.MaxRequestBodySize = 50
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		// chunk 1: 30 bytes, under the limit
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`{"jsonrpc":"2.0","method":"in`),
+						EndOfStream: false,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{},
+						},
+					},
+				},
+			},
+		},
+		// chunk 2: pushes total over 50 bytes, expect 413
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`initialize","id":1,"params":{"extra":"data"}}`),
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				immediateResponse(413),
+			},
+		},
+	})
+
+	err := srv.Process(mock)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request body too large")
+	mock.verifyAllResponsesConsumed()
+}
+
+func TestProcess_StreamedBodyEmptyFinalChunk(t *testing.T) {
+	srv := newTestServer(t)
+
+	doNothingBody := &extProcV3.ProcessingResponse{
+		Response: &extProcV3.ProcessingResponse_RequestBody{
+			RequestBody: &extProcV3.BodyResponse{
+				Response: &extProcV3.CommonResponse{},
+			},
+		},
+	}
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		// chunk 1: full body in intermediate chunk
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte(`{"jsonrpc":"2.0","method":"initialize","id":1}`),
+						EndOfStream: false,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{doNothingBody},
+		},
+		// chunk 2: empty final chunk, EndOfStream=true — should process accumulated data
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        []byte{},
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{
+									SetHeaders: []*corev3.HeaderValueOption{
+										{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte("initialize")}},
+										{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		responseHeadersStep(),
+	})
+
+	err := srv.Process(mock)
+	require.NoError(t, err)
+	mock.verifyAllResponsesConsumed()
 }
 
 func newTestServer(t *testing.T) *ExtProcServer {
