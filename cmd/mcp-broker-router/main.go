@@ -239,6 +239,9 @@ func main() {
 	mutex.Unlock()
 	mcpConfig.Notify(ctx)
 
+	// wire viper's logger so fsnotify errors (e.g. EMFILE from Kind's inotify
+	// limit) surface instead of being dropped before WatchConfig's os.Exit(1).
+	viper.SetOptions(viper.WithLogger(logger))
 	viper.WatchConfig()
 	// set up our change event handler
 	viper.OnConfigChange(func(in fsnotify.Event) {
