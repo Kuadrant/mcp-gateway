@@ -18,10 +18,16 @@ import (
 
 const userCredPrefix = "usercred:"
 
-// UserTokenCache stores per-user credentials keyed by session and server name
+// UserTokenCache stores per-user credentials keyed by session and server name.
+// Tokens are collected via URL elicitation and injected into upstream requests.
 type UserTokenCache interface {
+	// SetUserToken stores a token for the given session and server
 	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	// GetUserToken retrieves a cached token. Returns ("", false, nil) on miss.
+	// JWT tokens are checked for expiry; expired tokens are deleted and treated as a miss.
+	// Opaque tokens (e.g. PATs) are returned without expiry checks.
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
+	// DeleteUserToken removes a cached token for the given session and server
 	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
 }
 
