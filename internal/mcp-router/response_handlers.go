@@ -43,6 +43,16 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 			// not much we can do here log and continue
 			s.Logger.ErrorContext(ctx, "failed to remove server session ", "server", req.serverName, "session", req.GetSessionID())
 		}
+		// close and remove the connection if it exists in our registry
+		connKey := req.GetSessionID() + ":" + req.serverName
+		if conn, ok := s.connections.LoadAndDelete(connKey); ok {
+			if client, ok := conn.(MCPClient); ok {
+				s.Logger.DebugContext(ctx, "closing connection after backend 404", "server", req.serverName)
+				if err := client.Close(); err != nil {
+					s.Logger.ErrorContext(ctx, "failed to close connection after 404", "error", err)
+				}
+			}
+		}
 	}
 
 	responses := response.WithResponseHeaderResponse(responseHeaderBuilder.Build()).Build()

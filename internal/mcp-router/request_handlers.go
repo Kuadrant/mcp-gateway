@@ -495,7 +495,6 @@ func (s *ExtProcServer) HandleElicitationResponse(
 
 // initializeMCPSeverSession will create a new session and connection with the backend MCP server
 // This connection is kept open for the life of the gateway session to ensure the backend session is not closed/invalidated.
-// TODO when we receive a 404 from a backend MCP Server we should have a way to close the connection at that point also currently when we receive a 404 we remove the session from cache and will open a new connection. They will all be closed once the gateway session expires or the client sends a delete but it is a source of potential leaks
 func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
 	ctx, initSpan := tracer().Start(ctx, "mcp-router.session-init",
 		trace.WithAttributes(
@@ -551,8 +550,13 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		initSpan.SetStatus(codes.Error, "failed to initialize backend session")
 		return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
 	}
+
+	connKey := mcpReq.GetSessionID() + ":" + mcpReq.serverName
+	s.connections.Store(connKey, clientHandle)
+
 	var sessionCloser = func() {
 		s.Logger.DebugContext(ctx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
+		s.connections.Delete(connKey)
 		if err := clientHandle.Close(); err != nil {
 			s.Logger.DebugContext(ctx, "failed to close client connection", "err", err)
 		}

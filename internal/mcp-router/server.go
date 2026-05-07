@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/mark3labs/mcp-go/client"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -30,8 +30,14 @@ type SessionCache interface {
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
 }
 
+// MCPClient defines the interface for an MCP client
+type MCPClient interface {
+	Close() error
+	GetSessionId() string
+}
+
 // InitForClient defines a function for initializing an MCP server for a client
-type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (MCPClient, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
@@ -44,6 +50,8 @@ type ExtProcServer struct {
 	MaxRequestBodySize int
 	//TODO this should not be needed
 	Broker broker.MCPBroker
+
+	connections sync.Map // map[string]*client.Client, key is gatewaySessionID + ":" + serverName
 }
 
 // OnConfigChange is used to register the router for config changes
