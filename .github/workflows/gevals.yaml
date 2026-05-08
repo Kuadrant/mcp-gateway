@@ -114,6 +114,13 @@ jobs:
 
           echo "Ollama setup complete using model $MODEL_NAME"
 
+      - name: Warm up Ollama model
+        if: env.OPENAI_API_KEY == 'ollama'
+        run: |
+          echo "Warming up model to ensure it is loaded before eval..."
+          curl -s -X POST http://localhost:11434/api/generate \
+            -d '{"model":"qwen2.5:1.5b","prompt":"hi","stream":false}' > /dev/null || true
+
       - name: Run mcpchecker
         run: |
           echo "Installing mcpchecker..."
