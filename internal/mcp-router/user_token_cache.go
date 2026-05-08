@@ -7,18 +7,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"golang.org/x/crypto/hkdf"
 )
 
 const userCredPrefix = "usercred:"
 
-// UserTokenCache stores per-user credentials keyed by session and server name.
+// UserTokenCache stores per-user tokens keyed by session and server name.
 // Tokens are collected via URL elicitation and injected into upstream requests.
 type UserTokenCache interface {
 	// SetUserToken stores a token for the given session and server
@@ -29,24 +28,18 @@ type UserTokenCache interface {
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
 	// DeleteUserToken removes a cached token for the given session and server
 	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
+	// Close stops background goroutines. Safe to call multiple times.
+	Close()
 }
 
 // checkUpstreamJWTExpiry simple check of expiry, does not validate the JWT.
 // Returns true if the token looks like a JWT and is expired.
 // Non-JWT tokens (opaque PATs) return false.
 func checkUpstreamJWTExpiry(token string) bool {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return false
-	}
 	var claims struct {
 		Exp *float64 `json:"exp"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == nil {
+	if !elicitation.DecodeJWTPayload(token, &claims) || claims.Exp == nil {
 		return false
 	}
 	return time.Unix(int64(*claims.Exp), 0).Before(time.Now())

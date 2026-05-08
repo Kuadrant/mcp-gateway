@@ -411,3 +411,7 @@ secrettoken
 CONNLINK
 HMAC
 myprefix
+nilerr
+tokenelicitation
+unparseable
+Nlcjpw

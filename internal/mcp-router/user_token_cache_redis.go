@@ -58,6 +58,8 @@ func (c *redisTokenCache) DeleteUserToken(ctx context.Context, sessionID, server
 	return c.client.HDel(ctx, redisKey(sessionID), serverName).Err()
 }
 
+func (c *redisTokenCache) Close() {}
+
 // NewRedisUserTokenCache returns a Redis-backed UserTokenCache with AES-GCM encryption.
 // signingKey is the session JWT signing key; an encryption key is derived from it via HKDF.
 // sessionTTL sets the Redis key expiry matching the session JWT lifetime.

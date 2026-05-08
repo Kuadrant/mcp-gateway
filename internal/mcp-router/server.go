@@ -9,6 +9,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -35,13 +36,15 @@ type InitForClient func(ctx context.Context, gatewayHost, routerKey string, conf
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig      *config.MCPServersConfig
-	JWTManager         *session.JWTManager
-	Logger             *slog.Logger
-	InitForClient      InitForClient
-	SessionCache       SessionCache
-	ElicitationMap     idmap.Map
-	MaxRequestBodySize int
+	RoutingConfig       *config.MCPServersConfig
+	JWTManager          *session.JWTManager
+	Logger              *slog.Logger
+	InitForClient       InitForClient
+	SessionCache        SessionCache
+	ElicitationMap      idmap.Map
+	UserTokenCache      UserTokenCache
+	TokenElicitationMap elicitation.Map
+	MaxRequestBodySize  int
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
@@ -205,6 +206,22 @@ func main() {
 		panic("failed to setup elicitation map: " + err.Error())
 	}
 
+	var userTokenCache mcpRouter.UserTokenCache
+	if redisClient != nil {
+		utc, utcErr := mcpRouter.NewRedisUserTokenCache(redisClient, []byte(jwtSigningKeyFlag), sessionTTL, logger)
+		if utcErr != nil {
+			panic("failed to setup redis user token cache: " + utcErr.Error())
+		}
+		userTokenCache = utc
+	} else {
+		userTokenCache = mcpRouter.NewMemoryUserTokenCache(sessionTTL)
+	}
+
+	tokenElicitationMap, err := elicitation.New(elicitation.WithRedisClient(redisClient))
+	if err != nil {
+		panic("failed to setup token elicitation map: " + err.Error())
+	}
+
 	invalidToolPolicy := mcpv1alpha1.InvalidToolPolicy(invalidToolPolicyFlag)
 	if invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyFilterOut && invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyRejectServer {
 		panic("--invalid-tool-policy must be FilterOut or RejectServer")
@@ -220,8 +237,9 @@ func main() {
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
 	)
-	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
-	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
+	tokenHandler := broker.NewTokenHandler(userTokenCache, tokenElicitationMap, *logger)
+	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs, tokenHandler)
+	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap, userTokenCache, tokenElicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
 	if mcpRoutePublicHost == "" {
@@ -314,7 +332,7 @@ func main() {
 	}
 }
 
-func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager *session.JWTManager, writeTimeoutSecs int64) (*http.Server, *server.StreamableHTTPServer) {
+func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager *session.JWTManager, writeTimeoutSecs int64, tokenHandler http.Handler) (*http.Server, *server.StreamableHTTPServer) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -353,23 +371,26 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 
 	mux.HandleFunc("/status", mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
+	mux.Handle("/tokens", tokenHandler)
 	mux.Handle("/mcp", streamableHTTPServer)
 
 	return httpSrv, streamableHTTPServer
 }
 
-func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
+func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map, userTokenCache mcpRouter.UserTokenCache, tokenElicitationMap elicitation.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
 	server := &mcpRouter.ExtProcServer{
-		RoutingConfig:      mcpConfig,
-		Logger:             logger.With("component", "router"),
-		JWTManager:         jwtManager,
-		InitForClient:      clients.Initialize,
-		SessionCache:       sessionCache,
-		ElicitationMap:     elicitationMap,
-		Broker:             broker, // TODO we shouldn't need a handle to broker in the router
-		MaxRequestBodySize: maxRequestBodySize,
+		RoutingConfig:       mcpConfig,
+		Logger:              logger.With("component", "router"),
+		JWTManager:          jwtManager,
+		InitForClient:       clients.Initialize,
+		SessionCache:        sessionCache,
+		ElicitationMap:      elicitationMap,
+		UserTokenCache:      userTokenCache,
+		TokenElicitationMap: tokenElicitationMap,
+		Broker:              broker, // TODO we shouldn't need a handle to broker in the router
+		MaxRequestBodySize:  maxRequestBodySize,
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

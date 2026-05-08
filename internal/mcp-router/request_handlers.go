@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -301,9 +304,7 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 					},
 				},
 			},
-			`
-event: message
-data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not found"}],"isError":true},"jsonrpc":"2.0"}`)
+			buildSSEToolError(mcpReq.ID, "MCP error -32602: Tool not found"))
 		return calculatedResponse.Build()
 	}
 
@@ -339,6 +340,21 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	headers.WithMCPToolName(upstreamToolName)
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
+
+	// token resolution for servers with URL elicitation configured
+	if serverInfo.TokenURLElicitation != nil && s.UserTokenCache != nil {
+		if tokenErr := s.resolveUpstreamToken(ctx, mcpReq, serverInfo, headers); tokenErr != nil {
+			span.RecordError(tokenErr)
+			span.SetStatus(codes.Error, tokenErr.Error())
+			span.SetAttributes(attribute.String("error.type", "token_resolution"))
+			calculatedResponse.WithImmediateJSONRPCResponse(200,
+				[]*corev3.HeaderValueOption{{
+					Header: &corev3.HeaderValue{Key: "mcp-session-id", Value: mcpReq.GetSessionID()},
+				}},
+				tokenErr.Error())
+			return calculatedResponse.Build()
+		}
+	}
 
 	// create a new session with backend mcp if one doesn't exist
 	var exists map[string]string
@@ -629,4 +645,96 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 	// none tool call set headers
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
+}
+
+// resolveUpstreamToken checks for a cached upstream token and injects it, or triggers URL elicitation.
+// Returns nil on success (token injected or not needed). Returns an error whose message is a
+// pre-formatted SSE JSON-RPC response ready for WithImmediateJSONRPCResponse.
+func (s *ExtProcServer) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder) error {
+	sessionID := mcpReq.GetSessionID()
+
+	token, ok, err := s.UserTokenCache.GetUserToken(ctx, sessionID, serverInfo.Name)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "user token cache lookup failed", "error", err)
+		return errors.New(buildSSEError(mcpReq.ID, mcp.INTERNAL_ERROR, "internal error"))
+	}
+	if ok {
+		headers.WithAuth(token)
+		return nil
+	}
+
+	// cache miss — trigger elicitation if the client supports it
+	authHeader := mcpReq.GetSingleHeaderValue(authorizationHeader)
+	sub, subErr := elicitation.ExtractSubClaim(authHeader)
+	if subErr != nil {
+		// JWT present but no sub claim = misconfigured OIDC
+		s.Logger.ErrorContext(ctx, "authorization JWT missing sub claim", "error", subErr)
+		return errors.New(buildSSEError(mcpReq.ID, mcp.INVALID_REQUEST, "authorization token missing sub claim"))
+	}
+
+	clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, sessionID)
+	if elErr != nil {
+		s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
+		return errors.New(buildSSEError(mcpReq.ID, mcp.INTERNAL_ERROR, "internal error"))
+	}
+	if !clientElicitation {
+		return errors.New(buildSSEError(mcpReq.ID, mcp.RESOURCE_NOT_FOUND, "upstream server requires a token"))
+	}
+
+	elicitationID, storeErr := s.TokenElicitationMap.Store(ctx, sessionID, serverInfo.Name, sub)
+	if storeErr != nil {
+		s.Logger.ErrorContext(ctx, "failed to store elicitation entry", "error", storeErr)
+		return errors.New(buildSSEError(mcpReq.ID, mcp.INTERNAL_ERROR, "internal error"))
+	}
+
+	elicitationURL := s.buildElicitationURL(serverInfo, elicitationID)
+	return errors.New(buildURLElicitationError(mcpReq.ID, elicitationURL))
+}
+
+func (s *ExtProcServer) buildElicitationURL(serverInfo *config.MCPServer, elicitationID string) string {
+	if serverInfo.TokenURLElicitation.URL != "" {
+		return serverInfo.TokenURLElicitation.URL + "?elicitation_id=" + elicitationID
+	}
+	return "https://" + s.RoutingConfig.MCPGatewayExternalHostname + "/tokens?elicitation_id=" + elicitationID
+}
+
+// sseJSONRPC writes the SSE envelope and JSON-RPC preamble, then calls
+// writeBody to append the response-specific payload. The caller must NOT
+// write the closing "\n\n" — sseJSONRPC appends it.
+func sseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
+	var b strings.Builder
+	b.WriteString("\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":")
+	idBytes, _ := json.Marshal(requestID)
+	b.Write(idBytes)
+	writeBody(&b)
+	b.WriteString("\n\n")
+	return b.String()
+}
+
+func buildSSEError(requestID any, code int, message string) string {
+	return sseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"error\":{\"code\":")
+		b.WriteString(strconv.Itoa(code))
+		b.WriteString(",\"message\":")
+		b.WriteString(strconv.Quote(message))
+		b.WriteString("}}")
+	})
+}
+
+func buildURLElicitationError(requestID any, url string) string {
+	return sseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"error\":{\"code\":")
+		b.WriteString(strconv.Itoa(mcp.URL_ELICITATION_REQUIRED))
+		b.WriteString(",\"message\":\"URLElicitationRequired\",\"data\":{\"url\":")
+		b.WriteString(strconv.Quote(url))
+		b.WriteString("}}}")
+	})
+}
+
+func buildSSEToolError(requestID any, message string) string {
+	return sseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+		b.WriteString(strconv.Quote(message))
+		b.WriteString("}],\"isError\":true}}")
+	})
 }

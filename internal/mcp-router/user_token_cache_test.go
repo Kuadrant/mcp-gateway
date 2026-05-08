@@ -22,7 +22,7 @@ func buildJWT(exp time.Time) string {
 }
 
 func TestMemoryTokenCache_SetGetDelete(t *testing.T) {
-	cache := NewMemoryUserTokenCache()
+	cache := NewMemoryUserTokenCache(5 * time.Minute)
 	ctx := context.Background()
 
 	token, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
@@ -56,7 +56,7 @@ func TestMemoryTokenCache_SetGetDelete(t *testing.T) {
 }
 
 func TestMemoryTokenCache_OpaqueTokenNoExpiryCheck(t *testing.T) {
-	cache := NewMemoryUserTokenCache()
+	cache := NewMemoryUserTokenCache(5 * time.Minute)
 	ctx := context.Background()
 
 	opaque := "ghp_abc123XYZ"
@@ -71,7 +71,7 @@ func TestMemoryTokenCache_OpaqueTokenNoExpiryCheck(t *testing.T) {
 }
 
 func TestMemoryTokenCache_ExpiredJWTDeletedOnGet(t *testing.T) {
-	cache := NewMemoryUserTokenCache()
+	cache := NewMemoryUserTokenCache(5 * time.Minute)
 	ctx := context.Background()
 
 	expired := buildJWT(time.Now().Add(-1 * time.Hour))
@@ -95,7 +95,7 @@ func TestMemoryTokenCache_ExpiredJWTDeletedOnGet(t *testing.T) {
 }
 
 func TestMemoryTokenCache_ValidJWTReturned(t *testing.T) {
-	cache := NewMemoryUserTokenCache()
+	cache := NewMemoryUserTokenCache(5 * time.Minute)
 	ctx := context.Background()
 
 	valid := buildJWT(time.Now().Add(1 * time.Hour))
