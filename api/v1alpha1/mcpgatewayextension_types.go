@@ -64,7 +64,11 @@ type MCPGatewayExtensionSpec struct {
 	PublicHost string `json:"publicHost,omitempty"`
 
 	// privateHost overrides the internal host used for hair-pinning requests
-	// back through the gateway. Defaults to <gateway>-istio.<ns>.svc.cluster.local:<port>.
+	// back through the gateway. Defaults to
+	// <gateway>-istio.<ns>.svc.cluster.local:<port>, with an https:// scheme
+	// prefix when the targeted Gateway listener uses the HTTPS protocol. The
+	// value supplied here is honoured verbatim, so an operator can include a
+	// scheme (e.g. "https://my-gw:443") or pin to a different port.
 	// +optional
 	PrivateHost string `json:"privateHost,omitempty"`
 
@@ -257,4 +261,8 @@ type ListenerConfig struct {
 	Hostname string `json:"hostname,omitempty"`
 	// name is the listener name (sectionName)
 	Name string `json:"name,omitempty"`
+	// protocol is the Gateway listener protocol (e.g. HTTP, HTTPS).
+	// Used to determine whether the broker-router hairpin URL should use
+	// http:// or https://.
+	Protocol string `json:"protocol,omitempty"`
 }
