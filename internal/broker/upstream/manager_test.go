@@ -187,6 +187,20 @@ func TestMCPManager_MCPName(t *testing.T) {
 	assert.Equal(t, "my-test-server", manager.MCPName())
 }
 
+// TestMCPManager_NilGatewayServer_NoPanic is a regression test for
+// https://github.com/Kuadrant/mcp-gateway/issues/882.
+// manage() must not panic when gatewayServer is nil — tools/list_changed
+// notifications can fire before the broker wires up the gateway server.
+func TestMCPManager_NilGatewayServer_NoPanic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mock := newMockMCP("test-server", "s1_")
+	manager := NewUpstreamMCPManager(mock, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+
+	assert.NotPanics(t, func() {
+		manager.manage(context.Background(), eventTypeTimer)
+	})
+}
+
 func TestMCPManager_GetStatus(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
