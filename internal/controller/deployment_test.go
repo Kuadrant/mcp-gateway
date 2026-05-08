@@ -918,6 +918,94 @@ func TestDerivePublicHost(t *testing.T) {
 	}
 }
 
+func TestDerivePrivateHost(t *testing.T) {
+	tests := []struct {
+		name           string
+		spec           mcpv1alpha1.MCPGatewayExtensionSpec
+		listenerConfig *mcpv1alpha1.ListenerConfig
+		want           string
+	}{
+		{
+			name: "HTTP listener: bare host, no scheme prefix (backwards compatible)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:8080",
+		},
+		{
+			name: "HTTPS listener: scheme is prepended (issue #917)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			want:           "https://my-gw-istio.gateway-system.svc.cluster.local:443",
+		},
+		{
+			name: "HTTPS listener with mixed-case protocol value still detected",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "https"},
+			want:           "https://my-gw-istio.gateway-system.svc.cluster.local:443",
+		},
+		{
+			name: "PrivateHost override is honoured verbatim (no scheme injection)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+				PrivateHost: "my-gw-istio.gateway-system.svc.cluster.local:8081",
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:8081",
+		},
+		{
+			name: "PrivateHost override may carry its own scheme",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+				PrivateHost: "https://custom.example.com:443",
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			want:           "https://custom.example.com:443",
+		},
+		{
+			name: "TCP listener (no recognised TLS): fallback to plain host (no scheme)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 9090, Protocol: "TCP"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:9090",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{Spec: tt.spec}
+			got := derivePrivateHost(mcpExt, tt.listenerConfig)
+			if got != tt.want {
+				t.Errorf("derivePrivateHost() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindListenerConfig(t *testing.T) {
 	hostname := gatewayv1.Hostname("mcp.example.com")
 	wildcardHostname := gatewayv1.Hostname("*.example.com")
@@ -951,32 +1039,36 @@ func TestFindListenerConfig(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		sectionName string
-		wantPort    uint32
-		wantHost    string
-		wantErr     bool
+		name         string
+		sectionName  string
+		wantPort     uint32
+		wantHost     string
+		wantProtocol string
+		wantErr      bool
 	}{
 		{
-			name:        "finds http listener",
-			sectionName: "http",
-			wantPort:    8080,
-			wantHost:    "mcp.example.com",
-			wantErr:     false,
+			name:         "finds http listener",
+			sectionName:  "http",
+			wantPort:     8080,
+			wantHost:     "mcp.example.com",
+			wantProtocol: "HTTP",
+			wantErr:      false,
 		},
 		{
-			name:        "finds https listener with wildcard",
-			sectionName: "https",
-			wantPort:    8443,
-			wantHost:    "*.example.com",
-			wantErr:     false,
+			name:         "finds https listener with wildcard",
+			sectionName:  "https",
+			wantPort:     8443,
+			wantHost:     "*.example.com",
+			wantProtocol: "HTTPS",
+			wantErr:      false,
 		},
 		{
-			name:        "finds listener without hostname",
-			sectionName: "no-hostname",
-			wantPort:    9090,
-			wantHost:    "",
-			wantErr:     false,
+			name:         "finds listener without hostname",
+			sectionName:  "no-hostname",
+			wantPort:     9090,
+			wantHost:     "",
+			wantProtocol: "HTTP",
+			wantErr:      false,
 		},
 		{
 			name:        "returns error for non-existent listener",
@@ -1006,6 +1098,9 @@ func TestFindListenerConfig(t *testing.T) {
 			}
 			if config.Name != tt.sectionName {
 				t.Errorf("findListenerConfigByName() name = %q, want %q", config.Name, tt.sectionName)
+			}
+			if config.Protocol != tt.wantProtocol {
+				t.Errorf("findListenerConfigByName() protocol = %q, want %q", config.Protocol, tt.wantProtocol)
 			}
 		})
 	}

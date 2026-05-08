@@ -21,7 +21,7 @@
 |-----------|----------|:------------:|-----------------|
 | `targetRef` | [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference) | Yes | The Gateway listener to extend with MCP protocol support |
 | `publicHost` | String | No | Overrides the public host derived from the listener hostname. Use when the listener has a wildcard and you need a specific host |
-| `privateHost` | String | No | Overrides the internal host used for hair-pinning requests back through the gateway. Defaults to `<gateway>-istio.<ns>.svc.cluster.local:<port>` |
+| `privateHost` | String | No | Overrides the internal host used for hair-pinning requests back through the gateway. Defaults to `<gateway>-istio.<ns>.svc.cluster.local:<port>`, with an `https://` scheme prefix when the targeted Gateway listener uses the HTTPS protocol. The supplied value is honoured verbatim, so an operator can include a scheme (e.g. `https://my-gw:443`) or pin to a different port. |
 | `backendPingIntervalSeconds` | Integer | No | How often (in seconds) the broker pings upstream MCP servers. Min: 10, Max: 7200, Default: 60 |
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
