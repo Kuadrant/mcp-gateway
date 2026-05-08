@@ -129,7 +129,7 @@ func TestMCPRequestToolName(t *testing.T) {
 			Name: "test with not a tool call",
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
-				Method:  "intialise",
+				Method:  "initialise",
 				Params: map[string]any{
 					"name": "test",
 				},
@@ -140,7 +140,7 @@ func TestMCPRequestToolName(t *testing.T) {
 			Name: "test with not a tool call",
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
-				Method:  "intialise",
+				Method:  "initialise",
 				Params: map[string]any{
 					"name": 2,
 				},

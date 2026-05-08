@@ -200,7 +200,7 @@ func (s *ExtProcServer) HandleRequestHeaders(_ *eppb.HttpHeaders) ([]*eppb.Proce
 	requestHeaders := NewHeaders()
 	response := NewResponse()
 	requestHeaders.WithAuthority(s.RoutingConfig.MCPGatewayExternalHostname)
-	return response.WithRequestHeadersReponse(requestHeaders.Build()).Build(), nil
+	return response.WithRequestHeadersResponse(requestHeaders.Build()).Build(), nil
 }
 
 // RouteMCPRequest handles request bodies for MCP requests.
@@ -420,7 +420,7 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 		calculatedResponse.WithStreamingResponse(headers.Build(), body)
 		return calculatedResponse.Build()
 	}
-	calculatedResponse.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
+	calculatedResponse.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
 	return calculatedResponse.Build()
 }
 
@@ -485,7 +485,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	}
 
 	headers.WithContentLength(len(body))
-	response.WithRequestBodyHeadersAndBodyReponse(headers.Build(), body)
+	response.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
 
 	// remove the mapping only after the response was successfully built
 	s.ElicitationMap.Remove(ctx, gatewayID)
@@ -526,7 +526,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 				passThroughHeaders[h.Key] = string(h.RawValue)
 			}
 		}
-		// ensure these gateway heades are set
+		// ensure these gateway headers are set
 		passThroughHeaders["x-mcp-method"] = mcpReq.Method
 		passThroughHeaders["x-mcp-servername"] = mcpReq.serverName
 		passThroughHeaders["x-mcp-toolname"] = mcpReq.ToolName()

@@ -28,7 +28,6 @@ boltdb
 btlspolicy
 buger
 buildx
-bulder
 cainjector
 caitlinelfring
 catalogsource
@@ -136,7 +135,6 @@ gotool
 grpcroute
 grpcroutes
 hairpinned
-heades
 healthz
 Healthz
 hostaliases
@@ -154,7 +152,6 @@ inmemory
 inotify
 installplan
 integration
-intialise
 intstr
 invopop
 ipaddresspool
@@ -193,7 +190,6 @@ kubebuilder
 kubeconfig
 KUBECONFIG
 kubelet
-kuberenetes
 kustomization
 kvstore
 kylelemons
@@ -298,7 +294,6 @@ planetscale
 pmezard
 printcolumn
 procv
-protectected
 protoc
 pubout
 python3
@@ -321,7 +316,6 @@ regpour
 regset
 regslow
 regtime
-Reponse
 retval
 rhcl
 Rkfdsw
@@ -339,7 +333,6 @@ serviceentry
 servicemeshoperator
 sess
 sessionid
-sesssion
 Sjlm
 sjson
 socket

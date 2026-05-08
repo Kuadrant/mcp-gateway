@@ -16,7 +16,7 @@ const (
 	envOAuthScopesSupported        = "OAUTH_SCOPES_SUPPORTED"
 )
 
-// ProtectedResourceHandler  is the HTTP handler for the oauth protectected resource config
+// ProtectedResourceHandler  is the HTTP handler for the oauth protected resource config
 type ProtectedResourceHandler struct {
 	Logger *slog.Logger
 }

@@ -19,7 +19,12 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Run spell check
-        run: |
-          npm install -g cspell@9.4.0
-          make spell
+      - name: Run cspell with reviewdog
+        uses: reviewdog/action-cspell@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          filter_mode: nofilter
+          fail_on_error: true
+          cspell_args: "--quiet ."

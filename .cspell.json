@@ -1,13 +1,24 @@
 {
-	"language": "en,en-GB",
-	"dictionaryDefinitions": [{
-		"name": "project-words",
-		"path": "./project-words.txt",
-		"addWords": true
-	}],
-	"dictionaries": ["project-words"],
-	"ignorePaths": [
-		"**/go.sum",
-		"go.sum"
-	]
+    "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+    "version": "0.2",
+    "language": "en,en-GB",
+    "dictionaryDefinitions": [
+        {
+            "name": "project-words",
+            "path": "./project-words.txt",
+            "addWords": true
+        }
+    ],
+    "dictionaries": ["project-words"],
+    "ignorePaths": [
+        "tests/**",
+        "**/project-words.txt",
+        "/config/crd/istio/**",
+        "**/go.mod",
+        "**/go.sum",
+        "realm-import.yaml",
+        "docs/plans/**",
+        "docs/superpowers/**",
+        "catalog/mcp-gateway-catalog/**"
+    ]
 }

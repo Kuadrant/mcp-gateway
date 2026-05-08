@@ -128,7 +128,7 @@ func (m *JWTManager) GetExpiresIn(tokenValue string) (time.Time, error) {
 
 // Terminate part of the SessionIDManager interface. Will remove the associated sessions from cache
 func (m *JWTManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
-	m.logger.Info("terminate session id in jwt session manager", "sesssion", sessionID)
+	m.logger.Info("terminate session id in jwt session manager", "session", sessionID)
 	if m.sessionDeleter != nil {
 		// TODO(craig) this method will be invoked by the MCPBroker so we can probably do the cache deletion there rather than in this manager
 		ctx := context.TODO()
