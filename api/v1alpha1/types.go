@@ -63,16 +63,16 @@ type MCPServerRegistrationSpec struct {
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
 
-	// credentialURLElicitation enables per-user credential collection via URL elicitation.
+	// tokenURLElicitation enables per-user token collection via URL elicitation.
 	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
-	// to collect credentials from capable clients at tool-call time.
+	// to collect tokens from capable clients at tool-call time.
 	// +optional
-	CredentialURLElicitation *CredentialURLElicitationConfig `json:"credentialURLElicitation,omitempty"`
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
 }
 
-// CredentialURLElicitationConfig configures per-user credential collection via URL elicitation.
-type CredentialURLElicitationConfig struct {
-	// url overrides the default broker credential page URL.
+// TokenURLElicitationConfig configures per-user token collection via URL elicitation.
+type TokenURLElicitationConfig struct {
+	// url overrides the default broker token page URL.
 	// When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
 	// +optional
 	URL string `json:"url,omitempty"`

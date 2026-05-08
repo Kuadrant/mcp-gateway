@@ -53,15 +53,15 @@ Add the flag early so all subsequent work is gated behind it.
 ### Task 2: CRD + config types (CONNLINK-995)
 
 **Files:**
-- `api/v1alpha1/types.go` — add `CredentialURLElicitation *CredentialURLElicitationConfig` to `MCPServerRegistrationSpec`
-- `api/v1alpha1/types.go` — add `CredentialURLElicitationConfig` struct with `URL string`
-- `internal/config/types.go` — add `CredentialURLElicitation *CredentialURLElicitationConfig` to `MCPServer`
-- `internal/config/types.go` — add `CredentialURLElicitationConfig` struct
+- `api/v1alpha1/types.go` — add `TokenURLElicitation *TokenURLElicitationConfig` to `MCPServerRegistrationSpec`
+- `api/v1alpha1/types.go` — add `TokenURLElicitationConfig` struct with `URL string`
+- `internal/config/types.go` — add `TokenURLElicitation *TokenURLElicitationConfig` to `MCPServer`
+- `internal/config/types.go` — add `TokenURLElicitationConfig` struct
 - `internal/controller/mcpserverregistration_controller.go:386` — propagate field from CRD to config
 - Run `make generate-all` to regenerate deepcopy, CRDs, sync Helm
 
 **Acceptance criteria:**
-- [ ] CRD accepts `credentialURLElicitation` with optional `url` field
+- [ ] CRD accepts `tokenURLElicitation` with optional `url` field
 - [ ] Controller propagates to config Secret
 - [ ] Unit test: controller includes elicitation config when set, omits when not set
 
@@ -136,7 +136,7 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 
 **Files:**
 - `internal/mcp-router/request_handlers.go` — modify `HandleToolCall` to add token resolution:
-  1. Check if server has `CredentialURLElicitation` config — if not, skip (existing behavior)
+  1. Check if server has `TokenURLElicitation` config — if not, skip (existing behavior)
   2. If `--enable-elicitation` is false, skip (existing behavior)
   3. Check `Authorization` header from client request — if present, use as-is (no token injection needed)
   4. Check `UserTokenCache.GetUserToken(sessionID, serverName)` — if hit, inject via `headers.WithAuth()`
@@ -153,7 +153,7 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 - [ ] -32042 returned on miss with elicitation-capable client
 - [ ] Standard error returned on miss without capability
 - [ ] Feature flag disabled → existing behavior unchanged
-- [ ] URL in -32042 uses external URL when `credentialURLElicitation.url` is set
+- [ ] URL in -32042 uses external URL when `tokenURLElicitation.url` is set
 
 **E2E test cases (from `e2e_test_cases.md`):**
 - `[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client`
@@ -165,10 +165,10 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 - `[Happy,URLElicitation] Non-elicitation-capable client with Authorization header succeeds`
 - `[URLElicitation] Elicitation-capable client with Authorization header bypasses cache`
 - `[URLElicitation] Elicitation disabled via feature flag has no effect`
-- `[Happy,URLElicitation] Server without credentialURLElicitation is unaffected`
+- `[Happy,URLElicitation] Server without tokenURLElicitation is unaffected`
 
 **Documentation (from `documentation.md`):**
-- Guide section: "When I want to securely collect per-user tokens for an upstream MCP server" — adding `credentialURLElicitation`, enabling the feature, user experience flow, prerequisites
+- Guide section: "When I want to securely collect per-user tokens for an upstream MCP server" — adding `tokenURLElicitation`, enabling the feature, user experience flow, prerequisites
 - Guide section: "When I want to use my own credential UI instead of the built-in page" — external URL config, AuthPolicy on upstream route, differences from default flow
 - Guide section: "When I have automated agents that can't use a browser" — automatic capability-based behavior, agents passing Authorization header, 401 handling for agents
 
@@ -180,7 +180,7 @@ On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base
 
 **Files:**
 - `internal/mcp-router/response_handlers.go` — modify `HandleResponseHeaders` to handle 401:
-  1. If status is 401 and server has `CredentialURLElicitation` config and `--enable-elicitation`:
+  1. If status is 401 and server has `TokenURLElicitation` config and `--enable-elicitation`:
      - Delete cached token via `UserTokenCache.DeleteUserToken`
      - Check client capability via `SessionCache.GetClientElicitation(ctx, gatewaySessionID)` (same flow as Task 5)
      - If client supports elicitation → return `-32042` immediate response (reuse helper from Task 5)
@@ -211,12 +211,12 @@ Documentation sections are written inline with their implementation tasks (Tasks
 **Files:**
 - `docs/guides/url-elicitation.md` (new) — assemble from sections written in Tasks 4–6
 - `docs/guides/README.md` — add entry for new guide
-- `docs/reference/mcpserverregistration.md` — update API reference with `credentialURLElicitation` object, `url` field, relationship to `credentialRef`, examples
+- `docs/reference/mcpserverregistration.md` — update API reference with `tokenURLElicitation` object, `url` field, relationship to `credentialRef`, examples
 
 **Acceptance criteria:**
 - [ ] Guide sections from Tasks 4–6 assembled into coherent guide
 - [ ] Guide follows `docs/CLAUDE.md` conventions (numbered steps, prerequisites, next steps)
-- [ ] API reference updated with `credentialURLElicitation` fields
+- [ ] API reference updated with `tokenURLElicitation` fields
 - [ ] Security architecture updated (done in Task 6)
 - [ ] Guide added to `docs/guides/README.md`
 

@@ -9,7 +9,7 @@ Documentation for URL elicitation, organized by user goals. Each section maps to
 When a platform engineer has an upstream MCP server that requires each user to authenticate with their own token, they want to enable URL elicitation so that the gateway collects tokens at runtime without exposing them to the MCP client or LLM context.
 
 **Cover:**
-- Adding `credentialURLElicitation: {}` to an MCPServerRegistration
+- Adding `tokenURLElicitation: {}` to an MCPServerRegistration
 - Enabling the feature with `--enable-elicitation`
 - What the user experience looks like (tool call → prompt → browser → retry)
 - Prerequisites (HTTPS, client capability)
@@ -19,7 +19,7 @@ When a platform engineer has an upstream MCP server that requires each user to a
 When a platform engineer already has credential infrastructure (e.g., Vault web UI), they want to direct users there instead of the broker's built-in page so that tokens are managed in their existing system.
 
 **Cover:**
-- Setting `credentialURLElicitation.url` to an external URL
+- Setting `tokenURLElicitation.url` to an external URL
 - How AuthPolicy on the upstream route handles token injection
 - Differences from the default flow (no cache write, no completion notification)
 
@@ -68,10 +68,10 @@ When a security reviewer or contributor needs to assess the token handling in UR
 
 ### When I need to know the exact field names and types for URL elicitation
 
-When a platform engineer is writing MCPServerRegistration YAML, they want to know the exact API surface for `credentialURLElicitation`.
+When a platform engineer is writing MCPServerRegistration YAML, they want to know the exact API surface for `tokenURLElicitation`.
 
 **Cover:**
-- `credentialURLElicitation` object (optional)
-- `credentialURLElicitation.url` field (optional string, overrides default broker page)
+- `tokenURLElicitation` object (optional)
+- `tokenURLElicitation.url` field (optional string, overrides default broker page)
 - Relationship to `credentialRef` (they serve different purposes)
 - Examples: minimal config, external URL config

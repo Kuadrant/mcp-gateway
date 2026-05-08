@@ -1,9 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  creationTimestamp: null
   name: mcpserverregistrations.mcp.kuadrant.io
 spec:
   group: mcp.kuadrant.io
@@ -90,18 +90,6 @@ spec:
                 required:
                 - name
                 type: object
-              credentialURLElicitation:
-                description: |-
-                  credentialURLElicitation enables per-user credential collection via URL elicitation.
-                  When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
-                  to collect credentials from capable clients at tool-call time.
-                properties:
-                  url:
-                    description: |-
-                      url overrides the default broker credential page URL.
-                      When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
-                    type: string
-                type: object
               path:
                 default: /mcp
                 description: |-
@@ -147,6 +135,18 @@ spec:
                     type: string
                 required:
                 - name
+                type: object
+              tokenURLElicitation:
+                description: |-
+                  tokenURLElicitation enables per-user token collection via URL elicitation.
+                  When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+                  to collect tokens from capable clients at tool-call time.
+                properties:
+                  url:
+                    description: |-
+                      url overrides the default broker token page URL.
+                      When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+                    type: string
                 type: object
             required:
             - targetRef
@@ -227,9 +227,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: null
-  storedVersions: null

@@ -386,9 +386,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		Enabled: true,
 	}
 
-	if mcpsr.Spec.CredentialURLElicitation != nil {
-		serverConfig.CredentialURLElicitation = &config.CredentialURLElicitationConfig{
-			URL: mcpsr.Spec.CredentialURLElicitation.URL,
+	if mcpsr.Spec.TokenURLElicitation != nil {
+		serverConfig.TokenURLElicitation = &config.TokenURLElicitationConfig{
+			URL: mcpsr.Spec.TokenURLElicitation.URL,
 		}
 	}
 

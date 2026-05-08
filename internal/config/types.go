@@ -57,18 +57,18 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name                     string                          `json:"name"                              yaml:"name"`
-	URL                      string                          `json:"url"                               yaml:"url"`
-	Hostname                 string                          `json:"hostname,omitempty"                yaml:"hostname,omitempty"`
-	Prefix                   string                          `json:"prefix,omitempty"                  yaml:"prefix,omitempty"`
-	Auth                     *AuthConfig                     `json:"auth,omitempty"                    yaml:"auth,omitempty"`
-	Credential               string                          `json:"credential,omitempty"              yaml:"credential,omitempty"`
-	Enabled                  bool                            `json:"enabled"                           yaml:"enabled"`
-	CredentialURLElicitation *CredentialURLElicitationConfig `json:"credentialURLElicitation,omitempty" yaml:"credentialURLElicitation,omitempty"`
+	Name                string                     `json:"name"                              yaml:"name"`
+	URL                 string                     `json:"url"                               yaml:"url"`
+	Hostname            string                     `json:"hostname,omitempty"                yaml:"hostname,omitempty"`
+	Prefix              string                     `json:"prefix,omitempty"                  yaml:"prefix,omitempty"`
+	Auth                *AuthConfig                `json:"auth,omitempty"                    yaml:"auth,omitempty"`
+	Credential          string                     `json:"credential,omitempty"              yaml:"credential,omitempty"`
+	Enabled             bool                       `json:"enabled"                           yaml:"enabled"`
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
 }
 
-// CredentialURLElicitationConfig holds URL elicitation settings for per-user credential collection
-type CredentialURLElicitationConfig struct {
+// TokenURLElicitationConfig holds URL elicitation settings for per-user token collection
+type TokenURLElicitationConfig struct {
 	URL string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 

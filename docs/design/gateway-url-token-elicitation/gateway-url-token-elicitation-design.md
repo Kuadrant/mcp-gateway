@@ -138,13 +138,13 @@ sequenceDiagram
 | **Router** | (1) If `Authorization` header present, use as-is for upstream routing. (2) If absent, check cache — inject cached credential on hit. (3) On cache miss, return `-32042` if client declares `elicitation.url` capability, otherwise return standard error. (4) On upstream 401, invalidate cached credential and re-elicit or error per client capability. |
 | **Broker** | Hosts `/credentials` page, writes credential to cache |
 | **Cache** | Shared storage for per-user, per-server credentials |
-| **Controller** | Propagates `credentialURLElicitation` from CRD to config |
+| **Controller** | Propagates `tokenURLElicitation` from CRD to config |
 
 ### API Changes
 
 #### MCPServerRegistration
 
-New optional object `credentialURLElicitation`. When present, it signals that this server requires per-user credentials and that the router should use the URL elicitation flow to collect them from capable clients.
+New optional object `tokenURLElicitation`. When present, it signals that this server requires per-user credentials and that the router should use the URL elicitation flow to collect them from capable clients.
 
 ```yaml
 apiVersion: mcp.kuadrant.io/v1alpha1
@@ -160,10 +160,10 @@ spec:
   credentialRef:                  # broker-only: used for tool discovery
     name: github-token
     key: token
-  credentialURLElicitation: {}    # enables per-user credential collection
+  tokenURLElicitation: {}    # enables per-user credential collection
 ```
 
-`credentialRef` and `credentialURLElicitation` serve different purposes: `credentialRef` gives the broker a credential for tool discovery, while `credentialURLElicitation` enables per-user credential collection at tool-call time.
+`credentialRef` and `tokenURLElicitation` serve different purposes: `credentialRef` gives the broker a credential for tool discovery, while `tokenURLElicitation` enables per-user credential collection at tool-call time.
 
 When present, the router checks the session cache for a per-user credential before routing tool calls. On cache miss, it returns `URLElicitationRequiredError` with a URL to the broker's credential page (if the client declares `elicitation.url` capability).
 
@@ -175,7 +175,7 @@ Example with external URL:
 
 ```yaml
 spec:
-  credentialURLElicitation:
+  tokenURLElicitation:
     url: "https://vault.example.com/ui/vault/secrets/mcp/create"
 ```
 
@@ -184,10 +184,10 @@ When no `url` is set, the router generates a URL pointing to the broker's built-
 #### Config Type
 
 `MCPServer` in `internal/config/types.go` gains:
-- `CredentialURLElicitation *CredentialURLElicitationConfig` (optional, nil means no elicitation)
+- `TokenURLElicitation *TokenURLElicitationConfig` (optional, nil means no elicitation)
 
 ```go
-type CredentialURLElicitationConfig struct {
+type TokenURLElicitationConfig struct {
     URL string `json:"url,omitempty"`
 }
 ```
@@ -198,7 +198,7 @@ The elicitation URL determines how the credential reaches the upstream request. 
 
 #### Pattern 1: Broker Credential Page (default)
 
-When no `credentialURLElicitation.url` is set, the router generates a URL pointing to the broker's `/credentials` page. The user enters a credential on the broker page, the broker writes it to the session cache, and the router reads from cache on retry to inject the `Authorization` header.
+When no `tokenURLElicitation.url` is set, the router generates a URL pointing to the broker's `/credentials` page. The user enters a credential on the broker page, the broker writes it to the session cache, and the router reads from cache on retry to inject the `Authorization` header.
 
 ```text
 Router → -32042 (broker URL) → User enters PAT → Broker stores in cache → Router reads cache → sets header
@@ -208,14 +208,14 @@ The router is responsible for credential injection.
 
 #### Pattern 2: External UI with AuthPolicy
 
-When `credentialURLElicitation.url` is set to an external UI (e.g., Vault web UI), the user stores their credential there directly. An AuthPolicy on the upstream HTTPRoute can then be configured to read the credential from the external store and injects it into the `Authorization` header. The router does not need to read from cache — it only needs to detect whether a credential is missing (upstream 401) and re-trigger elicitation.
+When `tokenURLElicitation.url` is set to an external UI (e.g., Vault web UI), the user stores their credential there directly. An AuthPolicy on the upstream HTTPRoute can then be configured to read the credential from the external store and injects it into the `Authorization` header. The router does not need to read from cache — it only needs to detect whether a credential is missing (upstream 401) and re-trigger elicitation.
 
 ```text
 Router → -32042 (external URL) → User stores PAT in Vault → AuthPolicy reads from Vault → sets header
 ```
 
 AuthPolicy handles credential injection. The router's role simplifies to:
-1. If `credentialURLElicitation` is set and the upstream returns 401, return `-32042` with the configured URL
+1. If `tokenURLElicitation` is set and the upstream returns 401, return `-32042` with the configured URL
 2. No cache read/write needed for this server
 
 This pattern is useful when operators already have credential infrastructure (e.g., Vault) and want to avoid duplicating storage in the session cache.
@@ -251,7 +251,7 @@ User credentials are stored as fields on the existing gateway session hash, usin
 
 ### URLElicitationRequiredError Response
 
-Returned as an SSE-formatted immediate response (HTTP 200, `text/event-stream`). The `url` field uses `credentialURLElicitation.url` from the server config if set, otherwise defaults to the broker's `/credentials` page:
+Returned as an SSE-formatted immediate response (HTTP 200, `text/event-stream`). The `url` field uses `tokenURLElicitation.url` from the server config if set, otherwise defaults to the broker's `/credentials` page:
 
 ```json
 {
@@ -327,7 +327,7 @@ If the upstream MCP server shares the same identity provider as the gateway, onl
 
 The credential page could initiate an OAuth flow instead of rendering a form. The router would construct the OAuth authorize URL dynamically, encoding the elicitation ID in the OAuth `state` parameter. After the user consents, the provider redirects back to a gateway callback endpoint with the authorization code and `state`. The broker extracts the elicitation ID from `state`, exchanges the code for a token, and stores it in the session cache.
 
-This would add OAuth fields to the `credentialURLElicitation` object (client ID, authorize endpoint, scopes, plus a referenced secret for the client secret). Their presence implies an OAuth flow. The router would compute the authorize URL per-elicitation rather than using the stored `url` verbatim.
+This would add OAuth fields to the `tokenURLElicitation` object (client ID, authorize endpoint, scopes, plus a referenced secret for the client secret). Their presence implies an OAuth flow. The router would compute the authorize URL per-elicitation rather than using the stored `url` verbatim.
 
 The MCP spec [calls this out explicitly](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation#url-mode-elicitation-for-oauth-flows) as a primary use case for URL mode elicitation. The existing abstractions (storage interface, credential page, elicitation ID) would support this without major structural changes.
 
