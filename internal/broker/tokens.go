@@ -1,14 +1,21 @@
 package broker
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
-	"html"
+	"html/template"
 	"log/slog"
 	"net/http"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 )
+
+//go:embed templates/*.html
+var templateFS embed.FS
+
+var tokenTemplates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
 // tokenStore is the subset of UserTokenCache that the token page needs.
 type tokenStore interface {
@@ -63,7 +70,11 @@ func (h *TokenHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(tokenFormHTML(entry.ServerName, elicitationID, entry.CSRFToken)))
+	_, _ = w.Write([]byte(renderTemplate("token_form.html", tokenFormData{
+		ServerName:    entry.ServerName,
+		ElicitationID: elicitationID,
+		CSRFToken:     entry.CSRFToken,
+	})))
 }
 
 func (h *TokenHandler) handlePost(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +134,7 @@ func (h *TokenHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(tokenSuccessHTML(entry.ServerName)))
+	_, _ = w.Write([]byte(renderTemplate("token_success.html", tokenSuccessData{ServerName: entry.ServerName})))
 }
 
 func (h *TokenHandler) sendError(w http.ResponseWriter, status int, message string) {
@@ -132,35 +143,20 @@ func (h *TokenHandler) sendError(w http.ResponseWriter, status int, message stri
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func tokenFormHTML(serverName, elicitationID, csrfToken string) string {
-	name := html.EscapeString(serverName)
-	id := html.EscapeString(elicitationID)
-	csrf := html.EscapeString(csrfToken)
-	return `<!DOCTYPE html>
-<html><head><title>MCP Gateway - Token Required</title>
-<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:40px auto;padding:0 20px}
-h1{font-size:1.4em}form{margin-top:20px}label{display:block;margin-bottom:6px;font-weight:600}
-input[type=password]{width:100%;padding:8px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
-button{margin-top:12px;padding:8px 20px;background:#0066cc;color:#fff;border:none;border-radius:4px;cursor:pointer}
-button:hover{background:#0052a3}</style></head>
-<body><h1>Token Required</h1>
-<p>The MCP server <strong>` + name + `</strong> requires a token to proceed.</p>
-<form method="POST" action="/tokens">
-<input type="hidden" name="elicitation_id" value="` + id + `">
-<input type="hidden" name="csrf_token" value="` + csrf + `">
-<label for="token">Token or API Key</label>
-<input type="password" id="token" name="token" required placeholder="Enter your token or API key">
-<button type="submit">Submit</button>
-</form></body></html>`
+type tokenFormData struct {
+	ServerName    string
+	ElicitationID string
+	CSRFToken     string
 }
 
-func tokenSuccessHTML(serverName string) string {
-	name := html.EscapeString(serverName)
-	return `<!DOCTYPE html>
-<html><head><title>MCP Gateway - Token Stored</title>
-<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:40px auto;padding:0 20px}
-h1{font-size:1.4em;color:#2e7d32}</style></head>
-<body><h1>Token Stored</h1>
-<p>Your token for <strong>` + name + `</strong> has been stored. You can close this window and retry the tool call.</p>
-</body></html>`
+type tokenSuccessData struct {
+	ServerName string
+}
+
+func renderTemplate(name string, data any) string {
+	var buf bytes.Buffer
+	if err := tokenTemplates.ExecuteTemplate(&buf, name, data); err != nil {
+		return "internal error rendering page"
+	}
+	return buf.String()
 }
