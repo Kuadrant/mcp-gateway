@@ -239,14 +239,14 @@ Encryption is only applied when using an external cache store as the storage bac
 
 #### User Credential Cache Schema
 
-User credentials are stored in a separate Redis hash per session, using the key prefix `usercred:` to distinguish from session hashes. Server names are hash fields.
+User credentials are stored as fields in the existing session hash, using the field prefix `token:` to distinguish from session fields. This avoids a separate Redis key and TTL — token lifetime is tied to the session.
 
 | Operation | Key | Field | Value |
 |-----------|-----|-------|-------|
-| Set | `usercred:<sessionID>` | `github` | AES-GCM encrypted credential |
-| Get | `usercred:<sessionID>` | `github` | AES-GCM encrypted credential |
-| Delete (on 401) | `usercred:<sessionID>` | `github` | — |
-| Delete (on session invalidation) | `usercred:<sessionID>` | — | entire key deleted |
+| Set | `<sessionID>` | `token:github` | AES-GCM encrypted credential |
+| Get | `<sessionID>` | `token:github` | AES-GCM encrypted credential |
+| Delete (on 401) | `<sessionID>` | `token:github` | — |
+| Delete (on session invalidation) | `<sessionID>` | — | entire key deleted (tokens included) |
 
 #### Elicitation ID Store Schema
 

@@ -342,7 +342,7 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 	headers.WithMCPServerName(serverInfo.Name)
 
 	// token resolution for servers with URL elicitation configured
-	if serverInfo.TokenURLElicitation != nil && s.UserTokenCache != nil {
+	if serverInfo.TokenURLElicitation != nil {
 		if tokenErr := s.resolveUpstreamToken(ctx, mcpReq, serverInfo, headers); tokenErr != nil {
 			span.RecordError(tokenErr)
 			span.SetStatus(codes.Error, tokenErr.Error())
@@ -653,7 +653,7 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 func (s *ExtProcServer) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder) error {
 	sessionID := mcpReq.GetSessionID()
 
-	token, ok, err := s.UserTokenCache.GetUserToken(ctx, sessionID, serverInfo.Name)
+	token, ok, err := s.SessionCache.GetUserToken(ctx, sessionID, serverInfo.Name)
 	if err != nil {
 		s.Logger.ErrorContext(ctx, "user token cache lookup failed", "error", err)
 		return errors.New(buildSSEError(mcpReq.ID, mcp.INTERNAL_ERROR, "internal error"))

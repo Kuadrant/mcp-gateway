@@ -29,6 +29,9 @@ type SessionCache interface {
 	KeyExists(ctx context.Context, key string) (bool, error)
 	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
+	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
+	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
 }
 
 // InitForClient defines a function for initializing an MCP server for a client
@@ -42,7 +45,6 @@ type ExtProcServer struct {
 	InitForClient       InitForClient
 	SessionCache        SessionCache
 	ElicitationMap      idmap.Map
-	UserTokenCache      UserTokenCache
 	TokenElicitationMap elicitation.Map
 	MaxRequestBodySize  int
 	//TODO this should not be needed

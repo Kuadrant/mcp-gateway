@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
@@ -1111,7 +1110,7 @@ func testBearerJWTNoSub() string {
 	return fmt.Sprintf("Bearer %s.%s.%s", header, payload, sig)
 }
 
-func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, tokenCache UserTokenCache, tokenElicitationMap elicitation.Map) (*ExtProcServer, string) {
+func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, tokenElicitationMap elicitation.Map) (*ExtProcServer, string) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cache, err := session.NewCache()
@@ -1139,7 +1138,6 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 		},
 		Broker:              newMockBroker(serverConfigs, toolMap),
 		ElicitationMap:      mustNewIDMap(t),
-		UserTokenCache:      tokenCache,
 		TokenElicitationMap: tokenElicitationMap,
 	}
 	return server, validToken
@@ -1150,7 +1148,7 @@ func TestResolveUpstreamToken_NoElicitationConfig(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
 		Name: "plain-server", URL: "http://localhost:8080/mcp", Prefix: "p_", Enabled: true, Hostname: "localhost",
 	}}
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"p_tool": "plain-server"}, nil, nil)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"p_tool": "plain-server"}, nil)
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
@@ -1175,14 +1173,13 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
-	// pre-populate the user token cache
-	require.NoError(t, tokenCache.SetUserToken(context.Background(), validToken, "github", "ghp_cached_token"))
+	// pre-populate the user token in the session cache
+	require.NoError(t, server.SessionCache.SetUserToken(context.Background(), validToken, "github", "ghp_cached_token"))
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
@@ -1211,11 +1208,10 @@ func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
 	// mark client as supporting elicitation
 	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
@@ -1244,11 +1240,10 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
 	// client does NOT support elicitation (default)
 	req := &MCPRequest{
@@ -1272,11 +1267,10 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
 	// JWT present but no sub claim → misconfigured OIDC → error
 	req := &MCPRequest{
@@ -1302,11 +1296,10 @@ func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{URL: externalURL},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
 
 	req := &MCPRequest{
@@ -1330,11 +1323,10 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
-	tokenCache := NewMemoryUserTokenCache(5 * time.Minute)
 	tokenMap, err := elicitation.New()
 	require.NoError(t, err)
 
-	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenCache, tokenMap)
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
 
 	req := &MCPRequest{

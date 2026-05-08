@@ -182,7 +182,16 @@ func main() {
 		}
 	}
 
-	sessionCache, err := session.NewCache(session.WithRedisClient(redisClient))
+	var sessionCacheOpts []func(*session.Cache)
+	sessionCacheOpts = append(sessionCacheOpts, session.WithRedisClient(redisClient))
+	if redisClient != nil {
+		encKey, encErr := session.DeriveEncryptionKey([]byte(jwtSigningKeyFlag))
+		if encErr != nil {
+			panic("failed to derive encryption key: " + encErr.Error())
+		}
+		sessionCacheOpts = append(sessionCacheOpts, session.WithEncryptionKey(encKey))
+	}
+	sessionCache, err := session.NewCache(sessionCacheOpts...)
 	if err != nil {
 		panic("failed to setup session cache: " + err.Error())
 	}
@@ -206,17 +215,6 @@ func main() {
 		panic("failed to setup elicitation map: " + err.Error())
 	}
 
-	var userTokenCache mcpRouter.UserTokenCache
-	if redisClient != nil {
-		utc, utcErr := mcpRouter.NewRedisUserTokenCache(redisClient, []byte(jwtSigningKeyFlag), sessionTTL, logger)
-		if utcErr != nil {
-			panic("failed to setup redis user token cache: " + utcErr.Error())
-		}
-		userTokenCache = utc
-	} else {
-		userTokenCache = mcpRouter.NewMemoryUserTokenCache(sessionTTL)
-	}
-
 	tokenElicitationMap, err := elicitation.New(elicitation.WithRedisClient(redisClient))
 	if err != nil {
 		panic("failed to setup token elicitation map: " + err.Error())
@@ -237,9 +235,9 @@ func main() {
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
 	)
-	tokenHandler := broker.NewTokenHandler(userTokenCache, tokenElicitationMap, *logger)
+	tokenHandler := broker.NewTokenHandler(sessionCache, tokenElicitationMap, *logger)
 	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs, tokenHandler)
-	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap, userTokenCache, tokenElicitationMap)
+	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap, tokenElicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
 	if mcpRoutePublicHost == "" {
@@ -377,7 +375,7 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 	return httpSrv, streamableHTTPServer
 }
 
-func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map, userTokenCache mcpRouter.UserTokenCache, tokenElicitationMap elicitation.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
+func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map, tokenElicitationMap elicitation.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
 	server := &mcpRouter.ExtProcServer{
@@ -387,7 +385,6 @@ func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *sessi
 		InitForClient:       clients.Initialize,
 		SessionCache:        sessionCache,
 		ElicitationMap:      elicitationMap,
-		UserTokenCache:      userTokenCache,
 		TokenElicitationMap: tokenElicitationMap,
 		Broker:              broker, // TODO we shouldn't need a handle to broker in the router
 		MaxRequestBodySize:  maxRequestBodySize,
