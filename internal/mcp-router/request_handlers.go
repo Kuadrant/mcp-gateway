@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -665,7 +665,7 @@ func (s *ExtProcServer) resolveUpstreamToken(ctx context.Context, mcpReq *MCPReq
 
 	// cache miss — trigger elicitation if the client supports it
 	authHeader := mcpReq.GetSingleHeaderValue(authorizationHeader)
-	sub, subErr := elicitation.ExtractSubClaim(authHeader)
+	sub, subErr := internaljwt.ExtractSubClaim(authHeader)
 	if subErr != nil {
 		// JWT present but no sub claim = misconfigured OIDC
 		s.Logger.ErrorContext(ctx, "authorization JWT missing sub claim", "error", subErr)

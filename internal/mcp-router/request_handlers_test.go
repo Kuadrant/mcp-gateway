@@ -1193,6 +1193,7 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
 
 	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	// token is injected as-is (no "Bearer " prefix) — upstream servers handle both PATs and Bearer tokens
 	var foundAuth bool
 	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
 		if h.Header.Key == "authorization" {
@@ -1358,4 +1359,80 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	require.Equal(t, "user123", entry.Sub)
 	require.Equal(t, "github", entry.ServerName)
 	require.Equal(t, validToken, entry.SessionID)
+}
+
+func TestBuildSSEError(t *testing.T) {
+	result := buildSSEError(1, -32600, "invalid request")
+	require.Contains(t, result, "event: message\n")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+		Error   struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	data := extractSSEData(t, result)
+	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, 1, envelope.ID)
+	require.Equal(t, -32600, envelope.Error.Code)
+	require.Equal(t, "invalid request", envelope.Error.Message)
+}
+
+func TestBuildURLElicitationError(t *testing.T) {
+	result := buildURLElicitationError(42, "https://broker.example.com/tokens?id=abc")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+		Error   struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    struct {
+				URL string `json:"url"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	data := extractSSEData(t, result)
+	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, 42, envelope.ID)
+	require.Equal(t, -32042, envelope.Error.Code)
+	require.Equal(t, "https://broker.example.com/tokens?id=abc", envelope.Error.Data.URL)
+}
+
+func TestBuildSSEToolError(t *testing.T) {
+	result := buildSSEToolError("req-1", "something went wrong")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      string `json:"id"`
+		Result  struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	data := extractSSEData(t, result)
+	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, "req-1", envelope.ID)
+	require.True(t, envelope.Result.IsError)
+	require.Len(t, envelope.Result.Content, 1)
+	require.Equal(t, "text", envelope.Result.Content[0].Type)
+	require.Equal(t, "something went wrong", envelope.Result.Content[0].Text)
+}
+
+func extractSSEData(t *testing.T, sse string) string {
+	t.Helper()
+	const prefix = "data: "
+	idx := strings.Index(sse, prefix)
+	require.Greater(t, idx, -1, "SSE should contain data: prefix")
+	rest := sse[idx+len(prefix):]
+	end := strings.Index(rest, "\n")
+	if end == -1 {
+		return rest
+	}
+	return rest[:end]
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 )
 
 //go:embed templates/*.html
@@ -114,7 +115,7 @@ func (h *TokenHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if entry.Sub != "" {
-		reqSub, err := elicitation.ExtractSubClaim(r.Header.Get("Authorization"))
+		reqSub, err := internaljwt.ExtractSubClaim(r.Header.Get("Authorization"))
 		if err != nil {
 			h.sendError(w, http.StatusForbidden, "authorization JWT missing sub claim")
 			return

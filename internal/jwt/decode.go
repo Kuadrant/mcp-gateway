@@ -1,4 +1,4 @@
-package elicitation
+package jwt
 
 import (
 	"encoding/base64"
@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// DecodeJWTPayload decodes the payload of a JWT token (3-part dot-separated string)
+// DecodePayload decodes the payload of a JWT token (3-part dot-separated string)
 // into the provided claims struct. Does NOT validate the signature.
 // Returns false if the token is not a valid JWT structure.
-func DecodeJWTPayload(token string, claims any) bool {
+func DecodePayload(token string, claims any) bool {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return false
@@ -40,7 +40,7 @@ func ExtractSubClaim(authHeader string) (string, error) {
 	var claims struct {
 		Sub string `json:"sub"`
 	}
-	if !DecodeJWTPayload(token, &claims) {
+	if !DecodePayload(token, &claims) {
 		return "", nil
 	}
 	if claims.Sub == "" {

@@ -1,4 +1,4 @@
-package elicitation
+package jwt
 
 import (
 	"encoding/base64"

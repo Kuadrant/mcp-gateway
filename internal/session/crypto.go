@@ -10,7 +10,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -74,7 +74,7 @@ func checkUpstreamJWTExpiry(token string) bool {
 	var claims struct {
 		Exp *float64 `json:"exp"`
 	}
-	if !elicitation.DecodeJWTPayload(token, &claims) || claims.Exp == nil {
+	if !internaljwt.DecodePayload(token, &claims) || claims.Exp == nil {
 		return false
 	}
 	return time.Unix(int64(*claims.Exp), 0).Before(time.Now())
