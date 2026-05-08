@@ -122,41 +122,53 @@ var (
 	}
 )
 
-// RunServer create a server that can be started and stopped
-func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
-
+// buildMCPServer creates a new MCP server with lifecycle hooks and all testTools registered.
+func buildMCPServer() *server.MCPServer {
 	hooks := &server.Hooks{}
-
 	// Note that AddOnRegisterSession is for GET, not POST, for a session.
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
 		log.Printf("Client %s connected", session.SessionID())
 	})
-
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
 		log.Printf("Client %s disconnected", session.SessionID())
 	})
-
-	// Add request hooks
 	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
 		log.Printf("Processing %s request", method)
 	})
-
 	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
 		log.Printf("Error in %s: %v", method, err)
 	})
-
-	// Create a new MCP server
 	s := server.NewMCPServer(
 		"Demo rocket",
 		"1.0.0",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 	)
-
 	for _, tool := range testTools {
 		s.AddTools(tool)
 	}
+	return s
+}
+
+// buildStreamableHTTP wires the shared HTTP mux and registers all routes onto httpServer.
+// It sets httpServer.Handler to the new mux and returns the streamable server.
+func buildStreamableHTTP(s *server.MCPServer, httpServer *http.Server, streamOpts []server.StreamableHTTPOption) *server.StreamableHTTPServer {
+	mux := http.NewServeMux()
+	httpServer.Handler = mux
+	streamOpts = append(streamOpts, server.WithStreamableHTTPServer(httpServer))
+	streamableHTTPServer := server.NewStreamableHTTPServer(s, streamOpts...)
+	mux.Handle("/mcp", streamableHTTPServer)
+	// For testing session ID invalidation and dynamic tool management
+	mux.HandleFunc("/admin/forget", forgetFuncFactory(s))
+	mux.HandleFunc("/admin/deleteTool", deleteToolFactory(s))
+	mux.HandleFunc("/admin/addTool", addToolFactory(s))
+	return streamableHTTPServer
+}
+
+// RunServer create a server that can be started and stopped
+func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
+	s := buildMCPServer()
 
 	if port == "" {
 		port = "8080"
@@ -164,43 +176,23 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 
 	switch transport {
 	case "http":
-		// Define the HTTP server with interceptor to record HTTP headers
-		mux := http.NewServeMux()
 		httpServer := &http.Server{
 			Addr:              ":" + port,
-			Handler:           mux,
 			ReadHeaderTimeout: 3 * time.Second,
 		}
-
-		streamOpts = append(streamOpts, server.WithStreamableHTTPServer(httpServer))
-		streamableHTTPServer := server.NewStreamableHTTPServer(
-			s,
-			streamOpts...,
-		)
-		mux.Handle("/mcp", streamableHTTPServer)
-
-		// For testing session ID invalidation
-		mux.HandleFunc("/admin/forget", forgetFuncFactory(s))
-		mux.HandleFunc("/admin/deleteTool", deleteToolFactory(s))
-		mux.HandleFunc("/admin/addTool", addToolFactory(s))
-
+		streamableHTTPServer := buildStreamableHTTP(s, httpServer, streamOpts)
 		return func() error {
 				fmt.Printf("Serving HTTPStreamable on http://localhost:%s/mcp\n", port)
-
 				return streamableHTTPServer.Start(":" + port)
 			}, func() error {
 				// We use a timeout because the MCP inspector holds the port open
-				shutdownCtx, shutdownRelease := context.WithTimeout(
-					context.Background(),
-					1*time.Second,
-				)
+				shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 1*time.Second)
 				defer shutdownRelease()
 				return streamableHTTPServer.Shutdown(shutdownCtx)
 			}, nil
 	case "sse":
 		fmt.Printf("Serving SSE on http://localhost:%s\n", port)
 		sseServer := server.NewSSEServer(s)
-
 		return func() error {
 				return sseServer.Start(":" + port)
 			}, func() error {
@@ -220,44 +212,13 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 // eliminating the TOCTOU race between port selection and server bind.
 // The caller must not close ln before calling this function.
 func RunServerWithListener(transport string, ln net.Listener, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
-	hooks := &server.Hooks{}
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
-		log.Printf("Client %s connected", session.SessionID())
-	})
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		log.Printf("Client %s disconnected", session.SessionID())
-	})
-	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
-		log.Printf("Processing %s request", method)
-	})
-	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
-		log.Printf("Error in %s: %v", method, err)
-	})
-
-	s := server.NewMCPServer(
-		"Demo rocket",
-		"1.0.0",
-		server.WithHooks(hooks),
-		server.WithToolCapabilities(true),
-	)
-	for _, tool := range testTools {
-		s.AddTools(tool)
-	}
-
 	switch transport {
 	case "http":
-		mux := http.NewServeMux()
+		s := buildMCPServer()
 		httpServer := &http.Server{
-			Handler:           mux,
 			ReadHeaderTimeout: 3 * time.Second,
 		}
-		streamOpts = append(streamOpts, server.WithStreamableHTTPServer(httpServer))
-		streamableHTTPServer := server.NewStreamableHTTPServer(s, streamOpts...)
-		mux.Handle("/mcp", streamableHTTPServer)
-		mux.HandleFunc("/admin/forget", forgetFuncFactory(s))
-		mux.HandleFunc("/admin/deleteTool", deleteToolFactory(s))
-		mux.HandleFunc("/admin/addTool", addToolFactory(s))
-
+		streamableHTTPServer := buildStreamableHTTP(s, httpServer, streamOpts)
 		return func() error {
 				fmt.Printf("Serving HTTPStreamable on http://%s/mcp\n", ln.Addr())
 				return httpServer.Serve(ln)
