@@ -65,6 +65,41 @@ spec:
                 maximum: 7200
                 minimum: 10
                 type: integer
+              envoyFilter:
+                description: |-
+                  envoyFilter controls how the operator manages the EnvoyFilter that wires the
+                  ext_proc router into the gateway. When omitted, the operator creates an
+                  EnvoyFilter that inserts the ext_proc filter at the start of the HTTP filter
+                  chain. Set management to Disabled to opt out of EnvoyFilter creation when
+                  integrating with an externally provided filter, or override patchOperation
+                  to control the insertion point relative to the router filter.
+                properties:
+                  management:
+                    default: Enabled
+                    description: |-
+                      management controls whether the operator creates and reconciles the EnvoyFilter.
+                      Enabled (default): the operator creates and updates the EnvoyFilter targeting the gateway listener.
+                      Disabled: the operator does not create an EnvoyFilter and deletes any EnvoyFilter it
+                      previously managed for this extension. Users that disable management are responsible
+                      for routing MCP traffic to the broker-router service via their own configuration.
+                    enum:
+                    - Enabled
+                    - Disabled
+                    type: string
+                  patchOperation:
+                    default: InsertFirst
+                    description: |-
+                      patchOperation controls how the ext_proc filter is inserted into the HTTP filter chain.
+                      InsertFirst (default): inserts before all other HTTP filters.
+                      InsertBefore: inserts immediately before the matched router filter so the
+                      ext_proc filter is the last one to run before the router.
+                      InsertAfter: inserts immediately after the matched filter.
+                    enum:
+                    - InsertFirst
+                    - InsertBefore
+                    - InsertAfter
+                    type: string
+                type: object
               httpRouteManagement:
                 default: Enabled
                 description: |-

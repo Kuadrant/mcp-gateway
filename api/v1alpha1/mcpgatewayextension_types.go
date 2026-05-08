@@ -19,6 +19,16 @@ type KeyGenerationPolicy string
 // +kubebuilder:validation:Enum=FilterOut;RejectServer
 type InvalidToolPolicy string
 
+// EnvoyFilterManagementPolicy defines how the operator manages the EnvoyFilter
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type EnvoyFilterManagementPolicy string
+
+// EnvoyFilterPatchOperation controls how the ext_proc filter is inserted into
+// the HTTP filter chain. Mirrors a subset of istio EnvoyFilter Patch.Operation
+// values that are meaningful for HTTP_FILTER patches.
+// +kubebuilder:validation:Enum=InsertFirst;InsertBefore;InsertAfter
+type EnvoyFilterPatchOperation string
+
 const (
 	// ConditionTypeReady signals if a resource is ready
 	ConditionTypeReady = "Ready"
@@ -49,6 +59,19 @@ const (
 	InvalidToolPolicyFilterOut InvalidToolPolicy = "FilterOut"
 	// InvalidToolPolicyRejectServer rejects all tools from a server if any are invalid
 	InvalidToolPolicyRejectServer InvalidToolPolicy = "RejectServer"
+
+	// EnvoyFilterManagementEnabled means the operator creates and reconciles the EnvoyFilter
+	EnvoyFilterManagementEnabled EnvoyFilterManagementPolicy = "Enabled"
+	// EnvoyFilterManagementDisabled means the operator does not create the EnvoyFilter
+	// and removes any previously managed EnvoyFilter for this extension
+	EnvoyFilterManagementDisabled EnvoyFilterManagementPolicy = "Disabled"
+
+	// EnvoyFilterPatchInsertFirst inserts the ext_proc filter at the beginning of the HTTP filter chain
+	EnvoyFilterPatchInsertFirst EnvoyFilterPatchOperation = "InsertFirst"
+	// EnvoyFilterPatchInsertBefore inserts the ext_proc filter immediately before the router filter
+	EnvoyFilterPatchInsertBefore EnvoyFilterPatchOperation = "InsertBefore"
+	// EnvoyFilterPatchInsertAfter inserts the ext_proc filter immediately after the matched filter
+	EnvoyFilterPatchInsertAfter EnvoyFilterPatchOperation = "InsertAfter"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -93,6 +116,36 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// envoyFilter controls how the operator manages the EnvoyFilter that wires the
+	// ext_proc router into the gateway. When omitted, the operator creates an
+	// EnvoyFilter that inserts the ext_proc filter at the start of the HTTP filter
+	// chain. Set management to Disabled to opt out of EnvoyFilter creation when
+	// integrating with an externally provided filter, or override patchOperation
+	// to control the insertion point relative to the router filter.
+	// +optional
+	EnvoyFilter *EnvoyFilterConfig `json:"envoyFilter,omitempty"`
+}
+
+// EnvoyFilterConfig configures how the operator manages the EnvoyFilter for the MCP Gateway
+type EnvoyFilterConfig struct {
+	// management controls whether the operator creates and reconciles the EnvoyFilter.
+	// Enabled (default): the operator creates and updates the EnvoyFilter targeting the gateway listener.
+	// Disabled: the operator does not create an EnvoyFilter and deletes any EnvoyFilter it
+	// previously managed for this extension. Users that disable management are responsible
+	// for routing MCP traffic to the broker-router service via their own configuration.
+	// +optional
+	// +default="Enabled"
+	Management EnvoyFilterManagementPolicy `json:"management,omitempty"`
+
+	// patchOperation controls how the ext_proc filter is inserted into the HTTP filter chain.
+	// InsertFirst (default): inserts before all other HTTP filters.
+	// InsertBefore: inserts immediately before the matched router filter so the
+	// ext_proc filter is the last one to run before the router.
+	// InsertAfter: inserts immediately after the matched filter.
+	// +optional
+	// +default="InsertFirst"
+	PatchOperation EnvoyFilterPatchOperation `json:"patchOperation,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
@@ -246,6 +299,22 @@ func (m *MCPGatewayExtension) InternalHost(port uint32) string {
 // HTTPRouteDisabled returns true if HTTPRouteManagement is set to Disabled
 func (m *MCPGatewayExtension) HTTPRouteDisabled() bool {
 	return m.Spec.HTTPRouteManagement == HTTPRouteManagementDisabled
+}
+
+// EnvoyFilterDisabled returns true when EnvoyFilter management has been
+// explicitly opted out of via spec.envoyFilter.management = Disabled.
+func (m *MCPGatewayExtension) EnvoyFilterDisabled() bool {
+	return m.Spec.EnvoyFilter != nil && m.Spec.EnvoyFilter.Management == EnvoyFilterManagementDisabled
+}
+
+// EnvoyFilterPatchOp returns the patch operation configured on the extension,
+// defaulting to InsertFirst when not set. The default preserves the prior
+// behaviour where the ext_proc filter runs first in the HTTP filter chain.
+func (m *MCPGatewayExtension) EnvoyFilterPatchOp() EnvoyFilterPatchOperation {
+	if m.Spec.EnvoyFilter == nil || m.Spec.EnvoyFilter.PatchOperation == "" {
+		return EnvoyFilterPatchInsertFirst
+	}
+	return m.Spec.EnvoyFilter.PatchOperation
 }
 
 // ListenerConfig holds configuration extracted from a Gateway listener.

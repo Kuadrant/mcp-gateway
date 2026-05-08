@@ -5,6 +5,7 @@
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [TrustedHeadersKey](#trustedheaderskey)
 - [SessionStore](#sessionstore)
+- [EnvoyFilterConfig](#envoyfilterconfig)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
 
 ## MCPGatewayExtension
@@ -25,6 +26,7 @@
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
+| `envoyFilter` | [EnvoyFilterConfig](#envoyfilterconfig) | No | Controls how the operator manages the EnvoyFilter that wires the ext_proc router into the gateway. When omitted, the operator creates an EnvoyFilter that inserts the ext_proc filter at the start of the HTTP filter chain |
 
 ## MCPGatewayExtensionTargetReference
 
@@ -48,6 +50,45 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `secretName` | String | Yes | Name of the secret containing a `CACHE_CONNECTION_STRING` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
+
+## EnvoyFilterConfig
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `management` | String | No | Controls whether the operator creates and reconciles the EnvoyFilter. `Enabled` (default): the operator creates and updates the EnvoyFilter targeting the gateway listener. `Disabled`: the operator does not create an EnvoyFilter and deletes any EnvoyFilter it previously managed for this extension. When disabled, the operator no longer routes MCP traffic to the broker-router service; users must provide their own filter or routing |
+| `patchOperation` | String | No | Controls how the ext_proc filter is inserted into the HTTP filter chain. `InsertFirst` (default): inserts before all other HTTP filters. `InsertBefore`: inserts immediately before the matched router filter so the ext_proc filter is the last one to run before the router. `InsertAfter`: inserts immediately after the matched filter |
+
+### Example: opt out of operator-managed EnvoyFilter
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: my-extension
+  namespace: mcp-test
+spec:
+  targetRef:
+    name: my-gateway
+    sectionName: mcp
+  envoyFilter:
+    management: Disabled
+```
+
+### Example: insert the ext_proc filter just before the router
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: my-extension
+  namespace: mcp-test
+spec:
+  targetRef:
+    name: my-gateway
+    sectionName: mcp
+  envoyFilter:
+    patchOperation: InsertBefore
+```
 
 ## MCPGatewayExtensionStatus
 

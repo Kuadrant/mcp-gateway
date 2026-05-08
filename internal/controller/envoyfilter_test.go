@@ -208,6 +208,129 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 	}
 }
 
+func TestEnvoyFilterPatchOpTranslation(t *testing.T) {
+	tests := []struct {
+		name string
+		op   mcpv1alpha1.EnvoyFilterPatchOperation
+		want istiov1alpha3.EnvoyFilter_Patch_Operation
+	}{
+		{name: "default empty falls back to insert first", op: "", want: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST},
+		{name: "insert first", op: mcpv1alpha1.EnvoyFilterPatchInsertFirst, want: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST},
+		{name: "insert before", op: mcpv1alpha1.EnvoyFilterPatchInsertBefore, want: istiov1alpha3.EnvoyFilter_Patch_INSERT_BEFORE},
+		{name: "insert after", op: mcpv1alpha1.EnvoyFilterPatchInsertAfter, want: istiov1alpha3.EnvoyFilter_Patch_INSERT_AFTER},
+		{name: "unknown value falls back to insert first", op: "Bogus", want: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := envoyFilterPatchOp(tt.op); got != tt.want {
+				t.Errorf("envoyFilterPatchOp(%q) = %v, want %v", tt.op, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnvoyFilterDisabledAndPatchOpHelpers(t *testing.T) {
+	tests := []struct {
+		name         string
+		spec         mcpv1alpha1.MCPGatewayExtensionSpec
+		wantDisabled bool
+		wantPatchOp  mcpv1alpha1.EnvoyFilterPatchOperation
+	}{
+		{
+			name:         "no envoy filter config returns defaults",
+			spec:         mcpv1alpha1.MCPGatewayExtensionSpec{},
+			wantDisabled: false,
+			wantPatchOp:  mcpv1alpha1.EnvoyFilterPatchInsertFirst,
+		},
+		{
+			name: "management enabled keeps creation",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				EnvoyFilter: &mcpv1alpha1.EnvoyFilterConfig{
+					Management: mcpv1alpha1.EnvoyFilterManagementEnabled,
+				},
+			},
+			wantDisabled: false,
+			wantPatchOp:  mcpv1alpha1.EnvoyFilterPatchInsertFirst,
+		},
+		{
+			name: "management disabled opts out",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				EnvoyFilter: &mcpv1alpha1.EnvoyFilterConfig{
+					Management: mcpv1alpha1.EnvoyFilterManagementDisabled,
+				},
+			},
+			wantDisabled: true,
+			wantPatchOp:  mcpv1alpha1.EnvoyFilterPatchInsertFirst,
+		},
+		{
+			name: "patch operation override is honoured",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				EnvoyFilter: &mcpv1alpha1.EnvoyFilterConfig{
+					PatchOperation: mcpv1alpha1.EnvoyFilterPatchInsertBefore,
+				},
+			},
+			wantDisabled: false,
+			wantPatchOp:  mcpv1alpha1.EnvoyFilterPatchInsertBefore,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext := &mcpv1alpha1.MCPGatewayExtension{Spec: tt.spec}
+			if got := ext.EnvoyFilterDisabled(); got != tt.wantDisabled {
+				t.Errorf("EnvoyFilterDisabled() = %v, want %v", got, tt.wantDisabled)
+			}
+			if got := ext.EnvoyFilterPatchOp(); got != tt.wantPatchOp {
+				t.Errorf("EnvoyFilterPatchOp() = %q, want %q", got, tt.wantPatchOp)
+			}
+		})
+	}
+}
+
+func TestBuildEnvoyFilterRespectsPatchOperation(t *testing.T) {
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-gateway", Namespace: "gateway-system"},
+	}
+	listener := &mcpv1alpha1.ListenerConfig{Port: 8080, Hostname: "team-a.example.com", Name: "team-a-mcp"}
+
+	tests := []struct {
+		name string
+		op   mcpv1alpha1.EnvoyFilterPatchOperation
+		want istiov1alpha3.EnvoyFilter_Patch_Operation
+	}{
+		{name: "default insert first", op: "", want: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST},
+		{name: "explicit insert before", op: mcpv1alpha1.EnvoyFilterPatchInsertBefore, want: istiov1alpha3.EnvoyFilter_Patch_INSERT_BEFORE},
+		{name: "explicit insert after", op: mcpv1alpha1.EnvoyFilterPatchInsertAfter, want: istiov1alpha3.EnvoyFilter_Patch_INSERT_AFTER},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ext", Namespace: "team-a"},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					EnvoyFilter: &mcpv1alpha1.EnvoyFilterConfig{PatchOperation: tt.op},
+				},
+			}
+			if tt.op == "" {
+				ext.Spec.EnvoyFilter = nil
+			}
+
+			r := &MCPGatewayExtensionReconciler{}
+			ef, err := r.buildEnvoyFilter(ext, gateway, listener)
+			if err != nil {
+				t.Fatalf("buildEnvoyFilter returned error: %v", err)
+			}
+			if len(ef.Spec.ConfigPatches) != 1 {
+				t.Fatalf("expected 1 config patch, got %d", len(ef.Spec.ConfigPatches))
+			}
+			if got := ef.Spec.ConfigPatches[0].Patch.Operation; got != tt.want {
+				t.Errorf("patch operation = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {
 	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{

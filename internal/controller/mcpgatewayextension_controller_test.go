@@ -10,6 +10,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	istiov1alpha3 "istio.io/api/networking/v1alpha3"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -1016,6 +1017,136 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					Namespace: gatewayNamespace,
 				}, envoyFilter)
 				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should not create the EnvoyFilter when management is disabled", func() {
+			ext := &mcpv1alpha1.MCPGatewayExtension{}
+			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, ext)).To(Succeed())
+			ext.Spec.EnvoyFilter = &mcpv1alpha1.EnvoyFilterConfig{
+				Management: mcpv1alpha1.EnvoyFilterManagementDisabled,
+			}
+			Expect(testK8sClient.Update(ctx, ext)).To(Succeed())
+
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Consistently(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				err := testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, "2s", testRetryInterval).Should(Succeed())
+		})
+
+		It("should remove an existing EnvoyFilter when management transitions to disabled", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				ext := &mcpv1alpha1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, ext)).To(Succeed())
+				ext.Spec.EnvoyFilter = &mcpv1alpha1.EnvoyFilterConfig{
+					Management: mcpv1alpha1.EnvoyFilterManagementDisabled,
+				}
+				g.Expect(testK8sClient.Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				err = testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should honour the configured patch operation", func() {
+			ext := &mcpv1alpha1.MCPGatewayExtension{}
+			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, ext)).To(Succeed())
+			ext.Spec.EnvoyFilter = &mcpv1alpha1.EnvoyFilterConfig{
+				PatchOperation: mcpv1alpha1.EnvoyFilterPatchInsertBefore,
+			}
+			Expect(testK8sClient.Update(ctx, ext)).To(Succeed())
+
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)).To(Succeed())
+				g.Expect(envoyFilter.Spec.ConfigPatches).To(HaveLen(1))
+				g.Expect(envoyFilter.Spec.ConfigPatches[0].Patch.Operation).To(Equal(istiov1alpha3.EnvoyFilter_Patch_INSERT_BEFORE))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})

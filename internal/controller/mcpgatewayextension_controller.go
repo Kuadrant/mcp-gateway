@@ -716,6 +716,21 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 	return requests
 }
 
+// envoyFilterPatchOp translates the public CRD enum into the istio API value.
+// Unknown or empty values fall back to INSERT_FIRST to preserve historical behaviour.
+func envoyFilterPatchOp(op mcpv1alpha1.EnvoyFilterPatchOperation) istiov1alpha3.EnvoyFilter_Patch_Operation {
+	switch op {
+	case mcpv1alpha1.EnvoyFilterPatchInsertFirst:
+		return istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST
+	case mcpv1alpha1.EnvoyFilterPatchInsertBefore:
+		return istiov1alpha3.EnvoyFilter_Patch_INSERT_BEFORE
+	case mcpv1alpha1.EnvoyFilterPatchInsertAfter:
+		return istiov1alpha3.EnvoyFilter_Patch_INSERT_AFTER
+	default:
+		return istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST
+	}
+}
+
 func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) (*istionetv1alpha3.EnvoyFilter, error) {
 	// build the ext_proc filter config as a structpb.Struct
 	extProcConfig, err := structpb.NewStruct(map[string]any{
@@ -781,7 +796,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 						},
 					},
 					Patch: &istiov1alpha3.EnvoyFilter_Patch{
-						Operation: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST,
+						Operation: envoyFilterPatchOp(mcpExt.EnvoyFilterPatchOp()),
 						Value:     extProcConfig,
 					},
 				},
@@ -791,6 +806,11 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 }
 
 func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+	if mcpExt.EnvoyFilterDisabled() {
+		r.log.Info("envoy filter management disabled, skipping creation", "extension", mcpExt.Name, "namespace", mcpExt.Namespace)
+		return r.deleteEnvoyFilter(ctx, mcpExt)
+	}
+
 	envoyFilter, err := r.buildEnvoyFilter(mcpExt, targetGateway, listenerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to build envoy filter: %w", err)
