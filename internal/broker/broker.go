@@ -307,7 +307,7 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 
 	m.logger.Debug("ValidateAllServers: checking servers", "# servers", len(m.mcpServers))
 
-	for _, upstream := range m.RegisteredMCPServers() {
+	for _, upstream := range m.mcpServers {
 		status := upstream.GetStatus()
 		response.Servers = append(response.Servers, status)
 
