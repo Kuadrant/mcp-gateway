@@ -122,7 +122,7 @@ var (
 	}
 )
 
-// buildMCPServer creates a new MCP server with lifecycle hooks and all testTools registered.
+// mcp server with lifecycle hooks and test tools registered.
 func buildMCPServer() *server.MCPServer {
 	hooks := &server.Hooks{}
 	// Note that AddOnRegisterSession is for GET, not POST, for a session.
@@ -151,8 +151,7 @@ func buildMCPServer() *server.MCPServer {
 	return s
 }
 
-// buildStreamableHTTP wires the shared HTTP mux and registers all routes onto httpServer.
-// It sets httpServer.Handler to the new mux and returns the streamable server.
+// wires mux onto httpServer and registers all routes; returns the streamable server.
 func buildStreamableHTTP(s *server.MCPServer, httpServer *http.Server, streamOpts []server.StreamableHTTPOption) *server.StreamableHTTPServer {
 	mux := http.NewServeMux()
 	httpServer.Handler = mux
@@ -208,9 +207,7 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 	}
 }
 
-// RunServerWithListener is like RunServer but accepts a pre-existing net.Listener,
-// eliminating the TOCTOU race between port selection and server bind.
-// The caller must not close ln before calling this function.
+// RunServerWithListener is like RunServer but accepts a pre-existing net.Listener.
 func RunServerWithListener(transport string, ln net.Listener, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
 	if ln == nil {
 		return nil, nil, fmt.Errorf("RunServerWithListener: listener must not be nil")
@@ -231,8 +228,7 @@ func RunServerWithListener(transport string, ln net.Listener, streamOpts ...serv
 				return streamableHTTPServer.Shutdown(shutdownCtx)
 			}, nil
 	default:
-		// Close the caller-provided listener since we cannot use it for
-		// non-http transports, to avoid a resource leak.
+		// close listener to avoid resource leak for unsupported transports.
 		_ = ln.Close()
 		return nil, nil, fmt.Errorf("RunServerWithListener: unsupported transport %q", transport)
 	}
