@@ -449,7 +449,7 @@ func (r *MCPReconciler) buildServerInfoFromHTTPRoute(ctx context.Context, httpRo
 			return nil, fmt.Errorf("failed to get service %s: %w", route.BackendName(), err)
 		}
 
-		endpoint, routingHostname = r.buildServiceEndpoint(route, service, path)
+		endpoint, routingHostname = r.buildServiceEndpoint(ctx, route, service, path)
 
 	} else {
 		return nil, fmt.Errorf("unsupported backend reference kind: %s", route.BackendKind())
@@ -465,7 +465,7 @@ func (r *MCPReconciler) buildServerInfoFromHTTPRoute(ctx context.Context, httpRo
 }
 
 // buildServiceEndpoint builds the endpoint URL and routing hostname for a Service backend
-func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *corev1.Service, path string) (endpoint, routingHostname string) {
+func (r *MCPReconciler) buildServiceEndpoint(ctx context.Context, route *HTTPRouteWrapper, service *corev1.Service, path string) (endpoint, routingHostname string) {
 	isExternal := service.Spec.Type == corev1.ServiceTypeExternalName
 
 	var hostAndPort string
@@ -479,7 +479,7 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 		hostAndPort = fmt.Sprintf("%s:%d", hostAndPort, *route.BackendPort())
 	}
 
-	protocol := r.determineProtocol(route, service, isExternal)
+	protocol := r.determineProtocol(ctx, route, service, isExternal)
 	endpoint = fmt.Sprintf("%s://%s%s", protocol, hostAndPort, path)
 
 	if isExternal {
@@ -496,7 +496,7 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 }
 
 // determineProtocol determines the protocol (http/https) for the service endpoint
-func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
+func (r *MCPReconciler) determineProtocol(ctx context.Context, route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
 	if isExternal {
 		for _, port := range service.Spec.Ports {
 			if route.BackendPort() != nil && port.Port == *route.BackendPort() {
@@ -509,9 +509,31 @@ func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *core
 		return "http"
 	}
 
-	if route.UsesHTTPS() {
-		return "https"
+	for _, parentRef := range route.Spec.ParentRefs {
+		if parentRef.SectionName == nil {
+			continue
+		}
+
+		pr := parentRef.DeepCopy()
+
+		if pr.Namespace == nil {
+			pr.Namespace = ptr.To(gatewayv1.Namespace(route.Namespace))
+		}
+
+		gateway, err := r.getTargetGatewaysFromParentRef(ctx, pr)
+		if err != nil {
+			continue
+		}
+
+		for _, listener := range gateway.Spec.Listeners {
+			if string(listener.Name) == string(*parentRef.SectionName) {
+				if listener.Protocol == gatewayv1.HTTPSProtocolType {
+					return "https"
+				}
+			}
+		}
 	}
+
 	return "http"
 }
 

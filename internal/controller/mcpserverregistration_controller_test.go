@@ -1,6 +1,16 @@
 package controller
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+)
 
 func TestIsValidHostname(t *testing.T) {
 	tests := []struct {
@@ -44,6 +54,93 @@ func TestIsValidHostname(t *testing.T) {
 			got := isValidHostname(tt.hostname)
 			if got != tt.valid {
 				t.Errorf("isValidHostname(%q) = %v, want %v", tt.hostname, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestDetermineProtocolFromGatewayListener(t *testing.T) {
+	scheme := runtime.NewScheme()
+
+	if err := gatewayv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add gateway api scheme: %v", err)
+	}
+
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add corev1 scheme: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		listenerName gatewayv1.SectionName
+		protocol     gatewayv1.ProtocolType
+		expected     string
+	}{
+		{
+			name:         "https listener with arbitrary name",
+			listenerName: "secure-listener",
+			protocol:     gatewayv1.HTTPSProtocolType,
+			expected:     "https",
+		},
+		{
+			name:         "http listener with misleading name",
+			listenerName: "https-looking-name",
+			protocol:     gatewayv1.HTTPProtocolType,
+			expected:     "http",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     tt.listenerName,
+							Port:     443,
+							Protocol: tt.protocol,
+						},
+					},
+				},
+			}
+
+			route := WrapHTTPRoute(&gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{
+								Name:        gatewayv1.ObjectName("test-gateway"),
+								SectionName: &tt.listenerName,
+							},
+						},
+					},
+				},
+			})
+
+			r := &MCPReconciler{
+				Client: fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithObjects(gateway).
+					Build(),
+			}
+
+			got := r.determineProtocol(
+				context.Background(),
+				route,
+				&corev1.Service{},
+				false,
+			)
+
+			if got != tt.expected {
+				t.Fatalf("determineProtocol() = %s, want %s", got, tt.expected)
 			}
 		})
 	}
