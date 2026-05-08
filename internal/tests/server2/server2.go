@@ -212,6 +212,9 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 // eliminating the TOCTOU race between port selection and server bind.
 // The caller must not close ln before calling this function.
 func RunServerWithListener(transport string, ln net.Listener, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
+	if ln == nil {
+		return nil, nil, fmt.Errorf("RunServerWithListener: listener must not be nil")
+	}
 	switch transport {
 	case "http":
 		s := buildMCPServer()
@@ -228,7 +231,10 @@ func RunServerWithListener(transport string, ln net.Listener, streamOpts ...serv
 				return streamableHTTPServer.Shutdown(shutdownCtx)
 			}, nil
 	default:
-		return RunServer(transport, "", streamOpts...)
+		// Close the caller-provided listener since we cannot use it for
+		// non-http transports, to avoid a resource leak.
+		_ = ln.Close()
+		return nil, nil, fmt.Errorf("RunServerWithListener: unsupported transport %q", transport)
 	}
 }
 
