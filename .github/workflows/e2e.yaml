@@ -31,6 +31,9 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      MODEL_KEY: ${{ secrets.MODEL_KEY }}
+      MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL }}
 
     steps:
       - name: Checkout
@@ -41,14 +44,44 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Create Kind cluster
         run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
 
       - name: Setup CI environment
         run: make ci-setup
 
+      - name: Setup Fallback LLM (Ollama)
+        if: env.MODEL_KEY == ''
+        uses: ai-action/setup-ollama@v2
+
+      - name: Run Ollama (Fallback)
+        if: env.MODEL_KEY == ''
+        run: |
+          ollama serve &
+          timeout 60s bash -c 'until curl -s http://localhost:11434 > /dev/null; do sleep 2; done'
+          ollama pull qwen2.5:1.5b
+          echo "OPENAI_BASE_URL=http://localhost:11434/v1" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=ollama" >> $GITHUB_ENV
+          sed -i 's/model: .*/model: "openai:qwen2.5:1.5b"/' evals/gemini-agent/agent.yaml
+
       - name: Run E2E tests
         run: make test-e2e-ci
+
+      - name: Run Gevals Integration tests
+        run: |
+          if [ -n "$MODEL_KEY" ]; then
+            export OPENAI_API_KEY="$MODEL_KEY"
+            export OPENAI_BASE_URL="$MODEL_BASE_URL"
+          fi
+          make test-e2e-gevals
+
+      - name: Run MCP Conformance tests
+        run: make test-conformance
 
       - name: Collect logs on failure
         if: failure()

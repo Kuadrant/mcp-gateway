@@ -1,0 +1,5 @@
+mcpServers:
+  gateway:
+    type: http
+    url: http://localhost:8004/mcp
+    enableAllTools: true

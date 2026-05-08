@@ -1,0 +1,68 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-gevals
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: gevals
+  namespace: mcp-gevals
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: e2e-1
+    namespace: gateway-system
+    sectionName: mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: everything-gevals
+  namespace: mcp-gevals
+  labels:
+    mcp-server: 'true'
+spec:
+  parentRefs:
+    - name: e2e-1
+      namespace: gateway-system
+  hostnames:
+    - 'everything-server.mcp.local'
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: everything-server
+          namespace: mcp-test
+          port: 9090
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: everything
+  namespace: mcp-gevals
+spec:
+  prefix: everything_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: everything-gevals
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-gevals-to-everything-server
+  namespace: mcp-test
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: mcp-gevals
+  to:
+    - group: ""
+      kind: Service
+      name: everything-server

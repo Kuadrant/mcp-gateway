@@ -1,0 +1,13 @@
+kind: Eval
+metadata:
+  name: "mcp-gateway-e2e-integration-test"
+config:
+  agent:
+    type: "file"
+    path: agent.yaml
+  mcpConfigFile: ../mcp-config-e2e.yaml
+  taskSets:
+    - glob: ../tasks/basic/*.yaml
+      assertions:
+        # Require at least one tool call to verify agent is working
+        minToolCalls: 1

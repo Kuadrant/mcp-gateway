@@ -36,8 +36,8 @@ jobs:
           COMMENT="${{ github.event.comment.body }}"
           # Extract suite from "/test-e2e <suite>"
           SUITE=$(echo "$COMMENT" | grep -oP '/test-e2e\s+\K\w+' || echo "")
-          if [[ "$SUITE" != "happy" && "$SUITE" != "full" ]]; then
-            echo "Invalid or missing suite. Use: /test-e2e happy or /test-e2e full"
+          if [[ "$SUITE" != "happy" && "$SUITE" != "full" && "$SUITE" != "gevals" ]]; then
+            echo "Invalid or missing suite. Use: /test-e2e happy, /test-e2e full or /test-e2e gevals"
             SUITE=""
           fi
           echo "suite=$SUITE" >> $GITHUB_OUTPUT
@@ -76,7 +76,11 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '❌ Invalid command. Usage: `/test-e2e happy` or `/test-e2e full`'
+              body: '❌ Invalid command. Usage: `/test-e2e happy`, `/test-e2e full` or `/test-e2e gevals`\n\n' +
+                    '**Suite Guide:**\n' +
+                    '- `happy`: Quick smoke test (Ginkgo).\n' +
+                    '- `gevals`: LLM-based tool routing tests. Use for changes to broker, router, or tool-calling logic.\n' +
+                    '- `full`: Complete suite (Ginkgo + Gevals + Conformance). Use for final verification.'
             });
             core.setFailed('Invalid suite specified');
 
@@ -84,7 +88,10 @@ jobs:
     needs: check-permission
     if: needs.check-permission.outputs.is-member == 'true' && needs.check-permission.outputs.suite != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      MODEL_KEY: ${{ secrets.MODEL_KEY }}
+      MODEL_BASE_URL: ${{ secrets.MODEL_BASE_URL }}
 
     steps:
       - name: Get PR branch
@@ -110,11 +117,30 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Create Kind cluster
         run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
 
       - name: Setup CI environment
         run: make ci-setup
+
+      - name: Setup Fallback LLM (Ollama)
+        if: (needs.check-permission.outputs.suite == 'gevals' || needs.check-permission.outputs.suite == 'full') && env.MODEL_KEY == ''
+        uses: ai-action/setup-ollama@v2
+
+      - name: Run Ollama (Fallback)
+        if: (needs.check-permission.outputs.suite == 'gevals' || needs.check-permission.outputs.suite == 'full') && env.MODEL_KEY == ''
+        run: |
+          ollama serve &
+          timeout 60s bash -c 'until curl -s http://localhost:11434 > /dev/null; do sleep 2; done'
+          ollama pull qwen2.5:1.5b
+          echo "OPENAI_BASE_URL=http://localhost:11434/v1" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=ollama" >> $GITHUB_ENV
+          sed -i 's/model: .*/model: "openai:qwen2.5:1.5b"/' evals/gemini-agent/agent.yaml
 
       - name: Run E2E tests (happy)
         if: needs.check-permission.outputs.suite == 'happy'
@@ -122,7 +148,21 @@ jobs:
 
       - name: Run E2E tests (full)
         if: needs.check-permission.outputs.suite == 'full'
-        run: make test-e2e-ci
+        run: |
+          if [ -n "$MODEL_KEY" ]; then
+            export OPENAI_API_KEY="$MODEL_KEY"
+            export OPENAI_BASE_URL="$MODEL_BASE_URL"
+          fi
+          make test-e2e-all-ci
+
+      - name: Run E2E tests (gevals)
+        if: needs.check-permission.outputs.suite == 'gevals'
+        run: |
+          if [ -n "$MODEL_KEY" ]; then
+            export OPENAI_API_KEY="$MODEL_KEY"
+            export OPENAI_BASE_URL="$MODEL_BASE_URL"
+          fi
+          make test-e2e-gevals
 
       - name: Collect logs on failure
         if: failure()

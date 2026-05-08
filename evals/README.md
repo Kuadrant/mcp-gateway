@@ -10,6 +10,29 @@ This directory contains configuration for running integration tests using [Geval
 
 ## Running Locally
 
+### Option 1: Using the E2E infrastructure (Recommended)
+
+This is the easiest way to run gevals tests against a local Kind cluster that matches the CI environment.
+
+1.  **Start the E2E environment**:
+    ```bash
+    make ci-setup
+    ```
+2.  **Run the gevals tests**:
+    ```bash
+    export MODEL_KEY="your-api-key"
+    export MODEL_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
+    make test-e2e-gevals
+    ```
+    This will set up a dedicated namespace `mcp-gevals`, deploy the necessary resources targeting the `e2e-1` gateway (port 8004), and run the tests.
+
+3.  **Cleanup**:
+    ```bash
+    make test-e2e-gevals-cleanup
+    ```
+
+### Option 2: Using the Local Demo environment
+
 1.  **Start the environment**:
     Make sure you have `kind`, `docker`, `kubectl` installed. Or use `make tools`.
     ```bash
@@ -18,23 +41,21 @@ This directory contains configuration for running integration tests using [Geval
     This will deploy the mcp-gateway and test servers to a Kind cluster. The gateway will be accessible at `http://localhost:8001/mcp`.
 
 2.  **Run MCP Checker**:
-    You need to have `mcpchecker` (or `gevals`) installed, or use the docker image.
+    You need to have `mcpchecker` installed.
     
-    Using docker:
     ```bash
     export MODEL_KEY="your-api-key"
-    export MODEL_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" # Example for Gemini
+    export MODEL_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
     
-    docker run --rm -it \
-      --network host \
-      -v $(pwd)/evals:/evals \
-      -e MODEL_KEY=$MODEL_KEY \
-      -e MODEL_BASE_URL=$MODEL_BASE_URL \
-      quay.io/bentito/gevals:latest \
-      check --config /evals/gemini-agent/eval.yaml
+    mcpchecker check --verbose evals/gemini-agent/eval.yaml
     ```
-    
-    (Note: Adjust image name if needed, assuming `quay.io/bentito/gevals` or similar exists as per issue description).
+
+### LLM Dependencies
+
+- **Paid LLM**: Set `MODEL_KEY` (OpenAI/Gemini key) and `MODEL_BASE_URL`.
+- **Local Fallback (Ollama)**: If no keys are provided, CI will automatically start Ollama and pull `qwen2.5:1.5b`. 
+- **Caching**: In CI, the Ollama model is cached to speed up runs. Locally, Ollama will reuse previously pulled models.
+- **Resources**: Ensure your local machine or CI runner has at least 8GB RAM to run Ollama comfortably alongside the Kind cluster.
 
 ## Adding Tasks
 

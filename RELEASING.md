@@ -97,7 +97,19 @@ helm show chart oci://ghcr.io/kuadrant/charts/mcp-gateway --version ${VERSION} >
 
 ### 5. Create RC Test Matrix Issue (Release Candidates Only)
 
-After verifying all artifacts are published, create a test matrix issue to track RC testing:
+After verifying all artifacts are published, create a test matrix issue to track RC testing. This involves running the full test suite against the RC images in a Kind environment:
+
+```bash
+# Run all E2E and integration tests
+# Note: make test-e2e transitively runs gevals tests which require LLM credentials.
+# See evals/README.md § "LLM Dependencies" to set MODEL_KEY and MODEL_BASE_URL.
+make test-e2e
+
+# Or run specific suites
+make test-e2e-run       # Ginkgo E2E tests
+make test-e2e-gevals    # Gevals integration tests
+make test-conformance   # MCP conformance tests
+```
 
 1. Go to [New Issue](https://github.com/Kuadrant/mcp-gateway/issues/new/choose)
 2. Select the **RC Test Matrix** template
