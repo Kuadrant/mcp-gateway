@@ -45,8 +45,8 @@ Branch: `ute-crds-feature-flag`
 - `internal/broker/broker.go` — add `ElicitationEnabled bool` field
 
 **Acceptance criteria:**
-- [x] Flag parsed and plumbed to router and broker
-- [x] When disabled, no elicitation behavior changes (verified by existing tests passing)
+- [ ] Flag parsed and plumbed to router and broker
+- [ ] When disabled, no elicitation behavior changes (verified by existing tests passing)
 
 **Verification:** `make test-unit` passes, `--help` shows the flag
 
@@ -65,8 +65,8 @@ Branch: `ute-crds-feature-flag`
 - Run `make generate-all` to regenerate deepcopy, CRDs, sync Helm
 
 **Acceptance criteria:**
-- [x] CRD accepts `credentialURLElicitation` with optional `url` field
-- [x] Controller propagates to config Secret
+- [ ] CRD accepts `credentialURLElicitation` with optional `url` field
+- [ ] Controller propagates to config Secret
 - [ ] Unit test: controller includes elicitation config when set, omits when not set
 
 **Verification:** `make generate-all && make lint && make test-unit`
@@ -95,12 +95,12 @@ Branch: `ute-crds-feature-flag`
 On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base64url segments). If it parses successfully, check the `exp` claim — if expired, delete the token and return a cache miss. If the token doesn't parse as a JWT (e.g. opaque PAT like a GitHub token), skip expiry checking and return it as-is for upstream use.
 
 **Acceptance criteria:**
-- [ ] Set/get/delete works for both backends
-- [ ] Redis protocol compliant backend encrypts values (not plaintext in store)
-- [ ] In-memory backend stores plaintext (no encryption overhead)
-- [ ] Token deleted when session hash is deleted
-- [ ] JWT tokens checked for expiry on get — expired tokens deleted and treated as cache miss
-- [ ] Non-JWT tokens (opaque PATs) returned as-is without expiry check
+- [x] Set/get/delete works for both backends
+- [x] Redis protocol compliant backend encrypts values (not plaintext in store)
+- [x] In-memory backend stores plaintext (no encryption overhead)
+- [x] Token deleted when session hash is deleted
+- [x] JWT tokens checked for expiry on get — expired tokens deleted and treated as cache miss
+- [x] Non-JWT tokens (opaque PATs) returned as-is without expiry check
 
 **Verification:** `make test-unit` — tests cover encrypt/decrypt round-trip, set/get/delete, missing key returns false, expired JWT returns miss, opaque token returned without expiry check
 
@@ -124,12 +124,12 @@ Depends on: Task 3. Core router logic — can be unit-tested with mock cache bef
 - `internal/mcp-router/server.go` — add `UserTokenCache` field to `ExtProcServer`
 
 **Acceptance criteria:**
-- [ ] Existing Authorization header used as-is (no regression)
-- [ ] Cached token injected on hit
-- [ ] -32042 returned on miss with elicitation-capable client
-- [ ] Standard error returned on miss without capability
+- [x] Existing Authorization header used as-is (no regression)
+- [x] Cached token injected on hit
+- [x] -32042 returned on miss with elicitation-capable client
+- [x] Standard error returned on miss without capability
 - [ ] Feature flag disabled → existing behavior unchanged
-- [ ] URL in -32042 uses external URL when `credentialURLElicitation.url` is set
+- [x] URL in -32042 uses external URL when `credentialURLElicitation.url` is set
 
 **E2E test cases (from `e2e_test_cases.md`):**
 - `[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client`
@@ -165,11 +165,11 @@ Depends on: Task 3. Independent of Task 4 — touches broker, not router.
 - `internal/broker/broker.go` — broker needs access to `UserTokenCache`
 
 **Acceptance criteria:**
-- [ ] GET renders form showing server name
-- [ ] POST verifies the session JWT on the request matches the session ID in the elicitation ID before storing
-- [ ] POST stores token in cache keyed by session ID and server name
-- [ ] Invalid/missing elicitation_id returns error
-- [ ] Session mismatch between request JWT and elicitation ID returns error
+- [x] GET renders form showing server name
+- [x] POST verifies the session JWT on the request matches the session ID in the elicitation ID before storing
+- [x] POST stores token in cache keyed by session ID and server name
+- [x] Invalid/missing elicitation_id returns error
+- [x] Session mismatch between request JWT and elicitation ID returns error
 - [ ] Endpoint only registered when `--enable-url-elicitation` is true
 
 **E2E test cases (from `e2e_test_cases.md`):**
