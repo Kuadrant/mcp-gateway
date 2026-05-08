@@ -1,3 +1,4 @@
+// Package jwt provides lightweight JWT decoding utilities.
 package jwt
 
 import (
