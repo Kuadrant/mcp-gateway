@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -9,6 +10,20 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 )
+
+// blockingDeleter blocks DeleteSessions until the supplied context is canceled
+// or its deadline elapses, then returns ctx.Err().
+type blockingDeleter struct {
+	called chan struct{}
+}
+
+func (b *blockingDeleter) DeleteSessions(ctx context.Context, _ ...string) error {
+	if b.called != nil {
+		close(b.called)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -366,6 +381,35 @@ func TestTerminate(t *testing.T) {
 		}
 		if isNotAllowed {
 			t.Error("expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("terminate bounds a stalled deleter via context deadline", func(t *testing.T) {
+		// Wire a deleter whose DeleteSessions blocks until the passed context
+		// is canceled. Without the WithTimeout fix, Terminate would block
+		// indefinitely; with it, Terminate must return within ~terminateTimeout.
+		deleter := &blockingDeleter{called: make(chan struct{})}
+		manager, err := NewJWTManager("test-key", 0, testLogger(), deleter)
+		if err != nil {
+			t.Fatalf("unexpected error constructing manager: %v", err)
+		}
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = manager.Terminate("session-id")
+		}()
+
+		select {
+		case <-deleter.called:
+		case <-time.After(2 * time.Second):
+			t.Fatal("DeleteSessions was not invoked")
+		}
+
+		select {
+		case <-done:
+		case <-time.After(terminateTimeout + 2*time.Second):
+			t.Fatalf("Terminate did not return within %v of the configured deadline", terminateTimeout)
 		}
 	})
 }
