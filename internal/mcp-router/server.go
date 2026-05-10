@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 var _ config.Observer = &ExtProcServer{}
@@ -43,6 +44,7 @@ type ExtProcServer struct {
 	InitForClient      InitForClient
 	SessionCache       SessionCache
 	ElicitationMap     idmap.Map
+	initFlight         singleflight.Group
 	MaxRequestBodySize int
 	//TODO this should not be needed
 	Broker broker.MCPBroker

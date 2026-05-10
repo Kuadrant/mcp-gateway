@@ -517,103 +517,124 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", mcpServerConfig.Name, "remote session", id)
 		return id, nil
 	}
-	passThroughHeaders := map[string]string{}
-	if mcpReq.Headers != nil {
-		// We don't want to pass through any pseudo routing headers (:authority,
-		// :path, etc.), the gateway-bound mcp-session-id, or the router-internal
-		// headers (mcp-init-host, router-key) which we set ourselves below via
-		// clients.Initialize. Dropping the router-internal headers here is
-		// defense-in-depth so a client-supplied value can never reach the
-		// hairpin request even if the override in clients.Initialize is later
-		// refactored. Everything else is passed through for custom headers.
-		for _, h := range mcpReq.Headers.Headers {
-			key := strings.ToLower(h.Key)
-			if strings.HasPrefix(key, ":") ||
-				key == "mcp-session-id" ||
-				key == "mcp-init-host" ||
-				key == RoutingKey {
-				continue
+
+	// collapse concurrent initializations for the same (gateway session, server) pair into a single
+	// backend connection; without this a parallel tool call would pass the cache check above, call
+	// InitForClient a second time, overwrite the first session in cache, and orphan the first client
+	// handle (leaked connection + goroutines) until JWT expiry, while also stacking a duplicate
+	// time.AfterFunc cleanup that would prematurely evict the winning session.
+	flightKey := mcpReq.GetSessionID() + ":" + mcpReq.serverName
+	v, flightErr, _ := s.initFlight.Do(flightKey, func() (any, error) {
+		// detach from the winner's request context: if the winning goroutine's ext_proc
+		// stream is cancelled mid-handshake, a context-tied ctx would propagate that
+		// cancellation to every concurrent waiter sharing this flight key
+		flightCtx := context.WithoutCancel(ctx)
+		passThroughHeaders := map[string]string{}
+		if mcpReq.Headers != nil {
+			// We don't want to pass through any pseudo routing headers (:authority,
+			// :path, etc.), the gateway-bound mcp-session-id, or the router-internal
+			// headers (mcp-init-host, router-key) which we set ourselves below via
+			// clients.Initialize. Dropping the router-internal headers here is
+			// defense-in-depth so a client-supplied value can never reach the
+			// hairpin request even if the override in clients.Initialize is later
+			// refactored. Everything else is passed through for custom headers.
+			for _, h := range mcpReq.Headers.Headers {
+				key := strings.ToLower(h.Key)
+				if strings.HasPrefix(key, ":") ||
+					key == "mcp-session-id" ||
+					key == "mcp-init-host" ||
+					key == RoutingKey {
+					continue
+				}
+				passThroughHeaders[h.Key] = string(h.RawValue)
 			}
-			passThroughHeaders[h.Key] = string(h.RawValue)
+			// ensure these gateway headers are set
+			passThroughHeaders["x-mcp-method"] = mcpReq.Method
+			passThroughHeaders["x-mcp-servername"] = mcpReq.serverName
+			passThroughHeaders["x-mcp-toolname"] = mcpReq.ToolName()
+			passThroughHeaders["user-agent"] = "mcp-router"
 		}
-		// ensure these gateway headers are set
-		passThroughHeaders["x-mcp-method"] = mcpReq.Method
-		passThroughHeaders["x-mcp-servername"] = mcpReq.serverName
-		passThroughHeaders["x-mcp-toolname"] = mcpReq.ToolName()
-		passThroughHeaders["user-agent"] = "mcp-router"
-	}
-	s.Logger.DebugContext(ctx, "initializing target as no mcp-session-id found for client", "server ", mcpReq.serverName, "with passthrough headers", passThroughHeaders)
+		s.Logger.DebugContext(ctx, "initializing target as no mcp-session-id found for client", "server ", mcpReq.serverName, "with passthrough headers", passThroughHeaders)
 
-	// check if the original client declared elicitation support
-	if !mcpReq.clientElicitation {
-		clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpReq.GetSessionID())
-		if elErr != nil {
-			s.Logger.ErrorContext(ctx, "failed to get client elicitation flag", "error", elErr, "session", mcpReq.GetSessionID())
-			return "", NewRouterErrorf(500, "failed to read client elicitation flag: %w", elErr)
+		clientElicitation := mcpReq.clientElicitation
+		if !clientElicitation {
+			var elErr error
+			clientElicitation, elErr = s.SessionCache.GetClientElicitation(flightCtx, mcpReq.GetSessionID())
+			if elErr != nil {
+				s.Logger.ErrorContext(ctx, "failed to get client elicitation flag", "error", elErr, "session", mcpReq.GetSessionID())
+				return "", NewRouterErrorf(500, "failed to read client elicitation flag: %w", elErr)
+			}
 		}
-		mcpReq.clientElicitation = clientElicitation
-	}
 
-	// mint a short-lived JWT bound to the target hostname; the router validates
-	// this token when the hairpin request re-enters the gateway in
-	// HandleNoneToolCall so we can never be tricked into routing to an
-	// attacker-controlled host by a forged `mcp-init-host` header.
-	initToken, err := s.JWTManager.GenerateBackendInitToken(mcpServerConfig.Hostname)
-	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to generate backend-init token", "error", err)
-		initSpan.RecordError(err)
-		initSpan.SetStatus(codes.Error, "failed to generate backend-init token")
-		return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
-	}
-	clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
-	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
-		initSpan.RecordError(err)
-		initSpan.SetStatus(codes.Error, "failed to initialize backend session")
-		return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
-	}
-	var sessionCloser = func() {
-		// use a fresh context: the request-scoped ctx is canceled long before this fires
-		cleanupCtx := context.Background()
-		s.Logger.DebugContext(cleanupCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
-		if err := clientHandle.Close(); err != nil {
-			s.Logger.DebugContext(cleanupCtx, "failed to close client connection", "err", err)
+		// mint a short-lived JWT bound to the target hostname; the router validates
+		// this token when the hairpin request re-enters the gateway in
+		// HandleNoneToolCall so we can never be tricked into routing to an
+		// attacker-controlled host by a forged `mcp-init-host` header.
+		initToken, tokenErr := s.JWTManager.GenerateBackendInitToken(mcpServerConfig.Hostname)
+		if tokenErr != nil {
+			s.Logger.ErrorContext(ctx, "failed to generate backend-init token", "error", tokenErr)
+			initSpan.RecordError(tokenErr)
+			initSpan.SetStatus(codes.Error, "failed to generate backend-init token")
+			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", tokenErr)
 		}
-		if err := s.SessionCache.DeleteSessions(cleanupCtx, mcpReq.GetSessionID()); err != nil {
-			s.Logger.DebugContext(cleanupCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
+		clientHandle, initErr := s.InitForClient(flightCtx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, clientElicitation)
+		if initErr != nil {
+			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", initErr)
+			initSpan.RecordError(initErr)
+			initSpan.SetStatus(codes.Error, "failed to initialize backend session")
+			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", initErr)
 		}
-	}
-	// close connection with remote backend and delete any sessions when our gateway session expires
-	expiresAt, err := s.JWTManager.GetExpiresIn(mcpReq.GetSessionID())
-	if err != nil {
-		// this err would be caused by an invalid token so force a re-initialize
-		s.Logger.ErrorContext(ctx, "failed to get expires in value. Forcing session reset", "err", err)
-		sessionCloser()
-		return "", NewRouterError(404, fmt.Errorf("invalid session"))
-	}
-	time.AfterFunc(time.Until(expiresAt), sessionCloser)
-	remoteSessionID := clientHandle.GetSessionId()
-	s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
-	{
-		_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",
-			trace.WithAttributes(
-				attribute.String("mcp.session.id", mcpReq.GetSessionID()),
-				attribute.String("mcp.server", mcpServerConfig.Name),
-			),
-		)
-		_, storeErr := s.SessionCache.AddSession(ctx, mcpReq.GetSessionID(), mcpServerConfig.Name, remoteSessionID)
-		if storeErr != nil {
-			storeSpan.RecordError(storeErr)
-			storeSpan.SetStatus(codes.Error, "session cache store failed")
+		sessionCloser := func() {
+			// use a fresh context: the request-scoped ctx is canceled long before this fires
+			cleanupCtx := context.Background()
+			s.Logger.DebugContext(cleanupCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
+			if closeErr := clientHandle.Close(); closeErr != nil {
+				s.Logger.DebugContext(cleanupCtx, "failed to close client connection", "err", closeErr)
+			}
+			if delErr := s.SessionCache.DeleteSessions(cleanupCtx, mcpReq.GetSessionID()); delErr != nil {
+				s.Logger.DebugContext(cleanupCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", delErr)
+			}
 		}
-		storeSpan.End()
-		if storeErr != nil {
-			s.Logger.ErrorContext(ctx, "failed to add remote session to cache", "error", storeErr)
-			// again if this fails it is likely terminal due to a network connection error
-			return "", NewRouterError(500, fmt.Errorf("internal error"))
+		expiresAt, expErr := s.JWTManager.GetExpiresIn(mcpReq.GetSessionID())
+		if expErr != nil {
+			// this err would be caused by an invalid token so force a re-initialize
+			s.Logger.ErrorContext(ctx, "failed to get expires in value. Forcing session reset", "err", expErr)
+			sessionCloser()
+			return "", NewRouterError(404, fmt.Errorf("invalid session"))
 		}
+		remoteSessionID := clientHandle.GetSessionId()
+		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
+		{
+			_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",
+				trace.WithAttributes(
+					attribute.String("mcp.session.id", mcpReq.GetSessionID()),
+					attribute.String("mcp.server", mcpServerConfig.Name),
+				),
+			)
+			_, storeErr := s.SessionCache.AddSession(flightCtx, mcpReq.GetSessionID(), mcpServerConfig.Name, remoteSessionID)
+			if storeErr != nil {
+				storeSpan.RecordError(storeErr)
+				storeSpan.SetStatus(codes.Error, "session cache store failed")
+			}
+			storeSpan.End()
+			if storeErr != nil {
+				s.Logger.ErrorContext(ctx, "failed to add remote session to cache", "error", storeErr)
+				// close the handle immediately: the session is not tracked so it would
+				// otherwise leak until JWT expiry
+				if closeErr := clientHandle.Close(); closeErr != nil {
+					s.Logger.ErrorContext(ctx, "failed to close client after store failure", "err", closeErr)
+				}
+				return "", NewRouterError(500, fmt.Errorf("internal error"))
+			}
+		}
+		// register the cleanup timer only after the session is safely in the cache
+		time.AfterFunc(time.Until(expiresAt), sessionCloser)
+		return remoteSessionID, nil
+	})
+	if flightErr != nil {
+		return "", flightErr
 	}
-	return remoteSessionID, nil
+	return v.(string), nil
 
 }
 
