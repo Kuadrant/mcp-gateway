@@ -55,13 +55,14 @@ type ToolConflict struct {
 
 // StatusResponse contains the overall validation status of all servers
 type StatusResponse struct {
-	Servers          []upstream.ServerValidationStatus `json:"servers"`
-	OverallValid     bool                              `json:"overallValid"`
-	TotalServers     int                               `json:"totalServers"`
-	HealthyServers   int                               `json:"healthyServers"`
-	UnHealthyServers int                               `json:"unHealthyServers"`
-	ToolConflicts    int                               `json:"toolConflicts"`
-	Timestamp        time.Time                         `json:"timestamp"`
+	Servers                []upstream.ServerValidationStatus `json:"servers"`
+	OverallValid           bool                              `json:"overallValid"`
+	TotalServers           int                               `json:"totalServers"`
+	HealthyServers         int                               `json:"healthyServers"`
+	UnHealthyServers       int                               `json:"unHealthyServers"`
+	ToolConflicts          int                               `json:"toolConflicts"`
+	Timestamp              time.Time                         `json:"timestamp"`
+	DiscoveryScopeSessions int                               `json:"discoveryScopeSessions"`
 }
 
 // StatusHandler handles HTTP requests to the status endpoint

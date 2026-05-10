@@ -97,6 +97,18 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// discoveryToolsEnabled sets --discovery-tools-enabled on the broker-router deployment.
+	// When unset, the broker defaults to true. Changing this requires a broker-router restart.
+	// +optional
+	DiscoveryToolsEnabled *bool `json:"discoveryToolsEnabled,omitempty"`
+
+	// discoveryToolThreshold sets --discovery-tool-threshold on the broker-router deployment.
+	// 0 means never hide tools by count; values greater than 0 enable progressive hiding when the session-visible tool count exceeds the threshold.
+	// Changing this requires a broker-router restart.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	DiscoveryToolThreshold *int32 `json:"discoveryToolThreshold,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.

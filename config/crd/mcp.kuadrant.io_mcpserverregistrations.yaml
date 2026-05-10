@@ -30,6 +30,10 @@ spec:
       jsonPath: .spec.path
       name: Path
       type: string
+    - description: Tool discovery categories
+      jsonPath: .spec.category
+      name: Category
+      type: string
     - description: Ready status
       jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
@@ -96,6 +100,24 @@ spec:
                   path specifies the URL path where the MCP server endpoint is exposed.
                   If not specified, defaults to "/mcp".
                   This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
+                type: string
+              category:
+                description: |-
+                  category classifies this server for discover_tools filtering (substring match on any entry).
+                  When empty, defaults to ["uncategorised"].
+                default:
+                - uncategorised
+                items:
+                  maxLength: 128
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: atomic
+              hint:
+                description: |-
+                  hint is an optional short natural-language summary of what tools this server exposes.
+                  Shown in discover_tools so agents can choose relevant servers without loading full schemas.
+                maxLength: 256
                 type: string
               prefix:
                 description: |-

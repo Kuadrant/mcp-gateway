@@ -71,6 +71,8 @@ var (
 	enforceCapabilityFilteringFlag bool
 	invalidToolPolicyFlag          string
 	maxRequestBodySize             int
+	discoveryToolsEnabledFlag      bool
+	discoveryToolThresholdFlag     int
 )
 
 func main() {
@@ -138,6 +140,16 @@ func main() {
 	flag.BoolVar(&enforceCapabilityFilteringFlag, "enforce-capability-filtering", false, "when enabled an x-mcp-authorized header will be needed to return any capabilities (tools, prompts)")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
+	flag.BoolVar(&discoveryToolsEnabledFlag,
+		"discovery-tools-enabled",
+		true,
+		"when false, discover_tools and select_tools are not registered; changing requires broker restart",
+	)
+	flag.IntVar(&discoveryToolThresholdFlag,
+		"discovery-tool-threshold",
+		0,
+		"when > 0, hide upstream tools (keep discovery meta-tools) if session-visible tool count exceeds this value after auth and virtual-server filtering until select_tools scopes the session; 0 never hides; changing requires broker restart",
+	)
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -219,6 +231,8 @@ func main() {
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
+		broker.WithDiscoveryToolsEnabled(discoveryToolsEnabledFlag),
+		broker.WithDiscoveryToolThreshold(discoveryToolThresholdFlag),
 	)
 	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
 	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)

@@ -75,6 +75,12 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// discoveryToolsEnabled registers discover_tools / select_tools and applies discovery filtering.
+	discoveryToolsEnabled bool
+	// discoveryToolThreshold when > 0 hides upstream tools (meta-tools only) until the session scopes, once visible tool count exceeds the threshold.
+	discoveryToolThreshold int
+	discoveryScope         *discoveryScopeStore
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -111,13 +117,31 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
+// WithDiscoveryToolsEnabled registers discover_tools / select_tools when true.
+func WithDiscoveryToolsEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolsEnabled = enabled
+	}
+}
+
+// WithDiscoveryToolThreshold configures progressive hiding: 0 never hides by count; values > 0 hide upstream tools
+// (keeping meta discovery tools) when the session-visible upstream tool count exceeds the threshold, until select_tools scopes the session.
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discoveryToolThreshold = threshold
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
-		mcpServers:            map[config.UpstreamMCPID]*upstream.MCPManager{},
-		logger:                logger,
-		virtualServers:        map[string]*config.VirtualServer{},
-		managerTickerInterval: time.Second * 60,
+		mcpServers:             map[config.UpstreamMCPID]*upstream.MCPManager{},
+		logger:                 logger,
+		virtualServers:         map[string]*config.VirtualServer{},
+		managerTickerInterval:  time.Second * 60,
+		discoveryToolsEnabled:  true,
+		discoveryToolThreshold: 0,
+		discoveryScope:         newDiscoveryScopeStore(100_000, 24*time.Hour),
 	}
 
 	for _, option := range opts {
@@ -134,6 +158,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	})
 
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+		mcpBkr.clearDiscoverySelection(session.SessionID())
 		mcpBkr.logger.Debug("gateway client session unregistered", "gatewaySessionID", session.SessionID())
 	})
 
@@ -155,6 +180,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 	)
+	mcpBkr.registerDiscoveryTools()
 	return mcpBkr
 }
 
@@ -296,13 +322,14 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 	defer m.mcpLock.RUnlock()
 
 	response := StatusResponse{
-		Servers:          make([]upstream.ServerValidationStatus, 0),
-		OverallValid:     true,
-		TotalServers:     len(m.mcpServers),
-		HealthyServers:   0,
-		UnHealthyServers: 0,
-		ToolConflicts:    0,
-		Timestamp:        time.Now(),
+		Servers:                make([]upstream.ServerValidationStatus, 0),
+		OverallValid:           true,
+		TotalServers:           len(m.mcpServers),
+		HealthyServers:         0,
+		UnHealthyServers:       0,
+		ToolConflicts:          0,
+		Timestamp:              time.Now(),
+		DiscoveryScopeSessions: m.discoveryScope.Len(),
 	}
 
 	m.logger.Debug("ValidateAllServers: checking servers", "# servers", len(m.mcpServers))

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 )
 
@@ -61,6 +62,8 @@ type MCPServer struct {
 	URL        string      `json:"url"                  yaml:"url"`
 	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
 	Prefix     string      `json:"prefix,omitempty"     yaml:"prefix,omitempty"`
+	Category   []string    `json:"category,omitempty"   yaml:"category,omitempty"`
+	Hint       string      `json:"hint,omitempty"       yaml:"hint,omitempty"`
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
@@ -77,7 +80,9 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		!slices.Equal(existingConfig.Category, mcpServer.Category) ||
+		existingConfig.Hint != mcpServer.Hint
 }
 
 // Path returns the path part of the mcp url

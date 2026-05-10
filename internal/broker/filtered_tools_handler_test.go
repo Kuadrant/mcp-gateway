@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"testing"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
@@ -31,7 +32,10 @@ MHcCAQEEIEY3QeiP9B9Bm3NHG3SgyiDHcbckwsGsQLKgv4fJxjJWoAoGCCqGSM49
 AwEHoUQDQgAE7WdMdvC8hviEAL4wcebqaYbLEtVOVEiyi/nozagw7BaWXmzbOWyy
 95gZLirTkhUb1P4Z4lgKLU2rD5NCbGPHAA==
 -----END EC PRIVATE KEY-----`))
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{"allowed-capabilities": string(claimPayload)})
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"allowed-capabilities": string(claimPayload),
+		"exp":                  time.Now().Add(time.Hour).Unix(),
+	})
 	parsedKey, err := x509.ParseECPrivateKey(block.Bytes)
 	if err != nil {
 		t.Fatalf("error parsing key for jwt %s", err)
@@ -248,6 +252,7 @@ func TestFilteredTools(t *testing.T) {
 				trustedHeadersPublicKey: testPublicKey,
 				logger:                  slog.Default(),
 				mcpServers:              tc.RegisteredMCPServers,
+				discoveryToolsEnabled:   false,
 			}
 
 			request := &mcp.ListToolsRequest{
@@ -283,6 +288,7 @@ func TestFilteredTools(t *testing.T) {
 				trustedHeadersPublicKey: testPublicKey,
 				logger:                  slog.Default(),
 				mcpServers:              tc.RegisteredMCPServers,
+				discoveryToolsEnabled:   false,
 			}
 
 			request := &mcp.ListToolsRequest{}
@@ -385,6 +391,7 @@ func TestVirtualServerFiltering(t *testing.T) {
 				enforceCapabilityFilter: false,
 				virtualServers:          tc.VirtualServers,
 				logger:                  slog.Default(),
+				discoveryToolsEnabled:   false,
 			}
 
 			request := &mcp.ListToolsRequest{Header: http.Header{}}
@@ -418,6 +425,7 @@ func TestFilterToolsSerializesAsEmptyArray(t *testing.T) {
 	mcpBroker := &mcpBrokerImpl{
 		enforceCapabilityFilter: true, // will return empty when no header
 		logger:                  slog.Default(),
+		discoveryToolsEnabled:   false,
 	}
 
 	// nil tools input
@@ -563,6 +571,7 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 				mcpServers:              tc.MCPServers,
 				virtualServers:          tc.VirtualServers,
 				logger:                  slog.Default(),
+				discoveryToolsEnabled:   false,
 			}
 
 			// build input tools from all registered servers

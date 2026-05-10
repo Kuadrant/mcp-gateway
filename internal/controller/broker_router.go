@@ -46,6 +46,8 @@ var managedCommandFlags = []string{
 	"--mcp-check-interval",
 	"--mcp-gateway-public-host",
 	"--mcp-router-key",
+	"--discovery-tools-enabled",
+	"--discovery-tool-threshold",
 }
 
 // managedEnvVarNames are the env var names the controller owns and reconciles.
@@ -76,6 +78,18 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	}
 	command = append(command, "--mcp-gateway-public-host="+publicHost)
 	command = append(command, "--mcp-router-key="+routerKey(mcpExt))
+
+	discoveryEnabled := true
+	if mcpExt.Spec.DiscoveryToolsEnabled != nil {
+		discoveryEnabled = *mcpExt.Spec.DiscoveryToolsEnabled
+	}
+	command = append(command, fmt.Sprintf("--discovery-tools-enabled=%t", discoveryEnabled))
+
+	discoveryThreshold := int32(0)
+	if mcpExt.Spec.DiscoveryToolThreshold != nil {
+		discoveryThreshold = *mcpExt.Spec.DiscoveryToolThreshold
+	}
+	command = append(command, fmt.Sprintf("--discovery-tool-threshold=%d", discoveryThreshold))
 
 	envVars := []corev1.EnvVar{
 		{

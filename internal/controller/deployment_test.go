@@ -533,6 +533,59 @@ func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
 	}
 }
 
+func TestBuildBrokerRouterDeployment_DiscoveryFlags(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
+	command := deployment.Spec.Template.Spec.Containers[0].Command
+	var seenEnabled, seenThreshold bool
+	for _, arg := range command {
+		switch arg {
+		case "--discovery-tools-enabled=true":
+			seenEnabled = true
+		case "--discovery-tool-threshold=0":
+			seenThreshold = true
+		}
+	}
+	if !seenEnabled || !seenThreshold {
+		t.Fatalf("expected default discovery flags on deployment command, got %v", command)
+	}
+
+	mcpExt2 := mcpExt.DeepCopy()
+	mcpExt2.Spec.DiscoveryToolsEnabled = ptr.To(false)
+	mcpExt2.Spec.DiscoveryToolThreshold = ptr.To(int32(30))
+	deployment2 := r.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", mcpExt2.InternalHost(8080))
+	command2 := deployment2.Spec.Template.Spec.Containers[0].Command
+	want := map[string]bool{
+		"--discovery-tools-enabled=false": false,
+		"--discovery-tool-threshold=30":   false,
+	}
+	for _, arg := range command2 {
+		if _, ok := want[arg]; ok {
+			want[arg] = true
+		}
+	}
+	for k, v := range want {
+		if !v {
+			t.Errorf("expected command to contain %q, got %v", k, command2)
+		}
+	}
+}
+
 func TestBuildBrokerRouterDeployment_RouterKey(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",

@@ -36,6 +36,10 @@
 - When the value of the `x-mcp-authorized` header is set as a JWT signed by a trusted key to a set of tools, the MCP Gateway should respond with only tools in that list.
 
 
+### [Discovery] Progressive tool discovery with deployment threshold
+
+- With `--discovery-tool-threshold` set to a positive value below the session-visible upstream tool count, a client should see only `discover_tools` and `select_tools` in `tools/list` until it calls `select_tools`. `discover_tools` returns JSON catalog entries respecting auth and virtual-server filtering (`categories` array per server). After `select_tools` with valid federated tool names, `tools/list` includes those tools plus the meta-tools, and `select_tools` with an empty list resets to the full visible tool set. Optional `category` / `hint` on `MCPServerRegistration` appear in the catalog and support substring filtering via the `category` argument.
+
 ### [Happy] Test notifications are received when a notifications/tools/list_changed notification is sent
 
 - When an MCPServerRegistration is registered with the MCP Gateway, a `notifications/tools/list_changed` should be sent to any clients connected to the MCP Gateway. This notification should work for a single connected client as well as multiple connected clients. They should all receive the same notification at least once. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.

@@ -10,6 +10,7 @@ import (
 // +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.prefix",description="Prefix for federation"
 // +kubebuilder:printcolumn:name="Target",type="string",JSONPath=".spec.targetRef.name",description="Target HTTPRoute.  MCP Gateway only supports routes with a single BackendRef"
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
+// +kubebuilder:printcolumn:name="Category",type="string",JSONPath=".spec.category",description="Tool discovery categories"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".status.discoveredTools",description="Number of discovered tools"
 // +kubebuilder:printcolumn:name="Credentials",type="string",JSONPath=".spec.credentialRef.name"
@@ -56,6 +57,19 @@ type MCPServerRegistrationSpec struct {
 	// +optional
 	// +default="/mcp"
 	Path string `json:"path,omitempty"`
+
+	// category classifies this server for discover_tools filtering (substring match on any entry).
+	// When empty, defaults to ["uncategorised"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:listType=atomic
+	Category []string `json:"category,omitempty"`
+
+	// hint is an optional short natural-language summary of what tools this server exposes.
+	// Shown in discover_tools so agents can choose relevant servers without loading full schemas.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Hint string `json:"hint,omitempty"`
 
 	// credentialRef references a Secret containing authentication credentials for the MCP server.
 	// The Secret should contain a key with the authentication token or credentials.

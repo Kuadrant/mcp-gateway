@@ -21,8 +21,8 @@ var virtualMCPHeader = http.CanonicalHeaderKey("x-mcp-virtualserver")
 const allowedCapabilitiesClaimKey = "allowed-capabilities"
 
 // FilterTools reduces the tool set based on authorization headers.
-// Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+// Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering, then progressive discovery scoping.
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
 	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 	emptyTools := []mcp.Tool{}
@@ -40,6 +40,9 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
 	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+
+	tools = broker.applyProgressiveDiscoveryFilter(ctx, tools)
+	broker.logger.Debug("FilterTools discovery result", "output_tools_count", len(tools))
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {
@@ -221,5 +224,5 @@ func validateJWTHeader(token string, publicKey string) (*jwt.Token, error) {
 			return nil, fmt.Errorf("expected *ecdsa.PublicKey, got %T", pubkey)
 		}
 		return key, nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodES256.Alg()}))
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodES256.Alg()}), jwt.WithExpirationRequired())
 }

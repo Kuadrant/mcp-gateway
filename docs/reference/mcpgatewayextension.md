@@ -25,6 +25,8 @@
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
+| `discoveryToolsEnabled` | Boolean | No | Sets `--discovery-tools-enabled` on the broker-router deployment. When unset, defaults to `true`. Changing requires a broker-router restart |
+| `discoveryToolThreshold` | Integer | No | Sets `--discovery-tool-threshold` on the broker-router deployment. `0` means never hide tools by count; values greater than zero enable progressive hiding when the session-visible tool count exceeds the threshold. Changing requires a broker-router restart |
 
 ## MCPGatewayExtensionTargetReference
 

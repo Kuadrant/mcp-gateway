@@ -23,6 +23,10 @@ controller:
 broker:
   # How often (in seconds) the broker pings upstream MCP servers
   pollInterval: 60
+  # Registers discover_tools / select_tools; changing MCPGatewayExtension requires broker-router restart
+  discoveryToolsEnabled: true
+  # 0 = never hide tools by count; > 0 enables progressive hiding after auth/virtual-server filtering
+  discoveryToolThreshold: 0
 
 # Gateway configuration
 gateway:

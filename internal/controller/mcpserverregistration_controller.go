@@ -366,6 +366,19 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpG
 	return errServerNotPresent
 }
 
+func normalizeDiscoveryCategories(c []string) []string {
+	out := make([]string, 0, len(c))
+	for _, x := range c {
+		if s := strings.TrimSpace(x); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"uncategorised"}
+	}
+	return out
+}
+
 func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {
 	if mcpsr.DeletionTimestamp != nil {
 		// don't add deleting mcpserver
@@ -382,8 +395,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		URL:      serverInfo.Endpoint,
 		Hostname: serverInfo.Hostname,
 		Prefix:   mcpsr.Spec.Prefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		Category: normalizeDiscoveryCategories(mcpsr.Spec.Category),
+		Hint:     mcpsr.Spec.Hint,
+		Enabled:  true,
 	}
 
 	// add credential env var if configured

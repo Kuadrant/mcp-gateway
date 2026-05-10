@@ -101,6 +101,19 @@ spec:
                 required:
                 - secretName
                 type: object
+              discoveryToolThreshold:
+                description: |-
+                  discoveryToolThreshold sets --discovery-tool-threshold on the broker-router deployment.
+                  0 means never hide tools by count; values greater than 0 enable progressive hiding when the session-visible tool count exceeds the threshold.
+                  Changing this requires a broker-router restart.
+                format: int32
+                minimum: 0
+                type: integer
+              discoveryToolsEnabled:
+                description: |-
+                  discoveryToolsEnabled sets --discovery-tools-enabled on the broker-router deployment.
+                  When unset, the broker defaults to true. Changing this requires a broker-router restart.
+                type: boolean
               targetRef:
                 description: |-
                   targetRef specifies the Gateway to extend with MCP protocol support.

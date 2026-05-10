@@ -36,16 +36,17 @@ mcp-gateway   1/1     1            1           ...
 
 ## Step 2: Apply discovery metadata
 
-`make local-env-setup` already builds and deploys all test servers (including the restaurant and messaging servers) and registers them with the base MCPServerRegistrations. To enable discovery metadata (categories and hints), apply the discovery variant:
+Add optional `category` and `hint` on each `MCPServerRegistration` so `discover_tools` can show useful catalog text. For an existing registration:
 
 ```bash
-kubectl apply -f config/samples/mcpserverregistration-discovery.yaml
+kubectl patch mcpserverregistration test-server1 -n mcp-test --type merge \
+  -p '{"spec":{"category":"utilities","hint":"greeting, time, and diagnostic tools"}}'
 ```
 
-Verify the registrations have the expected categories:
+Verify the fields:
 
 ```bash
-kubectl -n mcp-test get mcpserverregistrations
+kubectl -n mcp-test get mcpserverregistration test-server1 -o jsonpath='{.spec.category}{"\n"}'
 ```
 
 Expected output shows servers with discovery metadata alongside the base registrations:
@@ -142,24 +143,21 @@ The agent recognises that messaging tools are needed. It calls `discover_tools` 
 
 ## Configuration
 
-### Discovery threshold
+### Discovery flags
 
-The `--discovery-tool-threshold` flag (default: 10) controls when progressive discovery activates. When the total number of non-meta tools exceeds this threshold, new sessions only see meta-tools. At or below the threshold, all tools are shown directly.
+The broker exposes two startup flags (changing them requires a broker-router restart):
 
-To change the threshold on a running deployment:
+- **`--discovery-tools-enabled`** (default `true`): when `false`, `discover_tools` and `select_tools` are not registered and progressive hiding is disabled.
+- **`--discovery-tool-threshold`** (default `0`): when `0`, the gateway never hides upstream tools by count. When set to a **positive** integer, if the session-visible upstream tool count (after `x-mcp-authorized` and `x-mcp-virtualserver` filtering) is **greater than** the threshold, `tools/list` returns only the discovery meta-tools until the client calls `select_tools` or resets with an empty `select_tools`.
 
-```bash
-kubectl -n mcp-system set env deployment/mcp-gateway -- DISCOVERY_TOOL_THRESHOLD=20
-```
-
-Or add the flag to the deployment command args:
+When using the Helm chart, set `broker.discoveryToolsEnabled` and `broker.discoveryToolThreshold` on the rendered `MCPGatewayExtension`, or patch the broker-router deployment command directly:
 
 ```bash
 kubectl -n mcp-system patch deployment mcp-gateway --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--discovery-tool-threshold=20"}]'
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--discovery-tool-threshold=10"}]'
 ```
 
-Setting the threshold to 0 always requires discovery regardless of tool count.
+Wait for the rollout to complete after changing the deployment.
 
 ### Adding discovery metadata to your servers
 
@@ -172,8 +170,10 @@ metadata:
   name: my-server
   namespace: mcp-test
 spec:
-  toolPrefix: myprefix_
-  category: "my domain"
+  prefix: myprefix_
+  category:
+    - "my domain"
+    - "analytics"
   hint: "short description of what tools this server provides"
   targetRef:
     group: gateway.networking.k8s.io
@@ -181,5 +181,5 @@ spec:
     name: my-server-route
 ```
 
-- **category**: free-text classification (e.g., "payments", "analytics", "communication"). Servers without a category appear as "uncategorised".
+- **category**: list of classification strings (e.g., `payments`, `analytics`). Servers without a category appear as `uncategorised`. The `discover_tools` `category` argument matches if any entry contains the filter substring.
 - **hint**: natural-language summary of the server's tools. Gives the LLM enough context to decide relevance without full schemas.

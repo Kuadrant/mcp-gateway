@@ -20,6 +20,8 @@
 | `targetRef` | [TargetReference](#targetreference) | Yes | An HTTPRoute that points to a backend MCP server. The controller discovers the backend service from this HTTPRoute and configures the broker to federate its tools |
 | `prefix` | String | No | Prefix added to all federated tools from referenced servers. Avoids naming conflicts when aggregating tools from multiple sources (e.g. `server1_search` and `server2_search`). Immutable once set |
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
+| `category` | []String | No | Optional labels for progressive tool discovery (`discover_tools`). Max 64 entries; each entry max 128 characters. Default when omitted: `["uncategorised"]`. Substring filter matches any entry |
+| `hint` | String | No | Optional short description of the server's tools for discovery catalogs. Max 256 characters |
 | `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
 
 ## TargetReference

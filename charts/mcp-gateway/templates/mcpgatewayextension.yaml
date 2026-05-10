@@ -22,4 +22,6 @@ spec:
   {{- if .Values.broker.pollInterval }}
   backendPingIntervalSeconds: {{ .Values.broker.pollInterval }}
   {{- end }}
+  discoveryToolsEnabled: {{ .Values.broker.discoveryToolsEnabled }}
+  discoveryToolThreshold: {{ .Values.broker.discoveryToolThreshold }}
 {{- end }}
