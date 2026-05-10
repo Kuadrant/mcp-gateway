@@ -152,6 +152,10 @@ func main() {
 	)
 	flag.Parse()
 
+	if discoveryToolThresholdFlag < 0 {
+		log.Fatalf("invalid --discovery-tool-threshold: %d (must be >= 0)", discoveryToolThresholdFlag)
+	}
+
 	loggerOpts := &slog.HandlerOptions{}
 
 	switch loglevel {

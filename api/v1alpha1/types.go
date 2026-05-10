@@ -62,7 +62,9 @@ type MCPServerRegistrationSpec struct {
 	// When empty, defaults to ["uncategorised"].
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=128
 	// +kubebuilder:listType=atomic
+	// +kubebuilder:default:={"uncategorised"}
 	Category []string `json:"category,omitempty"`
 
 	// hint is an optional short natural-language summary of what tools this server exposes.

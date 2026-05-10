@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -60,5 +61,11 @@ func TestFilterToolsDiscoveryIntegration(t *testing.T) {
 		{Name: "y"},
 	}}
 	b.FilterTools(context.Background(), nil, &mcp.ListToolsRequest{Header: http.Header{}}, res)
-	require.Len(t, res.Tools, 2)
+	names := make([]string, 0, len(res.Tools))
+	for i := range res.Tools {
+		names = append(names, res.Tools[i].Name)
+	}
+	require.Len(t, names, 2)
+	require.True(t, slices.Contains(names, ToolDiscoverTools))
+	require.True(t, slices.Contains(names, ToolSelectTools))
 }

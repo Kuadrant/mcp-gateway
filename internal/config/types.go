@@ -74,8 +74,8 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.Prefix, mcpServer.Hostname))
 }
 
-// ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, hostname, or credential variable.
+// ConfigChanged checks if a server's config has changed in a way that will affect the gateway:
+// name, prefix, hostname, credential env binding, category slice, or hint.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||

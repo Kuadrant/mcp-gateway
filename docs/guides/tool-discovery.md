@@ -40,7 +40,7 @@ Add optional `category` and `hint` on each `MCPServerRegistration` so `discover_
 
 ```bash
 kubectl patch mcpserverregistration test-server1 -n mcp-test --type merge \
-  -p '{"spec":{"category":"utilities","hint":"greeting, time, and diagnostic tools"}}'
+  -p '{"spec":{"category":["utilities"],"hint":"greeting, time, and diagnostic tools"}}'
 ```
 
 Verify the fields:
@@ -49,19 +49,23 @@ Verify the fields:
 kubectl -n mcp-test get mcpserverregistration test-server1 -o jsonpath='{.spec.category}{"\n"}'
 ```
 
-Expected output shows servers with discovery metadata alongside the base registrations:
+You should see the `category` array (for example `["utilities"]`).
+
+List registrations (including the `Category` column when using a recent CRD):
+
+```bash
+kubectl -n mcp-test get mcpserverregistration
+```
+
+Example:
 
 ```
-NAME                PREFIX        TARGET                        PATH   READY   TOOLS   CREDENTIALS   AGE
-restaurant-server   restaurant_   mcp-restaurant-server-route   /mcp   True    5                     ...
-messaging-server    messaging_    mcp-messaging-server-route    /mcp   True    5                     ...
-test-server1        test1_        mcp-server1-route             /mcp   True    5                     ...
-test-server2        test2_        mcp-server2-route             /mcp   True    7                     ...
-test-server3        test3_        mcp-server3-route             /mcp   True    7                     ...
+NAME                PREFIX        TARGET                        PATH   CATEGORY      READY   TOOLS   CREDENTIALS   AGE
+restaurant-server   restaurant_   mcp-restaurant-server-route   /mcp   ...           True    5                     ...
 ...
 ```
 
-At this point the gateway federates tools from multiple servers. The total tool count exceeds the default discovery threshold of 10, so new sessions will only see the discovery meta-tools.
+At this point the gateway federates tools from multiple servers. The default `--discovery-tool-threshold` is **0**, so sessions normally see the **full** federated tool list. To follow this walkthrough—only `discover_tools` and `select_tools` until `select_tools`—set a **positive** threshold on the broker (for example add `--discovery-tool-threshold=1` to the `mcp-gateway` deployment command, or set `broker.discoveryToolThreshold` / `spec.discoveryToolThreshold` on `MCPGatewayExtension`), then restart or roll out the deployment so the flag takes effect.
 
 ## Step 3: Connect the gateway to your AI agent
 
@@ -89,12 +93,12 @@ Send the following prompt to your agent:
 
 **Turn 1 — Initial tool list**
 
-The agent's initial `tools/list` call returns only two tools:
+When a **positive** `--discovery-tool-threshold` is in effect and the session-visible tool count is above that threshold, the agent's initial `tools/list` returns only the two meta-tools:
 
 - `discover_tools` — browse available servers, categories, and tool names
 - `select_tools` — scope the session to specific tools
 
-No upstream tools are visible. The agent must use the discovery flow.
+No upstream tools are visible until the agent scopes. With threshold **0** (default), this step instead shows the full tool list.
 
 **Turn 2 — Discovery**
 
@@ -105,13 +109,13 @@ The agent calls `discover_tools` and receives lightweight metadata about all reg
   "servers": [
     {
       "name": "mcp-test/restaurant-server",
-      "category": "dining reservations",
+      "categories": ["dining reservations"],
       "hint": "search restaurants by cuisine and location, check table availability, make and cancel reservations",
       "tools": ["restaurant_search_restaurants", "restaurant_get_restaurant_details", "restaurant_check_availability", "restaurant_make_reservation", "restaurant_cancel_reservation"]
     },
     {
       "name": "mcp-test/messaging-server",
-      "category": "communication contacts",
+      "categories": ["communication contacts"],
       "hint": "find contacts, send messages via email/sms/slack, view message history, create messaging groups",
       "tools": ["messaging_find_contacts", "messaging_get_contact", "messaging_send_message", "messaging_get_messages", "messaging_create_group"]
     },
