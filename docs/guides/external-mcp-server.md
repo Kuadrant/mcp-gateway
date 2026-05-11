@@ -165,7 +165,7 @@ metadata:
   name: github
   namespace: mcp-test
 spec:
-  toolPrefix: github_
+  prefix: github_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute

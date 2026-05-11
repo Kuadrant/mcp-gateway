@@ -7,7 +7,7 @@ PERF_RAMP_RATE ?= 8
 PERF_DURATION ?= 5m
 PERF_HOLD_DURATION ?= 5m
 PERF_TARGET_URL ?= http://localhost:8001/mcp
-PERF_TOOL_PREFIX ?= mock_
+PERF_PREFIX ?= mock_
 PERF_OUT_DIR := out/perf/$(shell date +%Y%m%d-%H%M%S)
 PERF_PPROF_URL ?= http://localhost:6060
 
@@ -52,7 +52,7 @@ perf-run-steady: perf-build-k6 ## Run steady-state concurrency test
 	./bin/k6 run \
 		--out csv=$(PERF_OUT_DIR)/k6-steady-$(PERF_USERS)vu.csv \
 		-e TARGET_URL=$(PERF_TARGET_URL) \
-		-e TOOL_PREFIX=$(PERF_TOOL_PREFIX) \
+		-e PREFIX=$(PERF_PREFIX) \
 		-e USERS=$(PERF_USERS) \
 		-e DURATION=$(PERF_DURATION) \
 		tests/perf/k6/concurrency-levels.js 2>&1 | tee $(PERF_OUT_DIR)/k6-steady-$(PERF_USERS)vu.log
@@ -83,7 +83,7 @@ perf-run-ramp: perf-build-k6 ## Run ramp-up test with profiling
 	./bin/k6 run \
 		--out csv=$(PERF_OUT_DIR)/k6-ramp.csv \
 		-e TARGET_URL=$(PERF_TARGET_URL) \
-		-e TOOL_PREFIX=$(PERF_TOOL_PREFIX) \
+		-e PREFIX=$(PERF_PREFIX) \
 		-e MAX_USERS=$(PERF_MAX_USERS) \
 		-e RAMP_RATE=$(PERF_RAMP_RATE) \
 		-e HOLD_DURATION=$(PERF_HOLD_DURATION) \

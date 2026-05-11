@@ -23,6 +23,8 @@ MCP Gateway composes MCP support out of Envoy’s routing and extension mechanis
 ## Non-Goals
 
 * Not replacing Envoy AI Gateway or its broader AI gateway capabilities
+* Not transforming or masking tool inputs/outputs — the gateway federates and aggregates tools as they are; reshaping tool schemas, filtering fields, or creating derived tools from existing ones is the responsibility of the MCP server itself or dedicated tooling (e.g. camel, toolhive proxy, custom MCP servers)
+* Not automatically mapping non-MCP APIs (OpenAPI, REST, gRPC) to MCP tools — converting existing APIs into MCP tool definitions is out of scope; use purpose-built tooling at the MCP server layer for that
 
 ## Approach
 

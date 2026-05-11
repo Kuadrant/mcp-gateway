@@ -78,7 +78,7 @@ kind: MCPServerRegistration
 metadata:
   name: my-mcp-server
 spec:
-  toolPrefix: "myserver_"
+  prefix: "myserver_"
   targetRef:
     group: "gateway.networking.k8s.io"
     kind: "HTTPRoute"

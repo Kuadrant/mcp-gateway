@@ -72,6 +72,7 @@ Elicitations
 elif
 emceepea
 emicklei
+EMFILE
 EMKAB
 endpointslices
 envoyfilter
@@ -150,6 +151,7 @@ infobip
 ingester
 ingressgateway
 inmemory
+inotify
 installplan
 integration
 intialise
@@ -348,6 +350,7 @@ SPIFFE
 SQAY
 Srbu
 sslip
+startswith
 statefulness
 stdr
 streamable
@@ -378,6 +381,7 @@ typev
 uninimically
 unmarshal
 Unmarshal
+unmarshals
 unmarshalling
 Unregistration
 upserted
@@ -397,3 +401,11 @@ ZDRQ
 Znet
 Zscifu
 ztunnels
+startswith
+unmarshals
+xforwarded
+CONNLINK
+HKDF
+HMAC
+usercred
+myprefix

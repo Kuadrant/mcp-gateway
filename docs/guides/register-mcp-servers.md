@@ -101,7 +101,7 @@ metadata:
   name: my-mcp-server
   namespace: mcp-test
 spec:
-  toolPrefix: "myserver_"
+  prefix: "myserver_"
   targetRef:
     group: "gateway.networking.k8s.io"
     kind: "HTTPRoute"
@@ -163,7 +163,7 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
 rm -f /tmp/mcp_headers
 ```
 
-You should now see your MCP server tools in the response, prefixed with your configured `toolPrefix` (e.g., `myserver_`).
+You should now see your MCP server tools in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
 
 ## Next Steps
 

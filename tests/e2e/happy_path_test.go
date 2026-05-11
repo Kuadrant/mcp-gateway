@@ -65,12 +65,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	It("[Happy] basic registration tool invocation and unregistration", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
-		registration1 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithToolPrefix("server1").Build()
+		registration1 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithPrefix("server1").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration1.GetObjects()...)
 		httpRoute1Name := registration1.GetHTTPRouteName()
 		registeredServer1 := registration1.Register(ctx)
-		registration2 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithToolPrefix("server2").Build()
+		registration2 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithPrefix("server2").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration2.GetObjects()...)
 		registeredServer2 := registration2.Register(ctx)
@@ -92,11 +92,11 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer1.Spec.ToolPrefix))
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer2.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer2.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer1.Spec.Prefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer2.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer2.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		toolName := fmt.Sprintf("%s%s", registeredServer1.Spec.ToolPrefix, "hello_world")
+		toolName := fmt.Sprintf("%s%s", registeredServer1.Spec.Prefix, "hello_world")
 		By("Invoking a tool")
 		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
@@ -122,7 +122,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.ToolPrefix, toolsList)).To(BeFalse())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeFalse())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying HTTPRoute no longer has Programmed condition after MCPServerRegistration deletion")
@@ -136,7 +136,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
 		cred := BuildCredentialSecret("mcp-credential", "test-api-key-secret-toke")
 		registration := NewMCPServerResourcesWithDefaults("credentials", k8sClient).
-			WithCredential(cred, "token").WithBackendTarget("mcp-api-key-server", 9090).WithToolPrefix("auth").Build()
+			WithCredential(cred, "token").WithBackendTarget("mcp-api-key-server", 9090).WithPrefix("auth").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 		By("ensuring broker has failed authentication and the mcp server is not registered and the tools don't exist")
@@ -149,7 +149,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalseBecause("%s should NOT exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s should NOT exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("updating the secret to a valid value the server should be registered and the tools should exist")
@@ -167,7 +167,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 	})
@@ -192,10 +192,10 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
-		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "headers")
+		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "headers")
 		By("Invoking a tool")
 		res, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{Name: toolName},
@@ -298,7 +298,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Ensuring the gateway has the tools")
-		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.ToolPrefix)
+		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
 
 		gen, err := GetDeploymentGeneration(SystemNamespace, deploymentName)
 		Expect(err).NotTo(HaveOccurred())
@@ -326,7 +326,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(mcpNotifyInitialized(gatewayURL, sessionID, nil)).To(Succeed())
 
 		By("Calling headers tool to establish a backend session")
-		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "headers")
+		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "headers")
 		var backendSessionID string
 		Eventually(func(g Gomega) {
 			_, content, callErr := mcpCallTool(gatewayURL, sessionID, toolName, nil, nil)
@@ -410,11 +410,11 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating an MCPVirtualServer with a subset of tools")
-		allowedTool := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "hello_world")
+		allowedTool := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "hello_world")
 		virtualServer := BuildTestMCPVirtualServer("test-virtualserver", TestServerNameSpace, []string{allowedTool}).Build()
 		testResources = append(testResources, virtualServer)
 		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
@@ -481,7 +481,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
 		By("Verifying both clients received notifications/tools/list_changed within 1 minutes")
@@ -512,7 +512,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 			initialToolCount = len(toolsList.Tools)
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
@@ -539,7 +539,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Calling add_tool on the backend server to trigger notifications/tools/list_changed")
 		dynamicToolName := fmt.Sprintf("dynamic_tool_%s", UniqueName(""))
-		addToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "add_tool")
+		addToolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "add_tool")
 		res, err := client1.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name: addToolName,
@@ -614,7 +614,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with notification handler")
@@ -636,7 +636,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalseBecause("%s should be removed when server unavailable", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s should be removed when server unavailable", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying client notification was received")
@@ -645,7 +645,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
 		By("Verifying tool call returns error when server unavailable")
-		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "time")
+		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "time")
 		_, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{Name: toolName},
 		})
@@ -663,24 +663,24 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s should be restored when server available", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should be restored when server available", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying tool call work when server back available")
-		toolName = fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "time")
+		toolName = fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "time")
 		_, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{Name: toolName},
 		})
 		Expect(err).NotTo(HaveOccurred(), "tool calls should work once the server is back and ready")
 	})
 
-	It("[Happy] should filter tools based on x-authorized-tools JWT header", func() {
+	It("[Happy] should filter tools based on x-mcp-authorized JWT header", func() {
 		if !IsTrustedHeadersEnabled() {
-			Skip("trusted headers public key not configured - skipping x-authorized-tools test")
+			Skip("trusted headers public key not configured - skipping x-mcp-authorized test")
 		}
 
 		By("Creating an MCPServerRegistration with tools")
-		registration := NewMCPServerResourcesWithDefaults("authorized-tools-test", k8sClient).Build()
+		registration := NewMCPServerResourcesWithDefaults("authorized-capabilities-test", k8sClient).Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -696,7 +696,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			allTools, err = mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(allTools).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, allTools)).To(BeTrueBecause("%s should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, allTools)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a JWT with allowed tools for the server")
@@ -704,12 +704,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		allowedTools := map[string][]string{
 			fmt.Sprintf("%s/%s", registeredServer.Namespace, registeredServer.Name): {"hello_world"},
 		}
-		jwtToken, err := CreateAuthorizedToolsJWT(allowedTools)
+		jwtToken, err := CreateAuthorizedCapabilitiesJWT(allowedTools)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Creating a client with x-authorized-tools header")
+		By("Creating a client with x-mcp-authorized header")
 		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"X-Authorized-Tools": jwtToken,
+			"X-Mcp-Authorized": jwtToken,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer authorizedClient.Close()
@@ -719,8 +719,8 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			filteredTools, err := authorizedClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(filteredTools).NotTo(BeNil())
-			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from authorized tools header")
-			expectedToolName := fmt.Sprintf("%s%s", registeredServer.Spec.ToolPrefix, "hello_world")
+			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from authorized capabilities header")
+			expectedToolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "hello_world")
 			g.Expect(filteredTools.Tools[0].Name).To(Equal(expectedToolName))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
@@ -768,7 +768,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating first MCPServerRegistration with a specific prefix")
 		registration1 := NewMCPServerResourcesWithDefaults("conflict-test-1", k8sClient).
-			WithToolPrefix("conflict_").Build()
+			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
 
@@ -779,7 +779,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating second MCPServerRegistration with the SAME prefix pointing to server2")
 		registration2 := NewMCPServerResourcesWithDefaults("conflict-test-2", k8sClient).
-			WithToolPrefix("conflict_").Build()
+			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
 
@@ -808,14 +808,14 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
 		registration := NewMCPServerResources("same-prefix", "everything-server.mcp.local", "everything-server", 9090, k8sClient).
-			WithToolPrefix("").Build()
+			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer1 := registration.Register(ctx)
 
 		// This server has a 'hello_world' tool
 		registration = NewMCPServerResources("same-prefix", "e2e-server2.mcp.local", "mcp-test-server2", 9090, k8sClient).
-			WithToolPrefix("").Build()
+			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer2 := registration.Register(ctx)
@@ -871,7 +871,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating first MCPServer without prefix pointing to server1")
 		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
-			WithToolPrefix("").Build()
+			WithPrefix("").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
 
@@ -882,7 +882,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating second MCPServer without prefix pointing to server2 (also has time, headers, slow)")
 		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp.local", sharedMCPTestServer2, 9090, k8sClient).
-			WithToolPrefix("").Build()
+			WithPrefix("").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
 
@@ -896,7 +896,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Modifying second MCPServer to add a prefix to resolve conflict")
 		patch := client.MergeFrom(server2.DeepCopy())
-		server2.Spec.ToolPrefix = "server2_"
+		server2.Spec.Prefix = "server2_"
 		Expect(k8sClient.Patch(ctx, server2, patch)).To(Succeed())
 
 		By("Waiting for second server to become ready with new prefix")

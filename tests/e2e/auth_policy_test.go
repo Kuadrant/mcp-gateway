@@ -49,13 +49,13 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		// so the OPA rule and tool-access-check can map resource_access roles correctly
 		reg1 := NewTestResources("auth-server1", k8sClient).
 			ForInternalService("mcp-test-server1", 9090).
-			WithToolPrefix("test1_").
+			WithPrefix("test1_").
 			WithRegistrationName("test-server1").
 			Build()
 
 		reg2 := NewTestResources("auth-server2", k8sClient).
 			ForInternalService("mcp-test-server2", 9090).
-			WithToolPrefix("test2_").
+			WithPrefix("test2_").
 			WithRegistrationName("test-server2").
 			Build()
 

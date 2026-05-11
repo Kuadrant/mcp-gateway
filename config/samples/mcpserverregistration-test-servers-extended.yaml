@@ -7,7 +7,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: test3_
+  prefix: test3_
   targetRef:
     # Server 3 - Python FastMCP based (time, add, dozen, pi, get_weather, slow)
     group: gateway.networking.k8s.io
@@ -22,7 +22,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: apikey_
+  prefix: apikey_
   targetRef:
     # API key test server - validates Bearer token authentication
     group: gateway.networking.k8s.io
@@ -42,7 +42,7 @@ metadata:
 spec:
   # custom path - this server uses /v1/special/mcp instead of /mcp
   path: /v1/special/mcp
-  toolPrefix: custompath_
+  prefix: custompath_
   targetRef:
     # custom path server - tests non-standard mcp endpoint paths
     group: gateway.networking.k8s.io
@@ -58,7 +58,7 @@ metadata:
     mcp.kuadrant.io/managed: 'true'
 spec:
   # Validates OpenID Connect (OIDC) Bearer tokens issued by a configured OIDC provider
-  toolPrefix: oidc_
+  prefix: oidc_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -75,7 +75,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: everything_
+  prefix: everything_
   targetRef:
     # MCP Everything Server - TypeScript SDK based (prompts, tools, resources, sampling)
     group: gateway.networking.k8s.io
@@ -90,7 +90,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: custom_resp_
+  prefix: custom_resp_
   targetRef:
     # MCP Everything Server - TypeScript SDK based (prompts, tools, resources, sampling)
     group: gateway.networking.k8s.io

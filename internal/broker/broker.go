@@ -40,6 +40,12 @@ type MCPBroker interface {
 	// ValidateAllServers performs comprehensive validation of all registered servers and returns status
 	ValidateAllServers() StatusResponse
 
+	// IsReady reports whether the broker can serve traffic.
+	// Returns true when no upstream servers are configured (empty tool list is valid),
+	// or when at least one configured upstream is healthy.
+	// Returns false only when servers are configured but none have connected yet.
+	IsReady() bool
+
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
 
@@ -64,8 +70,8 @@ type mcpBrokerImpl struct {
 
 	logger *slog.Logger
 
-	// enforceToolFilter if set will ensure only a filtered list of tools is returned this list is based on the x-authorized-tools trusted header
-	enforceToolFilter bool
+	// enforceCapabilityFilter if set will ensure only filtered capabilities are returned based on the x-mcp-authorized trusted header
+	enforceCapabilityFilter bool
 
 	// trustedHeadersPublicKey this is the key to verify that a trusted header came from the trusted source (the owner of the private key)
 	trustedHeadersPublicKey string
@@ -83,10 +89,10 @@ var _ MCPBroker = &mcpBrokerImpl{}
 // Option configures a broker instance
 type Option func(mb *mcpBrokerImpl)
 
-// WithEnforceToolFilter defines enforceToolFilter setting and is intended for use with the NewBroker function
-func WithEnforceToolFilter(enforce bool) Option {
+// WithEnforceCapabilityFilter defines enforceCapabilityFilter setting and is intended for use with the NewBroker function
+func WithEnforceCapabilityFilter(enforce bool) Option {
 	return func(mb *mcpBrokerImpl) {
-		mb.enforceToolFilter = enforce
+		mb.enforceCapabilityFilter = enforce
 	}
 }
 
@@ -111,7 +117,7 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
-// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceToolFilter
+// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
 		mcpServers:            map[config.UpstreamMCPID]*upstream.MCPManager{},
@@ -193,7 +199,11 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			if err != nil {
+				m.logger.Error("failed to create manager", "server id", mcpServer.ID(), "error", err)
+				continue
+			}
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
@@ -307,7 +317,11 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 
 	m.logger.Debug("ValidateAllServers: checking servers", "# servers", len(m.mcpServers))
 
-	for _, upstream := range m.RegisteredMCPServers() {
+	// access m.mcpServers directly; RLock is already held.
+	// Calling RegisteredMCPServers() here would attempt a second RLock on the same
+	// goroutine. Go's sync.RWMutex blocks new readers when a writer is waiting, so a
+	// concurrent OnConfigChange() Lock() causes both goroutines to deadlock.
+	for _, upstream := range m.mcpServers {
 		status := upstream.GetStatus()
 		response.Servers = append(response.Servers, status)
 
@@ -326,4 +340,21 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		"overallValid", response.OverallValid)
 
 	return response
+}
+
+// IsReady reports whether the broker can serve traffic.
+// Accesses m.mcpServers directly (lock already not held here) rather than
+// calling RegisteredMCPServers to avoid nested RLock under a pending writer.
+func (m *mcpBrokerImpl) IsReady() bool {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	if len(m.mcpServers) == 0 {
+		return true
+	}
+	for _, mgr := range m.mcpServers {
+		if mgr.GetStatus().Ready {
+			return true
+		}
+	}
+	return false
 }

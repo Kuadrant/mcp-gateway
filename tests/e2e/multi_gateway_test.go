@@ -306,7 +306,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Creating MCPServerRegistration for team A (targeting mcp-gateway)")
 		teamAResources := NewTestResources("team-a-server", k8sClient).
-			WithToolPrefix(teamAPrefix).
+			WithPrefix(teamAPrefix).
 			ForInternalService("mcp-test-server1", 9090).
 			WithParentGateway(GatewayName, GatewayNamespace).
 			Build()
@@ -316,7 +316,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for team B (targeting e2e-1 gateway)")
 		teamBResources := NewTestResources("team-b-server", k8sClient).
 			InNamespace(e2e1ExtNamespace).
-			WithToolPrefix(teamBPrefix).
+			WithPrefix(teamBPrefix).
 			ForInternalService("mcp-test-server2", 9090).
 			WithHostname("team-b.e2e-1.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).
@@ -501,7 +501,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for Team A (using server1)")
 		teamAResources := NewTestResources("team-a-shared", k8sClient).
 			InNamespace(TeamANamespace).
-			WithToolPrefix(teamAPrefix).
+			WithPrefix(teamAPrefix).
 			ForInternalService("mcp-test-server1", 9090).
 			WithHostname("team-a-server.team-a.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).
@@ -513,7 +513,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for Team B (using server2)")
 		teamBResources := NewTestResources("team-b-shared", k8sClient).
 			InNamespace(TeamBNamespace).
-			WithToolPrefix(teamBPrefix).
+			WithPrefix(teamBPrefix).
 			ForInternalService("mcp-test-server2", 9090).
 			WithHostname("team-b-server.team-b.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).

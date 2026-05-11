@@ -60,7 +60,7 @@ type MCPServer struct {
 	Name       string      `json:"name"                 yaml:"name"`
 	URL        string      `json:"url"                  yaml:"url"`
 	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
-	ToolPrefix string      `json:"toolPrefix,omitempty" yaml:"toolPrefix,omitempty"`
+	Prefix     string      `json:"prefix,omitempty"     yaml:"prefix,omitempty"`
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
@@ -68,14 +68,14 @@ type MCPServer struct {
 
 // ID returns a unique id for the a registered server
 func (mcpServer *MCPServer) ID() UpstreamMCPID {
-	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.ToolPrefix, mcpServer.Hostname))
+	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.Prefix, mcpServer.Hostname))
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
 // This means having a different name, prefix, hostname, or credential variable.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
-		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
+		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
 		existingConfig.Credential != mcpServer.Credential
 }

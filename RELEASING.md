@@ -5,7 +5,19 @@ Creating a GitHub release with a `vX.Y.Z` tag triggers automated workflows that:
 2. Build and push OLM bundle and catalog images to `ghcr.io/kuadrant/`
 3. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
 
-## Release Steps
+## Using the `/release` command
+
+The recommended way to cut a release is through the Claude Code `/release` slash command, which automates the version bump, bundle regeneration, and walks you through push, PR, and GitHub release creation interactively.
+
+```
+/release 0.7.0-rc1
+```
+
+See [`.claude/commands/release.md`](.claude/commands/release.md) for details.
+
+## Manual Release Steps
+
+The steps below document the same process manually, for reference or environments without Claude Code.
 
 ### 1. Create Release Branch and Update Version
 

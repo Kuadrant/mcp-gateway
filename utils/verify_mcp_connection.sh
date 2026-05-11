@@ -1,17 +1,17 @@
 #!/bin/bash
-# Usage: ./verify_mcp_connection.sh [GATEWAY_URL] [TOOL_PREFIX]
+# Usage: ./verify_mcp_connection.sh [GATEWAY_URL] [PREFIX]
 set -e
 
 GATEWAY_URL="$1"
-TOOL_PREFIX="${2:-local_}"
+PREFIX="${2:-local_}"
 
 if [ -z "$GATEWAY_URL" ]; then
-    echo "Usage: ./verify_mcp_connection.sh [GATEWAY_URL] [TOOL_PREFIX]"
+    echo "Usage: ./verify_mcp_connection.sh [GATEWAY_URL] [PREFIX]"
     echo "Error: GATEWAY_URL is required."
     exit 1
 fi
 
-echo "Verifying connection to $GATEWAY_URL (expecting tools with prefix '$TOOL_PREFIX')..."
+echo "Verifying connection to $GATEWAY_URL (expecting tools with prefix '$PREFIX')..."
 
 cleanup() {
   rm -f sse.log headers.txt tools_resp.json
@@ -95,12 +95,12 @@ curl -k -s -X POST "$POST_URL" \
 }' > tools_resp.json
 
 # 5. Verify Results
-if grep -q "$TOOL_PREFIX" tools_resp.json; then
-    TOOL_COUNT=$(grep -o "$TOOL_PREFIX" tools_resp.json | wc -l)
-    echo -e "\nSUCCESS: Found $TOOL_COUNT tools with prefix '$TOOL_PREFIX'!"
+if grep -q "$PREFIX" tools_resp.json; then
+    TOOL_COUNT=$(grep -o "$PREFIX" tools_resp.json | wc -l)
+    echo -e "\nSUCCESS: Found $TOOL_COUNT tools with prefix '$PREFIX'!"
     exit 0
 else
-    echo -e "\nFAILURE: Did not find tools with prefix '$TOOL_PREFIX'."
+    echo -e "\nFAILURE: Did not find tools with prefix '$PREFIX'."
     echo "Response:"
     cat tools_resp.json
     exit 1

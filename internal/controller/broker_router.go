@@ -166,6 +166,20 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 									ReadOnly:  true,
 								},
 							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path:   "/readyz",
+										Port:   intstr.FromString("http"),
+										Scheme: corev1.URISchemeHTTP,
+									},
+								},
+								InitialDelaySeconds: 5,
+								TimeoutSeconds:      1,
+								PeriodSeconds:       10,
+								SuccessThreshold:    1,
+								FailureThreshold:    3,
+							},
 						},
 					},
 					Volumes: []corev1.Volume{
@@ -331,6 +345,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingContainer.Ports = desiredContainer.Ports
 		existingContainer.Env = mergeEnvVars(desiredContainer.Env, existingContainer.Env)
 		existingContainer.VolumeMounts = desiredContainer.VolumeMounts
+		existingContainer.ReadinessProbe = desiredContainer.ReadinessProbe
 		existingDeployment.Spec.Template.Spec.Containers[0] = existingContainer
 		existingDeployment.Spec.Template.Spec.Volumes = deployment.Spec.Template.Spec.Volumes
 		if err := r.Update(ctx, existingDeployment); err != nil {
@@ -444,6 +459,9 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	}
 	if !equality.Semantic.DeepEqual(desiredContainer.VolumeMounts, existingContainer.VolumeMounts) {
 		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingContainer.VolumeMounts, desiredContainer.VolumeMounts)
+	}
+	if !equality.Semantic.DeepEqual(desiredContainer.ReadinessProbe, existingContainer.ReadinessProbe) {
+		return true, fmt.Sprintf("readinessProbe changed: %+v -> %+v", existingContainer.ReadinessProbe, desiredContainer.ReadinessProbe)
 	}
 	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
 		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existing.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes)

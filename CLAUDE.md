@@ -131,6 +131,11 @@ Users authenticate based AuthPolicies applied on the Gateway Resource or the HTT
 - [ ] Add OpenTelemetry span attributes for observability
 - [ ] Add unit tests with mock ext_proc streams
 
+#### Breaking changes
+- [ ] Document the breaking change in `docs/release-notes/0.0.7.md` (the next release)
+- [ ] Include migration steps for users (what to change, exact commands if possible)
+- [ ] Note any changes to CLI flags, environment variables, headers, or API fields
+
 #### Writing tests
 - [ ] Unit tests use `testing` + `testify` or Ginkgo/Gomega
 - [ ] E2E tests go in `tests/e2e/` using Ginkgo and are defined in a markdown file `tests/e2e/test_cases.md`

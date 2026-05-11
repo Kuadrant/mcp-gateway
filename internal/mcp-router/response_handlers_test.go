@@ -532,3 +532,8 @@ func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, _ string) (mcp.
 func (m *mockBrokerImpl) ValidateAllServers() broker.StatusResponse {
 	panic("unimplemented")
 }
+
+// IsReady implements broker.MCPBroker.
+func (m *mockBrokerImpl) IsReady() bool {
+	return true
+}

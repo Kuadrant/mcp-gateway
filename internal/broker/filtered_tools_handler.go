@@ -15,15 +15,15 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-var authorizedToolsHeader = http.CanonicalHeaderKey("x-authorized-tools")
+var authorizedCapabilitiesHeader = http.CanonicalHeaderKey("x-mcp-authorized")
 var virtualMCPHeader = http.CanonicalHeaderKey("x-mcp-virtualserver")
 
-const allowedToolsClaimKey = "allowed-tools"
+const allowedCapabilitiesClaimKey = "allowed-capabilities"
 
 // FilterTools reduces the tool set based on authorization headers.
-// Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
+// Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
 func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
-	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
+	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 	emptyTools := []mcp.Tool{}
 	if len(mcpRes.Tools) == 0 {
@@ -31,9 +31,9 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 		return
 	}
 
-	// step 1: apply x-authorized-tools filtering (JWT-based)
-	tools = broker.applyAuthorizedToolsFilter(mcpReq.Header, tools)
-	broker.logger.Debug("FilterTools authorized tools result", "output_tools_count", len(tools))
+	// step 1: apply x-mcp-authorized filtering (JWT-based)
+	tools = broker.applyAuthorizedCapabilitiesFilter(mcpReq.Header, tools)
+	broker.logger.Debug("FilterTools authorized capabilities result", "output_tools_count", len(tools))
 
 	// step 2: apply virtual server filtering
 	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
@@ -58,31 +58,40 @@ func (broker *mcpBrokerImpl) removeGatewayMeta(tools []mcp.Tool) []mcp.Tool {
 	return tools
 }
 
-// applyAuthorizedToolsFilter filters tools based on x-authorized-tools JWT header.
+// applyAuthorizedCapabilitiesFilter filters tools based on x-mcp-authorized JWT header.
 // Returns original tools if header not present and enforcement is off.
 // Returns empty slice if header validation fails or enforcement is on without header.
-func (broker *mcpBrokerImpl) applyAuthorizedToolsFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
-	headerValues, present := headers[authorizedToolsHeader]
+func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
+	headerValues, present := headers[authorizedCapabilitiesHeader]
 
 	if !present {
-		broker.logger.Debug("no x-authorized-tools header", "enforced", broker.enforceToolFilter)
-		if broker.enforceToolFilter {
+		broker.logger.Debug("no x-mcp-authorized header", "enforced", broker.enforceCapabilityFilter)
+		if broker.enforceCapabilityFilter {
 			return []mcp.Tool{}
 		}
 		return tools
 	}
 
-	allowedTools, err := broker.parseAuthorizedToolsJWT(headerValues)
+	capabilities, err := broker.parseAuthorizedCapabilitiesJWT(headerValues)
 	if err != nil {
-		broker.logger.Error("failed to parse x-authorized-tools header", "error", err)
+		broker.logger.Error("failed to parse x-mcp-authorized header", "error", err)
 		return []mcp.Tool{}
+	}
+
+	allowedTools, hasTools := capabilities["tools"]
+	if !hasTools {
+		broker.logger.Debug("no tools key in capabilities")
+		if broker.enforceCapabilityFilter {
+			return []mcp.Tool{}
+		}
+		return tools
 	}
 
 	return broker.filterToolsByServerMap(allowedTools)
 }
 
-// parseAuthorizedToolsJWT validates and extracts allowed tools from the JWT header.
-func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map[string][]string, error) {
+// parseAuthorizedCapabilitiesJWT validates and extracts allowed capabilities from the JWT header.
+func (broker *mcpBrokerImpl) parseAuthorizedCapabilitiesJWT(headerValues []string) (map[string]map[string][]string, error) {
 	if len(headerValues) != 1 {
 		return nil, fmt.Errorf("expected exactly 1 header value, got %d", len(headerValues))
 	}
@@ -106,23 +115,23 @@ func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map
 		return nil, fmt.Errorf("failed to extract claims from JWT")
 	}
 
-	toolsClaim, ok := claims[allowedToolsClaimKey]
+	capabilitiesClaim, ok := claims[allowedCapabilitiesClaimKey]
 	if !ok {
-		return nil, fmt.Errorf("missing %s claim in JWT", allowedToolsClaimKey)
+		return nil, fmt.Errorf("missing %s claim in JWT", allowedCapabilitiesClaimKey)
 	}
 
-	toolsJSON, ok := toolsClaim.(string)
+	capabilitiesJSON, ok := capabilitiesClaim.(string)
 	if !ok {
-		return nil, fmt.Errorf("%s claim is not a string", allowedToolsClaimKey)
+		return nil, fmt.Errorf("%s claim is not a string", allowedCapabilitiesClaimKey)
 	}
 
-	var allowedTools map[string][]string
-	if err := json.Unmarshal([]byte(toolsJSON), &allowedTools); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allowed-tools JSON: %w", err)
+	var capabilities map[string]map[string][]string
+	if err := json.Unmarshal([]byte(capabilitiesJSON), &capabilities); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal allowed-capabilities JSON: %w", err)
 	}
 
-	broker.logger.Debug("parsed authorized tools", "tools", allowedTools)
-	return allowedTools, nil
+	broker.logger.Debug("parsed authorized capabilities", "capabilities", capabilities)
+	return capabilities, nil
 }
 
 func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager {

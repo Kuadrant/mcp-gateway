@@ -25,9 +25,9 @@ func TestInitialize(t *testing.T) {
 			gatewayHost: "%invalid",
 			routerKey:   "router-key-123",
 			conf: &config.MCPServer{
-				Name:       "test-server",
-				ToolPrefix: "test_",
-				Hostname:   "test.mcp.local",
+				Name:     "test-server",
+				Prefix:   "test_",
+				Hostname: "test.mcp.local",
 			},
 			passThroughHeaders: map[string]string{},
 			expectedError:      true,

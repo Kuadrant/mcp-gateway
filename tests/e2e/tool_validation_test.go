@@ -40,7 +40,7 @@ var _ = Describe("Tool Schema Validation", func() {
 		// property "responseCode" using "type": "int" which is not a valid JSON Schema type
 		registration := NewTestResources("tool-validation", k8sClient).
 			ForInternalService("mcp-custom-response", 9090).
-			WithToolPrefix("custom_resp_").
+			WithPrefix("custom_resp_").
 			Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)

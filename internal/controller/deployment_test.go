@@ -1512,3 +1512,125 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
+	probe := deployment.Spec.Template.Spec.Containers[0].ReadinessProbe
+
+	if probe == nil {
+		t.Fatal("expected ReadinessProbe to be set on broker container, got nil")
+	}
+	if probe.HTTPGet == nil {
+		t.Fatal("expected HTTPGet probe handler, got nil")
+	}
+	if probe.HTTPGet.Path != "/readyz" {
+		t.Errorf("expected probe Path /readyz, got %q", probe.HTTPGet.Path)
+	}
+	wantPort := intstr.FromString("http")
+	if probe.HTTPGet.Port != wantPort {
+		t.Errorf("expected probe Port %v (named http), got %v", wantPort, probe.HTTPGet.Port)
+	}
+}
+
+func TestDeploymentNeedsUpdate_Probe(t *testing.T) {
+	baseDeployment := func() *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-deployment",
+				Namespace: "default",
+			},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:    "test-container",
+								Image:   "test-image:v1",
+								Command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
+								Ports: []corev1.ContainerPort{
+									{Name: "http", ContainerPort: 8080},
+								},
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path:   "/readyz",
+											Port:   intstr.FromString("http"),
+											Scheme: corev1.URISchemeHTTP,
+										},
+									},
+									InitialDelaySeconds: 5,
+									TimeoutSeconds:      1,
+									PeriodSeconds:       10,
+									SuccessThreshold:    1,
+									FailureThreshold:    3,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name     string
+		modify   func(d *appsv1.Deployment)
+		expected bool
+	}{
+		{
+			name:     "no changes",
+			modify:   func(_ *appsv1.Deployment) {},
+			expected: false,
+		},
+		{
+			name: "probe removed triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].ReadinessProbe = nil
+			},
+			expected: true,
+		},
+		{
+			name: "probe path changed triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Path = "/different"
+			},
+			expected: true,
+		},
+		{
+			name: "probe port changed triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet.Port = intstr.FromString("grpc")
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := baseDeployment()
+			existing := baseDeployment()
+			tt.modify(existing)
+
+			result, reason := deploymentNeedsUpdate(desired, existing)
+			if result != tt.expected {
+				t.Errorf("deploymentNeedsUpdate() = %v, expected %v, reason: %s", result, tt.expected, reason)
+			}
+		})
+	}
+}

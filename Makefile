@@ -57,6 +57,7 @@ $(LOCALBIN):
 
 
 ENVTEST ?= $(LOCALBIN)/setup-envtest
+ENVTEST_K8S_VERSION ?= 1.31.0
 
 # Gateway API version for CRDs
 GATEWAY_API_VERSION ?= v1.4.1
@@ -301,7 +302,7 @@ deploy-example-minimal: install-crd ## Deploy MCPServerRegistration for everythi
 	@echo "Deploying MCPServerRegistration for everything server..."
 	kubectl apply -f config/samples/mcpserverregistration-everything-server.yaml
 	@echo "Waiting for MCPServerRegistration to be ready..."
-	@kubectl wait --for=condition=Ready mcpserverregistration/everything-server -n mcp-test --timeout=$(WAIT_TIME)
+	@kubectl wait --for=condition=Ready mcpserverregistration/everything-server -n mcp-test --timeout=240s
 
 # Build everything server image only
 build-everything-server: ## Build everything server Docker image
@@ -486,8 +487,12 @@ bin/golangci-lint-kube-api-linter:
 spell:
 	cspell --quiet --config cspell.json .
 
+.PHONY: lint-go
+lint-go: check-gofmt check-goimports check-newlines fmt vet golangci-lint kube-api-linter ## Run Go linting and style checks
+	@echo "All Go lint checks passed!"
+
 .PHONY: lint
-lint: check-gofmt check-goimports check-newlines fmt vet golangci-lint kube-api-linter spell ## Run all linting and style checks
+lint: lint-go spell ## Run all linting and style checks
 	@echo "All lint checks passed!"
 
 # Code style checks
@@ -561,9 +566,9 @@ test-unit: ## Run unit tests
 	go test -v -race ./...
 
 .PHONY: test-controller-integration
-test-controller-integration: envtest gateway-api-crds ## Run controller integration tests
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GINKGO) $(GINKGO_FLAGS) -tags=integration ./internal/controller
-  
+test-controller-integration: envtest ginkgo gateway-api-crds ## Run controller integration tests
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GINKGO) -v --race -tags=integration ./internal/controller
+
 
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
@@ -602,8 +607,7 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
-	@echo "Local environment setup complete"
-	@echo "Run 'make envoy-admin-forward' to access the Envoy Admin UI."
+	@"$(MAKE)" -s local-env-setup-complete-message
 
 .PHONY: local-env-setup-olm
 local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gateway and Kuadrant via OLM
@@ -622,8 +626,21 @@ local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gate
 	"${MAKE}" add-jwt-key
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
-	@echo "Local OLM environment setup complete"
-	@echo "Run 'make envoy-admin-forward' to access the Envoy Admin UI."
+	@"$(MAKE)" -s local-env-setup-complete-message
+
+.PHONY: local-env-setup-complete-message
+local-env-setup-complete-message:
+	@echo ""
+	@echo "========================================="
+	@echo "Local environment setup complete"
+	@echo ""
+	@echo "MCP Gateway is available at:"
+	@echo "  http://$(MCP_GATEWAY_HOST):$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"
+	@echo ""
+	@echo "Run 'make urls' to see all service URLs."
+	@echo "Run 'make info' for more setup info."
+	@echo "(Optional) Run 'make envoy-admin-forward' to access the Envoy Admin UI."
+	@echo "========================================="
 
 .PHONY: local-bare-setup
 local-bare-setup: setup-cluster-base ## Setup minimal cluster infrastructure (no MCP components)
@@ -635,12 +652,10 @@ local-env-teardown: ## Tear down the local Kind cluster
 
 
 .PHONY: add-jwt-key
-add-jwt-key: #add the public key needed to validate any incoming jwt based headers such as x-allowed-tools
-	@for i in 1 2 3 4 5; do \
-		kubectl get deployment/$(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) -o yaml | \
-		bin/yq '.spec.template.spec.containers[0].env += [{"name":"TRUSTED_HEADER_PUBLIC_KEY","valueFrom":{"secretKeyRef":{"name":"trusted-headers-public-key","key":"key"}}}] | .spec.template.spec.containers[0].env |= unique_by(.name)' | \
-		kubectl apply -f - && break || (echo "Retry $$i/5 failed, waiting 2s..." && sleep 2); \
-	done
+add-jwt-key: #add the public key needed to validate any incoming jwt based headers such as x-mcp-authorized
+	@kubectl apply -f config/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	@kubectl patch mcpgatewayextension mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --type='merge' \
+		-p='{"spec":{"trustedHeadersKey":{"secretName":"trusted-headers-public-key"}}}'
 
 .PHONY: dev
 dev: ## Setup cluster for local development (binaries run on host)

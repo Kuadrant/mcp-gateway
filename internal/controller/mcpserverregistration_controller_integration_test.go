@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -103,7 +104,7 @@ func createTestService(name, namespace string, port int32) *corev1.Service {
 }
 
 // createTestMCPServerRegistration creates an MCPServerRegistration for testing
-func createTestMCPServerRegistration(name, namespace, httpRouteName, toolPrefix string) *mcpv1alpha1.MCPServerRegistration {
+func createTestMCPServerRegistration(name, namespace, httpRouteName, prefix string) *mcpv1alpha1.MCPServerRegistration {
 	return &mcpv1alpha1.MCPServerRegistration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -115,8 +116,8 @@ func createTestMCPServerRegistration(name, namespace, httpRouteName, toolPrefix 
 				Kind:  "HTTPRoute",
 				Name:  httpRouteName,
 			},
-			ToolPrefix: toolPrefix,
-			Path:       "/mcp",
+			Prefix: prefix,
+			Path:   "/mcp",
 		},
 	}
 }
@@ -191,6 +192,11 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 		Scheme:             testK8sClient.Scheme(),
 		DirectAPIReader:    testK8sClient,
 		ConfigReaderWriter: configWriter,
+		MCPExtFinderValidator: &MCPGatewayExtensionValidator{
+			Client:          testIndexedClient,
+			DirectAPIReader: testK8sClient,
+			Logger:          slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		},
 	}
 }
 
@@ -316,7 +322,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// verify RemoveMCPServer was called
-			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", httpRouteName, "default")))
+			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", "default", resourceName)))
 
 			Eventually(func(g Gomega) {
 				deleted := &mcpv1alpha1.MCPServerRegistration{}

@@ -1,0 +1,25 @@
+name: Spelling
+
+on:
+  pull_request:
+    branches: [ 'main',  ]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+concurrency:
+  group: spelling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spelling:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run spell check
+        run: |
+          npm install -g cspell@9.4.0
+          make spell

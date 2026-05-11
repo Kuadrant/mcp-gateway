@@ -39,7 +39,7 @@ sequenceDiagram
 
   Note over Controller: Watch MCPServerRegistration resources
   Controller->>ConfigMap: Write aggregated config
-  Note right of ConfigMap: Config includes:<br/>- Server URL<br/>- Hostname<br/>- Tool Prefix<br/>- Credentials
+  Note right of ConfigMap: Config includes:<br/>- Server URL<br/>- Hostname<br/>- Prefix<br/>- Credentials
   
   ConfigMap->>Broker: Config change notification
   Broker->>Broker: OnConfigChange()

@@ -17,8 +17,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: Tool prefix for federation
-      jsonPath: .spec.toolPrefix
+    - description: Prefix for federation
+      jsonPath: .spec.prefix
       name: Prefix
       type: string
     - description: Target HTTPRoute.  MCP Gateway only supports routes with a single
@@ -97,6 +97,15 @@ spec:
                   If not specified, defaults to "/mcp".
                   This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
                 type: string
+              prefix:
+                description: |-
+                  prefix is the prefix to add to all federated capabilities from referenced servers.
+                  This helps avoid naming conflicts when aggregating tools from multiple sources.
+                  For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
+                type: string
+                x-kubernetes-validations:
+                - message: prefix is immutable once set
+                  rule: self == oldSelf
               targetRef:
                 description: |-
                   targetRef specifies an HTTPRoute that points to a backend MCP server.
@@ -127,15 +136,6 @@ spec:
                 required:
                 - name
                 type: object
-              toolPrefix:
-                description: |-
-                  toolPrefix is the prefix to add to all federated tools from referenced servers.
-                  This helps avoid naming conflicts when aggregating tools from multiple sources.
-                  For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
-                type: string
-                x-kubernetes-validations:
-                - message: toolPrefix is immutable once set
-                  rule: self == oldSelf
             required:
             - targetRef
             type: object

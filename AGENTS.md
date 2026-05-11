@@ -112,7 +112,7 @@ This prevents resource waste during rapid development/force-pushing.
 - Dynamic config updates via HTTP push API
 - Tool call forwarding to upstream servers
 - E2E tests validate full flow
-- toolPrefix field immutability enforced via CEL validation
+- prefix field immutability enforced via CEL validation
 - External service detection via ExternalName Services
 - Tool discovery from external MCP servers (GitHub MCP: 94 tools discovered)
 - Controller correctly generates HTTPS URLs for external services
@@ -141,7 +141,7 @@ metadata:
   name: weather-service
   namespace: mcp-test
 spec:
-  toolPrefix: weather_      # Prefix for federated tools (immutable once set)
+  prefix: weather_      # Prefix for federated tools (immutable once set)
   path: /v1/custom/mcp      # Optional custom path (default: /mcp)
   targetRef:                # HTTPRoute reference
     group: gateway.networking.k8s.io
@@ -173,7 +173,7 @@ metadata:
   namespace: mcp-test
 spec:
   path: /v1/special/mcp    # Custom endpoint
-  toolPrefix: custom_
+  prefix: custom_
   targetRef:
     kind: HTTPRoute
     name: custom-path-route

@@ -16,7 +16,7 @@ import (
 type ServerValidationStatus struct {
 	ID                     string                 `json:"id"`
 	Name                   string                 `json:"name"`
-	ToolPrefix             string                 `json:"toolPrefix"`
+	Prefix                 string                 `json:"prefix"`
 	ConnectionStatus       ConnectionStatus       `json:"connectionStatus"`
 	ProtocolValidation     ProtocolValidation     `json:"protocolValidation"`
 	CapabilitiesValidation CapabilitiesValidation `json:"capabilitiesValidation"`

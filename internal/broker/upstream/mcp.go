@@ -45,7 +45,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 	return config.MCPServer{
 		Name:       up.Name,
 		URL:        up.URL,
-		ToolPrefix: up.ToolPrefix,
+		Prefix:     up.Prefix,
 		Enabled:    up.Enabled,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
@@ -57,9 +57,9 @@ func (up *MCPServer) ProtocolInfo() *mcp.InitializeResult {
 	return up.init
 }
 
-// GetPrefix returns the specific tool prefix
+// GetPrefix returns the prefix for this server
 func (up *MCPServer) GetPrefix() string {
-	return up.ToolPrefix
+	return up.Prefix
 }
 
 // GetName returns the name of the MCP Server

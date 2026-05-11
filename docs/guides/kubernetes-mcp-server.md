@@ -139,7 +139,7 @@ kind: MCPServerRegistration
 metadata:
   name: kubernetes-mcp-server
 spec:
-  toolPrefix: kube_
+  prefix: kube_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute

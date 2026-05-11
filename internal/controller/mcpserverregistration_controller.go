@@ -52,7 +52,7 @@ type ServerInfo struct {
 	ID                 string
 	Endpoint           string
 	Hostname           string
-	ToolPrefix         string
+	Prefix             string
 	HTTPRouteName      string
 	HTTPRouteNamespace string
 	Credential         string
@@ -378,10 +378,10 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	serverName := mcpServerName(mcpsr)
 	serverConfig := config.MCPServer{
-		Name:       serverName,
-		URL:        serverInfo.Endpoint,
-		Hostname:   serverInfo.Hostname,
-		ToolPrefix: mcpsr.Spec.ToolPrefix,
+		Name:     serverName,
+		URL:      serverInfo.Endpoint,
+		Hostname: serverInfo.Hostname,
+		Prefix:   mcpsr.Spec.Prefix,
 		// TODO implement add to MCPServerRegistration CRD
 		Enabled: true,
 	}

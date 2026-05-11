@@ -55,22 +55,22 @@ func init() {
 }
 
 var (
-	mcpRouterAddrFlag         string
-	mcpBrokerAddrFlag         string
-	mcpRoutePublicHost        string
-	mcpRoutePrivateHost       string
-	mcpRouterKey              string
-	cacheConnectionStringFlag string
-	mcpConfigFile             string
-	jwtSigningKeyFlag         string
-	sessionDurationInMins     int64
-	brokerWriteTimeoutSecs    int64
-	managerTickerIntervalSecs int64
-	loglevel                  int
-	logFormat                 string
-	enforceToolFilteringFlag  bool
-	invalidToolPolicyFlag     string
-	maxRequestBodySize        int
+	mcpRouterAddrFlag              string
+	mcpBrokerAddrFlag              string
+	mcpRoutePublicHost             string
+	mcpRoutePrivateHost            string
+	mcpRouterKey                   string
+	cacheConnectionStringFlag      string
+	mcpConfigFile                  string
+	jwtSigningKeyFlag              string
+	sessionDurationInMins          int64
+	brokerWriteTimeoutSecs         int64
+	managerTickerIntervalSecs      int64
+	loglevel                       int
+	logFormat                      string
+	enforceCapabilityFilteringFlag bool
+	invalidToolPolicyFlag          string
+	maxRequestBodySize             int
 )
 
 func main() {
@@ -135,7 +135,7 @@ func main() {
 	flag.Int64Var(&sessionDurationInMins, "session-length", 60*24, "default session length with the gateway in minutes. Default 24h")
 	flag.Int64Var(&brokerWriteTimeoutSecs, "mcp-broker-write-timeout", 0, "HTTP write timeout in seconds for the broker. Default 0 (disabled) for SSE notification support. Set > 0 to enable timeout.")
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
-	flag.BoolVar(&enforceToolFilteringFlag, "enforce-tool-filtering", false, "when enabled an x-authorized-tools header will be needed to return any tools")
+	flag.BoolVar(&enforceCapabilityFilteringFlag, "enforce-capability-filtering", false, "when enabled an x-mcp-authorized header will be needed to return any capabilities (tools, prompts)")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
 	flag.Parse()
@@ -215,7 +215,7 @@ func main() {
 		panic("flag mcp-check-interval cannot be 0 or less seconds")
 	}
 	mcpBroker := broker.NewBroker(logger.With("component", "broker"),
-		broker.WithEnforceToolFilter(enforceToolFilteringFlag),
+		broker.WithEnforceCapabilityFilter(enforceCapabilityFilteringFlag),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
@@ -239,6 +239,9 @@ func main() {
 	mutex.Unlock()
 	mcpConfig.Notify(ctx)
 
+	// wire viper's logger so fsnotify errors (e.g. EMFILE from Kind's inotify
+	// limit) surface instead of being dropped before WatchConfig's os.Exit(1).
+	viper.SetOptions(viper.WithLogger(logger))
 	viper.WatchConfig()
 	// set up our change event handler
 	viper.OnConfigChange(func(in fsnotify.Event) {
@@ -316,6 +319,18 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, "Hello, World!  BTW, the MCP server is on /mcp")
+	})
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !mcpBroker.IsReady() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 
 	oauthHandler := broker.ProtectedResourceHandler{Logger: logger}
@@ -407,7 +422,7 @@ func LoadConfig(path string) {
 			"server name",
 			s.Name,
 			"server prefix",
-			s.ToolPrefix,
+			s.Prefix,
 			"enabled",
 			s.Enabled,
 			"backend url",

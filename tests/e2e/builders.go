@@ -32,7 +32,7 @@ type TestResourcesBuilder struct {
 	hostname         string
 	serviceName      string
 	port             int32
-	toolPrefix       string
+	prefix           string
 	path             string
 	credential       *corev1.Secret
 	credentialKey    string
@@ -91,9 +91,9 @@ func (b *TestResourcesBuilder) WithHostname(hostname string) *TestResourcesBuild
 	return b
 }
 
-// WithToolPrefix sets the tool prefix for the MCPServerRegistration
-func (b *TestResourcesBuilder) WithToolPrefix(prefix string) *TestResourcesBuilder {
-	b.toolPrefix = prefix
+// WithPrefix sets the prefix for the MCPServerRegistration
+func (b *TestResourcesBuilder) WithPrefix(p string) *TestResourcesBuilder {
+	b.prefix = p
 	return b
 }
 
@@ -166,8 +166,8 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 			Labels:    map[string]string{"e2e": "test", "test": b.testName},
 		},
 		Spec: mcpv1alpha1.MCPServerRegistrationSpec{
-			ToolPrefix: b.toolPrefix,
-			Path:       b.path,
+			Prefix: b.prefix,
+			Path:   b.path,
 			TargetRef: mcpv1alpha1.TargetReference{
 				Group: "gateway.networking.k8s.io",
 				Kind:  "HTTPRoute",

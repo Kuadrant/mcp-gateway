@@ -22,13 +22,13 @@ Following on from [Auth Phase 1](./auth-phase-1.md), we will now also show how t
 
 ![](./images/tools-list.jpg)
 
-In order to filter down the available tools, either generally or within the context of a virtual MCP, based on the auth integration, a trusted source can set a header `x-allowed-tools`. This header is expected to be in JWT format signed by a trusted key pair, with the public element being shared with the broker via env var `TRUSTED_HEADER_PUBLIC_KEY`. The list of tools has to be a claim within this JWT with a key `allowed-tools` and a value as shown below. The broker will look for this header during a `tools/list` call. If set, it will validate the JWT, extract the allowed tools and ensure the returned tools are matched against this list. If it fails to validate the header, it will return an empty list.
+In order to filter down the available capabilities (tools, and in future prompts and resources), either generally or within the context of a virtual MCP, based on the auth integration, a trusted source can set a header `x-mcp-authorized`. This header is expected to be in JWT format signed by a trusted key pair, with the public element being shared with the broker via env var `TRUSTED_HEADER_PUBLIC_KEY`. The JWT must contain a claim with key `allowed-capabilities` whose value is a JSON-encoded capabilities map, keyed by capability type (e.g. `"tools"`) with each entry mapping server names to allowed item names. The broker will look for this header during a `tools/list` call, validate the JWT, extract `capabilities["tools"]`, and filter the returned tools accordingly. If validation fails, it will return an empty list.
 
 Example JWT payload:
 
 ```json
 {
-  "allowed-tools": "{\"mcp-test/mcp-server1-route\":[\"greet\"],\"mcp-test/mcp-server2-route\":[\"headers\"],\"mcp-test/mcp-server3-route\":[\"add\"]}",
+  "allowed-capabilities": "{\"tools\":{\"mcp-test/mcp-server1-route\":[\"greet\"],\"mcp-test/mcp-server2-route\":[\"headers\"],\"mcp-test/mcp-server3-route\":[\"add\"]}}",
   "exp": 1760004918,
   "iat": 1760004618,
   "iss": "Authorino",
@@ -44,7 +44,7 @@ We have provided an [example AuthPolicy](../../config/samples/oauth-token-exchan
 
 There are multiple ways to configure a Keycloak realm for storing permissions to control access to the MCP tools. The method employed in the [example provided](../../config/keycloak/realm-import.yaml) consists of:
 - An OAuth "resource server" client for each MCP server, identified by the MCP server's internal host name for convenience
-- Each tool of an MCP server defined as a role of the resource server client
+- Each tool of an MCP server defined as a role of the resource server client, prefixed with `tool:` (e.g. `tool:greet`)
 - Groups representing aggregations of permissions, to which MCP tool client roles are assigned
 - Users added as members of the groups whose assigned tools the user can access
 - An OpenId Connect client for each MCP client (e.g. agent) that requests access to the MCP system, created by the [OAuth2 Dynamic Client Registration Protocol](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization#dynamic-client-registration), with **Full scopes allowed** and the `roles` client scope set by default

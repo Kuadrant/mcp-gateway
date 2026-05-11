@@ -38,10 +38,10 @@ The issued OAuth token should include claims similar to:
 {
   "resource_access": {
     "mcp-ns/arithmetic-mcp-server": { // matches the namespaced name of the MCPServerRegistration CR
-      "roles": ["add", "sum", "multiply", "divide"] // roles representing the allowed tools
+      "roles": ["tool:add", "tool:sum", "tool:multiply", "tool:divide"] // roles prefixed with capability type
     },
     "mcp-ns/geometry-mcp-server": {
-      "roles": ["area", "distance", "volume"]
+      "roles": ["tool:area", "tool:distance", "tool:volume"]
     }
   }
 }
@@ -76,7 +76,7 @@ spec:
         patternMatching:
           patterns:
             - predicate: |
-                request.headers['x-mcp-toolname'] in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+                ('tool:' + request.headers['x-mcp-toolname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
     response:
       unauthenticated:
         headers:
@@ -105,7 +105,7 @@ EOF
 - **CEL Breakdown**:
   - `request.headers['x-mcp-toolname']`: The name of the requested MCP tool (stripped from prefix)
   - `request.headers['x-mcp-servername']`: The namespaced name of the MCP server matching the MCPServerRegistration resource
-  - `auth.identity.resource_access`: The JWT claim containing all roles representing each allowed tool the user can access, grouped by MCP server
+  - `auth.identity.resource_access`: The JWT claim containing roles prefixed by capability type (e.g. `tool:greet`), grouped by MCP server
 - **Response Handling**: Custom 401 and 403 responses for unauthenticated and unauthorized access attempts
 
 ## Step 3: Test Authorization
@@ -138,7 +138,7 @@ open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-
    - `test1_greet`
    - `test2_headers`
 3. **Try restricted tools**:
-   - `test1_time` - Should return 403 Forbidden (accounting group only has the `greet` role for test-server1)
+   - `test1_time` - Should return 403 Forbidden (accounting group only has the `tool:greet` role for test-server1)
 
 ## Alternative Authorization Mechanisms
 

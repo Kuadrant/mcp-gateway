@@ -185,11 +185,11 @@ func TestHandleRequestBody(t *testing.T) {
 
 	serverConfigs := []*config.MCPServer{
 		{
-			Name:       "dummy",
-			URL:        "http://localhost:8080/mcp",
-			ToolPrefix: "s_",
-			Enabled:    true,
-			Hostname:   "localhost",
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			Enabled:  true,
+			Hostname: "localhost",
 		},
 	}
 
@@ -760,11 +760,11 @@ func TestHandleElicitationResponse(t *testing.T) {
 
 		serverConfigs := []*config.MCPServer{
 			{
-				Name:       "weather-server",
-				URL:        "http://weather.mcp.local:8080/mcp",
-				ToolPrefix: "weather_",
-				Enabled:    true,
-				Hostname:   "weather.mcp.local",
+				Name:     "weather-server",
+				URL:      "http://weather.mcp.local:8080/mcp",
+				Prefix:   "weather_",
+				Enabled:  true,
+				Hostname: "weather.mcp.local",
 			},
 		}
 

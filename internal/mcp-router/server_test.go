@@ -533,11 +533,11 @@ func newTestServer(t *testing.T) *ExtProcServer {
 		RoutingConfig: &config.MCPServersConfig{
 			Servers: []*config.MCPServer{
 				{
-					Name:       "dummy",
-					URL:        "http://localhost:9090",
-					ToolPrefix: "",
-					Enabled:    true,
-					Hostname:   "dummy",
+					Name:     "dummy",
+					URL:      "http://localhost:9090",
+					Prefix:   "",
+					Enabled:  true,
+					Hostname: "dummy",
 				},
 			},
 		},

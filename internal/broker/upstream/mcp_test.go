@@ -9,11 +9,11 @@ import (
 
 func TestNewUpstreamMCP(t *testing.T) {
 	testServer := config.MCPServer{
-		Name:       "test-server",
-		URL:        "http://localhost:8088/mcp",
-		ToolPrefix: "",
-		Enabled:    true,
-		Hostname:   "dummy",
+		Name:     "test-server",
+		URL:      "http://localhost:8088/mcp",
+		Prefix:   "",
+		Enabled:  true,
+		Hostname: "dummy",
 	}
 	up := NewUpstreamMCP(&testServer)
 	require.NotNil(t, up)

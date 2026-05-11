@@ -3,7 +3,7 @@
 // 0 to N users at a steady ramp rate, hold at peak.
 //
 // usage:
-//   TARGET_URL=http://localhost:8001/mcp TOOL_PREFIX=mock_ MAX_USERS=4096 RAMP_RATE=8 \
+//   TARGET_URL=http://localhost:8001/mcp PREFIX=mock_ MAX_USERS=4096 RAMP_RATE=8 \
 //     ./bin/k6 run tests/perf/k6/ramp-up.js
 
 import mcp from 'k6/x/infobip_mcp';
@@ -11,7 +11,7 @@ import { check, sleep } from 'k6';
 import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
 
 const TARGET_URL = __ENV.TARGET_URL || 'http://localhost:8001/mcp';
-const TOOL_PREFIX = __ENV.TOOL_PREFIX || 'mock_';
+const PREFIX = __ENV.PREFIX || 'mock_';
 const MAX_USERS = parseInt(__ENV.MAX_USERS || '4096');
 const RAMP_RATE = parseInt(__ENV.RAMP_RATE || '8');
 const HOLD_DURATION = __ENV.HOLD_DURATION || '5m';
@@ -71,7 +71,7 @@ export default function () {
     try {
         while (true) {
             for (let i = 0; i < TOOLS.length; i++) {
-                const toolName = `${TOOL_PREFIX}${TOOLS[i]}`;
+                const toolName = `${PREFIX}${TOOLS[i]}`;
                 const start = Date.now();
                 try {
                     const result = client.callTool(toolName, { input: 'test' });

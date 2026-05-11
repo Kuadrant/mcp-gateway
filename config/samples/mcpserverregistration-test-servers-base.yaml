@@ -7,8 +7,8 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  # Tool prefix applied to all servers in this MCPServer
-  toolPrefix: test1_
+  # Prefix applied to all federated capabilities from this server
+  prefix: test1_
   targetRef:
     # Server 1 - Go SDK based (greet, time, slow, headers tools)
     group: gateway.networking.k8s.io
@@ -23,7 +23,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: test2_
+  prefix: test2_
   targetRef:
     # Server 2 - Go SDK based (hello_world, time, headers, auth1234, slow tools)
     group: gateway.networking.k8s.io

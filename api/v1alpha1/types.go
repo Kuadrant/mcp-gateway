@@ -7,7 +7,7 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
-// +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.toolPrefix",description="Tool prefix for federation"
+// +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.prefix",description="Prefix for federation"
 // +kubebuilder:printcolumn:name="Target",type="string",JSONPath=".spec.targetRef.name",description="Target HTTPRoute.  MCP Gateway only supports routes with a single BackendRef"
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
@@ -43,12 +43,12 @@ type MCPServerRegistrationSpec struct {
 	// +required
 	TargetRef TargetReference `json:"targetRef,omitzero"`
 
-	// toolPrefix is the prefix to add to all federated tools from referenced servers.
+	// prefix is the prefix to add to all federated capabilities from referenced servers.
 	// This helps avoid naming conflicts when aggregating tools from multiple sources.
 	// For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="toolPrefix is immutable once set"
-	ToolPrefix string `json:"toolPrefix,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="prefix is immutable once set"
+	Prefix string `json:"prefix,omitempty"`
 
 	// path specifies the URL path where the MCP server endpoint is exposed.
 	// If not specified, defaults to "/mcp".

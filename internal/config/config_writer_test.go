@@ -38,19 +38,19 @@ func TestUpsertMCPServer(t *testing.T) {
 		{
 			name: "creates secret if not exists",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_", Enabled: true},
+				{Name: "test-server", URL: "http://test.local:8080/mcp", Prefix: "test_", Enabled: true},
 			},
 			expectedCount:  1,
-			expectedServer: MCPServer{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_"},
+			expectedServer: MCPServer{Name: "test-server", URL: "http://test.local:8080/mcp", Prefix: "test_"},
 		},
 		{
 			name: "updates existing server",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://old.local:8080/mcp", ToolPrefix: "old_", Enabled: true},
-				{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_", Enabled: true},
+				{Name: "test-server", URL: "http://old.local:8080/mcp", Prefix: "old_", Enabled: true},
+				{Name: "test-server", URL: "http://new.local:8080/mcp", Prefix: "new_", Enabled: true},
 			},
 			expectedCount:  1,
-			expectedServer: MCPServer{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_"},
+			expectedServer: MCPServer{Name: "test-server", URL: "http://new.local:8080/mcp", Prefix: "new_"},
 		},
 		{
 			name: "appends new server",
@@ -99,8 +99,8 @@ func TestUpsertMCPServer(t *testing.T) {
 				if config.Servers[0].URL != tc.expectedServer.URL {
 					t.Errorf("expected URL %q, got %q", tc.expectedServer.URL, config.Servers[0].URL)
 				}
-				if config.Servers[0].ToolPrefix != tc.expectedServer.ToolPrefix {
-					t.Errorf("expected ToolPrefix %q, got %q", tc.expectedServer.ToolPrefix, config.Servers[0].ToolPrefix)
+				if config.Servers[0].Prefix != tc.expectedServer.Prefix {
+					t.Errorf("expected Prefix %q, got %q", tc.expectedServer.Prefix, config.Servers[0].Prefix)
 				}
 			}
 		})

@@ -9,7 +9,7 @@ metadata:
   name: weather-service
   namespace: mcp-test
 spec:
-  toolPrefix: weather_      # Prefix for federated tools (immutable once set)
+  prefix: weather_      # Prefix for federated tools (immutable once set)
   path: /v1/custom/mcp      # Optional custom path (default: /mcp)
   targetRef:                # HTTPRoute reference
     group: gateway.networking.k8s.io
@@ -41,7 +41,7 @@ metadata:
   namespace: mcp-test
 spec:
   path: /v1/special/mcp    # Custom endpoint
-  toolPrefix: custom_
+  prefix: custom_
   targetRef:
     kind: HTTPRoute
     name: custom-path-route

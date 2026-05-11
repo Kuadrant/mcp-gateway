@@ -102,14 +102,17 @@ const DefaultTickerInterval = time.Minute * 1
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) *MCPManager {
+func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) (*MCPManager, error) {
+	if gatewayServer == nil {
+		return nil, fmt.Errorf("gateway server is required for upstream MCP manager")
+	}
 	if tickerInterval <= 0 {
 		tickerInterval = DefaultTickerInterval
 	}
 
 	return &MCPManager{
 		MCP:               upstream,
-		gatewayServer:     gatewaySever,
+		gatewayServer:     gatewayServer,
 		tickerInterval:    tickerInterval,
 		ticker:            time.NewTicker(tickerInterval),
 		logger:            logger,
@@ -118,7 +121,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger 
 		toolsMap:          map[string]*mcp.Tool{},
 		servedToolsMap:    map[string]*mcp.Tool{},
 		serverTools:       []server.ServerTool{},
-	}
+	}, nil
 }
 
 // MCPName returns the name of the upstream MCP server being managed
@@ -457,9 +460,9 @@ func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]server.Server
 	return addedTools, removedTools
 }
 
-func prefixedName(toolPrefix, tool string) string {
-	if toolPrefix == "" {
+func prefixedName(prefix, tool string) string {
+	if prefix == "" {
 		return tool
 	}
-	return fmt.Sprintf("%s%s", toolPrefix, tool)
+	return fmt.Sprintf("%s%s", prefix, tool)
 }

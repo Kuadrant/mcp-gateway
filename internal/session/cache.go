@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 
 	redis "github.com/redis/go-redis/v9"
@@ -13,6 +14,7 @@ const clientElicitationPrefix = "clientelicitation:"
 // Cache implements a cache
 type Cache struct {
 	inmemory  *sync.Map
+	innerMu   sync.Mutex // serializes copy-on-write mutations on inner map[string]string values
 	extClient *redis.Client
 }
 
@@ -48,6 +50,8 @@ func (c *Cache) GetSession(ctx context.Context, key string) (map[string]string, 
 // DeleteSessions deletes sessions and associated metadata from the cache
 func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 	if c.inmemory != nil {
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
 		for _, k := range key {
 			c.inmemory.Delete(k)
 			c.inmemory.Delete(clientElicitationPrefix + k)
@@ -64,16 +68,21 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 // AddSession will add a session under the key. If the key exists it will append that session
 func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession string) (bool, error) {
 	if c.inmemory != nil {
-		session, err := c.GetSession(ctx, key)
-		if err != nil {
-			return false, err
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		var existing map[string]string
+		if val, ok := c.inmemory.Load(key); ok {
+			existing = val.(map[string]string)
 		}
-		session[mcpServerID] = mcpSession
-		c.inmemory.Store(key, session)
+		next := maps.Clone(existing)
+		if next == nil {
+			next = map[string]string{}
+		}
+		next[mcpServerID] = mcpSession
+		c.inmemory.Store(key, next)
 		return true, nil
 	}
-	err := c.extClient.HSet(ctx, key, mcpServerID, mcpSession).Err()
-	if err != nil {
+	if err := c.extClient.HSet(ctx, key, mcpServerID, mcpSession).Err(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -82,12 +91,16 @@ func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession str
 // RemoveServerSession remove specific server session form cache
 func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string) error {
 	if c.inmemory != nil {
-		session, err := c.GetSession(ctx, key)
-		if err != nil {
-			return err
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		val, ok := c.inmemory.Load(key)
+		if !ok {
+			return nil
 		}
-		delete(session, mcpServerID)
-		c.inmemory.Store(key, session)
+		existing := val.(map[string]string)
+		next := maps.Clone(existing)
+		delete(next, mcpServerID)
+		c.inmemory.Store(key, next)
 		return nil
 	}
 	return c.extClient.HDel(ctx, key, mcpServerID).Err()

@@ -29,7 +29,7 @@ metadata:
             "namespace": "mcp-test"
           },
           "spec": {
-            "toolPrefix": "example_",
+            "prefix": "example_",
             "targetRef": {
               "group": "gateway.networking.k8s.io",
               "kind": "HTTPRoute",

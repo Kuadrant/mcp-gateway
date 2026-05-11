@@ -141,12 +141,12 @@ servers:
     url: http://weather.example.com:8080
     hostname: weather.example.com
     enabled: true
-    toolPrefix: "weather_"
+    prefix: "weather_"
   - name: calendar-service
     url: http://calendar.example.com:8080
     hostname: calendar.example.com
     enabled: true
-    toolPrefix: "cal_"
+    prefix: "cal_"
 ```
 
 ### Kubernetes Configuration
@@ -157,7 +157,7 @@ The `MCPServer` is a Kubernetes Custom Resource that defines an MCP (Model Conte
 
 Each `MCPServer` resource:
 - References a single HTTPRoute that points to a backend MCP service
-- Configures a tool prefix to avoid naming conflicts when federating tools
+- Configures a prefix to avoid naming conflicts when federating tools
 - Enables the controller to automatically discover and configure the broker with available MCP servers
 - Maintains status conditions to indicate whether the server is successfully discovered, valid and ready
 
@@ -173,7 +173,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: weather-route
-  toolPrefix: weather_
+  prefix: weather_
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
@@ -184,7 +184,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: calendar-route
-  toolPrefix: cal_
+  prefix: cal_
 ```
 
 ## Command Line Flags

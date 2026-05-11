@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -255,6 +258,94 @@ func TestInMemoryCache_SetAndGetClientElicitation(t *testing.T) {
 	val, err = cache.GetClientElicitation(ctx, sessionID)
 	require.NoError(t, err)
 	require.True(t, val)
+}
+
+func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	// seed one entry so concurrent callers retrieve the same stored map reference
+	_, err = cache.AddSession(ctx, "gateway-session-1", "seed", "seed-session")
+	require.NoError(t, err)
+
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			_, addErr := cache.AddSession(ctx, "gateway-session-1",
+				fmt.Sprintf("server%d", i),
+				fmt.Sprintf("upstream-session-%d", i),
+			)
+			assert.NoError(t, addErr)
+		}(i)
+	}
+	wg.Wait()
+
+	sessions, err := cache.GetSession(ctx, "gateway-session-1")
+	require.NoError(t, err)
+	require.Len(t, sessions, n+1) // n concurrent entries + seed
+}
+
+func TestInMemoryCache_RemoveServerSession_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	const n = 50
+	for i := range n {
+		_, err = cache.AddSession(ctx, "gateway-session-1",
+			fmt.Sprintf("server%d", i),
+			fmt.Sprintf("upstream-session-%d", i),
+		)
+		require.NoError(t, err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			assert.NoError(t, cache.RemoveServerSession(ctx, "gateway-session-1",
+				fmt.Sprintf("server%d", i),
+			))
+		}(i)
+	}
+	wg.Wait()
+
+	sessions, err := cache.GetSession(ctx, "gateway-session-1")
+	require.NoError(t, err)
+	require.Empty(t, sessions)
+}
+
+func TestInMemoryCache_DeleteSessions_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n * 2)
+
+	// concurrent AddSession and DeleteSessions on the same key
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			_, addErr := cache.AddSession(ctx, "gateway-session-1",
+				fmt.Sprintf("server%d", i),
+				fmt.Sprintf("upstream-session-%d", i),
+			)
+			assert.NoError(t, addErr)
+		}(i)
+
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, cache.DeleteSessions(ctx, "gateway-session-1"))
+		}()
+	}
+	wg.Wait()
 }
 
 func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {

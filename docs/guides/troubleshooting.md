@@ -63,6 +63,33 @@ kubectl logs -n mcp-system <pod-name>
 - **Pending**: Check resource availability and node capacity
 - **Init Container Failures**: Check RBAC permissions
 
+### Broker Crashes on Startup with Exit Code 1 (inotify limit on Kind)
+
+**Symptom**: The `mcp-gateway` broker pod is in `CrashLoopBackOff`. Logs end after a single line and there is no error message:
+
+```text
+time=... level=INFO msg="jwt session manager configured"
+```
+
+The pod exits with code 1 and the next line of context is missing.
+
+**Cause**: On Linux hosts, every fsnotify watcher consumes one inotify instance. Kind clusters default to `fs.inotify.max_user_instances=128`, and Kubernetes system components (kubelet, containerd-shim, kube-apiserver, kube-controller, istiod, and so on) collectively consume most of those slots. When the broker calls viper's `WatchConfig`, `fsnotify.NewWatcher` can fail with `EMFILE` ("too many open files") and viper exits the process. As of #790 the broker wires viper's logger to its own slog logger so the underlying error becomes visible in the pod logs, but the underlying limit still needs to be raised.
+
+**Fix**: Raise the inotify instance limit on the Kind node:
+
+```bash
+docker exec <kind-node-name> sysctl fs.inotify.max_user_instances=1024
+kubectl delete pods -n mcp-system -l app.kubernetes.io/name=mcp-gateway
+```
+
+For the standard local-env-setup, the node name is usually `kuadrant-local-control-plane`:
+
+```bash
+docker exec kuadrant-local-control-plane sysctl fs.inotify.max_user_instances=1024
+```
+
+To make the change persist across host reboots, set it in the Kind cluster config or the host's sysctl configuration. See the [Kind cluster setup guide](./kind-cluster-setup.md) for the prerequisite section.
+
 ## Gateway Routing Issues
 
 ### Gateway Listener Not Working
@@ -219,23 +246,23 @@ kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway
 - Verify backend MCP server implements `tools/list` method correctly
 - Check backend server logs for errors
 - Ensure backend server returns valid MCP protocol responses
-- Verify `toolPrefix` in MCPServerRegistration spec is valid (no spaces or special chars)
+- Verify `prefix` in MCPServerRegistration spec is valid (no spaces or special chars)
 
-### Tool Prefix Not Applied
+### Prefix Not Applied
 
 **Symptom**: Tools appear without the configured prefix
 
 ```bash
 # Check MCPServerRegistration configuration
-kubectl get mcpsr <server-name> -n <namespace> -o yaml | grep toolPrefix
+kubectl get mcpsr <server-name> -n <namespace> -o yaml | grep prefix
 
 # Check controller logs
 kubectl logs -n mcp-system deployment/mcp-gateway-controller | grep prefix
 ```
 
 **Solutions**:
-- Ensure `toolPrefix` is set in MCPServerRegistration spec
-- Verify no typos in `toolPrefix` field name
+- Ensure `prefix` is set in MCPServerRegistration spec
+- Verify no typos in `prefix` field name
 - Restart broker after MCPServerRegistration changes: `kubectl rollout restart deployment/mcp-gateway -n mcp-system`
 
 ## External MCP Server Issues
