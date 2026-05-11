@@ -45,6 +45,13 @@ const (
 	HTTPRouteIndex = "spec.targetRef.httproute"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
 	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
+
+	// conditionReasonReady is the reason used when the MCPServerRegistration is ready
+	conditionReasonReady = "Ready"
+	// conditionReasonNotReady is the reason used when the MCPServerRegistration is not ready
+	conditionReasonNotReady = "NotReady"
+	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
+	conditionReasonDisabled = "Disabled"
 )
 
 // ServerInfo holds server information
@@ -382,8 +389,7 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		URL:      serverInfo.Endpoint,
 		Hostname: serverInfo.Hostname,
 		Prefix:   mcpsr.Spec.Prefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		State:    string(mcpsr.Spec.State),
 	}
 
 	// add credential env var if configured
@@ -588,14 +594,14 @@ func (r *MCPReconciler) updateStatus(
 	condition := metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionFalse,
-		Reason:             "NotReady",
+		Reason:             conditionReasonNotReady,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
 	}
 
 	if ready {
 		condition.Status = metav1.ConditionTrue
-		condition.Reason = "Ready"
+		condition.Reason = conditionReasonReady
 	}
 
 	statusChanged := false

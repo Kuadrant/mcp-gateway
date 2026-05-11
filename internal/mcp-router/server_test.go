@@ -537,7 +537,7 @@ func newTestServer(t *testing.T) *ExtProcServer {
 					Name:     "dummy",
 					URL:      "http://localhost:9090",
 					Prefix:   "",
-					Enabled:  true,
+					State:    "Enabled",
 					Hostname: "dummy",
 				},
 			},
