@@ -106,6 +106,17 @@ spec:
                 x-kubernetes-validations:
                 - message: prefix is immutable once set
                   rule: self == oldSelf
+              state:
+                default: Enabled
+                description: |-
+                  state dictates whether the broker should maintain a connection to this server.
+                  When set to Disabled, the broker will remove any registered tools and stop connecting to the server.
+                  The server can be re-enabled at any time by setting this field back to Enabled.
+                  Defaults to Enabled.
+                enum:
+                - Enabled
+                - Disabled
+                type: string
               targetRef:
                 description: |-
                   targetRef specifies an HTTPRoute that points to a backend MCP server.
