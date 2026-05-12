@@ -28,6 +28,9 @@ type MCPBroker interface {
 	// Returns server info for a given tool name
 	GetServerInfo(tool string) (*config.MCPServer, error)
 
+	// Returns server info for a given prompt name
+	GetServerInfoByPrompt(prompt string) (*config.MCPServer, error)
+
 	// MCPServer gets an MCP server that federates the upstreams known to this MCPBroker
 	MCPServer() *server.MCPServer
 
@@ -155,11 +158,16 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		mcpBkr.FilterTools(ctx, id, message, result)
 	})
 
+	hooks.AddAfterListPrompts(func(ctx context.Context, id any, message *mcp.ListPromptsRequest, result *mcp.ListPromptsResult) {
+		mcpBkr.FilterPrompts(ctx, id, message, result)
+	})
+
 	mcpBkr.listeningMCPServer = server.NewMCPServer(
 		"Kuadrant MCP Gateway",
 		"0.0.1",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
+		server.WithPromptCapabilities(true),
 	)
 	return mcpBkr
 }
@@ -199,7 +207,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			if err != nil {
 				m.logger.Error("failed to create manager", "server id", mcpServer.ID(), "error", err)
 				continue
@@ -272,6 +280,26 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	}
 
 	return nil, fmt.Errorf("tool name %q doesn't match any configured server", tool)
+}
+
+// GetServerInfoByPrompt implements MCPBroker by providing a lookup of the server that implements a prompt.
+func (m *mcpBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer, error) {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+
+	for _, upstream := range m.mcpServers {
+		p := upstream.GetServedManagedPrompt(prompt)
+		if p != nil {
+			m.logger.Debug("found matching server for prompt",
+				"promptName", prompt,
+				"serverPrefix", upstream.MCP.GetPrefix(),
+				"serverName", upstream.MCP.GetName())
+			retval := upstream.MCP.GetConfig()
+			return &retval, nil
+		}
+	}
+
+	return nil, fmt.Errorf("prompt name %q doesn't match any configured server", prompt)
 }
 
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
