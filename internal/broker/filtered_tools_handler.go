@@ -135,6 +135,8 @@ func (broker *mcpBrokerImpl) parseAuthorizedCapabilitiesJWT(headerValues []strin
 }
 
 func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager {
+	broker.mcpLock.RLock()
+	defer broker.mcpLock.RUnlock()
 	for _, upstream := range broker.mcpServers {
 		if upstream.MCPName() == name {
 			return upstream

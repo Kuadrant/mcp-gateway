@@ -5,15 +5,19 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -603,4 +607,46 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 			}
 		})
 	}
+}
+func TestFindServerByName_ConcurrentConfigChange(t *testing.T) {
+	b := NewBroker(logger)
+	bImpl, ok := b.(*mcpBrokerImpl)
+	require.True(t, ok)
+
+	bImpl.mcpServers["server1"] = createTestManager(t, "server1", "", []mcp.Tool{
+		mcp.NewTool("tool1"),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					bImpl.findServerByName("server1")
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			bImpl.mcpLock.Lock()
+			id := config.UpstreamMCPID(fmt.Sprintf("server%d", i))
+			bImpl.mcpServers[id] = createTestManager(t, fmt.Sprintf("server%d", i), "", []mcp.Tool{})
+			bImpl.mcpLock.Unlock()
+		}(i)
+	}
+
+	wg.Wait()
 }
