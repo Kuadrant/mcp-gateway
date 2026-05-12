@@ -42,6 +42,12 @@ func TestBuildHairpinURL(t *testing.T) {
 			mcpPath:     "/v1/special/mcp",
 			want:        "https://mcp-gw.example.com:443/v1/special/mcp",
 		},
+		{
+			name:        "uppercase scheme is recognized and not double-prefixed",
+			gatewayHost: "HTTPS://mcp-gateway-istio.gateway-system.svc.cluster.local:443",
+			mcpPath:     "/mcp",
+			want:        "HTTPS://mcp-gateway-istio.gateway-system.svc.cluster.local:443/mcp",
+		},
 	}
 
 	for _, tt := range tests {

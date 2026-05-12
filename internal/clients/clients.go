@@ -22,7 +22,8 @@ import (
 // https:// scheme. This is what lets HTTPS-listener hairpins work without
 // silently sending plain HTTP to a TLS-only port (issue #917).
 func buildHairpinURL(gatewayHost, mcpPath string) string {
-	if strings.HasPrefix(gatewayHost, "http://") || strings.HasPrefix(gatewayHost, "https://") {
+	lowerHost := strings.ToLower(gatewayHost)
+	if strings.HasPrefix(lowerHost, "http://") || strings.HasPrefix(lowerHost, "https://") {
 		return gatewayHost + mcpPath
 	}
 	return "http://" + gatewayHost + mcpPath
