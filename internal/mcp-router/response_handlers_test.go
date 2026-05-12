@@ -20,11 +20,9 @@ import (
 )
 
 type mockBrokerImpl struct {
-	// Servers known to this mock broker
 	svrConfigs []*config.MCPServer
-
-	// Map of tool name to server name
-	tool2svr map[string]string
+	tool2svr   map[string]string
+	prompt2svr map[string]string
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -474,7 +472,21 @@ func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) b
 	return &mockBrokerImpl{
 		svrConfigs: svrConfigs,
 		tool2svr:   tool2svr,
+		prompt2svr: map[string]string{},
 	}
+}
+
+func (m *mockBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer, error) {
+	svrName, ok := m.prompt2svr[prompt]
+	if !ok {
+		return nil, fmt.Errorf("No server for prompt %q", prompt)
+	}
+	for _, svrInfo := range m.svrConfigs {
+		if svrName == svrInfo.Name {
+			return svrInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get server %q for prompt %q", svrName, prompt)
 }
 
 // GetServerInfo implements broker.MCPBroker.
