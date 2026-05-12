@@ -240,6 +240,72 @@ func TestValidateTool_OutputSchema(t *testing.T) {
 	assert.Contains(t, info.Errors[0], "outputSchema.type must be \"object\"")
 }
 
+func TestValidatePrompt(t *testing.T) {
+	tests := []struct {
+		name        string
+		prompt      mcp.Prompt
+		expectValid bool
+		errContains string
+	}{
+		{
+			name:        "valid prompt",
+			prompt:      mcp.Prompt{Name: "code_review", Description: "Reviews code"},
+			expectValid: true,
+		},
+		{
+			name:        "valid prompt with arguments",
+			prompt:      mcp.Prompt{Name: "summarize", Arguments: []mcp.PromptArgument{{Name: "text", Required: true}}},
+			expectValid: true,
+		},
+		{
+			name:        "empty name",
+			prompt:      mcp.Prompt{Name: ""},
+			expectValid: false,
+			errContains: "name must not be empty",
+		},
+		{
+			name:        "empty argument name",
+			prompt:      mcp.Prompt{Name: "test", Arguments: []mcp.PromptArgument{{Name: "", Required: true}}},
+			expectValid: false,
+			errContains: "arguments[0].name must not be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := ValidatePrompt(tt.prompt)
+			if tt.expectValid {
+				assert.Empty(t, info.Errors, "expected no errors")
+			} else {
+				assert.NotEmpty(t, info.Errors, "expected errors")
+				found := false
+				for _, e := range info.Errors {
+					if strings.Contains(e, tt.errContains) {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "expected error containing %q, got %v", tt.errContains, info.Errors)
+			}
+		})
+	}
+}
+
+func TestValidatePrompts(t *testing.T) {
+	prompts := []mcp.Prompt{
+		{Name: "valid_prompt"},
+		{Name: ""},
+		{Name: "another_valid"},
+	}
+
+	valid, invalid := ValidatePrompts(prompts)
+	assert.Len(t, valid, 2)
+	assert.Len(t, invalid, 1)
+	assert.Equal(t, "", invalid[0].Name)
+	assert.Equal(t, "valid_prompt", valid[0].Name)
+	assert.Equal(t, "another_valid", valid[1].Name)
+}
+
 func TestInvalidToolPolicyConstants(t *testing.T) {
 	assert.Equal(t, mcpv1alpha1.InvalidToolPolicy("FilterOut"), mcpv1alpha1.InvalidToolPolicyFilterOut)
 	assert.Equal(t, mcpv1alpha1.InvalidToolPolicy("RejectServer"), mcpv1alpha1.InvalidToolPolicyRejectServer)
