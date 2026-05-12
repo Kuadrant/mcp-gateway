@@ -15,7 +15,7 @@ MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. 
 - **MCP Gateway Operator**: Kubernetes controller that reconciles MCPGatewayExtension resources and deploys instances of the MCP Router and MCP Broker to form a working MCP Gateway instance
 
 ### Not Implemented
-- Resource/prompt federation (only tools currently)
+- Resource federation (only tools and prompts currently)
 
 # Exploration
 
