@@ -162,6 +162,12 @@ type MCPVirtualServerSpec struct {
 	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	Tools []string `json:"tools,omitempty"`
+
+	// prompts specifies the list of prompt names to expose through this virtual server.
+	// When omitted, all prompts are exposed.
+	// +optional
+	// +listType=atomic
+	Prompts []string `json:"prompts,omitempty"`
 }
 
 // +kubebuilder:object:root=true

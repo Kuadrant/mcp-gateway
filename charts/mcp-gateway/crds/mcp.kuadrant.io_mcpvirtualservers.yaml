@@ -55,6 +55,14 @@ spec:
                 description: description provides a human-readable description of
                   this virtual server's purpose.
                 type: string
+              prompts:
+                description: |-
+                  prompts specifies the list of prompt names to expose through this virtual server.
+                  When omitted, all prompts are exposed.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               tools:
                 description: |-
                   tools specifies the list of tool names to expose through this virtual server.
