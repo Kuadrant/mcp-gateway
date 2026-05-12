@@ -986,3 +986,35 @@ func TestMCPManager_manage_AllValidTools(t *testing.T) {
 	assert.Empty(t, status.InvalidToolList)
 	assert.Len(t, gateway.tools, 2)
 }
+func TestMCPManager_manage_ConcurrentRace(t *testing.T) {
+	mock := newMockMCP("test-server", "test_")
+	gateway := NewMockGatewayServer()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	manager := NewUpstreamMCPManager(mock, gateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			manager.manage(ctx, eventTypeTimer)
+		}()
+		go func() {
+			defer wg.Done()
+			manager.manage(ctx, eventTypeNotification)
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatalf("concurrent manage calls timed out: %v", ctx.Err())
+	}
+}
