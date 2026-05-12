@@ -64,6 +64,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
+	// ensure orphaned elicitation idmap entries are cleaned up on any exit path
+	// (e.g. stream.Recv/Send errors before endOfStream). Flush is idempotent so
+	// this is a no-op on the happy path where it has already run.
+	defer func() {
+		if rewriter != nil {
+			_ = rewriter.Flush(ctx)
+		}
+	}()
 	for {
 		req, err := stream.Recv()
 
