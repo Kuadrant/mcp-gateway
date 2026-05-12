@@ -21,7 +21,7 @@ spec:
         patternMatching:
           patterns:
           - predicate: |
-              !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
+              !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","prompts/list","initialize","notifications/initialized"])
       'authorized-capabilities':
         opa:
           rego: |
@@ -32,6 +32,13 @@ spec:
                 tools := [substring(r, count("tool:"), -1) |
                   r := input.auth.identity.resource_access[server].roles[_]
                   startswith(r, "tool:")
+                ]
+              },
+              "prompts": { server: prompts |
+                server := object.keys(input.auth.identity.resource_access)[_]
+                prompts := [substring(r, count("prompt:"), -1) |
+                  r := input.auth.identity.resource_access[server].roles[_]
+                  startswith(r, "prompt:")
                 ]
               }
             }
