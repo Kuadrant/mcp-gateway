@@ -308,4 +308,9 @@ func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
+	// verify all sessions were stored
+	sessions, err := cache.GetSession(ctx, "gateway-session-1")
+	require.NoError(t, err)
+	require.Len(t, sessions, 100)
 }
