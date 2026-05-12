@@ -133,6 +133,8 @@ gotool
 grpcroute
 grpcroutes
 hairpinned
+hairpinning
+heades
 healthz
 Healthz
 hostaliases
