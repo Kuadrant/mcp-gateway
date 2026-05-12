@@ -14,6 +14,7 @@ const clientElicitationPrefix = "clientelicitation:"
 type Cache struct {
 	inmemory  *sync.Map
 	extClient *redis.Client
+	mu        sync.Mutex
 }
 
 // KeyExists checks if a key exists in the cache
@@ -64,6 +65,8 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 // AddSession will add a session under the key. If the key exists it will append that session
 func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession string) (bool, error) {
 	if c.inmemory != nil {
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		session, err := c.GetSession(ctx, key)
 		if err != nil {
 			return false, err
@@ -82,6 +85,8 @@ func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession str
 // RemoveServerSession remove specific server session form cache
 func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string) error {
 	if c.inmemory != nil {
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		session, err := c.GetSession(ctx, key)
 		if err != nil {
 			return err

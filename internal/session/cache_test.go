@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -288,4 +290,22 @@ func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {
 	sessions, err = cache.GetSession(ctx, sessionID)
 	require.NoError(t, err)
 	require.Empty(t, sessions)
+}
+
+func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			serverName := fmt.Sprintf("server%d", i)
+			_, err := cache.AddSession(ctx, "gateway-session-1", serverName, "upstream-session")
+			require.NoError(t, err)
+		}(i)
+	}
+	wg.Wait()
 }
