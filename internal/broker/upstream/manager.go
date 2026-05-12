@@ -35,7 +35,7 @@ type ToolsAdderDeleter interface {
 type PromptsAdderDeleter interface {
 	AddPrompts(prompts ...server.ServerPrompt)
 	DeletePrompts(names ...string)
-	ListPrompts() map[string]server.ServerPrompt
+	ListPrompts() map[string]*server.ServerPrompt
 }
 
 const (

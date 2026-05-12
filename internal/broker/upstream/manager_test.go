@@ -1068,12 +1068,12 @@ func (m *MockPromptsAdderDeleter) DeletePrompts(names ...string) {
 	}
 }
 
-func (m *MockPromptsAdderDeleter) ListPrompts() map[string]server.ServerPrompt {
+func (m *MockPromptsAdderDeleter) ListPrompts() map[string]*server.ServerPrompt {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make(map[string]server.ServerPrompt, len(m.prompts))
+	result := make(map[string]*server.ServerPrompt, len(m.prompts))
 	for k, v := range m.prompts {
-		result[k] = *v
+		result[k] = v
 	}
 	return result
 }
