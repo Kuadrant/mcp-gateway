@@ -1058,7 +1058,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should disable and re-enable an MCPServerRegistration", func() {
 		By("Creating an MCPServerRegistration with default state (Enabled)")
-		registration := NewMCPServerResourcesWithDefaults("disable-enable-test", k8sClient).WithToolPrefix("distest_").Build()
+		registration := NewMCPServerResourcesWithDefaults("disable-enable-test", k8sClient).WithPrefix("distest_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -1071,7 +1071,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s tools should exist", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Disabling the MCPServerRegistration by patching spec.state to Disabled")
@@ -1084,7 +1084,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeFalseBecause("%s tools should be removed when disabled", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s tools should be removed when disabled", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying MCPServerRegistration status is Ready=False with reason Disabled")
@@ -1103,7 +1103,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.ToolPrefix, toolsList)).To(BeTrueBecause("%s tools should return after re-enabling", registeredServer.Spec.ToolPrefix))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should return after re-enabling", registeredServer.Spec.Prefix))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying MCPServerRegistration status is Ready=True after re-enabling")
