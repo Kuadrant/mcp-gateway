@@ -11,6 +11,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
+	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -73,6 +74,9 @@ const (
 	elicitationActionAccept  = "accept"
 	elicitationActionDecline = "decline"
 	elicitationActionCancel  = "cancel"
+
+	samplingResultRole    = "role"
+	samplingResultContent = "content"
 )
 
 // MCPRequest encapsulates a mcp protocol request to the gateway
@@ -81,7 +85,7 @@ type MCPRequest struct {
 	JSONRPC           string            `json:"jsonrpc"`
 	Method            string            `json:"method,omitempty"`
 	Params            map[string]any    `json:"params,omitempty"`
-	Result            map[string]any    `json:"result,omitempty"` // set in elicitation responses (which are a request from the client)
+	Result            map[string]any    `json:"result,omitempty"` // set in elicitation/sampling responses (which are a request from the client)
 	Headers           *corev3.HeaderMap `json:"-"`
 	Streaming         bool              `json:"-"`
 	sessionID         string            `json:"-"`
@@ -111,8 +115,8 @@ func (mr *MCPRequest) Validate() (bool, error) {
 	if mr.JSONRPC != "2.0" {
 		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("json rpc version invalid"))
 	}
-	// elicitation responses (sent as a request to the server) do not have the method set
-	if mr.Method == "" && !mr.isElicitationResponse() {
+	// elicitation/sampling responses (sent as a request to the server) do not have the method set
+	if mr.Method == "" && !mr.isElicitationResponse() && !mr.isSamplingResponse() {
 		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("no method set in json rpc payload"))
 	}
 	if mr.ID == nil && !mr.isNotificationRequest() {
@@ -151,6 +155,19 @@ func (mr *MCPRequest) clientSupportsElicitation() bool {
 	}
 	_, hasElicitation := capsMap["elicitation"]
 	return hasElicitation
+}
+
+func (mr *MCPRequest) isSamplingResponse() bool {
+	if mr.Method != "" || mr.Result == nil {
+		return false
+	}
+	if _, ok := mr.Result[samplingResultRole].(string); !ok {
+		return false
+	}
+	if _, ok := mr.Result[samplingResultContent]; !ok {
+		return false
+	}
+	return true
 }
 
 func (mr *MCPRequest) isElicitationResponse() bool {
@@ -249,6 +266,9 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	case mcpReq.isElicitationResponse():
 		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
 		return s.HandleElicitationResponse(ctx, mcpReq)
+	case mcpReq.isSamplingResponse():
+		span.SetAttributes(attribute.String("mcp.route", "sampling-response"))
+		return s.HandleSamplingResponse(ctx, mcpReq)
 	case mcpReq.Method == methodToolCall:
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
 		return s.HandleToolCall(ctx, mcpReq)
@@ -579,7 +599,27 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	ctx context.Context,
 	mcpReq *MCPRequest,
 ) []*eppb.ProcessingResponse {
-	ctx, span := tracer().Start(ctx, "mcp-router.elicitation-response",
+	return s.handleServerInitiatedResponse(ctx, mcpReq, s.ElicitationMap, "elicitation")
+}
+
+// HandleSamplingResponse routes a sampling/createMessage response from the client to the correct backend server
+func (s *ExtProcServer) HandleSamplingResponse(
+	ctx context.Context,
+	mcpReq *MCPRequest,
+) []*eppb.ProcessingResponse {
+	return s.handleServerInitiatedResponse(ctx, mcpReq, s.SamplingMap, "sampling")
+}
+
+// handleServerInitiatedResponse routes a client response for a server-initiated request
+// (elicitation/create or sampling/createMessage) back to the correct backend server using
+// the supplied id map.
+func (s *ExtProcServer) handleServerInitiatedResponse(
+	ctx context.Context,
+	mcpReq *MCPRequest,
+	idMap idmap.Map,
+	kind string,
+) []*eppb.ProcessingResponse {
+	ctx, span := tracer().Start(ctx, "mcp-router."+kind+"-response",
 		trace.WithAttributes(
 			componentAttr,
 			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
@@ -597,23 +637,23 @@ func (s *ExtProcServer) HandleElicitationResponse(
 
 	gatewayID := fmt.Sprint(mcpReq.ID)
 
-	entry, ok, err := s.ElicitationMap.Lookup(ctx, gatewayID)
+	entry, ok, err := idMap.Lookup(ctx, gatewayID)
 	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to lookup elicitation mapping", "error", err, "gatewayID", gatewayID)
-		mcpotel.SpanError(span, err, "elicitation lookup failed")
+		s.Logger.ErrorContext(ctx, "failed to lookup "+kind+" mapping", "error", err, "gatewayID", gatewayID)
+		mcpotel.SpanError(span, err, kind+" lookup failed")
 		response.WithImmediateResponse(500, "internal error")
 		return response.Build()
 	}
 	if !ok {
-		lookupErr := fmt.Errorf("elicitation response for unknown gateway ID: %s", gatewayID)
-		s.Logger.ErrorContext(ctx, "elicitation response for unknown gateway ID", "gatewayID", gatewayID)
-		mcpotel.SpanError(span, lookupErr, "unknown elicitation ID")
-		response.WithImmediateResponse(400, "unknown elicitation ID")
+		lookupErr := fmt.Errorf("%s response for unknown gateway ID: %s", kind, gatewayID)
+		s.Logger.ErrorContext(ctx, kind+" response for unknown gateway ID", "gatewayID", gatewayID)
+		mcpotel.SpanError(span, lookupErr, "unknown "+kind+" ID")
+		response.WithImmediateResponse(400, "unknown "+kind+" ID")
 		return response.Build()
 	}
 	if entry.GatewaySessionID != mcpReq.GetSessionID() {
-		mismatchErr := fmt.Errorf("elicitation session mismatch: expected %s, got %s", entry.GatewaySessionID, mcpReq.GetSessionID())
-		s.Logger.ErrorContext(ctx, "elicitation session mismatch", "gatewayID", gatewayID, "expected", entry.GatewaySessionID, "got", mcpReq.GetSessionID())
+		mismatchErr := fmt.Errorf("%s session mismatch: expected %s, got %s", kind, entry.GatewaySessionID, mcpReq.GetSessionID())
+		s.Logger.ErrorContext(ctx, kind+" session mismatch", "gatewayID", gatewayID, "expected", entry.GatewaySessionID, "got", mcpReq.GetSessionID())
 		mcpotel.SpanError(span, mismatchErr, "session mismatch")
 		response.WithImmediateResponse(403, "session mismatch")
 		return response.Build()
@@ -624,7 +664,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 
 	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(entry.ServerName)
 	if err != nil {
-		s.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
+		s.Logger.ErrorContext(ctx, "server not found for "+kind+" response", "server", entry.ServerName)
 		mcpotel.SpanError(span, err, "server not found")
 		response.WithImmediateResponse(500, "internal error")
 		return response.Build()
@@ -632,7 +672,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 
 	headers := NewHeaders()
 	headers.WithAuthority(mcpServerConfig.Hostname)
-	headers.WithMCPSession(entry.SessionID) // entry.SessionID contains the backend session id from when the elicitation request was made
+	headers.WithMCPSession(entry.SessionID) // backend session id captured when the server-initiated request was made
 	headers.WithMCPServerName(entry.ServerName)
 	path, err := mcpServerConfig.Path()
 	if err != nil {
@@ -645,7 +685,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 
 	body, err := mcpReq.ToBytes()
 	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to get bytes for elicitation response", "mcpReqID", mcpReq.ID, "serverName", entry.ServerName)
+		s.Logger.ErrorContext(ctx, "failed to get bytes for "+kind+" response", "mcpReqID", mcpReq.ID, "serverName", entry.ServerName)
 		mcpotel.SpanError(span, err, "marshal failed")
 		response.WithImmediateResponse(500, "internal error")
 		return response.Build()
@@ -654,8 +694,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	headers.WithContentLength(len(body))
 	response.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
 
-	// remove the mapping only after the response was successfully built
-	s.ElicitationMap.Remove(ctx, gatewayID)
+	idMap.Remove(ctx, gatewayID)
 
 	return response.Build()
 }

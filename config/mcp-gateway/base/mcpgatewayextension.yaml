@@ -3,6 +3,7 @@ kind: MCPGatewayExtension
 metadata:
   name: mcp-gateway-extension
 spec:
+  httpRouteManagement: Disabled
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
