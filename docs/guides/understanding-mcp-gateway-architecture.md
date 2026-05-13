@@ -45,23 +45,21 @@ spec:
 
 ### Generated Configuration
 
-The controller generates a ConfigMap that the broker/router consumes:
+The controller generates a Secret that the broker/router consumes:
 
 ```bash
 # View generated configuration
-kubectl get configmap mcp-gateway-config -n mcp-system -o yaml
+kubectl get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d
 ```
 
 **Configuration structure:**
 ```yaml
-data:
-  config.yaml: |
-    servers:
-      - name: mcp-test/mcp-server1-route
-        url: http://mcp-test-server1.mcp-test.svc.cluster.local:9090/mcp
-        hostname: server1.mcp.local
-        prefix: test1_
-        enabled: true
+servers:
+  - name: mcp-test/mcp-server1-route
+    url: http://mcp-test-server1.mcp-test.svc.cluster.local:9090/mcp
+    hostname: server1.mcp.local
+    prefix: test1_
+    enabled: true
 ```
 
 **What each server entry contains:**
@@ -347,7 +345,7 @@ data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"Hi Pat
 
 1. **Check if tool exists in aggregated list using MCP Inspector** (Step 3) or:
 ```bash
-kubectl get configmap mcp-gateway-config -n mcp-system -o yaml
+kubectl get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d
 ```
 
 2. **Check MCPServerRegistration status:**
@@ -404,7 +402,7 @@ kubectl logs deployment/mcp-gateway -n mcp-system | grep -E "(routing|authority|
 
 2. **Verify prefix mappings in configuration:**
 ```bash
-kubectl get configmap mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | grep -A 5 prefix
+kubectl get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d | grep -A 5 prefix
 ```
 
 3. **Check Envoy routing configuration:**

@@ -191,9 +191,9 @@ sequenceDiagram
         note left of Authorino: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource
         WASM->>MCPClient: 401 WWW-Authenticate
         note left of WASM: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource
-        MCPClient->>Gateway: .well-known/oauth-protected-resource
-        Gateway->>MCPRouter: .well-known/oauth-protected-resource
-        Gateway->>MCPBroker: .well-known/oauth-protected-resource
+        MCPClient->>Gateway: GET /.well-known/oauth-protected-resource
+        Gateway->>MCPRouter: GET /.well-known/oauth-protected-resource
+        Gateway->>MCPBroker: GET /.well-known/oauth-protected-resource
         MCPBroker->>MCPClient: auth metadata response
         MCPClient->>AuthServer: Authenticate (dynamic client reg etc)
         AuthServer->>MCPClient: Authenticated !!

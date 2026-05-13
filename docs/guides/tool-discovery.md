@@ -18,19 +18,19 @@ If you are looking for that future direction, see the design proposal in [docs/d
 
 ## Discover tools through the gateway
 
-Start the local demo environment if needed:
+Confirm your registrations are Ready:
 
 ```bash
-make local-env-setup
+kubectl get mcpsr -A
 ```
 
-Open MCP Inspector:
+Start MCP Inspector:
 
 ```bash
-make inspect-gateway
+DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1
 ```
 
-Connect MCP Inspector to:
+Then connect it to your MCP Gateway endpoint. For example:
 
 ```text
 http://mcp.127-0-0-1.sslip.io:8001/mcp
@@ -40,7 +40,7 @@ After connecting, use **Tools -> List Tools** to view the federated tool catalog
 
 ## Verify which servers contributed tools
 
-Check the registration status first:
+Check the registration status:
 
 ```bash
 kubectl get mcpsr -A
