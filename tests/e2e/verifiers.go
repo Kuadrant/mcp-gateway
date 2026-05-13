@@ -293,6 +293,32 @@ func extractBackendSessionID(res *mcp.CallToolResult) string {
 	return ""
 }
 
+// PromptsListHasPrefix checks if any prompt in the list has the given prefix
+func PromptsListHasPrefix(promptsList *mcp.ListPromptsResult, prefix string) bool {
+	return promptsListMatches(promptsList, func(name string) bool {
+		return strings.HasPrefix(name, prefix)
+	})
+}
+
+// PromptsListHasPrompt checks if the prompts list contains a prompt with the exact name
+func PromptsListHasPrompt(promptsList *mcp.ListPromptsResult, promptName string) bool {
+	return promptsListMatches(promptsList, func(name string) bool {
+		return name == promptName
+	})
+}
+
+func promptsListMatches(promptsList *mcp.ListPromptsResult, matcher func(string) bool) bool {
+	if promptsList == nil {
+		return false
+	}
+	for _, p := range promptsList.Prompts {
+		if matcher(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Legacy unexported functions for backwards compatibility
 func verifyMCPServerRegistrationToolsPresent(serverPrefix string, toolsList *mcp.ListToolsResult) bool {
 	return ToolsListHasPrefix(toolsList, serverPrefix)

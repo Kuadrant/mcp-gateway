@@ -426,6 +426,7 @@ type MCPVirtualServerBuilder struct {
 	namespace   string
 	description string
 	tools       []string
+	prompts     []string
 }
 
 // NewMCPVirtualServerBuilder creates a new MCPVirtualServerBuilder
@@ -448,6 +449,12 @@ func (b *MCPVirtualServerBuilder) WithTools(tools []string) *MCPVirtualServerBui
 	return b
 }
 
+// WithPrompts sets the prompts list
+func (b *MCPVirtualServerBuilder) WithPrompts(prompts []string) *MCPVirtualServerBuilder {
+	b.prompts = prompts
+	return b
+}
+
 // Build creates the MCPVirtualServer resource
 func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 	return &mcpv1alpha1.MCPVirtualServer{
@@ -458,6 +465,7 @@ func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 		Spec: mcpv1alpha1.MCPVirtualServerSpec{
 			Description: b.description,
 			Tools:       b.tools,
+			Prompts:     b.prompts,
 		},
 	}
 }
