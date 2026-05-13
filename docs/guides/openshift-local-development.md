@@ -4,7 +4,7 @@ This guide documents the process of deploying the MCP Gateway on OpenShift and c
 
 ## 1. Deploying to OpenShift
 
-Use the provided helper script to deploy the necessary components (Service Mesh, Connectivity Link, and MCP Gateway):
+Use the provided helper script to deploy the current OpenShift integration:
 
 ```bash
 cd config/openshift
@@ -14,81 +14,40 @@ cd config/openshift
 This script will output the public URL of your MCP Gateway, for example:
 `https://mcp.apps.your-cluster-domain.com/mcp`
 
-## 2. Enabling Internal Session Management
+By default the script installs the MCP Gateway controller through OLM, deploys the gateway instance, and creates an OpenShift Route. Red Hat Connectivity Link is optional and is only installed when `INSTALL_RHCL=true`.
 
-For the MCP Gateway to manage sessions and tool calls correctly, it must be able to communicate with itself using its internal cluster address. By default, OpenShift ingress may block these internal "hairpin" requests.
+## 2. Verify Internal Gateway Wiring
 
-Execute these commands to allow internal traffic:
+The current Helm/chart-based OpenShift deployment already configures the internal listener and private host needed for session management. Before connecting an off-cluster MCP server, verify those resources exist instead of patching them manually.
 
-### A. Update the Gateway Listener
-Allow the Gateway to accept traffic for any hostname (required for internal service-to-service calls) and add a listener on port 8081 for internal traffic (bypassing the ExtProc filter):
-
-```bash
-# Allow wildcard hostname on main listener
-kubectl patch gateway mcp-gateway -n gateway-system --type='json' -p='[{"op": "remove", "path": "/spec/listeners/0/hostname"}]'
-
-# Add internal listener on port 8081
-kubectl patch gateway mcp-gateway -n gateway-system --type='json' -p='[
-  {
-    "op": "add",
-    "path": "/spec/listeners/-",
-    "value": {
-      "name": "internal-mcp",
-      "port": 8081,
-      "protocol": "HTTP",
-      "allowedRoutes": {"namespaces": {"from": "All"}}
-    }
-  }
-]'
-```
-
-### B. Update the Main HTTPRoute
-Add the internal service address to the allowed hostnames of the main MCP route:
+Check the Gateway listeners:
 
 ```bash
-kubectl patch httproute mcp-gateway-ingress-httproute -n mcp-system --type='json' -p='[
-  {
-    "op": "add",
-    "path": "/spec/hostnames/-",
-    "value": "mcp-gateway-istio.gateway-system.svc.cluster.local"
-  }
-]'
+kubectl get gateway mcp-gateway -n gateway-system -o yaml
 ```
 
-### C. Update the Broker Deployment
-Ensure the broker is configured to use the correct internal gateway address for session initialization, and add a HostAlias to route internal traffic correctly through the Gateway.
+Expected result:
 
-First, get the ClusterIP of the Gateway:
+- a public listener named `mcp`
+- an internal listener named `mcps`
+
+Then confirm the broker/router deployment has a private host flag:
+
 ```bash
-GATEWAY_IP=$(oc get svc mcp-gateway-istio -n gateway-system -o jsonpath='{.spec.clusterIP}')
+kubectl get deployment mcp-gateway -n mcp-system -o jsonpath='{.spec.template.spec.containers[0].command}'
 ```
 
-Then patch the deployment to use port 8081 (bypassing ExtProc) and map a local alias:
-```bash
-kubectl patch deployment mcp-gateway -n mcp-system --type='json' -p="[
-  {
-    \"op\": \"add\",
-    \"path\": \"/spec/template/spec/hostAliases\",
-    \"value\": [
-      {
-        \"ip\": \"$GATEWAY_IP\",
-        \"hostnames\": [\"local-dev.mcp.local\"]
-      }
-    ]
-  },
-  {
-    \"op\": \"replace\",
-    \"path\": \"/spec/template/spec/containers/0/command/4\",
-    \"value\": \"--mcp-gateway-private-host=local-dev.mcp.local:8081\"
-  }
-]"
-```
+Expected result:
+
+- one command argument starts with `--mcp-gateway-private-host=`
+
+If those resources are present, no extra hairpin patching is needed for the current deployment flow.
 
 ## 3. Connecting an External MCP Server
 
 To connect an MCP server running off-cluster (e.g., on your laptop), you need to expose it via a public URL (using tools like `ngrok`, `localtunnel`, or a static IP).
 
-The provided automation script helps configure the necessary Istio `ServiceEntry`, `DestinationRule`, and Gateway `HTTPRoute` resources to route traffic from the cluster to your external server.
+The provided automation script configures the required Istio and Gateway API resources so the gateway can route to that external server.
 
 ### Start your Tunnel (Optional)
 If you don't have a public IP, start a tunnel. For example, using ngrok:
@@ -105,10 +64,11 @@ Run the connection script and provide your external domain when prompted:
 *Note: You can pass the domain as an argument: `./config/local-tunnel/connect_external_server.sh my-tunnel.ngrok-free.dev`*
 
 This script automates the creation of:
-1.  **ServiceEntry:** Registers the external domain and maps port 80 traffic to port 443.
-2.  **DestinationRule:** Enforces TLS and SNI for the external connection.
-3.  **Service & Route:** Maps internal "hairpin" traffic to the external service.
-4.  **Headers:** Adds `ngrok-skip-browser-warning: true` (harmless for non-ngrok domains, but required for ngrok free tier).
+1. **ServiceEntry:** Registers the external domain and maps port 80 traffic to port 443.
+2. **DestinationRule:** Enforces TLS and SNI for the external connection.
+3. **HTTPRoute:** Creates `local-tunnel-route` with hostnames for both `local-dev.mcp.local` and your external domain.
+4. **MCPServerRegistration:** Creates `local-dev-server` with the `local_` prefix.
+5. **Headers:** Adds `ngrok-skip-browser-warning: true` (harmless for non-ngrok domains, but required for ngrok free tier).
 
 ## 4. Verification
 
@@ -150,7 +110,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 gemini
     *   Ensure your `DestinationRule` has the correct `sni` matching your ngrok domain.
     *   Ensure your `DestinationRule` and `ServiceEntry` are in `gateway-system` or have `exportTo: ["*"]`.
 3.  **Ngrok Host Header:** Ensure you have the `URLRewrite` filter in your `HTTPRoute`. Ngrok servers reject requests if the `Host` header doesn't match the tunnel domain.
-4.  **Bypass ExtProc:** The Broker must use port 8081 (configured via `internal-mcp` listener) to talk to the Gateway internally, bypassing the EnvoyFilter that rewrites headers.
+4.  **Internal Listener:** Ensure the gateway still has the internal `mcps` listener and the broker deployment still includes `--mcp-gateway-private-host`.
 5.  **Session Invalidation:** If you restart the Broker, all existing sessions are lost. You must restart your client (Gemini) to establish a new session.
 6.  **Protocol Mismatch (202 vs 200):** 
     *   **Symptom:** `Streamable HTTP error: Error POSTing to endpoint: `

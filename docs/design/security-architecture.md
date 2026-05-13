@@ -89,7 +89,7 @@ Authentication and authorization are enforced via [Kuadrant AuthPolicy](https://
 
 ### Client authentication
 
-Clients authenticate via OAuth2/OIDC. The gateway serves MCP-spec resource metadata at `/.well-known/oauth-protected-resource/mcp`, pointing clients to the authorization server. JWT tokens are validated against the OIDC provider.
+Clients authenticate via OAuth2/OIDC. The gateway serves MCP-spec resource metadata at `/.well-known/oauth-protected-resource`, pointing clients to the authorization server. JWT tokens are validated against the OIDC provider.
 
 ### Token exchange
 

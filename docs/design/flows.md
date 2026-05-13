@@ -152,11 +152,11 @@ sequenceDiagram
         Gateway->>WASM: POST /mcp init
         WASM->>Authorino: Apply Auth
         Authorino->>MCPClient: 401 WWW-Authenticate with resource meta-data
-        note left of Authorino: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource/mcp
-        MCPClient->>Gateway: GET /.well-known/oauth-protected-resource/mcp
-        Gateway->>MCPRouter: GET /.well-known/oauth-protected-resource/mcp
+        note left of Authorino: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource
+        MCPClient->>Gateway: GET /.well-known/oauth-protected-resource
+        Gateway->>MCPRouter: GET /.well-known/oauth-protected-resource
         MCPRouter->>Gateway: no routing needed
-        Gateway->>MCPBroker: GET /.well-known/oauth-protected-resource/mcp
+        Gateway->>MCPBroker: GET /.well-known/oauth-protected-resource
         MCPBroker->>MCPClient: responds with resource json with configured auth server etc
         MCPClient->>AuthServer: register
         MCPClient->>AuthServer: authenticate
@@ -188,12 +188,12 @@ sequenceDiagram
         WASM->>Authorino: apply auth
         note right of Authorino: checking JWT and tool name <br/> defined in AuthPolicy
         Authorino->>WASM: 401 WWW-Authenticate
-        note left of Authorino: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource/mcp
+        note left of Authorino: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource
         WASM->>MCPClient: 401 WWW-Authenticate
-        note left of WASM: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource/mcp
-        MCPClient->>Gateway: .well-known/oauth-protected-resource/mcp
-        Gateway->>MCPRouter: .well-known/oauth-protected-resource/mcp
-        Gateway->>MCPBroker: .well-known/oauth-protected-resource/mcp
+        note left of WASM: WWW-Authenticate: Bearer <br/> resource_metadata=<host>/.well-known/oauth-protected-resource
+        MCPClient->>Gateway: .well-known/oauth-protected-resource
+        Gateway->>MCPRouter: .well-known/oauth-protected-resource
+        Gateway->>MCPBroker: .well-known/oauth-protected-resource
         MCPBroker->>MCPClient: auth metadata response
         MCPClient->>AuthServer: Authenticate (dynamic client reg etc)
         AuthServer->>MCPClient: Authenticated !!
