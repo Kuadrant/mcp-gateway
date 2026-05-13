@@ -10,7 +10,10 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
-const clientElicitationPrefix = "clientelicitation:"
+const (
+	clientElicitationPrefix = "clientelicitation:"
+	clientSamplingPrefix    = "clientsampling:"
+)
 
 const userTokenFieldPrefix = "token:"
 
@@ -59,12 +62,13 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 		for _, k := range key {
 			c.inmemory.Delete(k)
 			c.inmemory.Delete(clientElicitationPrefix + k)
+			c.inmemory.Delete(clientSamplingPrefix + k)
 		}
 		return nil
 	}
-	allKeys := make([]string, 0, len(key)*2)
+	allKeys := make([]string, 0, len(key)*3)
 	for _, k := range key {
-		allKeys = append(allKeys, k, clientElicitationPrefix+k)
+		allKeys = append(allKeys, k, clientElicitationPrefix+k, clientSamplingPrefix+k)
 	}
 	return c.extClient.Del(ctx, allKeys...).Err()
 }
@@ -229,6 +233,33 @@ func (c *Cache) DeleteUserToken(ctx context.Context, sessionID, serverName strin
 		return nil
 	}
 	return c.extClient.HDel(ctx, sessionID, field).Err()
+}
+
+// SetClientSampling records that the client for this gateway session supports sampling
+func (c *Cache) SetClientSampling(ctx context.Context, gatewaySessionID string) error {
+	key := clientSamplingPrefix + gatewaySessionID
+	if c.inmemory != nil {
+		c.inmemory.Store(key, true)
+		return nil
+	}
+	return c.extClient.Set(ctx, key, "1", 0).Err()
+}
+
+// GetClientSampling returns whether the client for this gateway session supports sampling
+func (c *Cache) GetClientSampling(ctx context.Context, gatewaySessionID string) (bool, error) {
+	key := clientSamplingPrefix + gatewaySessionID
+	if c.inmemory != nil {
+		_, ok := c.inmemory.Load(key)
+		return ok, nil
+	}
+	val, err := c.extClient.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return val == "1", nil
 }
 
 // NewCache returns a new cache. Pass WithRedisClient to use an external redis

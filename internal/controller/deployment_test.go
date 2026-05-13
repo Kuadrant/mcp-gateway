@@ -1330,6 +1330,23 @@ func TestBuildGatewayHTTPRoute(t *testing.T) {
 			if parentRef.SectionName == nil || string(*parentRef.SectionName) != tt.mcpExt.Spec.TargetRef.SectionName {
 				t.Errorf("parentRef sectionName = %v, want %q", parentRef.SectionName, tt.mcpExt.Spec.TargetRef.SectionName)
 			}
+			if len(route.Spec.Rules) != 2 {
+				t.Fatalf("rules len = %d, want 2", len(route.Spec.Rules))
+			}
+
+			gotPaths := map[string]bool{}
+			for _, rule := range route.Spec.Rules {
+				if len(rule.Matches) == 0 || rule.Matches[0].Path == nil || rule.Matches[0].Path.Value == nil {
+					t.Fatalf("rule missing path match: %+v", rule)
+				}
+				gotPaths[*rule.Matches[0].Path.Value] = true
+			}
+			if !gotPaths["/mcp"] {
+				t.Errorf("missing /mcp rule")
+			}
+			if !gotPaths["/.well-known/oauth-protected-resource"] {
+				t.Errorf("missing /.well-known/oauth-protected-resource rule")
+			}
 		})
 	}
 }
