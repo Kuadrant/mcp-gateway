@@ -404,3 +404,6 @@ usercred
 myprefix
 SIEM
 SIEMs
+GHSA
+hrpp
+deadbeefcafebabe
