@@ -18,14 +18,14 @@ Before observing the system in action, let's understand how it's configured.
 
 ### MCPServerRegistration Resources
 
-MCPServer custom resources define backend servers:
+MCPServerRegistration custom resources define backend servers:
 
 ```bash
 # View all MCPServerRegistration resources
 kubectl get mcpsr -A
 
 # Describe a specific MCPServerRegistration
-kubectl describe mcpserver api-key-server -n mcp-test
+kubectl describe mcpserverregistration api-key-server -n mcp-test
 ```
 
 **Example MCPServerRegistration spec:**
@@ -353,7 +353,7 @@ kubectl get configmap mcp-gateway-config -n mcp-system -o yaml
 2. **Check MCPServerRegistration status:**
 ```bash
 kubectl get mcpsr -A
-kubectl describe mcpserver <name> -n mcp-test
+kubectl describe mcpserverregistration <name> -n mcp-test
 ```
 
 3. **Check broker logs for connection issues:**

@@ -180,7 +180,7 @@ spec:
         code: 401
         headers:
           WWW-Authenticate:
-            value: Bearer resource_metadata=https://mcp.example.com/.well-known/oauth-protected-resource/mcp
+            value: Bearer resource_metadata=https://mcp.example.com/.well-known/oauth-protected-resource
         body:
           value: |
             {

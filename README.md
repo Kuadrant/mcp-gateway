@@ -116,18 +116,18 @@ make run
 The broker watches the config file for changes and hot-reloads configuration automatically.
 
 ### Controller Mode (Kubernetes)
-Discovers MCP servers dynamically from Kubernetes Gateway API `HTTPRoute` resources:
+Runs the Kubernetes controller that discovers MCP servers dynamically from `MCPServerRegistration` resources and their referenced Gateway API `HTTPRoute` objects:
 
 ```bash
 make run-controller
 # Or directly:
-./bin/mcp-broker-router --controller
+./bin/mcp-controller
 ```
 
 In controller mode:
-- Watches `MCPServer` custom resources
-- Discovers servers via `HTTPRoute` references
-- Generates aggregated configuration in `ConfigMap`, for use by the broker/router
+- Watches `MCPServerRegistration`, `MCPGatewayExtension`, and `MCPVirtualServer` custom resources
+- Resolves backend MCP servers via referenced `HTTPRoute` objects
+- Generates aggregated configuration in a Secret for the broker/router
 - Exposes health endpoints on `:8081` and metrics on `:8082`
 
 ## Configuration
@@ -153,15 +153,15 @@ servers:
 
 #### MCPServerRegistration Resource
 
-The `MCPServer` is a Kubernetes Custom Resource that defines an MCP (Model Context Protocol) server to be aggregated by the gateway. It enables discovery and federation of tools from backend MCP servers through Gateway API `HTTPRoute` references.
+The `MCPServerRegistration` resource is a Kubernetes Custom Resource that defines an MCP (Model Context Protocol) server to be aggregated by the gateway. It enables discovery and federation of tools from backend MCP servers through Gateway API `HTTPRoute` references.
 
-Each `MCPServer` resource:
+Each `MCPServerRegistration` resource:
 - References a single HTTPRoute that points to a backend MCP service
 - Configures a prefix to avoid naming conflicts when federating tools
 - Enables the controller to automatically discover and configure the broker with available MCP servers
 - Maintains status conditions to indicate whether the server is successfully discovered, valid and ready
 
-Create `MCPServer` resources that reference HTTPRoutes:
+Create `MCPServerRegistration` resources that reference HTTPRoutes:
 
 ```yaml
 apiVersion: mcp.kuadrant.io/v1alpha1
@@ -193,7 +193,12 @@ spec:
 --mcp-router-address            # gRPC ext_proc address (default: 0.0.0.0:50051)
 --mcp-broker-public-address     # HTTP broker address (default: 0.0.0.0:8080)
 --mcp-gateway-config            # Config file path (default: ./config/samples/config.yaml)
---controller                    # Enable Kubernetes controller mode
+--mcp-gateway-public-host       # Public hostname the gateway expects on incoming requests
+--mcp-gateway-private-host      # Internal host used for hairpin requests
+--session-signing-key           # JWT signing key for session tokens
+--cache-connection-string       # Optional Redis connection string for session storage
+--mcp-check-interval            # Backend health check interval in seconds
+--invalid-tool-policy           # FilterOut (default) or RejectServer for invalid upstream tools
 ```
 
 ### OAuth Configuration

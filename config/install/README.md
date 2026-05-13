@@ -7,7 +7,7 @@ This directory provides a minimal installation of MCP Gateway with just the core
 - Kubernetes cluster (1.28+)
 - **gateway API CRDs installed** (required!)
   ```bash
-  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
   ```
 - gateway controller (istio, envoy gateway, etc.)
 - kubectl configured
@@ -16,7 +16,7 @@ This directory provides a minimal installation of MCP Gateway with just the core
 
 ## What gets installed
 
-- MCP Gateway CRDs (`MCPServer`)
+- MCP Gateway CRDs (`MCPGatewayExtension`, `MCPServerRegistration`, `MCPVirtualServer`)
 - MCP broker/router deployment
 - MCP controller deployment
 - RBAC (service accounts, roles, bindings)

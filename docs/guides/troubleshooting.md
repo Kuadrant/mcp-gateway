@@ -567,7 +567,7 @@ If you continue to experience issues:
 
 2. Check resource status:
    ```bash
-   kubectl describe mcpserver -A > mcpserver-status.txt
+   kubectl describe mcpserverregistration -A > mcpserver-status.txt
    kubectl describe gateway -A > gateway-status.txt
    kubectl describe httproute -A > httproute-status.txt
    ```

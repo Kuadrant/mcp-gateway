@@ -81,7 +81,7 @@ spec:
       unauthenticated:
         headers:
           'WWW-Authenticate':
-            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
+            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource
         body:
           value: |
             {
