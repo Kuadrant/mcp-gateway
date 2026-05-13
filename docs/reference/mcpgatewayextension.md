@@ -5,6 +5,7 @@
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [TrustedHeadersKey](#trustedheaderskey)
 - [SessionStore](#sessionstore)
+- [AuditConfig](#auditconfig)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
 
 ## MCPGatewayExtension
@@ -25,6 +26,7 @@
 | `trustedHeadersKey` | [TrustedHeadersKey](#trustedheaderskey) | No | Configures trusted-header key pair for JWT-based tool filtering. When set, the public key secret is injected into the broker deployment via the `TRUSTED_HEADER_PUBLIC_KEY` env var |
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
+| `audit` | [AuditConfig](#auditconfig) | No | Configures the MCP audit trail via Envoy access logs. When set, the operator adds an access log to the gateway and injects audit env vars into the router deployment. When not set, no audit access log is added |
 
 ## MCPGatewayExtensionTargetReference
 
@@ -48,6 +50,13 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `secretName` | String | Yes | Name of the secret containing a `CACHE_CONNECTION_STRING` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
+
+## AuditConfig
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. `Enabled`: `params.arguments` from `tools/call` requests are logged, truncated to 1KB. `Disabled` (default): parameters are not logged |
+| `identityHeaders` | []String | No | Header names to check (in order) for caller identity when W3C Baggage `user.id` is absent. Default: `["x-forwarded-email", "x-auth-user"]` |
 
 ## MCPGatewayExtensionStatus
 

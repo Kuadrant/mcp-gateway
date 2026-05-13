@@ -25,7 +25,7 @@ Enrich the MCP Router's request headers with audit-relevant fields (caller ident
 - Cryptographic attribution (e.g., signed receipts per tool call)
 - Field-level parameter redaction (deferred to log aggregation pipelines)
 - Recording whether a tool call was permitted by policy (policy-level audit is an application concern, not a gateway access log concern)
-- CRD-level audit configuration (env vars for now, CRD exposure deferred)
+- Per-server audit configuration (deferred to AccessPolicy CRD / extensions SDK work)
 
 ## Job Stories
 
@@ -99,15 +99,86 @@ sequenceDiagram
 | **Operator** | Add access log `ConfigPatch` to the EnvoyFilter alongside the existing ext_proc patch. Default JSON format references `x-mcp-*` headers via `%REQ(...)%`. |
 | **Envoy** | Write structured JSON access log entries to stdout. Include all `x-mcp-*` headers, `traceparent`, `mcp-session-id`, timing, status, upstream host. |
 
+### API Changes
+
+Audit configuration is exposed via an optional `audit` field on the MCPGatewayExtension CRD. When present, the operator adds the access log ConfigPatch to the EnvoyFilter and injects audit env vars into the router deployment. When absent, no access log is added (existing behavior preserved).
+
+```go
+// ParameterLoggingPolicy controls whether tool call parameters are included in the audit trail.
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type ParameterLoggingPolicy string
+
+const (
+    ParameterLoggingEnabled  ParameterLoggingPolicy = "Enabled"
+    ParameterLoggingDisabled ParameterLoggingPolicy = "Disabled"
+)
+
+// AuditConfig configures the MCP audit trail via Envoy access logs.
+type AuditConfig struct {
+    // parameterLogging controls whether tool call parameters are included in the audit trail.
+    // Enabled: params.arguments from tools/call requests are logged (truncated to 1KB).
+    // Disabled (default): parameters are not logged.
+    // +optional
+    // +default="Disabled"
+    ParameterLogging ParameterLoggingPolicy `json:"parameterLogging,omitempty"`
+
+    // identityHeaders specifies header names to check (in order) for caller
+    // identity when baggage user.id is absent.
+    // +optional
+    // +default={"x-forwarded-email","x-auth-user"}
+    IdentityHeaders []string `json:"identityHeaders,omitempty"`
+}
+```
+
+Minimal example (defaults only, presence of `spec.audit` triggers the access log):
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: my-gateway
+  namespace: mcp-gateway
+spec:
+  targetRef:
+    name: my-gateway
+    sectionName: mcp
+  audit: {}
+```
+
+With parameter logging enabled and custom identity headers:
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: my-gateway
+  namespace: mcp-gateway
+spec:
+  targetRef:
+    name: my-gateway
+    sectionName: mcp
+  audit:
+    parameterLogging: Enabled
+    identityHeaders:
+      - x-forwarded-email
+      - x-auth-user
+```
+
+The operator translates these fields into env vars on the router deployment (`MCP_AUDIT_LOG_PARAMS`, `MCP_AUDIT_IDENTITY_HEADERS`). The router reads env vars — it has no direct CRD dependency.
+
+### Data Storage
+
+None. Audit data is written to Envoy access logs on stdout — storage and retention are handled by the platform's log collection pipeline.
+
 ### Router Changes
 
 **New headers set on requests:**
 
 | Header | Source | Description |
 |--------|--------|-------------|
-| `x-mcp-user-id` | `baggage` header, key `user.id` | Authenticated user identity. Falls back to auth-layer headers (configurable via `MCP_AUDIT_IDENTITY_HEADERS` env var). `-` if unavailable. |
+| `x-mcp-user-id` | `baggage` header, key `user.id` | Authenticated user identity. Falls back to auth-layer headers (configurable via `spec.audit.identityHeaders`). `-` if unavailable. |
 | `x-mcp-agent-id` | `baggage` header, key `agent.id` | Agent identity. `-` if unavailable. |
-| `x-mcp-tool-params` | Request body `params.arguments` | Tool call arguments as JSON. Only set when `MCP_AUDIT_LOG_PARAMS=true`. Truncated to 1KB. |
+| `x-mcp-tool-params` | Request body `params.arguments` | Tool call arguments as JSON. Only set when `spec.audit.parameterLogging` is `Enabled`. Truncated to 1KB. |
 
 **Existing headers (unchanged):**
 
@@ -120,13 +191,13 @@ sequenceDiagram
 
 **Baggage parsing:** Extract key-value pairs from the `baggage` header per [W3C Baggage specification](https://www.w3.org/TR/baggage/). Look up `user.id` and `agent.id` keys. URL-decode values. After decoding, strip any control characters (CR, LF, null bytes) to prevent header injection — the baggage header is client-controlled and could contain encoded newlines.
 
-**Identity fallback:** When `user.id` is absent from baggage, check headers listed in `MCP_AUDIT_IDENTITY_HEADERS` (comma-separated, checked in order). Defaults to `x-forwarded-email,x-auth-user`. First non-empty value is used for `x-mcp-user-id`.
+**Identity fallback:** When `user.id` is absent from baggage, check headers listed in `spec.audit.identityHeaders` (checked in order). Defaults to `x-forwarded-email,x-auth-user`. First non-empty value is used for `x-mcp-user-id`.
 
-**Parameter logging:** Gated by `MCP_AUDIT_LOG_PARAMS` env var (default: `false`). When enabled, extract `params.arguments` from the parsed MCP request body, serialize as JSON, truncate to 1KB, and set as `x-mcp-tool-params`. Sensitive field redaction is deferred to log aggregation pipelines. Note: enabling parameter logging means any secrets passed as tool arguments (API keys, tokens, credentials) will appear in access logs. The auditing guide should warn operators of this and recommend restricting access log storage accordingly.
+**Parameter logging:** Gated by `spec.audit.parameterLogging` (default: `Disabled`). When `Enabled`, extract `params.arguments` from the parsed MCP request body, serialize as JSON, truncate to 1KB, and set as `x-mcp-tool-params`. Sensitive field redaction is deferred to log aggregation pipelines. Note: enabling parameter logging means any secrets passed as tool arguments (API keys, tokens, credentials) will appear in access logs. The auditing guide should warn operators of this and recommend restricting access log storage accordingly.
 
 ### Operator Changes
 
-The operator adds a second `ConfigPatch` to the EnvoyFilter it builds in `buildEnvoyFilter()`. This patch uses `ApplyTo: NETWORK_FILTER` to merge an `access_log` configuration into the `envoy.filters.network.http_connection_manager` on the same listener (matching the same `listenerConfig.Port`) as the ext_proc filter.
+When `spec.audit` is set, the operator adds a second `ConfigPatch` to the EnvoyFilter it builds in `buildEnvoyFilter()`. This patch uses `ApplyTo: NETWORK_FILTER` to merge an `access_log` configuration into the `envoy.filters.network.http_connection_manager` on the same listener (matching the same `listenerConfig.Port`) as the ext_proc filter. The operator also injects `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment based on the CRD fields.
 
 The patch operation is `MERGE` — this differs from the ext_proc patch which uses `INSERT_FIRST`. The ext_proc patch inserts a new HTTP filter into the filter chain, so it needs `INSERT_FIRST` to position it before the router filter. The access log patch modifies an existing network filter (HCM) to add an `access_log` field, so `MERGE` is correct — it applies proto merge semantics to combine the access log config into the existing HCM configuration. See [Istio EnvoyFilter patch operations](https://istio.io/latest/docs/reference/config/networking/envoy-filter/) for details on `MERGE` vs `INSERT_FIRST`.
 
@@ -155,7 +226,7 @@ The patch operation is `MERGE` — this differs from the ext_proc patch which us
 ```
 
 - Logged to stdout on the gateway pod (standard for Kubernetes log collection)
-- Access log only added when MCPGatewayExtension exists
+- Access log only added when `spec.audit` is set on the MCPGatewayExtension
 - Users can override by applying their own EnvoyFilter with `MERGE` or `REPLACE` targeting the access log
 
 ### Example User Flow
@@ -205,12 +276,21 @@ Still useful: tool name, server, session, timing, and response code are all pres
 
 ### Configuration
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `MCP_AUDIT_LOG_PARAMS` | `false` | Enable tool call parameter logging |
-| `MCP_AUDIT_IDENTITY_HEADERS` | `x-forwarded-email,x-auth-user` | Comma-separated header names to check (in order) for caller identity when baggage `user.id` is absent |
+Audit is configured via the `spec.audit` field on the MCPGatewayExtension CRD:
 
-These are set on the `mcp-gateway` deployment (the router/broker pod managed by the operator). The operator does not manage them — users configure via `kubectl set env deployment/mcp-gateway`.
+| CRD Field | Default | Description |
+|-----------|---------|-------------|
+| `spec.audit.parameterLogging` | `Disabled` | Enable tool call parameter logging (`Enabled` / `Disabled`) |
+| `spec.audit.identityHeaders` | `["x-forwarded-email", "x-auth-user"]` | Header names to check (in order) for caller identity when baggage `user.id` is absent |
+
+The operator translates these into env vars on the router deployment:
+
+| Env Var | Source | Translation |
+|---------|--------|-------------|
+| `MCP_AUDIT_LOG_PARAMS` | `spec.audit.parameterLogging` | `Enabled` -> `"true"`, `Disabled`/empty -> `"false"` |
+| `MCP_AUDIT_IDENTITY_HEADERS` | `spec.audit.identityHeaders` | Comma-joined |
+
+These env vars are operator-managed. The router reads them at startup — it has no direct CRD dependency.
 
 ### AuthPolicy Integration
 
@@ -248,8 +328,8 @@ Traces are for debugging, metrics are for patterns, access logs are for accounta
 
 ## Future Considerations
 
-- **CRD-level audit configuration**: Expose audit settings (parameter logging, identity headers, log format) via MCPGatewayExtension CRD fields once the feature stabilises.
 - **Dynamic metadata**: If header-based access logging hits limitations (e.g., headers not available in certain Envoy access log contexts), fall back to ext_proc dynamic metadata with `%DYNAMIC_METADATA(mcp-audit:...)%` format strings.
+- **Custom access log format**: Expose the JSON log format as a CRD field so operators can customize without writing EnvoyFilters.
 - **Field-level parameter redaction**: Allow operators to specify fields to redact from tool call parameters before logging.
 - **Per-server audit configuration**: Configure parameter logging per MCPServerRegistration (some servers may have sensitive params, others not).
 - **Unified Kuadrant audit surface**: MCP Gateway and Authorino are both Kuadrant projects. A single CRD or configuration point that combines tool call auditing with auth decision logging would give platform engineers one place to configure "MCP audit logging" rather than two. This could surface Authorino's allow/deny decisions, identity resolution, and policy evaluations alongside tool call metadata in a unified audit log. The [AccessPolicy CRD (#804)](https://github.com/Kuadrant/mcp-gateway/issues/804) work is a natural point to design this unified surface.
@@ -263,14 +343,21 @@ Traces are for debugging, metrics are for patterns, access logs are for accounta
 
 ## Change Log
 
+### 2026-05-13 — Add CRD API for audit configuration
+
+- Added `spec.audit` field to MCPGatewayExtension CRD (gateway-level configuration)
+- `spec.audit` presence triggers access log ConfigPatch and env var injection
+- Operator translates CRD fields to env vars on the router deployment
+- `parameterLogging` uses `Enabled`/`Disabled` enum (not boolean), matching existing CRD patterns
+- Per-server configuration deferred to AccessPolicy CRD / extensions SDK
+
 ### 2026-05-08 — Initial design
 
 - Header-first approach using existing `x-mcp-*` pattern (dynamic metadata deferred unless limitations found)
 - W3C Baggage for caller identity aligned with kube-agentic-networking proposal
 - Three-level correlation model: agent workflow, MCP session, individual request
-- Opt-in parameter logging via env var (`MCP_AUDIT_LOG_PARAMS`)
+- Opt-in parameter logging
 - Operator-managed access log with user override capability
-- Env var configuration for now, CRD exposure deferred
 
 ## References
 

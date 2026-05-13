@@ -34,7 +34,7 @@ When a platform engineer wants to see who was allowed or denied access alongside
 When a compliance officer needs to verify what data was sent to tools during an incident, they want to enable parameter logging and understand the sensitivity implications, so that they can assess data exposure.
 
 **Cover:**
-- `MCP_AUDIT_LOG_PARAMS` env var configuration via `kubectl set env`
+- `spec.audit.parameterLogging` CRD field configuration
 - Truncation behaviour (1KB)
 - Sensitivity considerations and deferred redaction
 

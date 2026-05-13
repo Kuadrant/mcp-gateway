@@ -7,6 +7,8 @@ The implementation builds on:
 - **Router headers**: `internal/mcp-router/headers.go` — `HeadersBuilder` already sets `x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`, and `mcp-session-id` via `ProcessingResponse` header mutations.
 - **Router request handling**: `internal/mcp-router/request_handlers.go` — MCP request body is already parsed (method, tool name, server name extracted). New audit headers plug into the same `HeadersBuilder` chain.
 - **Operator EnvoyFilter**: `internal/controller/mcpgatewayextension_controller.go` — `buildEnvoyFilter()` (line ~719) builds an EnvoyFilter with a single `HTTP_FILTER` ConfigPatch for ext_proc. The access log patch adds a second `NETWORK_FILTER` ConfigPatch to the same EnvoyFilter.
+- **Operator deployment**: `internal/controller/broker_router.go` — `buildBrokerRouterDeployment()` builds the router deployment with env vars. `managedEnvVarNames` controls which env vars the operator owns. `mergeEnvVars()` preserves user-added env vars during reconciliation.
+- **CRD types**: `api/v1alpha1/mcpgatewayextension_types.go` — existing patterns for optional nested config: `SessionStore`, `TrustedHeadersKey` (pointer to struct, conditional env var injection).
 - **OTel tracing**: `internal/mcp-router/tracing.go` — span attributes include `mcp.method.name`, `mcp.session.id`, `gen_ai.tool.name`. Audit headers complement these with access-log-native fields.
 
 ### Task 1: Baggage parsing and identity extraction
@@ -56,23 +58,42 @@ The implementation builds on:
 
 **Verification:** `make test-unit`
 
-### Task 4: Operator access log ConfigPatch
+### Task 4: AuditConfig CRD type and env var wiring
+
+**Files:**
+- `api/v1alpha1/mcpgatewayextension_types.go` (modify — add `AuditConfig` struct and `Audit` field to spec)
+- `internal/controller/broker_router.go` (modify — inject `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars, add to `managedEnvVarNames`)
+- `docs/reference/mcpgatewayextension.md` (modify — add audit field documentation)
+
+**Acceptance criteria:**
+- [ ] `AuditConfig` struct with `ParameterLogging` (`ParameterLoggingPolicy` enum: `Enabled`/`Disabled`) and `IdentityHeaders` ([]string)
+- [ ] `Audit *AuditConfig` optional pointer field on `MCPGatewayExtensionSpec`
+- [ ] When `spec.audit` is set, operator injects `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment
+- [ ] `ParameterLogging` enum translated to env var: `Enabled` -> `"true"`, `Disabled`/empty -> `"false"`
+- [ ] When `spec.audit` is nil, no audit env vars are injected
+- [ ] `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` added to `managedEnvVarNames`
+- [ ] `make generate-all` succeeds (deepcopy, CRDs, Helm sync)
+- [ ] CRD reference doc updated
+
+**Verification:** `make generate-all && make test-controller-integration`
+
+### Task 5: Operator access log ConfigPatch
 
 **Files:**
 - `internal/controller/mcpgatewayextension_controller.go` (modify — add `NETWORK_FILTER` ConfigPatch to `buildEnvoyFilter()`)
 - `internal/controller/mcpgatewayextension_controller_test.go` (modify)
 
 **Acceptance criteria:**
-- [ ] EnvoyFilter includes a second ConfigPatch with `ApplyTo: NETWORK_FILTER`
+- [ ] When `spec.audit` is set, EnvoyFilter includes a second ConfigPatch with `ApplyTo: NETWORK_FILTER`
 - [ ] Patch targets `envoy.filters.network.http_connection_manager` on the same listener port as the ext_proc patch (`listenerConfig.Port`)
 - [ ] Patch operation is `MERGE` (modifying existing HCM, not inserting a new filter)
 - [ ] Access log format contains all `%REQ(...)%` fields from the design doc
-- [ ] Access log only added when MCPGatewayExtension exists
+- [ ] When `spec.audit` is nil, no access log patch is added (existing behavior preserved)
 - [ ] EnvoyFilter update propagates when MCPGatewayExtension changes
 
 **Verification:** `make test-controller-integration`
 
-### Task 5: E2E tests
+### Task 6: E2E tests
 
 **Files:**
 - `tests/e2e/` (new test file)
@@ -84,7 +105,7 @@ The implementation builds on:
 
 **Verification:** E2E test suite in CI
 
-### Task 6: Auditing guide
+### Task 7: Auditing guide
 
 **Files:**
 - `docs/guides/auditing.md` (new)

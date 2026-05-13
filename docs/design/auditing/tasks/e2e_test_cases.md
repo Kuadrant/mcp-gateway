@@ -14,11 +14,11 @@ When a client sends a bare tool call with no baggage and no traceparent, the aud
 
 ### [Auditing] Parameter logging opt-in
 
-When `MCP_AUDIT_LOG_PARAMS=true` is set on the router deployment, tool call arguments should appear in the `mcp_tool_params` field of the access log. When the env var is unset or false, the field should be `-`.
+When `spec.audit.parameterLogging` is `Enabled` on the MCPGatewayExtension, tool call arguments should appear in the `mcp_tool_params` field of the access log. When `parameterLogging` is `Disabled` or `spec.audit` is not set, the field should be `-`.
 
 ### [Auditing] Auth-layer identity fallback
 
-When a client sends an auth-layer header (e.g., `x-forwarded-email: test@example.com`) but no baggage, `mcp_user_id` in the access log should be populated from the fallback header. The fallback order is controlled by `MCP_AUDIT_IDENTITY_HEADERS`.
+When a client sends an auth-layer header (e.g., `x-forwarded-email: test@example.com`) but no baggage, `mcp_user_id` in the access log should be populated from the fallback header. The fallback order is controlled by `spec.audit.identityHeaders`.
 
 ### [Auditing] Baggage with special characters
 
@@ -26,4 +26,4 @@ When a client sends a baggage header with URL-encoded special characters includi
 
 ### [Auditing] Parameter truncation at 1KB
 
-When `MCP_AUDIT_LOG_PARAMS=true` is set and a tool call includes arguments exceeding 1KB, the `mcp_tool_params` field in the access log should be truncated to 1KB. This proves the truncation boundary is enforced.
+When `spec.audit.parameterLogging` is `Enabled` and a tool call includes arguments exceeding 1KB, the `mcp_tool_params` field in the access log should be truncated to 1KB. This proves the truncation boundary is enforced.
