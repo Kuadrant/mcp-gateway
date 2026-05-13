@@ -287,13 +287,10 @@ func derivePublicHost(listenerConfig *mcpv1alpha1.ListenerConfig, annotationOver
 // and an https:// scheme prefix is added when the listener is HTTPS so the
 // broker hairpin doesn't send plain HTTP to a TLS-only port (issue #917).
 func derivePrivateHost(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig) string {
-	host := mcpExt.InternalHost(listenerConfig.Port)
-	// honour an operator-supplied PrivateHost as-is. They may already have
-	// embedded a scheme, or chosen a separate HTTP port, and we should not
-	// silently rewrite either.
 	if mcpExt.Spec.PrivateHost != "" {
-		return host
+		return mcpExt.Spec.PrivateHost
 	}
+	host := mcpExt.InternalHost(listenerConfig.Port)
 	// listener.Protocol is the Gateway API protocol string, e.g. "HTTPS".
 	if listenerConfig != nil && strings.EqualFold(listenerConfig.Protocol, "HTTPS") {
 		return "https://" + host
