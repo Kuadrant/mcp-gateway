@@ -62,7 +62,7 @@ var (
 	mcpRouterKey                   string
 	cacheConnectionStringFlag      string
 	mcpConfigFile                  string
-	jwtSigningKeyFlag              string
+	gatewaySigningKeyFlag          string
 	sessionDurationInMins          int64
 	brokerWriteTimeoutSecs         int64
 	managerTickerIntervalSecs      int64
@@ -119,10 +119,10 @@ func main() {
 		int(slog.LevelInfo),
 		"set the log level 0=info, 4=warn , 8=error and -4=debug",
 	)
-	flag.StringVar(&jwtSigningKeyFlag,
+	flag.StringVar(&gatewaySigningKeyFlag,
 		"session-signing-key",
 		goenv.GetDefault("JWT_SESSION_SIGNING_KEY", ""),
-		"JWT signing key for session tokens (env: JWT_SESSION_SIGNING_KEY)",
+		"Gateway signing key used for JWT session signing and session cache encryption key derivation (env: JWT_SESSION_SIGNING_KEY)",
 	)
 	//"redis://redis.mcp-system.svc.cluster.local:6379
 	flag.StringVar(&cacheConnectionStringFlag,
@@ -187,13 +187,13 @@ func main() {
 	}
 
 	var jwtSessionMgr *session.JWTManager
-	if jwtSigningKeyFlag == "" {
+	if gatewaySigningKeyFlag == "" {
 		panic("JWT_SESSION_SIGNING_KEY is required but not set. " +
 			"When running via the controller, this is managed automatically. " +
 			"For standalone use, set the JWT_SESSION_SIGNING_KEY environment variable.")
 	}
 
-	jwtmgr, err := session.NewJWTManager(jwtSigningKeyFlag, sessionDurationInMins, logger, sessionCache)
+	jwtmgr, err := session.NewJWTManager(gatewaySigningKeyFlag, sessionDurationInMins, logger, sessionCache)
 	if err != nil {
 		panic("failed to setup jwt manager " + err.Error())
 	}
