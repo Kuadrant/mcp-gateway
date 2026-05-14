@@ -64,11 +64,8 @@ jobs:
 
       - name: Deploy Local Environment
         run: |
-          # Ensure we use the right cluster name
           export KIND_CLUSTER_NAME=${{ env.KIND_CLUSTER_NAME }}
-          
-          # Run setup
-          make local-env-setup
+          make local-env-setup KUSTOMIZE_OVERLAY=config/mcp-gateway/overlays/ci-full IMAGE_TAG=latest
 
       - name: Wait for Gateway Readiness
         run: |
