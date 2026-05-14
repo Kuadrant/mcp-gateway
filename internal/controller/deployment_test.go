@@ -1822,24 +1822,30 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 	}
 
 	var found bool
-	for _, f := range route.Spec.Rules[0].Filters {
-		if f.Type != gatewayv1.HTTPRouteFilterRequestHeaderModifier {
-			continue
+	for _, rule := range route.Spec.Rules {
+		for _, f := range rule.Filters {
+			if f.Type != gatewayv1.HTTPRouteFilterRequestHeaderModifier {
+				continue
+			}
+			if f.RequestHeaderModifier == nil {
+				continue
+			}
+
+			removed := map[string]bool{}
+			for _, h := range f.RequestHeaderModifier.Remove {
+				removed[h] = true
+			}
+
+			if !removed["mcp-init-host"] {
+				t.Errorf("expected RequestHeaderModifier.Remove to contain mcp-init-host, got %v", f.RequestHeaderModifier.Remove)
+			}
+
+			if !removed["router-key"] {
+				t.Errorf("expected RequestHeaderModifier.Remove to contain router-key, got %v", f.RequestHeaderModifier.Remove)
+			}
+
+			found = true
 		}
-		if f.RequestHeaderModifier == nil {
-			continue
-		}
-		removed := map[string]bool{}
-		for _, h := range f.RequestHeaderModifier.Remove {
-			removed[h] = true
-		}
-		if !removed["mcp-init-host"] {
-			t.Errorf("expected RequestHeaderModifier.Remove to contain mcp-init-host, got %v", f.RequestHeaderModifier.Remove)
-		}
-		if !removed["router-key"] {
-			t.Errorf("expected RequestHeaderModifier.Remove to contain router-key, got %v", f.RequestHeaderModifier.Remove)
-		}
-		found = true
 	}
 	if !found {
 		t.Errorf("expected RequestHeaderModifier filter to be present in HTTPRoute rules")
