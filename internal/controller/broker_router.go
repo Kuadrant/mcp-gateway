@@ -292,7 +292,7 @@ func derivePrivateHost(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *
 	}
 	host := mcpExt.InternalHost(listenerConfig.Port)
 	// listener.Protocol is the Gateway API protocol string, e.g. "HTTPS".
-	if listenerConfig != nil && strings.EqualFold(listenerConfig.Protocol, "HTTPS") {
+	if strings.EqualFold(listenerConfig.Protocol, "HTTPS") {
 		return "https://" + host
 	}
 	return host
