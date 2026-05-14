@@ -62,7 +62,7 @@ func NewRouterErrorf(code int32, format string, args ...any) *RouterError {
 const (
 	methodToolCall    = "tools/call"
 	methodInitialize  = "initialize"
-	methodInitialized = "notification/initialized"
+	methodInitialized = "notifications/initialized"
 
 	elicitationResultAction  = "action"
 	elicitationActionAccept  = "accept"
@@ -128,7 +128,7 @@ func (mr *MCPRequest) isToolCall() bool {
 
 // isInitializeRequest returns true if the method is initialize or initialized
 func (mr *MCPRequest) isInitializeRequest() bool {
-	return mr.Method == "initialize" || mr.Method == "notifications/initialized"
+	return mr.Method == methodInitialize || mr.Method == methodInitialized
 }
 
 // clientSupportsElicitation checks if an initialize request declares elicitation support
