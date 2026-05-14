@@ -61,6 +61,11 @@ func (w *sseRewriter) Process(ctx context.Context, chunk []byte) []byte {
 func (w *sseRewriter) Flush(ctx context.Context) []byte {
 	remaining := w.buf
 	w.buf = nil
+	if len(remaining) > 0 {
+		if bytes.HasPrefix(bytes.TrimSpace(remaining), dataPrefix) {
+			remaining = w.maybeRewriteElicitation(ctx, remaining)
+		}
+	}
 	for _, id := range w.gatewayIDs {
 		w.idMap.Remove(ctx, id) // tool request + response finished, no need to hold onto the mappings any more
 	}
