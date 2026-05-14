@@ -334,7 +334,8 @@ func TestProcessSpanEnded(t *testing.T) {
 	for _, s := range spans {
 		if s.Name == "mcp-router.process" {
 			found = true
-			require.True(t, s.EndTime.After(s.StartTime), "span should be ended")
+			require.False(t, s.EndTime.IsZero(), "span should have end time set")
+			require.False(t, s.EndTime.Before(s.StartTime), "span end should not precede start (sync tracer may use equal timestamps)")
 		}
 	}
 	require.True(t, found, "expected mcp-router.process span to be recorded")
