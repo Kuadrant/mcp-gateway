@@ -213,9 +213,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 			mcpRequest.Headers = localRequestHeaders.Headers
 			mcpRequest.Streaming = false
-			if span.IsRecording() {
-				span.SetAttributes(spanAttributes(mcpRequest)...)
-			}
+			span.SetAttributes(spanAttributes(mcpRequest)...)
 
 			routeResponses := s.RouteMCPRequest(ctx, mcpRequest)
 			for _, response := range routeResponses {
