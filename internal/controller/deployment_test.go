@@ -647,7 +647,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			var trustedEnv *corev1.EnvVar
 			for i := range container.Env {
 				switch container.Env[i].Name {
-				case "JWT_SESSION_SIGNING_KEY":
+				case "GATEWAY_SIGNING_KEY":
 					jwtEnv = &container.Env[i]
 				case "TRUSTED_HEADER_PUBLIC_KEY":
 					trustedEnv = &container.Env[i]
@@ -655,16 +655,16 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			}
 
 			if jwtEnv == nil {
-				t.Fatal("expected JWT_SESSION_SIGNING_KEY env var to always be present")
+				t.Fatal("expected GATEWAY_SIGNING_KEY env var to always be present")
 			}
 			if jwtEnv.ValueFrom == nil || jwtEnv.ValueFrom.SecretKeyRef == nil {
-				t.Fatal("expected JWT_SESSION_SIGNING_KEY to have secretKeyRef")
+				t.Fatal("expected GATEWAY_SIGNING_KEY to have secretKeyRef")
 			}
 			if jwtEnv.ValueFrom.SecretKeyRef.Name != sessionSigningKeySecretName {
-				t.Errorf("expected JWT secret name %q, got %q", sessionSigningKeySecretName, jwtEnv.ValueFrom.SecretKeyRef.Name)
+				t.Errorf("expected gateway signing key secret name %q, got %q", sessionSigningKeySecretName, jwtEnv.ValueFrom.SecretKeyRef.Name)
 			}
 			if jwtEnv.ValueFrom.SecretKeyRef.Key != sessionSigningKeyDataKey {
-				t.Errorf("expected JWT secret key %q, got %q", sessionSigningKeyDataKey, jwtEnv.ValueFrom.SecretKeyRef.Key)
+				t.Errorf("expected gateway signing key secret key %q, got %q", sessionSigningKeyDataKey, jwtEnv.ValueFrom.SecretKeyRef.Key)
 			}
 
 			if !tt.wantTrustedEnv {
