@@ -69,6 +69,8 @@ MCP_GATEWAY_NAMESPACE ?= mcp-system
 # Usage in recipes: $(call detect-kuadrant-ns) sets $$KUADRANT_NS
 detect-kuadrant-ns = if kubectl get namespace kuadrant-system >/dev/null 2>&1; then KUADRANT_NS=kuadrant-system; else KUADRANT_NS=mcp-system; fi
 
+KUSTOMIZE_OVERLAY ?= config/mcp-gateway/overlays/mcp-system
+
 MCP_GATEWAY_SUBDOMAIN ?= mcp
 MCP_GATEWAY_HOST ?= $(MCP_GATEWAY_SUBDOMAIN).127-0-0-1.sslip.io
 MCP_GATEWAY_NAME ?= mcp-gateway
@@ -242,7 +244,7 @@ configure-redis: deploy-redis ## deploy redis and patch deployment with redis co
 
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
-	kubectl apply -k config/mcp-gateway/overlays/mcp-system/
+	kubectl apply -k $(KUSTOMIZE_OVERLAY)/
 	@echo "Waiting for controller to be ready..."
 	@kubectl wait --for=condition=Available deployment/mcp-gateway-controller -n mcp-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for MCPGatewayExtension to be ready..."
