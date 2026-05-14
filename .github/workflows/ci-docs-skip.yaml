@@ -19,7 +19,6 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
-      - 'evals/**'
       - 'tests/servers/**'
       - '.coderabbit.yaml'
       - '.gitignore'
