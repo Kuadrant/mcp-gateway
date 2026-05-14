@@ -1221,7 +1221,7 @@ func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
 			Name:     "dummy",
 			URL:      "http://localhost:8080/mcp",
 			Prefix:   "s_",
-			Enabled:  true,
+			State:    "Enabled",
 			Hostname: "backend.example.com",
 		},
 	}
@@ -1435,7 +1435,7 @@ func TestHandlePromptGet(t *testing.T) {
 			Name:     "dummy",
 			URL:      "http://localhost:8080/mcp",
 			Prefix:   "s_",
-			Enabled:  true,
+			State:    "Enabled",
 			Hostname: "localhost",
 		},
 	}
