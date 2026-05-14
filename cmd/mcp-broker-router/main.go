@@ -61,7 +61,7 @@ var (
 	mcpRoutePrivateHost            string
 	cacheConnectionStringFlag      string
 	mcpConfigFile                  string
-	gatewaySigningKeyFlag              string
+	gatewaySigningKeyFlag          string
 	sessionDurationInMins          int64
 	brokerWriteTimeoutSecs         int64
 	managerTickerIntervalSecs      int64
