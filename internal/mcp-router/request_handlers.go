@@ -233,7 +233,7 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 	}
 	isInvalid, err := s.JWTManager.Validate(sessionID)
 	if err != nil || isInvalid {
-		return NewRouterError(404, fmt.Errorf("session no longer valid"))
+		return NewRouterError(401, fmt.Errorf("session no longer valid"))
 	}
 	return nil
 }
