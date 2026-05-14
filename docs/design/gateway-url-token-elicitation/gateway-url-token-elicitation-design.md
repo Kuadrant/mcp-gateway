@@ -233,7 +233,7 @@ Per-user credentials are written by the broker and read by the router. The stora
 
 #### Encryption at Rest
 
-When an external cache is configured, credentials are encrypted using AES-GCM before storage. The encryption key is derived from the existing session signing key (`--gateway-signing-key`) using HKDF (HMAC-based Key Derivation Function, [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869)), so no additional configuration is required. HKDF derives a cryptographically strong key using a context-specific salt, ensuring the encryption key is distinct from the signing key even though both originate from the same secret.
+When an external cache is configured, credentials are encrypted using AES-GCM before storage. The encryption key is derived from the existing session signing key (`--mcp-session-signing-key`) using HKDF (HMAC-based Key Derivation Function, [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869)), so no additional configuration is required. HKDF derives a cryptographically strong key using a context-specific salt, ensuring the encryption key is distinct from the signing key even though both originate from the same secret.
 
 Encryption is only applied when using an external cache store as the storage backend — it protects credentials in an external store that may be shared or persisted to disk. For the in-memory backend, encryption adds no value since a process memory dump would reveal the encryption key alongside the ciphertext and to be used to call a backend the token credential has to be in plain text in memory.
 

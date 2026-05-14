@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	sessionSigningKeySecretName = "mcp-gateway-signing-key" //nolint:gosec // not a credential
+	sessionSigningKeySecretName = "mcp-gateway-session-signing-key" //nolint:gosec // not a credential
 	sessionSigningKeyDataKey    = "key"
 	sessionSigningKeyEnvVar     = "GATEWAY_SIGNING_KEY"
 	sessionSigningKeyBytes      = 32 // 256-bit key for HS256
