@@ -161,6 +161,26 @@
 
 - When an MCPVirtualServer resource specifies a subset of prompt names in its `prompts` field, a client using the `X-Mcp-Virtualserver` header should only see the specified prompts in a prompts/list response. A client without the header should still see all prompts.
 
+### [Happy] VirtualServer with no prompts field exposes all prompts
+
+- When an MCPVirtualServer resource omits the `prompts` field, all federated prompts should be returned in a prompts/list response. Tools should still be filtered by the `tools` field. This matches the behavior where omitting a field means "no filtering" rather than "deny all".
+
+### [Happy] prompts/get for nonexistent prompt returns error
+
+- When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return an error.
+
+### [Auth] JWT-filtered prompts/list with Keycloak
+
+- When a client authenticates via Keycloak and sends a prompts/list request, only prompts the user has `prompt:*` roles for should be returned. The `mcp` user in the `accounting` group should see `test1_greet` but not prompts from servers where they have no prompt roles.
+
+### [Auth] prompts/get with auth as first request (hairpin test)
+
+- When a client sends a prompts/get request as the first request to a server (no prior tools/call), the hairpin initialize should pass through the AuthPolicy correctly and return prompt messages.
+
+### [Auth] Combined JWT + VirtualServer prompt filtering
+
+- When a client sends a prompts/list request with both a valid auth token and an x-mcp-virtualserver header, the result should be the intersection of both filters. If the JWT allows `test1_greet` but the VirtualServer only allows `everything_simple-prompt`, the result should be empty.
+
 ### [Happy] Elicitation accept flow
 
 - When a client connects to the gateway with an elicitation handler that accepts requests and provides user information, and calls a tool that triggers an elicitation request, the gateway should broker the elicitation between the upstream server and the client. The tool response should indicate that the user provided the requested information.

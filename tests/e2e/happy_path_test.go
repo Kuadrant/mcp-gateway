@@ -1043,6 +1043,76 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 	})
 
+	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", func() {
+		By("Creating MCPServerRegistration for server1 with prompts")
+		registration := NewMCPServerResourcesWithDefaults("prompt-vs-nofilter", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("nofilt_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying prompts are available")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
+
+		By("Creating an MCPVirtualServer with tools only (no prompts field)")
+		allowedTool := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+		virtualServer := NewMCPVirtualServerBuilder("prompt-nofilter-vs", TestServerNameSpace).
+			WithTools([]string{allowedTool}).Build()
+		testResources = append(testResources, virtualServer)
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+
+		By("Creating a client with X-Mcp-Virtualserver header")
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = virtualServerClient.Close() }()
+
+		By("Verifying all prompts are returned (no prompts field = no filtering)")
+		Eventually(func(g Gomega) {
+			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredPrompts).NotTo(BeNil())
+			expectedPrompt := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+			g.Expect(PromptsListHasPrompt(filteredPrompts, expectedPrompt)).To(BeTrueBecause("all prompts should be exposed when prompts field is omitted"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools ARE filtered by the VirtualServer")
+		Eventually(func(g Gomega) {
+			filteredTools, err := virtualServerClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredTools).NotTo(BeNil())
+			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server")
+			g.Expect(filteredTools.Tools[0].Name).To(Equal(allowedTool))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should return error for prompts/get with nonexistent prompt", func() {
+		By("Creating MCPServerRegistration for server1")
+		registration := NewMCPServerResourcesWithDefaults("prompt-notfound", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("notfound_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Calling GetPrompt with a nonexistent prompt name")
+		_, err := mcpGatewayClient.GetPrompt(ctx, mcp.GetPromptRequest{
+			Params: mcp.GetPromptParams{
+				Name: "nonexistent_prompt_that_does_not_exist",
+			},
+		})
+		Expect(err).To(HaveOccurred(), "prompts/get for nonexistent prompt should return an error")
+	})
+
 	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
 		// server1 has: greet, time, slow, headers, add_tool
 		// server2 has: hello_world, time, headers, auth1234, slow, set_time, pour_chocolate_into_mold

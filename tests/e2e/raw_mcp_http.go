@@ -172,6 +172,71 @@ func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[
 	return resp.StatusCode, callResult.Content, nil
 }
 
+func mcpListPrompts(ctx context.Context, url, sessionID string, headers map[string]string) ([]string, error) {
+	body := `{"jsonrpc":"2.0","id":2,"method":"prompts/list"}`
+	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
+	if err != nil {
+		return nil, fmt.Errorf("prompts/list failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("prompts/list returned status %d (body unreadable: %w)", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("prompts/list returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	result, err := readJSONRPCResult(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var listResult struct {
+		Prompts []struct {
+			Name string `json:"name"`
+		} `json:"prompts"`
+	}
+	if err := json.Unmarshal(result, &listResult); err != nil {
+		return nil, fmt.Errorf("failed to parse prompts/list result: %w: %s", err, string(result))
+	}
+	names := make([]string, len(listResult.Prompts))
+	for i, p := range listResult.Prompts {
+		names[i] = p.Name
+	}
+	return names, nil
+}
+
+func mcpGetPrompt(ctx context.Context, url, sessionID, promptName string, args map[string]string, headers map[string]string) (int, string, error) {
+	params := map[string]any{"name": promptName}
+	if len(args) > 0 {
+		params["arguments"] = args
+	}
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "prompts/get",
+		"params":  params,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to marshal prompts/get: %w", err)
+	}
+
+	resp, err := mcpPost(ctx, url, sessionID, body, headers)
+	if err != nil {
+		return 0, "", fmt.Errorf("prompts/get failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", fmt.Errorf("reading prompts/get response: %w", err)
+	}
+	return resp.StatusCode, string(respBody), nil
+}
+
 func mcpRawPost(ctx context.Context, url, sessionID string, body []byte, headers map[string]string) (int, string, http.Header, error) {
 	resp, err := mcpPost(ctx, url, sessionID, body, headers)
 	if err != nil {

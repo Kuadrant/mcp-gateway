@@ -167,4 +167,74 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(callErr).To(HaveOccurred())
 		Expect(status).NotTo(Equal(http.StatusOK), "unauthorised tool call must not succeed")
 	})
+
+	It("[Auth] should filter prompts/list by JWT roles", func() {
+		By("Obtaining a token and initialising a session")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		headers := map[string]string{"Authorization": "Bearer " + token}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Listing prompts — accounting has prompt:greet on test-server1")
+		var prompts []string
+		Eventually(func(g Gomega) {
+			var listErr error
+			prompts, listErr = mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			g.Expect(listErr).NotTo(HaveOccurred())
+			g.Expect(prompts).NotTo(BeEmpty())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		Expect(prompts).To(ContainElement("test1_greet"), "accounting has prompt:greet for test-server1")
+	})
+
+	It("[Auth] should allow prompts/get with auth as first request to a server", func() {
+		By("Obtaining a token and initialising a session")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		headers := map[string]string{"Authorization": "Bearer " + token}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Calling prompts/get for test1_greet without any prior tool call (triggers hairpin init)")
+		status, respBody, err := mcpGetPrompt(ctx, authGatewayURL, sessionID, "test1_greet", map[string]string{"name": "reviewer"}, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(respBody).To(ContainSubstring("Say hi to reviewer"))
+	})
+
+	It("[Auth] should return empty prompts for combined JWT + VirtualServer with no intersection", func() {
+		By("Creating a VirtualServer that allows only an everything-server prompt (user has no role for)")
+		virtualServer := NewMCPVirtualServerBuilder("auth-prompt-combined-vs", TestServerNameSpace).
+			WithTools([]string{"test1_greet"}).
+			WithPrompts([]string{"everything_simple-prompt"}).Build()
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+		defer func() {
+			CleanupResource(ctx, k8sClient, virtualServer)
+		}()
+
+		By("Obtaining a token and initialising a session")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		headers := map[string]string{
+			"Authorization":       "Bearer " + token,
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Listing prompts — JWT allows test1_greet, VirtualServer allows everything_simple-prompt, intersection is empty")
+		Eventually(func(g Gomega) {
+			prompts, listErr := mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			g.Expect(listErr).NotTo(HaveOccurred())
+			g.Expect(prompts).To(BeEmpty(), "intersection of JWT and VirtualServer should be empty")
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+	})
 })
