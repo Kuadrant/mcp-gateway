@@ -1368,3 +1368,77 @@ func TestMCPManager_manage_PromptsNilServer(t *testing.T) {
 	assert.True(t, status.Ready)
 	assert.Equal(t, 1, status.TotalTools)
 }
+
+func TestMCPManager_manage_DisabledServer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	t.Run("disabled server removes tools and does not connect", func(t *testing.T) {
+		// Start with server enabled so tools get registered
+		mock := newMockMCP("test-server", "test_")
+		mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
+		mock.hasToolsCap = false
+		gateway := newMockToolsAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		// First manage call with server enabled — tools get registered properly
+		manager.manage(context.Background(), eventTypeTimer)
+		assert.Len(t, gateway.tools, 2, "tools should be registered when enabled")
+
+		// Now disable the server
+		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
+
+		// Second manage call — should remove tools
+		manager.manage(context.Background(), eventTypeTimer)
+
+		// Server should not be ready
+		status := manager.GetStatus()
+		assert.False(t, status.Ready)
+		assert.Contains(t, status.Message, "disabled")
+
+		// Tools should be removed from gateway
+		assert.Empty(t, gateway.tools, "gateway tools should be empty when server is disabled")
+
+		// Server should be disconnected
+		assert.False(t, mock.connected.Load(), "server should be disconnected when disabled")
+	})
+
+	t.Run("disabled server with no prior tools sets not ready status", func(t *testing.T) {
+		mock := newMockMCP("test-server", "test_")
+		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
+		gateway := newMockToolsAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		manager.manage(context.Background(), eventTypeTimer)
+
+		status := manager.GetStatus()
+		assert.False(t, status.Ready)
+		assert.Contains(t, status.Message, "disabled")
+		assert.Equal(t, 0, status.TotalTools)
+		assert.Empty(t, gateway.tools)
+	})
+
+	t.Run("re-enabling server reconnects and registers tools", func(t *testing.T) {
+		mock := newMockMCP("test-server", "test_")
+		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
+		mock.tools = []mcp.Tool{validTool("tool1")}
+		mock.hasToolsCap = false
+		gateway := newMockToolsAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		// First call: disabled
+		manager.manage(context.Background(), eventTypeTimer)
+		assert.False(t, manager.GetStatus().Ready)
+		assert.Empty(t, gateway.tools)
+
+		// Re-enable the server
+		mock.cfg.State = string(mcpv1alpha1.ServerStateEnabled)
+
+		// Second call: enabled
+		manager.manage(context.Background(), eventTypeTimer)
+		assert.True(t, manager.GetStatus().Ready)
+		assert.Len(t, gateway.tools, 1)
+	})
+}
