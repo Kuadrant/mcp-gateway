@@ -967,7 +967,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		})
 		Expect(err).NotTo(HaveOccurred())
-		defer virtualServerClient.Close()
+		defer func() { _ = virtualServerClient.Close() }()
 
 		By("Verifying only the allowed prompt is returned via virtual server")
 		Eventually(func(g Gomega) {
