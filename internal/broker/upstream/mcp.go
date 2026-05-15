@@ -184,6 +184,36 @@ func (up *MCPServer) Ping(ctx context.Context) error {
 	return up.client.Ping(ctx)
 }
 
+// SupportsPrompts checks if the upstream server declared prompt capabilities
+func (up *MCPServer) SupportsPrompts() bool {
+	if up.init == nil {
+		return false
+	}
+	return up.init.Capabilities.Prompts != nil
+}
+
+// SupportsPromptsListChanged validates the mcp server supports prompts/list_changed notifications
+func (up *MCPServer) SupportsPromptsListChanged() bool {
+	if up.init == nil {
+		return false
+	}
+	if up.init.Capabilities.Prompts == nil {
+		return false
+	}
+	return up.init.Capabilities.Prompts.ListChanged
+}
+
+// ListPrompts retrieves the list of available prompts from the upstream MCP server
+func (up *MCPServer) ListPrompts(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error) {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+
+	if up.client == nil {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return up.client.ListPrompts(ctx, req)
+}
+
 // ListTools retrieves the list of available tools from the upstream MCP server
 func (up *MCPServer) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
 	up.clientMu.RLock()

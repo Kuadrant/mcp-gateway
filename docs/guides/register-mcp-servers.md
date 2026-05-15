@@ -5,7 +5,7 @@ You must register your MCP servers to be discovered and routed by the MCP Gatewa
 ## Prerequisites
 
 - You installed and configured the MCP Gateway
-- You configured a gateway and `HTTPRoute` for the MCP Gateway
+- Your Gateway has both the `mcp` and `mcps` listeners configured (see [Configure MCP Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md))
 - An MCP server is running in your cluster
 
 ## Procedure
@@ -63,7 +63,7 @@ kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test
 
 ## Step 2: Create an HTTPRoute
 
-Create an `HTTPRoute` that routes to your MCP server:
+Create an `HTTPRoute` that routes to your MCP server. The hostname must match the wildcard on the `mcps` listener of your Gateway (e.g. `*.mcp.local`). This is an internal-only hostname used for routing through the gateway and does not need to be publicly resolvable.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -76,8 +76,9 @@ spec:
   parentRefs:
     - name: mcp-gateway
       namespace: gateway-system
+      sectionName: mcps
   hostnames:
-    - 'my-mcp-server.mcp.local'  # Internal routing hostname
+    - 'my-mcp-server.mcp.local'  # must match the mcps listener wildcard
   rules:
     - matches:
         - path:

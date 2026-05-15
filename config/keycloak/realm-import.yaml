@@ -78,6 +78,9 @@ data:
             },
             {
               "name": "tool:time"
+            },
+            {
+              "name": "prompt:greet"
             }
           ],
           "mcp-test/test-server2": [
@@ -199,7 +202,8 @@ data:
           "name": "accounting",
           "clientRoles": {
             "mcp-test/test-server1": [
-              "tool:greet"
+              "tool:greet",
+              "prompt:greet"
             ],
             "mcp-test/test-server2": [
               "tool:headers"

@@ -5,6 +5,7 @@ package e2e
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -36,8 +37,8 @@ func getMCPHTTPClient() *http.Client {
 
 // mcpPost sends a raw HTTP POST to the MCP gateway and returns the response.
 // Caller is responsible for closing the response body.
-func mcpPost(url, sessionID string, body []byte, headers map[string]string) (*http.Response, error) {
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+func mcpPost(ctx context.Context, url, sessionID string, body []byte, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -53,14 +54,14 @@ func mcpPost(url, sessionID string, body []byte, headers map[string]string) (*ht
 }
 
 // mcpInitialize sends an initialize request and returns the session ID from the response header
-func mcpInitialize(url string, headers map[string]string) (string, error) {
+func mcpInitialize(ctx context.Context, url string, headers map[string]string) (string, error) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e-raw","version":"0.0.1"}}}`
-	resp, err := mcpPost(url, "", []byte(body), headers)
+	resp, err := mcpPost(ctx, url, "", []byte(body), headers)
 	if err != nil {
 		return "", fmt.Errorf("initialize request failed: %w", err)
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("initialize returned status %d", resp.StatusCode)
@@ -72,13 +73,13 @@ func mcpInitialize(url string, headers map[string]string) (string, error) {
 	return sessionID, nil
 }
 
-func mcpNotifyInitialized(url, sessionID string, headers map[string]string) error {
+func mcpNotifyInitialized(ctx context.Context, url, sessionID string, headers map[string]string) error {
 	body := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
-	resp, err := mcpPost(url, sessionID, []byte(body), headers)
+	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
 	if err != nil {
 		return fmt.Errorf("notifications/initialized failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading notifications/initialized response: %w", err)
@@ -89,13 +90,13 @@ func mcpNotifyInitialized(url, sessionID string, headers map[string]string) erro
 	return nil
 }
 
-func mcpListTools(url, sessionID string, headers map[string]string) (int, []string, error) {
+func mcpListTools(ctx context.Context, url, sessionID string, headers map[string]string) (int, []string, error) {
 	body := `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
-	resp, err := mcpPost(url, sessionID, []byte(body), headers)
+	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
 	if err != nil {
 		return 0, nil, fmt.Errorf("tools/list failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -125,7 +126,7 @@ func mcpListTools(url, sessionID string, headers map[string]string) (int, []stri
 	return resp.StatusCode, names, nil
 }
 
-func mcpCallTool(url, sessionID, toolName string, args map[string]any, headers map[string]string) (int, []toolContent, error) {
+func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[string]any, headers map[string]string) (int, []toolContent, error) {
 	params := map[string]any{"name": toolName}
 	if len(args) > 0 {
 		params["arguments"] = args
@@ -141,11 +142,11 @@ func mcpCallTool(url, sessionID, toolName string, args map[string]any, headers m
 		return 0, nil, fmt.Errorf("failed to marshal tools/call: %w", err)
 	}
 
-	resp, err := mcpPost(url, sessionID, body, headers)
+	resp, err := mcpPost(ctx, url, sessionID, body, headers)
 	if err != nil {
 		return 0, nil, fmt.Errorf("tools/call failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -169,12 +170,12 @@ func mcpCallTool(url, sessionID, toolName string, args map[string]any, headers m
 	return resp.StatusCode, callResult.Content, nil
 }
 
-func mcpRawPost(url, sessionID string, body []byte, headers map[string]string) (int, string, http.Header, error) {
-	resp, err := mcpPost(url, sessionID, body, headers)
+func mcpRawPost(ctx context.Context, url, sessionID string, body []byte, headers map[string]string) (int, string, http.Header, error) {
+	resp, err := mcpPost(ctx, url, sessionID, body, headers)
 	if err != nil {
 		return 0, "", nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, "", resp.Header, fmt.Errorf("reading response body: %w", err)

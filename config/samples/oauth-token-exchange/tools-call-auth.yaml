@@ -71,10 +71,20 @@ spec:
             - predicate: has(auth.authorization.token.claims.aud) && type(auth.authorization.token.claims.aud) == string && auth.authorization.token.claims.aud == request.headers['x-mcp-servername']
         priority: 1
       'tool-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-toolname')"
         patternMatching:
           patterns:
             - predicate: |
                 ('tool:' + request.headers['x-mcp-toolname']) in (has(auth.authorization.token.claims.resource_access) && auth.authorization.token.claims.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.authorization.token.claims.resource_access[request.headers['x-mcp-servername']].roles : [])
+        priority: 1
+      'prompt-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-promptname')"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('prompt:' + request.headers['x-mcp-promptname']) in (has(auth.authorization.token.claims.resource_access) && auth.authorization.token.claims.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.authorization.token.claims.resource_access[request.headers['x-mcp-servername']].roles : [])
         priority: 1
     response:
       success:

@@ -1333,3 +1333,161 @@ func TestHandleRequestHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPRequest_PromptName(t *testing.T) {
+	testCases := []struct {
+		Name         string
+		Input        *MCPRequest
+		ExpectPrompt string
+	}{
+		{
+			Name: "extracts prompt name from prompts/get",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params: map[string]any{
+					"name": "test_prompt",
+				},
+			},
+			ExpectPrompt: "test_prompt",
+		},
+		{
+			Name: "returns empty for non prompts/get method",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params: map[string]any{
+					"name": "test",
+				},
+			},
+			ExpectPrompt: "",
+		},
+		{
+			Name: "returns empty when no name param",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params:  map[string]any{},
+			},
+			ExpectPrompt: "",
+		},
+		{
+			Name: "returns empty for non-string name",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params: map[string]any{
+					"name": 42,
+				},
+			},
+			ExpectPrompt: "",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			require.Equal(t, tc.ExpectPrompt, tc.Input.PromptName())
+		})
+	}
+}
+
+func TestMCPRequest_isPromptGet(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   string
+		expected bool
+	}{
+		{name: "prompts/get is prompt get", method: "prompts/get", expected: true},
+		{name: "prompts/list is not prompt get", method: "prompts/list", expected: false},
+		{name: "tools/call is not prompt get", method: "tools/call", expected: false},
+		{name: "empty is not prompt get", method: "", expected: false},
+		{name: "PROMPTS/GET uppercase is not prompt get", method: "PROMPTS/GET", expected: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{Method: tc.method}
+			require.Equal(t, tc.expected, req.isPromptGet())
+		})
+	}
+}
+
+func TestHandlePromptGet(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	require.NoError(t, err)
+	require.True(t, sessionAdded)
+
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+		return nil, fmt.Errorf("InitForClient should not be called when session exists")
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			Enabled:  true,
+			Hostname: "localhost",
+		},
+	}
+
+	testBroker := newMockBroker(serverConfigs, map[string]string{})
+	testBroker.(*mockBrokerImpl).prompt2svr = map[string]string{
+		"s_myprompt": "dummy",
+	}
+
+	srv := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers: serverConfigs,
+		},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker:        testBroker,
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "prompts/get",
+		Params: map[string]any{
+			"name": "s_myprompt",
+		},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      "mcp-session-id",
+					RawValue: []byte(validToken),
+				},
+			},
+		},
+	}
+
+	resp := srv.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	require.NotNil(t, rb.RequestBody.Response)
+
+	headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+	require.Equal(t, "x-mcp-method", headers[0].Header.Key)
+	require.Equal(t, []uint8("prompts/get"), headers[0].Header.RawValue)
+	require.Equal(t, "x-mcp-promptname", headers[1].Header.Key)
+	require.Equal(t, []uint8("myprompt"), headers[1].Header.RawValue)
+	require.Equal(t, "x-mcp-servername", headers[2].Header.Key)
+	require.Equal(t, []uint8("dummy"), headers[2].Header.RawValue)
+
+	body := rb.RequestBody.Response.BodyMutation.GetBody()
+	require.Contains(t, string(body), `"name":"myprompt"`)
+	require.NotContains(t, string(body), `"name":"s_myprompt"`)
+}

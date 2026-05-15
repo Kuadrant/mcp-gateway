@@ -78,7 +78,11 @@ spec:
               privateHost:
                 description: |-
                   privateHost overrides the internal host used for hair-pinning requests
-                  back through the gateway. Defaults to <gateway>-istio.<ns>.svc.cluster.local:<port>.
+                  back through the gateway. Defaults to
+                  <gateway>-istio.<ns>.svc.cluster.local:<port>, with an https:// scheme
+                  prefix when the targeted Gateway listener uses the HTTPS protocol. The
+                  value supplied here is honoured verbatim, so an operator can include a
+                  scheme (e.g. "https://my-gw:443") or pin to a different port.
                 type: string
               publicHost:
                 description: |-

@@ -20,9 +20,9 @@ The broker and router handle every MCP request. Allocations in these paths direc
 
 `slog.Info` acquires the handler's write mutex. At thousands of req/s this serialises concurrent callers. Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only.
 
-### Unconditional span attribute writes
+### Expensive argument construction in span calls
 
-`span.SetAttributes(...)` allocates even when tracing is not configured. Guard with `if span.IsRecording()`.
+The OTel SDK already no-ops `SetAttributes` on [non-recording spans](https://github.com/open-telemetry/opentelemetry-go/blob/sdk/v1.43.0/sdk/trace/span.go#L632), so caller-side `IsRecording()` guards are unnecessary. However, arguments are evaluated before the call, so avoid expensive construction (e.g., `fmt.Sprintf`) in span attribute calls on hot paths.
 
 ### Package-level slog
 

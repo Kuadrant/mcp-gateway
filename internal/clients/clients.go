@@ -6,6 +6,7 @@ package clients
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	mcprouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
@@ -13,6 +14,20 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// buildHairpinURL composes the hairpin URL the broker uses to send the internal
+// initialize request back through the gateway. gatewayHost may be either a
+// bare host[:port] (in which case http:// is assumed for backwards
+// compatibility) or a full URL prefix that already carries an http:// or
+// https:// scheme. This is what lets HTTPS-listener hairpins work without
+// silently sending plain HTTP to a TLS-only port (issue #917).
+func buildHairpinURL(gatewayHost, mcpPath string) string {
+	lowerHost := strings.ToLower(gatewayHost)
+	if strings.HasPrefix(lowerHost, "http://") || strings.HasPrefix(lowerHost, "https://") {
+		return gatewayHost + mcpPath
+	}
+	return "http://" + gatewayHost + mcpPath
+}
 
 // Initialize will create a new initialize and initialized request and return the associated http client for connection management
 // This method makes a request back to the gateway setting the target mcp server to initialize. We hairpin through the gateway to ensure any Auth applied to that host is triggered for the call.
@@ -28,7 +43,7 @@ func Initialize(ctx context.Context, gatewayHost, initToken string, conf *config
 		return nil, err
 	}
 
-	url := fmt.Sprintf("http://%s%s", gatewayHost, mcpPath)
+	url := buildHairpinURL(gatewayHost, mcpPath)
 
 	httpClient, err := client.NewStreamableHttpClient(url, transport.WithHTTPHeaders(passThroughHeaders))
 	if err != nil {

@@ -194,16 +194,16 @@ func TestGetServerInfo(t *testing.T) {
 	// Attach phony tools to the upstreams
 	bImpl, ok := b.(*mcpBrokerImpl)
 	require.True(t, ok)
-	bImpl.mcpServers["test1"] = createTestManager(t, "test1", "", []mcp.Tool{
+	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(createTestManager(t, "test1", "", []mcp.Tool{
 		mcp.NewTool("pour_chocolate"),
-	})
-	bImpl.mcpServers["test2"] = createTestManager(t, "test2", "", []mcp.Tool{
+	}))
+	bImpl.mcpServers["test2"] = upstream.NewActiveForTesting(createTestManager(t, "test2", "", []mcp.Tool{
 		mcp.NewTool("restore_from_tape"),
-	})
-	bImpl.mcpServers["test3"] = createTestManager(t, "test3", "t", []mcp.Tool{
+	}))
+	bImpl.mcpServers["test3"] = upstream.NewActiveForTesting(createTestManager(t, "test3", "t", []mcp.Tool{
 		mcp.NewTool("restore_from_tape"),
-	})
-	bImpl.mcpServers["test4"] = createTestManager(t, "test4", "tt", []mcp.Tool{})
+	}))
+	bImpl.mcpServers["test4"] = upstream.NewActiveForTesting(createTestManager(t, "test4", "tt", []mcp.Tool{}))
 
 	svr, err := b.GetServerInfo("pour_chocolate")
 	require.NotNil(t, svr)
@@ -238,7 +238,7 @@ func TestToolAnnotations(t *testing.T) {
 	// Attach phony tools to the upstreams
 	bImpl, ok := b.(*mcpBrokerImpl)
 	require.True(t, ok)
-	bImpl.mcpServers["test1"] = createTestManager(t, "test1", "", []mcp.Tool{
+	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(createTestManager(t, "test1", "", []mcp.Tool{
 		mcp.NewTool("get_status", mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			ReadOnlyHint:   mcp.ToBoolPtr(true),
 			IdempotentHint: mcp.ToBoolPtr(true),
@@ -247,7 +247,7 @@ func TestToolAnnotations(t *testing.T) {
 			ReadOnlyHint:   mcp.ToBoolPtr(false),
 			IdempotentHint: mcp.ToBoolPtr(false),
 		})),
-	})
+	}))
 
 	testCases := []struct {
 		name       string
@@ -317,7 +317,7 @@ func TestIsReady(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				mgr := createTestManager(t, "s1", "", nil)
 				mgr.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
-				b.mcpServers["s1"] = mgr
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(mgr)
 			},
 			expected: false,
 		},
@@ -326,10 +326,10 @@ func TestIsReady(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				m1 := createTestManager(t, "s1", "", nil)
 				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
-				b.mcpServers["s1"] = m1
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
 				m2 := createTestManager(t, "s2", "", nil)
 				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: true})
-				b.mcpServers["s2"] = m2
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
 			},
 			expected: true,
 		},
@@ -338,7 +338,7 @@ func TestIsReady(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				mgr := createTestManager(t, "s1", "", nil)
 				mgr.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: true})
-				b.mcpServers["s1"] = mgr
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(mgr)
 			},
 			expected: true,
 		},

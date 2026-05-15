@@ -5,9 +5,11 @@ version: 2
 run:
   timeout: 10m
   modules-download-mode: readonly
+  build-tags:
+    - e2e
   exclude-files:
     - "zz_generated.*\\.go$"
-    
+
 linters:
   enable:
     - errcheck
@@ -84,6 +86,26 @@ linters:
     - usetesting # reports uses of functions with replacement inside the testing package
     - wastedassign # finds wasted assignment statements
     # - whitespace # detects leading and trailing whitespace
+  exclusions:
+    rules:
+      # Ginkgo/Gomega dot-imports are idiomatic in BDD test code
+      - path: 'tests/e2e/.*\.go$'
+        linters:
+          - revive
+          - staticcheck
+        text: "dot.imports|ST1001"
+      # gosec false-positives in e2e test code: G101 test-only EC signing
+      # key, G109/G115 trusted int conversions in builders, G204 kubectl
+      # shell-outs with controlled inputs, G402 self-signed Kind certs.
+      # Other gosec rules still apply.
+      - path: 'tests/e2e/.*\.go$'
+        linters:
+          - gosec
+        text: "G(101|109|115|204|402):"
+      # Suite-level context for the entire Ginkgo run is intentional.
+      - path: 'tests/e2e/suite_test\.go$'
+        linters:
+          - fatcontext
 
 issues:
   max-issues-per-linter: 0

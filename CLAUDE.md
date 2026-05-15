@@ -15,7 +15,7 @@ MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. 
 - **MCP Gateway Operator**: Kubernetes controller that reconciles MCPGatewayExtension resources and deploys instances of the MCP Router and MCP Broker to form a working MCP Gateway instance
 
 ### Not Implemented
-- Resource/prompt federation (only tools currently)
+- Resource federation (only tools and prompts currently)
 
 # Exploration
 
@@ -192,6 +192,10 @@ Test servers in `config/test-servers/`:
 - **Conformance Server**: Typescript SDK conformance test server
 - **Custom Response Server**: Tests custom response handling
 
+## Concurrency
+
+Before using a mutex to protect memory access, consider whether golang channels are a better solution. Favour the principle of sharing memory by communicating rather than communicating via shared memory.
+
 ## Performance
 
 Broker and router are hot paths. Avoid allocations in per-request code.
@@ -200,7 +204,7 @@ Broker and router are hot paths. Avoid allocations in per-request code.
 - Use `for i := range` not `for _, v := range` on large structs in hot loops
 - Use structured logging (`logger.Info("msg", "key", val)`) not `fmt.Sprintf`
 - Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only
-- Guard span attributes: `if span.IsRecording()` before `span.SetAttributes(...)`
+- Avoid expensive argument construction (e.g., `fmt.Sprintf`) in span attribute calls on hot paths; the OTel SDK already no-ops `SetAttributes` on non-recording spans
 - Use injected `logger`, never package-level `slog.Info`/`slog.Error`
 
 Profiling: pprof on port 6060. See `tests/perf/` for load testing scripts and methodology.

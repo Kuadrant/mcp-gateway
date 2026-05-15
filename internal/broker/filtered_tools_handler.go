@@ -50,9 +50,12 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 
 func (broker *mcpBrokerImpl) removeGatewayMeta(tools []mcp.Tool) []mcp.Tool {
 	broker.logger.Debug("removing gateway specific meta")
-	for _, t := range tools {
-		if t.Meta != nil {
-			delete(t.Meta.AdditionalFields, "kuadrant/id")
+	for i := range tools {
+		if tools[i].Meta != nil {
+			delete(tools[i].Meta.AdditionalFields, "kuadrant/id")
+			if len(tools[i].Meta.AdditionalFields) == 0 {
+				tools[i].Meta = nil
+			}
 		}
 	}
 	return tools
@@ -134,7 +137,7 @@ func (broker *mcpBrokerImpl) parseAuthorizedCapabilitiesJWT(headerValues []strin
 	return capabilities, nil
 }
 
-func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager {
+func (broker *mcpBrokerImpl) findServerByName(name string) upstream.ActiveMCPServer {
 	for _, upstream := range broker.mcpServers {
 		if upstream.MCPName() == name {
 			return upstream
@@ -163,7 +166,7 @@ func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]st
 			broker.logger.Debug("checking access", "tool", tool.Name, "against", toolNames)
 			if slices.Contains(toolNames, tool.Name) {
 				broker.logger.Debug("access granted", "tool", tool.Name)
-				tool.Name = fmt.Sprintf("%s%s", upstream.MCP.GetPrefix(), tool.Name)
+				tool.Name = fmt.Sprintf("%s%s", upstream.Config().Prefix, tool.Name)
 				filtered = append(filtered, tool)
 			}
 		}

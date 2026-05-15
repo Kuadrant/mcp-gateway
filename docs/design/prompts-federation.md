@@ -17,7 +17,7 @@ Add support for federating MCP Prompts through the gateway, following the same p
 ## Non-Goals
 
 - Resource federation — tracked separately in [#788](https://github.com/Kuadrant/mcp-gateway/issues/788)
-- Prompt validation (prompts have no JSON schemas like tools, so `invalidToolPolicy` does not apply)
+- `InvalidPromptPolicy` — prompts have no JSON schemas like tools, so there is no FilterOut/RejectServer policy. Basic validation is applied (empty prompt names, empty argument names) and invalid prompts are always filtered out silently
 
 ## Design
 
@@ -118,13 +118,11 @@ Add `ListPrompts()` and `SupportsPromptsListChanged()` to the `MCP` interface. T
 
 Add a `PromptsAdderDeleter` interface mirroring `ToolsAdderDeleter`. The mcp-go `server.MCPServer` already implements `AddPrompts()`/`DeletePrompts()`, so the broker's listening server satisfies this interface.
 
-> **Note**: mcp-go does **not** expose a public `ListPrompts()` on the server (unlike `ListTools()`). The manager maintains its own prompt maps for lookups.
-
-**Cross-server conflict detection**: For tools, `findToolConflicts()` calls `gatewayServer.ListTools()` to see all tools from all managers and detect name collisions. Since there is no equivalent `ListPrompts()`, the broker instead aggregates prompt maps from all managers and passes them into the conflict checker. This preserves the same safety guarantee — two servers registering the same prefixed prompt name will be detected and rejected, same as tools.
+> **Note**: As of mcp-go v0.53.0, the server exposes a public `ListPrompts()` returning `map[string]*server.ServerPrompt`. The `PromptsAdderDeleter` interface uses this for conflict detection via `findPromptConflicts()`, following the same pattern as `findToolConflicts()` with `ListTools()`.
 
 The manager gets prompt-parallel versions of the existing tool methods: discovery (`getPrompts`), prefixing (`promptToServerPrompt`), diffing (`diffPrompts`), conflict detection (`findPromptConflicts`), and cleanup (`removeAllPrompts`). These follow the same logic as their tool counterparts.
 
-The `manage()` loop is extended to discover prompts after tools, and `registerCallbacks()` adds a handler for `notifications/prompts/list_changed`. Status reporting includes `TotalPrompts`.
+The `manage()` loop is extended to discover prompts after tools. Notifications are funneled through separate `toolEvents` and `promptEvents` channels (buffer of 1 each) into the single-goroutine event loop, ensuring a tool notification cannot block a prompt notification while preserving per-type coalescing. `registerCallbacks()` handles both `notifications/tools/list_changed` and `notifications/prompts/list_changed`. Status reporting includes `TotalPrompts`.
 
 #### Broker (`internal/broker/broker.go`)
 
@@ -277,6 +275,18 @@ Authorino then packages this into the `allowed-capabilities` claim of the `x-mcp
 - **Integration tests**: VirtualServer filtering applies to prompts.
 - **E2E tests**: Register servers with prompts, verify `prompts/list` returns prefixed names, call `prompts/get` and verify response, unregister and verify cleanup. Test with multiple servers to verify cross-server prefix isolation. Test virtual server prompt filtering.
 
+## Implementation Notes
+
+Behavioral decisions made during implementation:
+
+- **Independent discovery**: Tool and prompt discovery run independently in `manage()`. Tool failures (getTools error, RejectServer, conflicts) do not block prompt discovery. Both errors are joined via `errors.Join` in status reporting.
+- **Transient failure handling**: A `getPrompts` or `getTools` listing failure preserves existing capabilities. Capabilities are only removed on connect/ping failure (server unreachable) or graceful shutdown.
+- **Conflict handling**: Both tool and prompt conflicts preserve existing capabilities and set error status, rather than removing all capabilities.
+- **Notification granularity**: `notifications/tools/list_changed` and `notifications/prompts/list_changed` are delivered via separate channels (`toolEvents`, `promptEvents`) with buffer of 1 each, preventing cross-type interference. A tool notification only re-fetches tools, not prompts, and vice versa.
+- **Fetch optimization**: `shouldFetchPrompts` mirrors `shouldFetchTools`. When a server supports `prompts/list_changed`, prompts are not re-fetched on timer ticks if already discovered.
+- **Shared routing**: `HandleToolCall` and `HandlePromptGet` share a `routeToUpstream` method for session lookup, lazy initialization, body marshaling, path resolution, and response building.
+- **Hairpin headers**: During lazy session initialization, `x-mcp-toolname` and `x-mcp-promptname` are only set when non-empty, preventing AuthPolicy rules from firing on irrelevant capability types.
+
 ## References
 
 - [MCP Prompts Specification](https://modelcontextprotocol.io/specification/latest/server/prompts)
@@ -284,3 +294,9 @@ Authorino then packages this into the `allowed-capabilities` claim of the `x-mcp
 - [Issue #787 — Add support for MCP Prompts federation](https://github.com/Kuadrant/mcp-gateway/issues/787)
 - [Issue #208 — Investigate support for Resources and Prompts](https://github.com/Kuadrant/mcp-gateway/issues/208)
 - [Notifications design doc](notifications.md)
+
+## Change Log
+
+- **2026-05-06**: Implementation complete. Used `gatewayServer.ListPrompts()` for conflict detection (available since mcp-go v0.50.0) instead of the aggregation workaround originally described.
+- **2026-05-12**: Added implementation notes documenting behavioral decisions: independent tool/prompt discovery, transient failure handling, conflict preservation, notification granularity, fetch optimization, shared routing, and hairpin header fixes.
+- **2026-05-14**: Upgraded mcp-go to v0.53.0 (`ListPrompts()` now returns pointers). Adapted to manager channel-based event loop refactor (`ActiveMCPServer` interface). Split single `events` channel into separate `toolEvents`/`promptEvents` channels to prevent cross-type notification drops.

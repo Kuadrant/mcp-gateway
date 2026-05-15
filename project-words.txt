@@ -84,7 +84,6 @@ eppb
 erlene
 errcheck
 Errorf
-evals
 evanphx
 EXITVAL
 externalname
@@ -108,7 +107,6 @@ genproto
 getent
 gethostbyname
 getline
-Gevals
 Ginko
 githubcopilot
 gitops
@@ -135,6 +133,8 @@ gotool
 grpcroute
 grpcroutes
 hairpinned
+hairpinning
+heades
 healthz
 Healthz
 hostaliases
@@ -208,7 +208,6 @@ maleck
 manifestskustomizesamples
 mapstructure
 maruel
-mcpchecker
 mcpclient
 mcpgateway
 mcpgatewayextension
@@ -407,3 +406,5 @@ SIEMs
 GHSA
 hrpp
 deadbeefcafebabe
+myprompt
+promptname

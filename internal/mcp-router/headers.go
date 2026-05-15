@@ -10,6 +10,7 @@ const (
 	mcpServerNameHeader   = "x-mcp-servername"
 	toolAnnotationsHeader = "x-mcp-annotation-hints"
 	toolHeader            = "x-mcp-toolname"
+	promptHeader          = "x-mcp-promptname"
 	methodHeader          = "x-mcp-method"
 	sessionHeader         = "mcp-session-id"
 	authorityHeader       = ":authority"
@@ -131,6 +132,17 @@ func (hb *HeadersBuilder) WithToolAnnotations(annotations string) *HeadersBuilde
 		Header: &basepb.HeaderValue{
 			Key:      toolAnnotationsHeader,
 			RawValue: []byte(annotations),
+		},
+	})
+	return hb
+}
+
+// WithMCPPromptName will set the x-mcp-promptname header
+func (hb *HeadersBuilder) WithMCPPromptName(promptName string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      promptHeader,
+			RawValue: []byte(promptName),
 		},
 	})
 	return hb

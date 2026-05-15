@@ -137,6 +137,11 @@ type MCPToolsLister interface {
 	ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
 }
 
+// MCPPromptsLister interface for clients that can list prompts
+type MCPPromptsLister interface {
+	ListPrompts(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error)
+}
+
 // WaitForToolsWithPrefix waits for tools with the given prefix to be present
 func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix string) {
 	Eventually(func(g Gomega) {
@@ -145,6 +150,17 @@ func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix s
 		g.Expect(toolsList).NotTo(BeNil())
 		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeTrue(),
 			"tools with prefix %q should exist", prefix)
+	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+}
+
+// WaitForPromptsWithPrefix waits for prompts with the given prefix to be present
+func WaitForPromptsWithPrefix(ctx context.Context, client MCPPromptsLister, prefix string) {
+	Eventually(func(g Gomega) {
+		promptsList, err := client.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(promptsList).NotTo(BeNil())
+		g.Expect(PromptsListHasPrefix(promptsList, prefix)).To(BeTrue(),
+			"prompts with prefix %q should exist", prefix)
 	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 }
 

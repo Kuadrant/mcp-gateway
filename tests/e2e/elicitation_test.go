@@ -83,7 +83,7 @@ var _ = Describe("Elicitation", func() {
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, gatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer elicitClient.Close()
+		defer func() { _ = elicitClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
@@ -124,7 +124,7 @@ var _ = Describe("Elicitation", func() {
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, gatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer elicitClient.Close()
+		defer func() { _ = elicitClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
@@ -164,7 +164,7 @@ var _ = Describe("Elicitation", func() {
 			standardClient, err = NewMCPGatewayClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer standardClient.Close()
+		defer func() { _ = standardClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible in tools/list")
 		toolFound := false

@@ -9,7 +9,6 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
-      - 'evals/**'
       - '.coderabbit.yaml'
       - '.gitignore'
   push:
@@ -20,7 +19,6 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
-      - 'evals/**'
   workflow_dispatch:
 
 concurrency:
