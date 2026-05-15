@@ -70,21 +70,45 @@ After creating the resource, verify that the MCP Gateway has successfully proces
 
 ```bash
 # Check the status of the registration
-kubectl get mcpserverregistration -n mcp-test
+kubectl get mcpserverregistration internal-api-key-server -n mcp-test
+```
 
+Example output:
+```
+NAME                      AGE   STATUS
+internal-api-key-server   1m    Enabled
+```
+
+```bash
 # Describe the resource to see status conditions
 kubectl describe mcpserverregistration internal-api-key-server -n mcp-test
 ```
 
-The `Status` field should indicate that the server is `Enabled` and that tools have been discovered.
+Example output (under `Status`):
+```yaml
+Status:
+  Conditions:
+    ...
+    Message:               Tools successfully discovered
+    Reason:                Registered
+    Status:                True
+    Type:                  Ready
+```
 
 ## How it Works
 
 1. **Discovery**: The MCP Gateway controller watches for `MCPServerRegistration` resources. When it sees a `credentialRef`, it verifies the Secret exists and has the required label.
 2. **Aggregation**: The controller securely copies the credential into an aggregated secret used by the MCP Gateway components.
-3. **Injection**: 
-   - **Broker**: Uses the credential to authenticate during the tool discovery phase.
-   - **Router**: (Envoy external processor) injects the `Authorization` header into requests sent to the upstream MCP server.
+3. **Injection & Credential Isolation**: 
+   - **Broker**: Uses the credential *only* during tool discovery and authentication with the upstream MCP server.
+   - **Router**: Does **NOT** inject this broker credential during client tool invocation. This establishes a strict security boundary.
+   
+   > [!IMPORTANT]
+   > Because the router does not automatically forward the `credentialRef` credentials, clients invoking tools must either:
+   > - Provide their own `Authorization` headers, or
+   > - Configure an `AuthPolicy` on the `HTTPRoute` for gateway-level token exchange.
+   > 
+   > Without one of these, client tool invocations will receive a `401 Unauthorized` response from the upstream server.
 4. **Security**: Credentials are never exposed in the `MCPServerRegistration` spec or in the gateway logs.
 
 ## Troubleshooting
