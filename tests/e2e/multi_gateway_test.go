@@ -196,8 +196,8 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			e2e1Client *NotifyingMCPClient
 			clientErr  error
 		)
-		Eventually(func(g Gomega) {
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
+		Eventually(func(_ Gomega) {
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ mcp.JSONRPCNotification) {})
 			Expect(clientErr).Error().NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
@@ -210,7 +210,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Closing the MCP client before deleting MCPGatewayExtension")
-		e2e1Client.Close()
+		_ = e2e1Client.Close()
 
 		By("Deleting the MCPGatewayExtension")
 		ext := e2e1Setup.GetExtension()
@@ -254,9 +254,9 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Re-establishing MCP client connection")
-		e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
+		e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ mcp.JSONRPCNotification) {})
 		Expect(clientErr).Error().NotTo(HaveOccurred())
-		defer e2e1Client.Close()
+		defer func() { _ = e2e1Client.Close() }()
 
 		By("Verifying gateway is accessible again")
 		Eventually(func(g Gomega) {
@@ -341,19 +341,19 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var mainGatewayClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			mainGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {})
+			mainGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(_ mcp.JSONRPCNotification) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer mainGatewayClient.Close()
+		defer func() { _ = mainGatewayClient.Close() }()
 
 		By("Connecting to e2e-1 gateway (team B)")
 		var e2e1Client *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ mcp.JSONRPCNotification) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer e2e1Client.Close()
+		defer func() { _ = e2e1Client.Close() }()
 
 		By("Verifying main gateway sees team_a_ tools and NOT team_b_ tools")
 		Eventually(func(g Gomega) {
@@ -538,19 +538,19 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var teamAClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamAClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamAGatewayURL, func(j mcp.JSONRPCNotification) {})
+			teamAClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamAGatewayURL, func(_ mcp.JSONRPCNotification) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer teamAClient.Close()
+		defer func() { _ = teamAClient.Close() }()
 
 		By("Connecting to Team B gateway")
 		var teamBClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamBClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(j mcp.JSONRPCNotification) {})
+			teamBClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(_ mcp.JSONRPCNotification) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer teamBClient.Close()
+		defer func() { _ = teamBClient.Close() }()
 
 		By("Verifying Team A gateway sees only team_a_ tools")
 		Eventually(func(g Gomega) {

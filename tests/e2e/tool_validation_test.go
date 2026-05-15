@@ -25,7 +25,7 @@ var _ = Describe("Tool Schema Validation", func() {
 
 	AfterEach(func() {
 		if mcpGatewayClient != nil {
-			mcpGatewayClient.Close()
+			_ = mcpGatewayClient.Close()
 			mcpGatewayClient = nil
 		}
 		for _, to := range testResources {
