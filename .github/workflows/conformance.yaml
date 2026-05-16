@@ -63,8 +63,8 @@ jobs:
         run: |
           echo "Waiting for Gateway to wire up the MCP routes and broker to fetch tools..."
           for i in {1..30}; do
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.MCP_URL }})
-            if [[ "$HTTP_STATUS" != "000" && "$HTTP_STATUS" != "502" && "$HTTP_STATUS" != "503" ]]; then
+            HTTP_STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" ${{ env.MCP_URL }} || echo "000")
+            if [[ "$HTTP_STATUS" != "000" && "$HTTP_STATUS" != "0" && "$HTTP_STATUS" != "502" && "$HTTP_STATUS" != "503" ]]; then
               echo "Gateway route is active! HTTP Status: $HTTP_STATUS"
               # Extra wait for broker to connect and fetch tools from the conformance server
               sleep 10
