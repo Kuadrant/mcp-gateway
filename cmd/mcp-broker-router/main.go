@@ -66,6 +66,7 @@ var (
 	sessionDurationInMins          int64
 	brokerWriteTimeoutSecs         int64
 	managerTickerIntervalSecs      int64
+	removeToolsGracePeriodSecs     int64
 	loglevel                       int
 	logFormat                      string
 	enforceCapabilityFilteringFlag bool
@@ -135,6 +136,7 @@ func main() {
 	flag.Int64Var(&sessionDurationInMins, "session-length", 60*24, "default session length with the gateway in minutes. Default 24h")
 	flag.Int64Var(&brokerWriteTimeoutSecs, "mcp-broker-write-timeout", 0, "HTTP write timeout in seconds for the broker. Default 0 (disabled) for SSE notification support. Set > 0 to enable timeout.")
 	flag.Int64Var(&managerTickerIntervalSecs, "mcp-check-interval", 60, "interval in seconds for MCP manager backend health checks. Default 60 seconds.")
+	flag.Int64Var(&removeToolsGracePeriodSecs, "remove-tools-grace-period", 60, "grace period in seconds to retain tools after backend checks fail. Default 60 seconds. Set 0 to remove immediately.")
 	flag.BoolVar(&enforceCapabilityFilteringFlag, "enforce-capability-filtering", false, "when enabled an x-mcp-authorized header will be needed to return any capabilities (tools, prompts)")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
@@ -214,10 +216,15 @@ func main() {
 	if managerTickerInterval <= 0 {
 		panic("flag mcp-check-interval cannot be 0 or less seconds")
 	}
+	removeToolsGracePeriod := time.Duration(removeToolsGracePeriodSecs) * time.Second
+	if removeToolsGracePeriod < 0 {
+		panic("flag remove-tools-grace-period cannot be less than 0 seconds")
+	}
 	mcpBroker := broker.NewBroker(logger.With("component", "broker"),
 		broker.WithEnforceCapabilityFilter(enforceCapabilityFilteringFlag),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
+		broker.WithRemoveToolsGracePeriod(removeToolsGracePeriod),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
 	)
 	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)

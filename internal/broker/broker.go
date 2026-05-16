@@ -73,6 +73,9 @@ type mcpBrokerImpl struct {
 	// managerTickerInterval is the interval for MCP manager backend health checks
 	managerTickerInterval time.Duration
 
+	// removeToolsGracePeriod is how long tools are retained after backend checks fail
+	removeToolsGracePeriod time.Duration
+
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
 }
@@ -104,6 +107,13 @@ func WithManagerTickerInterval(interval time.Duration) Option {
 	}
 }
 
+// WithRemoveToolsGracePeriod sets the grace period before removing tools for an unreachable backend
+func WithRemoveToolsGracePeriod(period time.Duration) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.removeToolsGracePeriod = period
+	}
+}
+
 // WithInvalidToolPolicy sets the policy for handling upstream tools with invalid schemas
 func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	return func(mb *mcpBrokerImpl) {
@@ -114,10 +124,11 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
-		mcpServers:            map[config.UpstreamMCPID]*upstream.MCPManager{},
-		logger:                logger,
-		virtualServers:        map[string]*config.VirtualServer{},
-		managerTickerInterval: time.Second * 60,
+		mcpServers:             map[config.UpstreamMCPID]*upstream.MCPManager{},
+		logger:                 logger,
+		virtualServers:         map[string]*config.VirtualServer{},
+		managerTickerInterval:  time.Second * 60,
+		removeToolsGracePeriod: time.Minute,
 	}
 
 	for _, option := range opts {
@@ -193,7 +204,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy, m.removeToolsGracePeriod)
 			m.mcpServers[mcpServer.ID()] = manager
 			go func() {
 				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())

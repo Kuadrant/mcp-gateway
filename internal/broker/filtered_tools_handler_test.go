@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"testing"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
@@ -58,7 +59,7 @@ func createTestManager(t *testing.T, serverName, prefix string, tools []mcp.Tool
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
 	})
-	manager := upstream.NewUpstreamMCPManager(mcpServer, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager := upstream.NewUpstreamMCPManager(mcpServer, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut, time.Minute)
 	// populate tools directly for testing (this requires accessing internal state)
 	manager.SetToolsForTesting(tools)
 	return manager

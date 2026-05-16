@@ -76,7 +76,9 @@ type MCPManager struct {
 	ticker *time.Ticker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
-	gatewayServer  ToolsAdderDeleter
+	// removeToolsGracePeriod is how long tools are retained after backend checks fail
+	removeToolsGracePeriod time.Duration
+	gatewayServer          ToolsAdderDeleter
 	// serverTools is an internal copy that contains the managed MCP's tools with prefixed names. It is these that are externally available via the gateway
 	serverTools []server.ServerTool
 	// tools is the original set from MCP server with no prefix
@@ -91,6 +93,9 @@ type MCPManager struct {
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
 
+	// backendUnavailableSince records the first failed check while tools are retained.
+	backendUnavailableSince time.Time
+
 	stopOnce sync.Once     // ensures Stop() is only executed once
 	done     chan struct{} // triggers the exit of the select and routine
 	status   ServerValidationStatus
@@ -102,22 +107,24 @@ const DefaultTickerInterval = time.Minute * 1
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) *MCPManager {
+// The removeToolsGracePeriod controls how long tools are retained after backend checks fail.
+func NewUpstreamMCPManager(upstream MCP, gatewaySever ToolsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy, removeToolsGracePeriod time.Duration) *MCPManager {
 	if tickerInterval <= 0 {
 		tickerInterval = DefaultTickerInterval
 	}
 
 	return &MCPManager{
-		MCP:               upstream,
-		gatewayServer:     gatewaySever,
-		tickerInterval:    tickerInterval,
-		ticker:            time.NewTicker(tickerInterval),
-		logger:            logger,
-		invalidToolPolicy: policy,
-		done:              make(chan struct{}),
-		toolsMap:          map[string]*mcp.Tool{},
-		servedToolsMap:    map[string]*mcp.Tool{},
-		serverTools:       []server.ServerTool{},
+		MCP:                    upstream,
+		gatewayServer:          gatewaySever,
+		tickerInterval:         tickerInterval,
+		removeToolsGracePeriod: removeToolsGracePeriod,
+		ticker:                 time.NewTicker(tickerInterval),
+		logger:                 logger,
+		invalidToolPolicy:      policy,
+		done:                   make(chan struct{}),
+		toolsMap:               map[string]*mcp.Tool{},
+		servedToolsMap:         map[string]*mcp.Tool{},
+		serverTools:            []server.ServerTool{},
 	}
 }
 
@@ -181,6 +188,27 @@ func (man *MCPManager) registerCallbacks(ctx context.Context) func() {
 	}
 }
 
+func (man *MCPManager) handleBackendUnavailable(err error) {
+	man.toolsLock.RLock()
+	toolCount := len(man.serverTools)
+	man.toolsLock.RUnlock()
+
+	if toolCount > 0 && man.removeToolsGracePeriod > 0 {
+		if man.backendUnavailableSince.IsZero() {
+			man.backendUnavailableSince = time.Now()
+		}
+		if time.Since(man.backendUnavailableSince) < man.removeToolsGracePeriod {
+			err = fmt.Errorf("%w; retaining existing tools during %s backend unavailable grace period", err, man.removeToolsGracePeriod)
+			man.setStatus(err, toolCount, nil)
+			return
+		}
+	}
+
+	err = fmt.Errorf("%w; removing tools", err)
+	man.removeAllTools()
+	man.setStatus(err, 0, nil)
+}
+
 // manage should be the only entry point that triggers changes to tools
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("managing connection", "upstream mcp server", man.MCP.ID(), "event type", event)
@@ -188,26 +216,29 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.MCP.ID())
 	if err := man.MCP.Connect(ctx, man.registerCallbacks(ctx)); err != nil {
-		err = fmt.Errorf("failed to connect to upstream mcp %s removing tools : %w", man.MCP.ID(), err)
-		man.removeAllTools()
+		err = fmt.Errorf("failed to connect to upstream mcp %s: %w", man.MCP.ID(), err)
+		man.handleBackendUnavailable(err)
 		// we call disconnect here as we may have connected but failed to initialize
 		_ = man.MCP.Disconnect()
-		man.setStatus(err, numberOfTools, nil)
 		return
 	}
 	// there may be an active client so we also ping
 	if err := man.MCP.Ping(ctx); err != nil {
 		// if we fail to ping we disconnect to ensure a fresh connection next time around
-		err = fmt.Errorf("upstream mcp failed to ping server %s removing tools : %w", man.MCP.ID(), err)
+		err = fmt.Errorf("upstream mcp failed to ping server %s: %w", man.MCP.ID(), err)
 		man.logger.Error("ping failed", "upstream mcp server", man.MCP.ID(), "error", err)
-		man.removeAllTools()
+		man.handleBackendUnavailable(err)
 		_ = man.MCP.Disconnect()
-		man.setStatus(err, numberOfTools, nil)
 		return
 	}
+	man.backendUnavailableSince = time.Time{}
 
 	if !man.shouldFetchTools(event) {
 		man.logger.Debug("not fetching tools", "event", event, "upstream mcp server", man.MCP.ID(), "waiting for notification", notificationToolsListChanged)
+		man.toolsLock.RLock()
+		toolCount := len(man.serverTools)
+		man.toolsLock.RUnlock()
+		man.setStatus(nil, toolCount, nil)
 		return
 	}
 
