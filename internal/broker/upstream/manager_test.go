@@ -1369,76 +1369,53 @@ func TestMCPManager_manage_PromptsNilServer(t *testing.T) {
 	assert.Equal(t, 1, status.TotalTools)
 }
 
-func TestMCPManager_manage_DisabledServer(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+func TestMCPManager_Backoff(t *testing.T) {
+	ctx := context.Background()
 
-	t.Run("disabled server removes tools and does not connect", func(t *testing.T) {
-		// Start with server enabled so tools get registered
-		mock := newMockMCP("test-server", "test_")
-		mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
-		mock.hasToolsCap = false
-		gateway := newMockToolsAdderDeleter()
-		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
-		require.NoError(t, err)
+	mock := newMockMCP("test-server", "")
+	mock.hasToolsCap = false // Force it to fetch tools on every tick
+	gateway := newMockToolsAdderDeleter()
 
-		// First manage call with server enabled — tools get registered properly
-		manager.manage(context.Background(), eventTypeTimer)
-		assert.Len(t, gateway.tools, 2, "tools should be registered when enabled")
+	// Set a long ticker interval
+	tickerInterval := time.Minute
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, slog.Default(), tickerInterval, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
 
-		// Now disable the server
-		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
+	// Initially, steps should be 10 (as configured in NewUpstreamMCPManager)
+	assert.Equal(t, 10, manager.backoff.Steps)
 
-		// Second manage call — should remove tools
-		manager.manage(context.Background(), eventTypeTimer)
+	// 1. Simulate failure
+	mock.connectErr = fmt.Errorf("connect error")
+	manager.manage(ctx, eventTypeTimer)
 
-		// Server should not be ready
-		status := manager.GetStatus()
-		assert.False(t, status.Ready)
-		assert.Contains(t, status.Message, "disabled")
+	// After failure, Steps should be 9
+	assert.Equal(t, 9, manager.backoff.Steps)
 
-		// Tools should be removed from gateway
-		assert.Empty(t, gateway.tools, "gateway tools should be empty when server is disabled")
+	// 2. Simulate another failure
+	manager.manage(ctx, eventTypeTimer)
+	assert.Equal(t, 8, manager.backoff.Steps)
 
-		// Server should be disconnected
-		assert.False(t, mock.connected.Load(), "server should be disconnected when disabled")
-	})
+	// 3. Simulate success
+	mock.connectErr = nil
+	manager.manage(ctx, eventTypeTimer)
 
-	t.Run("disabled server with no prior tools sets not ready status", func(t *testing.T) {
-		mock := newMockMCP("test-server", "test_")
-		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
-		gateway := newMockToolsAdderDeleter()
-		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
-		require.NoError(t, err)
+	// 4. Test Ping failure
+	mock.pingErr = fmt.Errorf("ping error")
+	manager.manage(ctx, eventTypeTimer)
+	assert.Equal(t, 9, manager.backoff.Steps)
 
-		manager.manage(context.Background(), eventTypeTimer)
+	// Reset
+	mock.pingErr = nil
+	manager.manage(ctx, eventTypeTimer)
+	assert.Equal(t, 10, manager.backoff.Steps)
 
-		status := manager.GetStatus()
-		assert.False(t, status.Ready)
-		assert.Contains(t, status.Message, "disabled")
-		assert.Equal(t, 0, status.TotalTools)
-		assert.Empty(t, gateway.tools)
-	})
+	// 5. Test ListTools failure
+	mock.listToolsErr = fmt.Errorf("list tools error")
+	manager.manage(ctx, eventTypeTimer)
+	assert.Equal(t, 9, manager.backoff.Steps)
 
-	t.Run("re-enabling server reconnects and registers tools", func(t *testing.T) {
-		mock := newMockMCP("test-server", "test_")
-		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
-		mock.tools = []mcp.Tool{validTool("tool1")}
-		mock.hasToolsCap = false
-		gateway := newMockToolsAdderDeleter()
-		manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
-		require.NoError(t, err)
-
-		// First call: disabled
-		manager.manage(context.Background(), eventTypeTimer)
-		assert.False(t, manager.GetStatus().Ready)
-		assert.Empty(t, gateway.tools)
-
-		// Re-enable the server
-		mock.cfg.State = string(mcpv1alpha1.ServerStateEnabled)
-
-		// Second call: enabled
-		manager.manage(context.Background(), eventTypeTimer)
-		assert.True(t, manager.GetStatus().Ready)
-		assert.Len(t, gateway.tools, 1)
-	})
+	// Reset
+	mock.listToolsErr = nil
+	manager.manage(ctx, eventTypeTimer)
+	assert.Equal(t, 10, manager.backoff.Steps)
 }

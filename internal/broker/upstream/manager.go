@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
+
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -107,7 +109,11 @@ type MCPManager struct {
 	ticker *time.Ticker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
-	gatewayServer  ToolsAdderDeleter
+	// backoff is used to calculate the next interval on failure
+	backoff wait.Backoff
+	// baseBackoff stores the initial backoff configuration for resets
+	baseBackoff   wait.Backoff
+	gatewayServer ToolsAdderDeleter
 	// serverTools is an internal copy that contains the managed MCP's tools with prefixed names. It is these that are externally available via the gateway
 	serverTools []server.ServerTool
 	// tools is the original set from MCP server with no prefix
@@ -155,12 +161,22 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		tickerInterval = DefaultTickerInterval
 	}
 
+	bo := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2,
+		Jitter:   0.1,
+		Steps:    10, // effectively unlimited if we cap it
+		Cap:      tickerInterval,
+	}
+
 	return &MCPManager{
 		mcp:               upstream,
 		gatewayServer:     gatewayServer,
 		promptsServer:     promptsServer,
 		tickerInterval:    tickerInterval,
 		ticker:            time.NewTicker(tickerInterval),
+		backoff:           bo,
+		baseBackoff:       bo,
 		logger:            logger,
 		invalidToolPolicy: policy,
 		toolEvents:        make(chan struct{}, 1),
@@ -288,6 +304,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.mcp.ID())
 	if err := man.mcp.Connect(ctx, man.registerCallbacks()); err != nil {
 		err = fmt.Errorf("failed to connect to upstream mcp %s removing tools : %w", man.mcp.ID(), err)
+		man.logger.Error("connection failed", "upstream mcp server", man.mcp.ID(), "error", err)
 		man.removeAllTools()
 		man.removeAllPrompts()
 		// we call disconnect here as we may have connected but failed to initialize
@@ -460,12 +477,25 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
+		man.applyBackoff()
 		return
 	}
 	man.status.TotalTools = toolCount
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
+	man.resetBackoff()
+}
+
+func (man *MCPManager) resetBackoff() {
+	man.backoff = man.baseBackoff
+	man.ticker.Reset(man.tickerInterval)
+}
+
+func (man *MCPManager) applyBackoff() {
+	duration := man.backoff.Step()
+	man.logger.Debug("applying backoff", "duration", duration, "upstream mcp server", man.mcp.ID())
+	man.ticker.Reset(duration)
 }
 
 func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
