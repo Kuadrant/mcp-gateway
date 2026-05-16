@@ -148,13 +148,51 @@
 
 - When an MCPServerRegistration is registered with a backend MCP server that has prompts (e.g., server1 with a "greet" prompt), the gateway should discover and serve those prompts with the server's prefix applied. A prompts/list request should return the prompt with the prefixed name. A prompts/get request using the prefixed prompt name should return the prompt's messages. When the MCPServerRegistration is deleted, the prompt should no longer appear in prompts/list.
 
+
 ### [Happy] Multi-server prompt aggregation
 
 - When multiple MCPServerRegistration resources are created pointing to servers with prompts and different prefixes, a prompts/list request should return prompts from all registered servers, each prefixed with the corresponding server's prefix. For example, two registrations of server1 with prefixes "s1a_" and "s1b_" should produce "s1a_greet" and "s1b_greet" in the prompts list.
 
+
 ### [Happy] MCPVirtualServer filters prompts
 
 - When an MCPVirtualServer resource specifies a subset of prompt names in its `prompts` field, a client using the `X-Mcp-Virtualserver` header should only see the specified prompts in a prompts/list response. A client without the header should still see all prompts.
+
+
+### [Happy] prompts/list returns federated prompts with prefixes
+
+- When a client sends a `prompts/list` request through the gateway, all prompts from registered upstream servers should be returned with their server prefix applied (e.g., `test1_greet`). Prompt metadata should not expose internal `kuadrant/id` fields.
+
+
+### [Happy] prompts/get routes to the correct upstream server
+
+- When a client sends a `prompts/get` request with a prefixed prompt name (e.g., `test1_greet`), the gateway should strip the prefix, route to the correct upstream server, perform lazy session initialization, and return the prompt messages.
+
+
+### [Happy] VirtualServer with no prompts field exposes all prompts
+
+- When a VirtualServer omits the `prompts` field, all federated prompts should be returned (same behavior as tools).
+
+
+### [Happy] prompts/get for nonexistent prompt returns error
+
+- When a client sends a `prompts/get` request with a prompt name that doesn't match any registered server, the gateway should return a JSON-RPC error with code `-32602`.
+
+
+### [Auth] JWT-filtered prompts/list with Keycloak
+
+- When a client authenticates via Keycloak and sends a `prompts/list` request, only prompts the user has `prompt:*` roles for should be returned. The `mcp` user in the `accounting` group should see `test1_greet` but not everything-server prompts.
+
+
+### [Auth] prompts/get with auth as first request (hairpin test)
+
+- When a client sends a `prompts/get` request as the first request to a server (no prior `tools/call`), the hairpin initialize should pass through the AuthPolicy correctly and return prompt messages.
+
+
+### [Auth] Combined JWT + VirtualServer prompt filtering
+
+- When a client sends a `prompts/list` request with both a valid auth token and an `x-mcp-virtualserver` header, the result should be the intersection of both filters.
+
 
 ### [Happy] Elicitation accept flow
 
