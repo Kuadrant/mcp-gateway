@@ -62,6 +62,26 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// tokenURLElicitation defines configuration for how URL elicitation tokens are injected into headers.
+	// +optional
+	TokenURLElicitation *TokenURLElicitation `json:"tokenURLElicitation,omitempty"`
+}
+
+// TokenURLElicitation defines configuration for how URL elicitation tokens are injected into headers.
+type TokenURLElicitation struct {
+	// headerName is the name of the HTTP header used to inject the token.
+	// If not specified, defaults to "Authorization".
+	// +optional
+	// +default="Authorization"
+	HeaderName string `json:"headerName,omitempty"`
+
+	// headerValueFormat is the format string used to construct the header value.
+	// The placeholder "{token}" will be replaced with the actual token value.
+	// If not specified, defaults to "Bearer {token}".
+	// +optional
+	// +default="Bearer {token}"
+	HeaderValueFormat string `json:"headerValueFormat,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

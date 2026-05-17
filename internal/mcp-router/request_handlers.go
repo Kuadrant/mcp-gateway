@@ -587,6 +587,32 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	}
 	headers.WithPath(path)
 
+	// Try to extract the elicitation token from the response content.
+	// In MCP, the elicitation response result contains a "content" map, which may contain a "token".
+	var token string
+	if mcpReq.Result != nil {
+		if content, ok := mcpReq.Result["content"].(map[string]any); ok {
+			if t, ok := content["token"].(string); ok {
+				token = t
+			}
+		}
+	}
+
+	if token != "" {
+		headerName := "authorization"
+		headerValueFormat := "Bearer {token}"
+		if mcpServerConfig.TokenURLElicitation != nil {
+			if mcpServerConfig.TokenURLElicitation.HeaderName != "" {
+				headerName = mcpServerConfig.TokenURLElicitation.HeaderName
+			}
+			if mcpServerConfig.TokenURLElicitation.HeaderValueFormat != "" {
+				headerValueFormat = mcpServerConfig.TokenURLElicitation.HeaderValueFormat
+			}
+		}
+		headerValue := strings.ReplaceAll(headerValueFormat, "{token}", token)
+		headers.WithCustomHeader(strings.ToLower(headerName), headerValue)
+	}
+
 	body, err := mcpReq.ToBytes()
 	if err != nil {
 		s.Logger.ErrorContext(ctx, "failed to get bytes for elicitation response", "mcpReqID", mcpReq.ID, "serverName", entry.ServerName)

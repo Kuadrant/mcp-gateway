@@ -80,15 +80,22 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 	return nil, fmt.Errorf("unknown server")
 }
 
+// TokenURLElicitation defines configuration for how URL elicitation tokens are injected into headers.
+type TokenURLElicitation struct {
+	HeaderName        string `json:"headerName"          yaml:"headerName"`
+	HeaderValueFormat string `json:"headerValueFormat"   yaml:"headerValueFormat"`
+}
+
 // MCPServer represents a server
 type MCPServer struct {
-	Name       string      `json:"name"                 yaml:"name"`
-	URL        string      `json:"url"                  yaml:"url"`
-	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
-	Prefix     string      `json:"prefix,omitempty"     yaml:"prefix,omitempty"`
-	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
-	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
-	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Name                string               `json:"name"                          yaml:"name"`
+	URL                 string               `json:"url"                           yaml:"url"`
+	Hostname            string               `json:"hostname,omitempty"            yaml:"hostname,omitempty"`
+	Prefix              string               `json:"prefix,omitempty"              yaml:"prefix,omitempty"`
+	Auth                *AuthConfig          `json:"auth,omitempty"                yaml:"auth,omitempty"`
+	Credential          string               `json:"credential,omitempty"          yaml:"credential,omitempty"`
+	Enabled             bool                 `json:"enabled"                       yaml:"enabled"`
+	TokenURLElicitation *TokenURLElicitation `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -99,10 +106,25 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
 // This means having a different name, prefix, hostname, or credential variable.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
-	return existingConfig.Name != mcpServer.Name ||
+	if existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential {
+		return true
+	}
+
+	if (mcpServer.TokenURLElicitation == nil) != (existingConfig.TokenURLElicitation == nil) {
+		return true
+	}
+
+	if mcpServer.TokenURLElicitation != nil && existingConfig.TokenURLElicitation != nil {
+		if mcpServer.TokenURLElicitation.HeaderName != existingConfig.TokenURLElicitation.HeaderName ||
+			mcpServer.TokenURLElicitation.HeaderValueFormat != existingConfig.TokenURLElicitation.HeaderValueFormat {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Path returns the path part of the mcp url

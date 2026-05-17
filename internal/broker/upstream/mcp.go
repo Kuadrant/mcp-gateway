@@ -42,7 +42,7 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 // GetConfig return the config for the backend mcp server
 func (up *MCPServer) GetConfig() config.MCPServer {
 	// return a copy rather than the original
-	return config.MCPServer{
+	c := config.MCPServer{
 		Name:       up.Name,
 		URL:        up.URL,
 		Prefix:     up.Prefix,
@@ -50,6 +50,13 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
 	}
+	if up.TokenURLElicitation != nil {
+		c.TokenURLElicitation = &config.TokenURLElicitation{
+			HeaderName:        up.TokenURLElicitation.HeaderName,
+			HeaderValueFormat: up.TokenURLElicitation.HeaderValueFormat,
+		}
+	}
+	return c
 }
 
 // ProtocolInfo returns the initialize result with the protocol information stored in it

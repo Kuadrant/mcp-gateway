@@ -256,6 +256,120 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			},
 			expectChanged: false,
 		},
+		{
+			name: "elicitation settings added (nil -> non-nil)",
+			current: &MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			existing: MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: nil,
+			},
+			expectChanged: true,
+		},
+		{
+			name: "elicitation settings removed (non-nil -> nil)",
+			current: &MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: nil,
+			},
+			existing: MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "elicitation header name changed",
+			current: &MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-New-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			existing: MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Old-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "elicitation header value format changed",
+			current: &MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Bearer {token}",
+				},
+			},
+			existing: MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "elicitation settings same (no changes)",
+			current: &MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			existing: MCPServer{
+				Name:       "server1",
+				Prefix:     "s1_",
+				Hostname:   "server1.local",
+				Credential: "CRED_VAR",
+				TokenURLElicitation: &TokenURLElicitation{
+					HeaderName:        "X-Custom-Header",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+			expectChanged: false,
+		},
 	}
 
 	for _, tc := range testCases {

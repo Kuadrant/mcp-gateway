@@ -136,6 +136,24 @@ spec:
                 required:
                 - name
                 type: object
+              tokenURLElicitation:
+                description: tokenURLElicitation defines configuration for how URL
+                  elicitation tokens are injected into headers.
+                properties:
+                  headerName:
+                    default: Authorization
+                    description: |-
+                      headerName is the name of the HTTP header used to inject the token.
+                      If not specified, defaults to "Authorization".
+                    type: string
+                  headerValueFormat:
+                    default: Bearer {token}
+                    description: |-
+                      headerValueFormat is the format string used to construct the header value.
+                      The placeholder "{token}" will be replaced with the actual token value.
+                      If not specified, defaults to "Bearer {token}".
+                    type: string
+                type: object
             required:
             - targetRef
             type: object

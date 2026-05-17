@@ -386,6 +386,13 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		Enabled: true,
 	}
 
+	if mcpsr.Spec.TokenURLElicitation != nil {
+		serverConfig.TokenURLElicitation = &config.TokenURLElicitation{
+			HeaderName:        mcpsr.Spec.TokenURLElicitation.HeaderName,
+			HeaderValueFormat: mcpsr.Spec.TokenURLElicitation.HeaderValueFormat,
+		}
+	}
+
 	// add credential env var if configured
 	if mcpsr.Spec.CredentialRef != nil {
 		secret := &corev1.Secret{}

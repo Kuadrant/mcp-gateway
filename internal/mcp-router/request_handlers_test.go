@@ -833,6 +833,134 @@ func TestHandleElicitationResponse(t *testing.T) {
 		require.False(t, found)
 	})
 
+	t.Run("routes elicitation response with default authorization header injection", func(t *testing.T) {
+		cache, err := session.NewCache()
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		serverConfigs := []*config.MCPServer{
+			{
+				Name:     "weather-server",
+				URL:      "http://weather.mcp.local:8080/mcp",
+				Prefix:   "weather_",
+				Enabled:  true,
+				Hostname: "weather.mcp.local",
+			},
+		}
+
+		elicitationMap := mustNewIDMap(t)
+		gatewayID := mustStoreIDMap(t, elicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
+
+		server := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{
+				Servers: serverConfigs,
+			},
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: elicitationMap,
+			Broker:         newMockBroker(serverConfigs, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      gatewayID,
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept", "content": map[string]any{"token": "my-secret-elicitation-token"}},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.NotNil(t, rb.RequestBody.Response)
+
+		headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		var authHeaderFound bool
+		for _, h := range headers {
+			if h.Header.Key == "authorization" {
+				require.Equal(t, "Bearer my-secret-elicitation-token", string(h.Header.RawValue))
+				authHeaderFound = true
+			}
+		}
+		require.True(t, authHeaderFound, "default authorization header should be set")
+	})
+
+	t.Run("routes elicitation response with custom configured elicitation token header", func(t *testing.T) {
+		cache, err := session.NewCache()
+		require.NoError(t, err)
+
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+
+		validToken := jwtManager.Generate()
+
+		serverConfigs := []*config.MCPServer{
+			{
+				Name:     "weather-server",
+				URL:      "http://weather.mcp.local:8080/mcp",
+				Prefix:   "weather_",
+				Enabled:  true,
+				Hostname: "weather.mcp.local",
+				TokenURLElicitation: &config.TokenURLElicitation{
+					HeaderName:        "X-Custom-Elicitation-Token",
+					HeaderValueFormat: "Token:{token}",
+				},
+			},
+		}
+
+		elicitationMap := mustNewIDMap(t)
+		gatewayID := mustStoreIDMap(t, elicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
+
+		server := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{
+				Servers: serverConfigs,
+			},
+			JWTManager:     jwtManager,
+			Logger:         logger,
+			SessionCache:   cache,
+			ElicitationMap: elicitationMap,
+			Broker:         newMockBroker(serverConfigs, map[string]string{}),
+		}
+
+		data := &MCPRequest{
+			ID:      gatewayID,
+			JSONRPC: "2.0",
+			Result:  map[string]any{"action": "accept", "content": map[string]any{"token": "my-secret-elicitation-token"}},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				},
+			},
+		}
+
+		resp := server.HandleElicitationResponse(context.Background(), data)
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.NotNil(t, rb.RequestBody.Response)
+
+		headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		var customHeaderFound bool
+		for _, h := range headers {
+			if h.Header.Key == "x-custom-elicitation-token" {
+				require.Equal(t, "Token:my-secret-elicitation-token", string(h.Header.RawValue))
+				customHeaderFound = true
+			}
+		}
+		require.True(t, customHeaderFound, "custom elicitation token header should be set")
+	})
+
 	t.Run("rejects unknown gateway ID", func(t *testing.T) {
 		cache, err := session.NewCache()
 		require.NoError(t, err)
