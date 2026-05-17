@@ -119,6 +119,41 @@ func TestOnConfigChange(t *testing.T) {
 	_ = b.Shutdown(context.Background())
 }
 
+func TestOnConfigChange_VirtualServerRemoval(t *testing.T) {
+	b := NewBroker(logger)
+
+	vs1 := &config.VirtualServer{Name: "ns/vs-one", Tools: []string{"tool_a"}}
+	vs2 := &config.VirtualServer{Name: "ns/vs-two", Tools: []string{"tool_b"}}
+
+	// register both virtual servers
+	conf := &config.MCPServersConfig{}
+	conf.VirtualServers = []*config.VirtualServer{vs1, vs2}
+	b.OnConfigChange(context.TODO(), conf)
+
+	_, err := b.GetVirtualSeverByHeader("ns/vs-one")
+	require.NoError(t, err, "vs-one should be present after first config")
+	_, err = b.GetVirtualSeverByHeader("ns/vs-two")
+	require.NoError(t, err, "vs-two should be present after first config")
+
+	// remove vs-one from the config (simulates MCPVirtualServer deletion)
+	conf.VirtualServers = []*config.VirtualServer{vs2}
+	b.OnConfigChange(context.TODO(), conf)
+
+	_, err = b.GetVirtualSeverByHeader("ns/vs-one")
+	require.Error(t, err, "vs-one should be removed after config update")
+
+	remaining, err := b.GetVirtualSeverByHeader("ns/vs-two")
+	require.NoError(t, err, "vs-two should still be present")
+	require.Equal(t, "ns/vs-two", remaining.Name)
+
+	// remove all virtual servers
+	conf.VirtualServers = []*config.VirtualServer{}
+	b.OnConfigChange(context.TODO(), conf)
+
+	_, err = b.GetVirtualSeverByHeader("ns/vs-two")
+	require.Error(t, err, "vs-two should be removed after empty config")
+}
+
 var _ http.ResponseWriter = &simpleResponseWriter{}
 
 type simpleResponseWriter struct {
