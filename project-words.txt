@@ -409,6 +409,7 @@ deadbeefcafebabe
 myprompt
 promptname
 a2aagentregistration
+a2aagentregistrations
 a2aagent
 a2abroker
 agentcard
@@ -418,3 +419,4 @@ federatedcard
 httptest
 skillprefix
 a2aar
+cerr
