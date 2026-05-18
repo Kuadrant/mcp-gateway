@@ -552,7 +552,9 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 			Request: &extProcV3.ProcessingRequest_RequestHeaders{
 				RequestHeaders: &extProcV3.HttpHeaders{
 					Headers: &corev3.HeaderMap{
-						Headers: []*corev3.HeaderValue{},
+						Headers: []*corev3.HeaderValue{
+							{Key: "content-type", RawValue: []byte("application/json")},
+						},
 					},
 				},
 			},

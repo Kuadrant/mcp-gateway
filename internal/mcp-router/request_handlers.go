@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -331,9 +334,7 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 					},
 				},
 			},
-			`
-event: message
-data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not found"}],"isError":true},"jsonrpc":"2.0"}`)
+			buildSSEToolError(mcpReq.ID, "MCP error -32602: Tool not found"))
 		return calculatedResponse.Build()
 	}
 
@@ -369,6 +370,43 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	headers.WithMCPToolName(upstreamToolName)
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
+
+	// token resolution for servers with URL elicitation configured
+	if s.ElicitationEnabled && serverInfo.TokenURLElicitation != nil {
+		elicitInfo, tokenErr := s.resolveUpstreamToken(ctx, mcpReq, serverInfo, headers)
+		if tokenErr != nil {
+			span.RecordError(tokenErr)
+			span.SetStatus(codes.Error, tokenErr.Error())
+			var routerErr *RouterError
+			if errors.As(tokenErr, &routerErr) {
+				span.SetAttributes(attribute.String("error.type", "client_capability"))
+				calculatedResponse.WithImmediateJSONRPCResponse(200,
+					[]*corev3.HeaderValueOption{
+						{
+							Header: &corev3.HeaderValue{
+								Key:   "mcp-session-id",
+								Value: mcpReq.GetSessionID(),
+							},
+						},
+					},
+					buildSSEToolError(mcpReq.ID, tokenErr.Error()))
+			} else {
+				span.SetAttributes(attribute.String("error.type", "token_resolution"))
+				s.Logger.ErrorContext(ctx, "resolveUpstreamToken failed", "error", tokenErr)
+				calculatedResponse.WithImmediateResponse(500, "internal error")
+			}
+			return calculatedResponse.Build()
+		}
+		if elicitInfo != nil {
+			// No stored token. Send request to broker to handle URLElicitation
+			headers.WithMCPServerName("mcpBroker")
+			headers.WithPath("/mcp/elicitation")
+			headers.WithCustomHeader(sharedheaders.ElicitationRequestID, elicitInfo.requestID)
+			headers.WithCustomHeader(sharedheaders.ElicitationID, elicitInfo.elicitationID)
+			calculatedResponse.WithRequestBodyHeadersResponse(headers.Build())
+			return calculatedResponse.Build()
+		}
+	}
 
 	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
 }
@@ -665,6 +703,13 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			}
 			passThroughHeaders["user-agent"] = "mcp-router"
 		}
+		// inject cached user token so the hairpin initialize reaches the backend
+		if s.ElicitationEnabled && mcpServerConfig.TokenURLElicitation != nil {
+			if userToken, ok, _ := s.SessionCache.GetUserToken(ctx, mcpReq.GetSessionID(), mcpServerConfig.Name); ok {
+				passThroughHeaders["authorization"] = userToken
+			}
+		}
+
 		s.Logger.DebugContext(ctx, "initializing target as no mcp-session-id found for client", "server", mcpReq.serverName, "passthrough header count", len(passThroughHeaders))
 
 		// check if the original client declared elicitation support
@@ -787,4 +832,76 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 	// none tool call set headers
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
+}
+
+// elicitationInfo holds the data needed to route an elicitation request to the broker.
+type elicitationInfo struct {
+	requestID     string // JSON-serialized JSON-RPC request ID
+	elicitationID string // unique ID for this elicitation round-trip
+}
+
+// resolveUpstreamToken checks for a cached upstream token and injects it, or signals that
+// URL elicitation is needed. Returns (nil, nil) when a cached token was found and injected
+// into headers. Returns (*elicitationInfo, nil) when elicitation is required. Returns
+// (nil, error) on infrastructure failures.
+func (s *ExtProcServer) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder) (*elicitationInfo, error) {
+	sessionID := mcpReq.GetSessionID()
+
+	token, ok, err := s.SessionCache.GetUserToken(ctx, sessionID, serverInfo.Name)
+	if err != nil {
+		s.Logger.ErrorContext(ctx, "user token cache lookup failed", "error", err)
+		return nil, fmt.Errorf("user token lookup: %w", err)
+	}
+	if ok {
+		s.Logger.DebugContext(ctx, "found cached user token", "server", serverInfo.Name)
+		headers.WithAuth(token)
+		return nil, nil //nolint:nilnil // nil info = token injected, nil error = success
+	}
+
+	authHeader := mcpReq.GetSingleHeaderValue(authorizationHeader)
+	sub, subErr := internaljwt.ExtractSubClaim(authHeader)
+	if subErr != nil {
+		s.Logger.ErrorContext(ctx, "authorization JWT missing sub claim", "error", subErr)
+		return nil, &RouterError{StatusCode: 400, Err: fmt.Errorf("authorization token missing sub claim: %w", subErr)}
+	}
+
+	clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, sessionID)
+	if elErr != nil {
+		s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
+		return nil, fmt.Errorf("client elicitation check: %w", elErr)
+	}
+	if !clientElicitation {
+		return nil, &RouterError{StatusCode: 400, Err: fmt.Errorf("upstream server requires a per-user token but client does not support elicitation")}
+	}
+
+	elicitationID, storeErr := s.TokenElicitationMap.Store(ctx, sessionID, serverInfo.Name, sub)
+	if storeErr != nil {
+		s.Logger.ErrorContext(ctx, "failed to store elicitation entry", "error", storeErr)
+		return nil, fmt.Errorf("elicitation store: %w", storeErr)
+	}
+
+	idBytes, _ := json.Marshal(mcpReq.ID)
+	s.Logger.DebugContext(ctx, "elicitation required", "elicitationID", elicitationID)
+	return &elicitationInfo{requestID: string(idBytes), elicitationID: elicitationID}, nil
+}
+
+// sseJSONRPC writes the SSE envelope and JSON-RPC preamble, then calls
+// writeBody to append the response-specific payload. The caller must NOT
+// write the closing "\n\n" — sseJSONRPC appends it.
+func sseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
+	var b strings.Builder
+	b.WriteString("\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":")
+	idBytes, _ := json.Marshal(requestID)
+	b.Write(idBytes)
+	writeBody(&b)
+	b.WriteString("\n\n")
+	return b.String()
+}
+
+func buildSSEToolError(requestID any, message string) string {
+	return sseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+		b.WriteString(strconv.Quote(message))
+		b.WriteString("}],\"isError\":true}}")
+	})
 }

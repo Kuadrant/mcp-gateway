@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -29,6 +31,9 @@ type SessionCache interface {
 	KeyExists(ctx context.Context, key string) (bool, error)
 	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
+	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
+	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
 }
 
 // InitForClient defines a function for initializing an MCP server for a client.
@@ -38,13 +43,15 @@ type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig      *config.MCPServersConfig
-	JWTManager         *session.JWTManager
-	Logger             *slog.Logger
-	InitForClient      InitForClient
-	SessionCache       SessionCache
-	ElicitationMap     idmap.Map
-	MaxRequestBodySize int
+	RoutingConfig       *config.MCPServersConfig
+	JWTManager          *session.JWTManager
+	Logger              *slog.Logger
+	InitForClient       InitForClient
+	SessionCache        SessionCache
+	ElicitationMap      idmap.Map
+	TokenElicitationMap elicitation.Map
+	MaxRequestBodySize  int
+	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 	// initGroup serializes backend session initialization per (gatewaySessionID, serverName)
@@ -62,6 +69,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	var (
 		localRequestHeaders *extProcV3.HttpHeaders
 		requestID           string
+		requestPath         string
 		endOfStream         = false
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
@@ -97,20 +105,20 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 
 			ctx = extractTraceContext(ctx, localRequestHeaders.Headers)
 			requestID = getSingleValueHeader(localRequestHeaders.Headers, "x-request-id")
-			path := getSingleValueHeader(localRequestHeaders.Headers, ":path")
+			requestPath = getSingleValueHeader(localRequestHeaders.Headers, ":path")
 			method := getSingleValueHeader(localRequestHeaders.Headers, ":method")
 
 			span.End()
 			ctx, span = tracer().Start(ctx, "mcp-router.process", //nolint:spancheck // ended via defer closure
 				trace.WithAttributes(
 					attribute.String("http.method", method),
-					attribute.String("http.path", path),
+					attribute.String("http.path", requestPath),
 					attribute.String("http.request_id", requestID),
 				),
 			)
 
 			responses, _ := s.HandleRequestHeaders(r.RequestHeaders)
-			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", path, "method", method)
+			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", requestPath, "method", method)
 			for _, response := range responses {
 				s.Logger.DebugContext(ctx, "sending header processing instructions to envoy", "response", response)
 				if err := stream.Send(response); err != nil {
@@ -169,6 +177,20 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			if !r.RequestBody.EndOfStream {
 				// intermediate chunk: acknowledge and wait for more data
 				s.Logger.DebugContext(ctx, "received body chunk, waiting for more", "request id", requestID, "buffer_size", len(bodyBuffer))
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
+						return err
+					}
+				}
+				continue
+			}
+
+			// non-JSON requests (e.g. form submissions to /tokens) pass through without JSON-RPC parsing
+			contentType := getSingleValueHeader(localRequestHeaders.Headers, "content-type")
+			if !strings.Contains(strings.ToLower(contentType), "application/json") {
+				s.Logger.DebugContext(ctx, "non-JSON content-type, passing through", "content-type", contentType)
 				resp := responseBuilder.WithDoNothingResponse(false).Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
