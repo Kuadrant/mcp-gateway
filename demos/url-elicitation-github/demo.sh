@@ -211,19 +211,21 @@ Then in Claude Code:
   1. Start a conversation — Claude discovers tools with the
      github_ prefix from the gateway.
 
-  2. Ask Claude to use a GitHub tool, e.g. "use github_get_me".
+  2. Ask Claude to use a GitHub tool, e.g. "use mcp-gateway github_get_me".
 
   3. Claude will prompt you to open a URL in your browser —
      this is the gateway's token page.
 
-  4. Open that URL. You'll see a form asking for your token.
+  4. Open that URL. 
 
-  5. Paste your GitHub PAT and click Submit.
+  5. You will be re-directed to keycloak. Login with mcp mcp (this is authenticating you in the browser)
 
-  6. Claude retries the tool call automatically.
+  6. Paste your GitHub PAT and click Submit.
+
+  7. In claude select re-try
      You should see your GitHub user data in the response.
 
-  7. Subsequent GitHub tool calls succeed immediately using
+  8. Subsequent GitHub tool calls succeed immediately using
      the cached token (no second prompt).
 
 INSTRUCTIONS
