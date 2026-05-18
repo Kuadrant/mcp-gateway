@@ -16,6 +16,7 @@
 - [Authorization](./authorization.md)
 - [URL Elicitation](./url-elicitation.md)
 - [Scaling](./scaling.md)
+- [Tool Discovery](./tool-discovery.md)
 - [Tool Revocation](./tool-revocation.md)
 - [Vault Integration](./vault-integration.md)
 - [Vault Token Exchange](./vault-token-exchange.md)

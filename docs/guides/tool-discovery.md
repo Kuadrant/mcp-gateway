@@ -1,185 +1,212 @@
-# Tool Discovery Walkthrough
+# Tool Discovery
 
-This guide walks through the progressive tool discovery feature using a local Kind cluster. You will deploy the gateway with demo MCP servers, connect an AI agent, and observe how the agent uses `discover_tools` and `select_tools` to find and scope relevant tools instead of receiving the full tool catalog upfront.
+This guide covers configuring progressive tool discovery on the MCP Gateway. Tool discovery lets agents browse and select tools from a lightweight catalogue instead of receiving every tool schema upfront, reducing context window usage and improving tool selection accuracy.
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/engine/install/) or [Podman](https://podman.io/docs/installation) installed and running
-- [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) installed
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
-- [Helm](https://helm.sh/docs/intro/install/) installed
-- An MCP-capable AI agent (e.g., Claude Desktop, Claude Code, or any MCP client)
-- The MCP Gateway repository cloned locally
+- MCP Gateway installed and configured
+- At least one MCPServerRegistration registered with the gateway
+- An MCP client that supports `tools/list` and tool-call operations (e.g., Claude Code, Claude Desktop)
 
-## Step 1: Set up the local environment
+## How It Works
 
-From the repository root, create a Kind cluster with the gateway and test servers:
+When tool discovery is active, new sessions see only two meta-tools:
 
-```bash
-make local-env-setup
-```
+- `discover_tools` -- returns server names, categories, hints, and tool names (no full schemas)
+- `select_tools` -- scopes the session to a chosen subset of tools
 
-This creates a Kind cluster, installs Istio as the Gateway API provider, deploys the MCP Gateway controller and broker, and registers the default test MCP servers.
+After `select_tools`, the gateway sends a `notifications/tools/list_changed` notification. The client's next `tools/list` call returns only the selected tools with full schemas.
 
-Verify the gateway is running:
+The agent drives selection using natural language understanding of the task, not keyword matching. This means an agent asked to "book a restaurant for Saturday" can identify both dining and calendar tools from the catalogue without needing an exact keyword match.
 
-```bash
-kubectl -n mcp-system get deployment mcp-gateway
-```
+## Step 1: Add Discovery Metadata to MCPServerRegistrations
 
-Expected output:
+Add `category` and `hint` fields to your MCPServerRegistration resources. These fields populate the catalogue returned by `discover_tools`.
 
-```
-NAME          READY   UP-TO-DATE   AVAILABLE   AGE
-mcp-gateway   1/1     1            1           ...
-```
+> **Note:** The quality of tool discovery depends directly on the accuracy of these fields. Agents use categories and hints to decide which tools are relevant to a task. Vague or incorrect metadata leads to agents selecting the wrong tools or missing relevant ones entirely. Be specific: prefer "current weather conditions and multi-day forecasts by location" over "weather stuff".
 
-## Step 2: Apply discovery metadata
-
-`make local-env-setup` already builds and deploys all test servers (including the restaurant and messaging servers) and registers them with the base MCPServerRegistrations. To enable discovery metadata (categories and hints), apply the discovery variant:
+Single category:
 
 ```bash
-kubectl apply -f config/samples/mcpserverregistration-discovery.yaml
+kubectl apply -f - <<EOF
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: weather-server
+  namespace: mcp-test
+spec:
+  prefix: weather_
+  category:
+  - "weather"
+  hint: "current conditions and forecasts by location"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: weather-route
+EOF
 ```
 
-Verify the registrations have the expected categories:
+Multiple categories:
 
 ```bash
-kubectl -n mcp-test get mcpserverregistrations
+kubectl apply -f - <<EOF
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: scheduling-server
+  namespace: mcp-test
+spec:
+  prefix: scheduling_
+  category:
+  - "calendar"
+  - "scheduling"
+  - "productivity"
+  hint: "manage calendar events, check availability, book meetings"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: scheduling-route
+EOF
 ```
 
-Expected output shows servers with discovery metadata alongside the base registrations:
+- `category` is a string array. Default: `["uncategorised"]`. Max 3 items, max 128 characters each.
+- `hint` is a short description. Max 256 characters. Give the agent enough context to judge relevance without full schemas.
 
-```
-NAME                PREFIX        TARGET                        PATH   READY   TOOLS   CREDENTIALS   AGE
-restaurant-server   restaurant_   mcp-restaurant-server-route   /mcp   True    5                     ...
-messaging-server    messaging_    mcp-messaging-server-route    /mcp   True    5                     ...
-test-server1        test1_        mcp-server1-route             /mcp   True    5                     ...
-test-server2        test2_        mcp-server2-route             /mcp   True    7                     ...
-test-server3        test3_        mcp-server3-route             /mcp   True    7                     ...
-...
-```
+> **Note:** Accuracy matters. Agents rely on these fields to decide which tools to load. Vague or incorrect metadata defeats the purpose of discovery.
 
-At this point the gateway federates tools from multiple servers. The total tool count exceeds the default discovery threshold of 10, so new sessions will only see the discovery meta-tools.
-
-## Step 3: Connect the gateway to your AI agent
-
-The gateway is accessible at `http://mcp.127-0-0-1.sslip.io:8001/mcp`.
-
-### Claude Code
+Verify the registration:
 
 ```bash
-claude mcp add --transport http -s user mcp-gateway http://mcp.127-0-0-1.sslip.io:8001/mcp
+kubectl get mcpserverregistrations -n mcp-test
 ```
 
-### MCP Inspector (for manual testing)
+## Step 2: Configure the Discovery Threshold
+
+The `--discovery-tool-threshold` flag controls when the gateway hides real tools and shows only meta-tools. It applies after auth and virtual server filtering.
+
+| Threshold value | Behaviour |
+|-|-|
+| `0` (default) | Never hide tools. Meta-tools are available but all tools are also returned in `tools/list`. Agents can optionally use discovery to reduce their working set |
+| Positive value (e.g., `20`) | When the visible tool count exceeds the threshold, `tools/list` returns only meta-tools. Agents must use `discover_tools` and `select_tools` to access real tools |
+
+To set the threshold:
 
 ```bash
-make inspect-gateway
+kubectl -n mcp-system patch deployment mcp-gateway --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--discovery-tool-threshold=20"}]'
 ```
 
-## Step 4: Observe progressive discovery
+> **Note:** This is a command-line flag on the broker-router binary, not an environment variable. Changing it triggers a pod restart.
 
-Send the following prompt to your agent:
+Verify the flag was applied:
 
-> Using the mcp-gateway, I would like to book an Italian restaurant in New York for 4 people on Saturday. After each turn, show me the tools in your context.
+```bash
+kubectl -n mcp-system get deployment mcp-gateway \
+  -o jsonpath='{.spec.template.spec.containers[0].command}' | python3 -m json.tool
+```
 
-### What to expect
+## Step 3: Verify the Agent Flow
 
-**Turn 1 — Initial tool list**
+Once configured, agents follow this flow:
 
-The agent's initial `tools/list` call returns only two tools:
+1. **Discover**: the agent calls `discover_tools`, optionally with a `category` filter, and receives lightweight metadata about available servers and tools.
 
-- `discover_tools` — browse available servers, categories, and tool names
-- `select_tools` — scope the session to specific tools
+2. **Select**: the agent calls `select_tools` with the tool names it needs. The gateway scopes the session and sends `notifications/tools/list_changed`.
 
-No upstream tools are visible. The agent must use the discovery flow.
+3. **Work**: the agent's next `tools/list` returns full schemas for only the selected tools plus the two meta-tools.
 
-**Turn 2 — Discovery**
-
-The agent calls `discover_tools` and receives lightweight metadata about all registered servers:
+Example `discover_tools` response:
 
 ```json
 {
   "servers": [
     {
-      "name": "mcp-test/restaurant-server",
-      "category": "dining reservations",
-      "hint": "search restaurants by cuisine and location, check table availability, make and cancel reservations",
-      "tools": ["restaurant_search_restaurants", "restaurant_get_restaurant_details", "restaurant_check_availability", "restaurant_make_reservation", "restaurant_cancel_reservation"]
-    },
-    {
-      "name": "mcp-test/messaging-server",
-      "category": "communication contacts",
-      "hint": "find contacts, send messages via email/sms/slack, view message history, create messaging groups",
-      "tools": ["messaging_find_contacts", "messaging_get_contact", "messaging_send_message", "messaging_get_messages", "messaging_create_group"]
-    },
-    ...
+      "name": "mcp-test/weather-server",
+      "categories": ["weather"],
+      "hint": "current conditions and forecasts by location",
+      "tools": ["weather_get_forecast", "weather_current_conditions"]
+    }
   ]
 }
 ```
 
-The agent identifies the restaurant tools as relevant and calls `select_tools` with those tool names.
+### Category Filtering
 
-**Turn 3 — Scoped tools**
+The `discover_tools` tool accepts an optional `category` parameter. The match is case-insensitive and checks against any element in the server's category array.
 
-After `select_tools`, the gateway sends a `notifications/tools/list_changed` notification. The agent's next `tools/list` call returns only the selected restaurant tools plus the two meta-tools. The agent now has full schemas for just the tools it needs and proceeds to search restaurants, check availability, and make a reservation.
+Calling `discover_tools` with `{"category": "Calendar"}` matches a server with `category: ["calendar", "scheduling"]`.
 
-### Key observations
+### Re-scoping Mid-conversation
 
-- **Before discovery**: the agent sees 2 tools (meta-tools only)
-- **After select_tools**: the agent sees ~7 tools (5 restaurant + 2 meta-tools) instead of 30+ from all servers
-- **Token savings**: the agent never ingests schemas for messaging, math, greeting, or other irrelevant tools
-- **Re-scoping**: if the conversation shifts (e.g., "now send a confirmation message"), the agent can call `discover_tools` again and `select_tools` with a different set
+If the conversation shifts, the agent calls `select_tools` again with a new set of tool names. The previous scope is replaced entirely.
 
-### Shifting context mid-conversation
+### Resetting to the Full Tool Set
 
-After the restaurant is booked, send a follow-up prompt that requires a different set of tools:
+Calling `select_tools` with an empty list resets the session scope. The next `tools/list` returns all tools (subject to threshold behaviour).
 
-> Great but now I would like to invite my friends. Can show me my contacts so I can message them?
+## Gateway Instructions
 
-The agent recognises that messaging tools are needed. It calls `discover_tools` again, identifies the messaging server, and calls `select_tools` with the messaging tool names. After re-scoping, the agent's tool list changes from the restaurant tools to the messaging tools (plus the two meta-tools). The agent can then look up contacts and send invitations without ever loading the full tool set.
+When discovery is enabled, the gateway includes server-level instructions in the MCP `initialize` response that explain the discovery flow to MCP clients:
 
-## Configuration
+```text
+This is an MCP Gateway that aggregates tools from multiple backend MCP servers
+into a single endpoint. The full tool set may be large.
 
-### Discovery threshold
-
-The `--discovery-tool-threshold` flag (default: 10) controls when progressive discovery activates. When the total number of non-meta tools exceeds this threshold, new sessions only see meta-tools. At or below the threshold, all tools are shown directly.
-
-To change the threshold on a running deployment:
-
-```bash
-kubectl -n mcp-system set env deployment/mcp-gateway -- DISCOVERY_TOOL_THRESHOLD=20
+To avoid loading all tool schemas upfront, use the discovery tools:
+1. Call discover_tools to browse available servers, categories, and tool names
+   (lightweight, no full schemas).
+2. Call select_tools with the tool names relevant to your task. This scopes your
+   session -- subsequent tools/list calls will return only the selected tools
+   with full schemas.
+3. To change scope, call select_tools again with a new set. Pass an empty list
+   to reset to the full tool set.
 ```
 
-Or add the flag to the deployment command args:
+Clients that support the MCP `instructions` field will surface this to the agent automatically.
+
+## Interaction with Auth and Virtual Servers
+
+Discovery respects the existing filtering pipeline. The order is:
+
+1. Auth filtering (JWT-based `x-mcp-authorized` claims)
+2. Virtual server filtering (MCPVirtualServer scoping)
+3. Scope filtering (discovery selection)
+
+Both `discover_tools` and `select_tools` only operate on tools visible after auth and virtual server filtering. An agent cannot discover or select tools it is not authorised to use.
+
+If a virtual server is configured with explicit tool lists, tools outside those lists are not visible regardless of what the agent selects.
+
+## Error Handling
+
+Tool selection is all-or-nothing. If any requested tool is not available (whether it does not exist, is not authorised, or is a meta-tool), `select_tools` returns a generic error:
+
+```json
+{"error": "tool not available"}
+```
+
+The error message is deliberately generic. It does not reveal whether the tool exists, is unauthorised, or was rejected for another reason. This prevents probing for tool names or authorisation boundaries.
+
+## Disabling Discovery
+
+The `--discovery-tools-enabled` flag (default: `true`) controls whether meta-tools are registered. To disable:
 
 ```bash
 kubectl -n mcp-system patch deployment mcp-gateway --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--discovery-tool-threshold=20"}]'
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--discovery-tools-enabled=false"}]'
 ```
 
-Setting the threshold to 0 always requires discovery regardless of tool count.
+> **Note:** This is a command-line flag, not an environment variable. Changing it triggers a pod restart.
 
-### Adding discovery metadata to your servers
+When disabled:
 
-Add `category` and `hint` fields to your MCPServerRegistration resources:
+- `discover_tools` and `select_tools` are not registered as tools
+- All tools are returned directly in `tools/list` (subject to auth and virtual server filtering)
+- Gateway instructions are not included in the `initialize` response
+- If a client attempts to call `discover_tools` or `select_tools`, the request fails with a standard MCP "tool not found" error
 
-```yaml
-apiVersion: mcp.kuadrant.io/v1alpha1
-kind: MCPServerRegistration
-metadata:
-  name: my-server
-  namespace: mcp-test
-spec:
-  toolPrefix: myprefix_
-  category: "my domain"
-  hint: "short description of what tools this server provides"
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: my-server-route
-```
+## Next Steps
 
-- **category**: free-text classification (e.g., "payments", "analytics", "communication"). Servers without a category appear as "uncategorised".
-- **hint**: natural-language summary of the server's tools. Gives the LLM enough context to decide relevance without full schemas.
+- [Register MCP Servers](./register-mcp-servers.md) -- configure MCPServerRegistrations
+- [Virtual MCP Servers](./virtual-mcp-servers.md) -- create curated tool subsets by category
+- [Authorization](./authorization.md) -- configure tool-level access control
+- [Authentication](./authentication.md) -- set up OIDC authentication

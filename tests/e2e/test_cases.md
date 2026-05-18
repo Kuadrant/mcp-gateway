@@ -192,3 +192,79 @@
 ### [Happy,URLElicitation] Server without tokenURLElicitation is unaffected
 
 - When an MCPServerRegistration does NOT have `tokenURLElicitation` configured and the backend does not require auth, tool calls should proceed without any token resolution or -32042 errors, regardless of whether the client declares elicitation capability.
+
+### [Happy] discover_tools returns correct metadata for registered servers
+
+- When an MCPServerRegistration is created with `category` and `hint` fields, calling `discover_tools` should return a server entry containing the correct categories, hint, and prefixed tool names.
+
+### [Happy] discover_tools category filter returns only matching servers (case-insensitive)
+
+- When multiple servers are registered with different categories, calling `discover_tools` with a `category` parameter should return only servers whose category list contains a case-insensitive match. Servers with non-matching categories should be excluded from the response.
+
+### [Happy] discover_tools multi-category server matched by either category value
+
+- When an MCPServerRegistration has multiple categories (e.g. `["dining", "reservations"]`), calling `discover_tools` with either category as the filter should return that server.
+
+### [Happy] discover_tools returns empty servers for non-matching category
+
+- When `discover_tools` is called with a category value that no registered server has, the response should contain no servers matching that category.
+
+### [Happy] discover_tools respects auth filtering
+
+- When a client sends requests with an `X-Mcp-Authorized` JWT that restricts visible tools, `discover_tools` should only return tools that the JWT authorises. Servers with no authorised tools should be excluded entirely.
+
+### [Happy] discover_tools respects MCPVirtualServer scoping
+
+- When a client sends requests with an `X-Mcp-Virtualserver` header, `discover_tools` should only return tools that the MCPVirtualServer allows. Servers with no allowed tools should be excluded.
+
+### [Happy] select_tools scopes subsequent tools/list
+
+- When a client calls `select_tools` with a list of tool names, subsequent `tools/list` requests should return only those tools (plus the discover_tools and select_tools meta-tools).
+
+### [Happy] select_tools returns error for invalid tool name
+
+- When `select_tools` is called with a tool name that does not exist or is not visible, the response should contain a "not available" error.
+
+### [Happy] select_tools all-or-nothing with partial valid list
+
+- When `select_tools` is called with a list containing both valid and invalid tool names, the entire selection should fail. No partial scope should be applied.
+
+### [Happy] select_tools re-scoping replaces previous selection
+
+- When `select_tools` is called twice in the same session, the second selection should completely replace the first. The `tools/list` response should reflect only the most recent selection.
+
+### [Happy] select_tools empty list resets to full tool set
+
+- When `select_tools` is called with an empty tools array, the session scope should be reset to the full tool set. Subsequent `tools/list` should return all tools.
+
+### [Happy] notifications/tools/list_changed delivered after select_tools
+
+- When a client with SSE notification support calls `select_tools`, a `notifications/tools/list_changed` notification should be delivered to that client over the SSE channel.
+
+### [Happy] discovery-tools-enabled=false hides meta-tools
+
+- When the broker is started with `--discovery-tools-enabled=false`, `tools/list` should not include `discover_tools` or `select_tools`. Calling these tools should return an error.
+
+### [Happy] discovery-tool-threshold=0 means never hide
+
+- When the threshold is 0 (default), all real tools should be visible alongside the meta-tools regardless of how many tools are registered.
+
+### [Happy] threshold above: only meta-tools shown
+
+- When the `--discovery-tool-threshold` is set to a value lower than the number of registered tools, `tools/list` should return only the meta-tools. After using `select_tools` to scope down, the selected tools should become visible.
+
+### [Happy] session scope does not leak across sessions
+
+- When one session calls `select_tools` to scope down its tools, another session should still see the full tool set. Session scoping is per-session, not global.
+
+### [Happy] concurrent select_tools calls do not corrupt scope state
+
+- When two concurrent `select_tools` calls are made on the same session, the result should be a consistent single scope (one of the two wins), not a corrupted mixed state.
+
+### [Happy] controller re-reconciles when category/hint updated
+
+- When the `category` or `hint` fields on a live MCPServerRegistration are updated, the controller should re-reconcile and the broker should reflect the new metadata in subsequent `discover_tools` calls. The old category should no longer match.
+
+## Common pitfalls
+
+- MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.
