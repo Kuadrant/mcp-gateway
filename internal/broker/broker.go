@@ -84,6 +84,9 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// elicitationEnabled gates URL elicitation credential collection
+	elicitationEnabled bool
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -117,6 +120,13 @@ func WithManagerTickerInterval(interval time.Duration) Option {
 func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.invalidToolPolicy = policy
+	}
+}
+
+// WithElicitationEnabled enables URL elicitation credential collection
+func WithElicitationEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.elicitationEnabled = enabled
 	}
 }
 

@@ -43,12 +43,13 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 func (up *MCPServer) GetConfig() config.MCPServer {
 	// return a copy rather than the original
 	return config.MCPServer{
-		Name:       up.Name,
-		URL:        up.URL,
-		Prefix:     up.Prefix,
-		Enabled:    up.Enabled,
-		Hostname:   up.Hostname,
-		Credential: up.Credential,
+		Name:                up.Name,
+		URL:                 up.URL,
+		Prefix:              up.Prefix,
+		Enabled:             up.Enabled,
+		Hostname:            up.Hostname,
+		Credential:          up.Credential,
+		TokenURLElicitation: up.TokenURLElicitation,
 	}
 }
 
