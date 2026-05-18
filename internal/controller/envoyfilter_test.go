@@ -267,3 +267,45 @@ func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildEnvoyFilter_AuditConfigPatch(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			Audit: &mcpv1alpha1.AuditConfig{
+				ParameterLogging: mcpv1alpha1.ParameterLoggingEnabled,
+			},
+		},
+	}
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gateway",
+			Namespace: "test-ns",
+		},
+	}
+	listenerConfig := &mcpv1alpha1.ListenerConfig{
+		Port: 8080,
+	}
+
+	ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerConfig)
+	if err != nil {
+		t.Fatalf("buildEnvoyFilter failed: %v", err)
+	}
+
+	if len(ef.Spec.ConfigPatches) != 2 {
+		t.Fatalf("expected 2 config patches, got %d", len(ef.Spec.ConfigPatches))
+	}
+
+	// Verify the second config patch is the access log patch
+	patch := ef.Spec.ConfigPatches[1]
+	if patch.ApplyTo != istiov1alpha3.EnvoyFilter_NETWORK_FILTER {
+		t.Errorf("expected apply to NETWORK_FILTER, got %v", patch.ApplyTo)
+	}
+	if patch.Patch.Operation != istiov1alpha3.EnvoyFilter_Patch_MERGE {
+		t.Errorf("expected operation MERGE, got %v", patch.Patch.Operation)
+	}
+}

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -370,6 +373,34 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
 
+	// Auditing headers integration
+	identityHeadersStr := os.Getenv("MCP_AUDIT_IDENTITY_HEADERS")
+	var identityHeaders []string
+	if identityHeadersStr != "" {
+		for _, h := range strings.Split(identityHeadersStr, ",") {
+			identityHeaders = append(identityHeaders, strings.TrimSpace(h))
+		}
+	} else {
+		identityHeaders = []string{"x-forwarded-email", "x-auth-user"}
+	}
+
+	baggage := mcpReq.GetSingleHeaderValue("baggage")
+	userID, agentID := ResolveCallerIdentity(mcpReq.Headers, baggage, identityHeaders)
+	if userID == "" {
+		userID = "-"
+	}
+	if agentID == "" {
+		agentID = "-"
+	}
+	headers.WithMCPUserID(userID)
+	headers.WithMCPAgentID(agentID)
+
+	toolParams := ExtractToolParams(mcpReq)
+	if toolParams == "" {
+		toolParams = "-"
+	}
+	headers.WithMCPToolParams(toolParams)
+
 	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
 }
 
@@ -525,13 +556,71 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 	}
 	headers.WithPath(path)
 	headers.WithContentLength(len(body))
+
+	identityHeadersStr := os.Getenv("MCP_AUDIT_IDENTITY_HEADERS")
+	var identityHeaders []string
+	if identityHeadersStr != "" {
+		for _, h := range strings.Split(identityHeadersStr, ",") {
+			identityHeaders = append(identityHeaders, strings.TrimSpace(h))
+		}
+	} else {
+		identityHeaders = []string{"x-forwarded-email", "x-auth-user"}
+	}
+
+	var respList []*eppb.ProcessingResponse
 	if mcpReq.Streaming {
 		s.Logger.DebugContext(ctx, "returning streaming response")
 		calculatedResponse.WithStreamingResponse(headers.Build(), body)
-		return calculatedResponse.Build()
+		respList = calculatedResponse.Build()
+	} else {
+		calculatedResponse.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
+		respList = calculatedResponse.Build()
 	}
-	calculatedResponse.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
-	return calculatedResponse.Build()
+
+	populateDynamicMetadata(respList, mcpReq, serverInfo, identityHeaders)
+	return respList
+}
+
+func populateDynamicMetadata(respList []*eppb.ProcessingResponse, mcpReq *MCPRequest, serverInfo *config.MCPServer, identityHeaders []string) {
+	if !mcpReq.isToolCall() {
+		return
+	}
+	upstreamToolName, _ := strings.CutPrefix(mcpReq.ToolName(), serverInfo.Prefix)
+	baggage := mcpReq.GetSingleHeaderValue("baggage")
+	userID, agentID := ResolveCallerIdentity(mcpReq.Headers, baggage, identityHeaders)
+	if userID == "" {
+		userID = "-"
+	}
+	if agentID == "" {
+		agentID = "-"
+	}
+	toolParams := ExtractToolParams(mcpReq)
+	if toolParams == "" {
+		toolParams = "-"
+	}
+
+	metaMap := map[string]any{
+		"method":     mcpReq.Method,
+		"tool":       upstreamToolName,
+		"server":     serverInfo.Name,
+		"session_id": mcpReq.backendSessionID,
+		"user":       userID,
+		"agent":      agentID,
+		"params":     toolParams,
+	}
+
+	metaStruct, err := structpb.NewStruct(map[string]any{
+		"mcp-audit": metaMap,
+	})
+	if err != nil {
+		return
+	}
+
+	for _, resp := range respList {
+		if resp != nil {
+			resp.DynamicMetadata = metaStruct
+		}
+	}
 }
 
 // HandleElicitationResponse routes an elicitation response from the client to the correct backend server

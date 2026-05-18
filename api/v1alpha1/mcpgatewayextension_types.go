@@ -97,6 +97,10 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// audit configures the MCP audit trail via Envoy access logs.
+	// +optional
+	Audit *AuditConfig `json:"audit,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
@@ -266,3 +270,29 @@ type ListenerConfig struct {
 	// http:// or https://.
 	Protocol string `json:"protocol,omitempty"`
 }
+
+// ParameterLoggingPolicy controls whether tool call parameters are included in the audit trail.
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type ParameterLoggingPolicy string
+
+const (
+	ParameterLoggingEnabled  ParameterLoggingPolicy = "Enabled"
+	ParameterLoggingDisabled ParameterLoggingPolicy = "Disabled"
+)
+
+// AuditConfig configures the MCP audit trail via Envoy access logs.
+type AuditConfig struct {
+	// parameterLogging controls whether tool call parameters are included in the audit trail.
+	// Enabled: params.arguments from tools/call requests are logged (truncated to 1KB).
+	// Disabled (default): parameters are not logged.
+	// +optional
+	// +kubebuilder:validation:Enum=Enabled;Disabled
+	// +default="Disabled"
+	ParameterLogging ParameterLoggingPolicy `json:"parameterLogging,omitempty"`
+
+	// identityHeaders specifies header names to check (in order) for caller
+	// identity when baggage user.id is absent.
+	// +optional
+	IdentityHeaders []string `json:"identityHeaders,omitempty"`
+}
+

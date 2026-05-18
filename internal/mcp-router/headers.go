@@ -18,7 +18,12 @@ const (
 	mcpTarget             = "mcp-target"
 	// RoutingKey is an internal header used to authenticate a request from the router
 	RoutingKey = "router-key"
+
+	userIDHeader     = "x-mcp-user-id"
+	agentIDHeader    = "x-mcp-agent-id"
+	toolParamsHeader = "x-mcp-tool-params"
 )
+
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {
@@ -169,3 +174,37 @@ func (hb *HeadersBuilder) WithPath(path string) *HeadersBuilder {
 	})
 	return hb
 }
+
+// WithMCPUserID will set the x-mcp-user-id header
+func (hb *HeadersBuilder) WithMCPUserID(userID string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      userIDHeader,
+			RawValue: []byte(userID),
+		},
+	})
+	return hb
+}
+
+// WithMCPAgentID will set the x-mcp-agent-id header
+func (hb *HeadersBuilder) WithMCPAgentID(agentID string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      agentIDHeader,
+			RawValue: []byte(agentID),
+		},
+	})
+	return hb
+}
+
+// WithMCPToolParams will set the x-mcp-tool-params header
+func (hb *HeadersBuilder) WithMCPToolParams(params string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      toolParamsHeader,
+			RawValue: []byte(params),
+		},
+	})
+	return hb
+}
+

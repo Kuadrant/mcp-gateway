@@ -229,24 +229,45 @@ func TestHandleRequestBody(t *testing.T) {
 	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
 	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
 	require.NotNil(t, rb.RequestBody.Response)
-	require.Len(t, rb.RequestBody.Response.HeaderMutation.SetHeaders, 7)
+	require.Len(t, rb.RequestBody.Response.HeaderMutation.SetHeaders, 10)
 	require.Equal(t, "x-mcp-method", rb.RequestBody.Response.HeaderMutation.SetHeaders[0].Header.Key)
 	require.Equal(t, []uint8("tools/call"), rb.RequestBody.Response.HeaderMutation.SetHeaders[0].Header.RawValue)
 	require.Equal(t, "x-mcp-toolname", rb.RequestBody.Response.HeaderMutation.SetHeaders[1].Header.Key)
 	require.Equal(t, []uint8("mytool"), rb.RequestBody.Response.HeaderMutation.SetHeaders[1].Header.RawValue)
 	require.Equal(t, "x-mcp-servername", rb.RequestBody.Response.HeaderMutation.SetHeaders[2].Header.Key)
 	require.Equal(t, []uint8("dummy"), rb.RequestBody.Response.HeaderMutation.SetHeaders[2].Header.RawValue)
-	require.Equal(t, "mcp-session-id", rb.RequestBody.Response.HeaderMutation.SetHeaders[3].Header.Key)
-	require.Equal(t, []uint8("mock-upstream-session-id"), rb.RequestBody.Response.HeaderMutation.SetHeaders[3].Header.RawValue)
-	require.Equal(t, ":authority", rb.RequestBody.Response.HeaderMutation.SetHeaders[4].Header.Key)
-	require.Equal(t, []uint8("localhost"), rb.RequestBody.Response.HeaderMutation.SetHeaders[4].Header.RawValue)
-	require.Equal(t, ":path", rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.Key)
-	require.Equal(t, []uint8("/mcp"), rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.RawValue)
-	require.Equal(t, "content-length", rb.RequestBody.Response.HeaderMutation.SetHeaders[6].Header.Key)
+	require.Equal(t, "x-mcp-user-id", rb.RequestBody.Response.HeaderMutation.SetHeaders[3].Header.Key)
+	require.Equal(t, []uint8("-"), rb.RequestBody.Response.HeaderMutation.SetHeaders[3].Header.RawValue)
+	require.Equal(t, "x-mcp-agent-id", rb.RequestBody.Response.HeaderMutation.SetHeaders[4].Header.Key)
+	require.Equal(t, []uint8("-"), rb.RequestBody.Response.HeaderMutation.SetHeaders[4].Header.RawValue)
+	require.Equal(t, "x-mcp-tool-params", rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.Key)
+	require.Equal(t, []uint8("-"), rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.RawValue)
+	require.Equal(t, "mcp-session-id", rb.RequestBody.Response.HeaderMutation.SetHeaders[6].Header.Key)
+	require.Equal(t, []uint8("mock-upstream-session-id"), rb.RequestBody.Response.HeaderMutation.SetHeaders[6].Header.RawValue)
+	require.Equal(t, ":authority", rb.RequestBody.Response.HeaderMutation.SetHeaders[7].Header.Key)
+	require.Equal(t, []uint8("localhost"), rb.RequestBody.Response.HeaderMutation.SetHeaders[7].Header.RawValue)
+	require.Equal(t, ":path", rb.RequestBody.Response.HeaderMutation.SetHeaders[8].Header.Key)
+	require.Equal(t, []uint8("/mcp"), rb.RequestBody.Response.HeaderMutation.SetHeaders[8].Header.RawValue)
+	require.Equal(t, "content-length", rb.RequestBody.Response.HeaderMutation.SetHeaders[9].Header.Key)
 
 	require.Equal(t,
 		`{"id":0,"jsonrpc":"2.0","method":"tools/call","params":{"name":"mytool","other":"other"}}`,
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
+
+	// Assert dynamic metadata
+	require.NotNil(t, resp[0].DynamicMetadata)
+	fields := resp[0].DynamicMetadata.Fields
+	require.Contains(t, fields, "mcp-audit")
+	mcpAuditStruct := fields["mcp-audit"].GetStructValue()
+	require.NotNil(t, mcpAuditStruct)
+	mcpAuditFields := mcpAuditStruct.Fields
+	require.Equal(t, "tools/call", mcpAuditFields["method"].GetStringValue())
+	require.Equal(t, "mytool", mcpAuditFields["tool"].GetStringValue())
+	require.Equal(t, "dummy", mcpAuditFields["server"].GetStringValue())
+	require.Equal(t, "mock-upstream-session-id", mcpAuditFields["session_id"].GetStringValue())
+	require.Equal(t, "-", mcpAuditFields["user"].GetStringValue())
+	require.Equal(t, "-", mcpAuditFields["agent"].GetStringValue())
+	require.Equal(t, "-", mcpAuditFields["params"].GetStringValue())
 }
 
 func TestMCPRequest_isNotificationRequest(t *testing.T) {
