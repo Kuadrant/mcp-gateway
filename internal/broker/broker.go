@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	"github.com/Kuadrant/mcp-gateway/internal/broker/authcapture"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -84,6 +85,9 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// perClientNotifMgr manages per-client, per-server backend SSE connections
+	perClientNotifMgr *upstream.PerClientNotificationManager
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -135,15 +139,18 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	hooks := &server.Hooks{}
 
-	// Enhanced session registration to log gateway session assignment
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
-		// Note that AddOnRegisterSession is for GET, not POST, for a session.
-		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+	// Note that AddOnRegisterSession is for GET, not POST, for a session.
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
 		mcpBkr.logger.Debug("gateway client session connected", "gatewaySessionID", session.SessionID())
+		if headers, ok := authcapture.ExtractHeaders(ctx); ok {
+			mcpBkr.perClientNotifMgr.OpenConnections(ctx, session.SessionID(), headers)
+		}
 	})
 
 	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
 		mcpBkr.logger.Debug("gateway client session unregistered", "gatewaySessionID", session.SessionID())
+		mcpBkr.perClientNotifMgr.TeardownSession(session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
@@ -169,6 +176,17 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		server.WithToolCapabilities(true),
 		server.WithPromptCapabilities(true),
 	)
+
+	mcpBkr.perClientNotifMgr = upstream.NewPerClientNotificationManager(
+		mcpBkr.listeningMCPServer,
+		func() map[config.UpstreamMCPID]upstream.ActiveMCPServer {
+			mcpBkr.mcpLock.RLock()
+			defer mcpBkr.mcpLock.RUnlock()
+			return mcpBkr.mcpServers
+		},
+		logger.With("sub-component", "per-client-notif-mgr"),
+	)
+
 	return mcpBkr
 }
 

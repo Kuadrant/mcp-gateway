@@ -17,6 +17,7 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
+	"github.com/Kuadrant/mcp-gateway/internal/broker/authcapture"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -356,7 +357,7 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 
 	mux.HandleFunc("/status", mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
-	mux.Handle("/mcp", streamableHTTPServer)
+	mux.Handle("/mcp", authcapture.InjectHeaders(streamableHTTPServer))
 
 	return httpSrv, streamableHTTPServer
 }
