@@ -16,8 +16,31 @@ reviews:
   assess_linked_issues: true
   related_issues: true
   related_prs: true
-  suggested_labels: false
-  auto_apply_labels: false
+  suggested_labels: true
+  auto_apply_labels: true
+  labeling_instructions:
+    - label: review-effort/small
+      instructions: >
+        Apply when the estimated review effort is 1-2. Typical indicators:
+        single file changed, straightforward logic, config-only, docs-only,
+        or generated code updates.
+    - label: review-effort/medium
+      instructions: >
+        Apply when the estimated review effort is 3. Typical indicators:
+        a few files changed across one subsystem, moderate logic changes,
+        new tests accompanying a small feature.
+    - label: review-effort/large
+      instructions: >
+        Apply when the estimated review effort is 4-5. Typical indicators:
+        many files changed, cross-cutting concerns, complex logic,
+        new components or significant refactors.
+    - label: high-risk
+      instructions: >
+        Apply when changes touch concurrency primitives (mutexes, channels,
+        singleflight), authentication or session management, CRD schema
+        changes, ext_proc request/response handling, or the Envoy routing
+        path. Also apply when the PR modifies security-sensitive code such
+        as JWT handling, credential management, or auth policies.
   suggested_reviewers: false
   auto_assign_reviewers: false
 
