@@ -96,6 +96,13 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.Prefix, mcpServer.Hostname))
 }
 
+func normalizeState(state string) string {
+	if state == "" {
+		return "Enabled"
+	}
+	return state
+}
+
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
 // This means having a different name, prefix, hostname, credential variable, or state.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
@@ -103,7 +110,7 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
 		existingConfig.Credential != mcpServer.Credential ||
-		existingConfig.State != mcpServer.State
+		normalizeState(existingConfig.State) != normalizeState(mcpServer.State)
 }
 
 // Path returns the path part of the mcp url

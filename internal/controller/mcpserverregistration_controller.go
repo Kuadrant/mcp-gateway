@@ -357,7 +357,11 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpG
 	log.Info("server status ", "mcpregistrationname", mcpsr.Name, "status", gatewayServerStatus)
 	// if there is an id that matches then the gateway is registering the mcp
 	if gatewayServerStatus.ID != "" {
-		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, conditionReasonReady, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
+		reason := conditionReasonNotReady
+		if gatewayServerStatus.Ready {
+			reason = conditionReasonReady
+		}
+		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, reason, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
 			log.Error(err, "Failed to update status")
 			return err
 		}
