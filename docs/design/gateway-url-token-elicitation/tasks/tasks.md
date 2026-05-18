@@ -40,7 +40,7 @@ Tasks 1 and 2 are complete on branch `ute-crds-feature-flag` and will merge afte
 Branch: `ute-crds-feature-flag`
 
 **Files:**
-- `cmd/mcp-broker-router/main.go` — add `--enable-url-elicitation` flag (default: true), pass to ExtProcServer and Broker
+- `cmd/mcp-broker-router/main.go` — add `--enable-url-elicitation` flag (default: false), pass to ExtProcServer and Broker
 - `internal/mcp-router/server.go` — add `ElicitationEnabled bool` field to `ExtProcServer`
 - `internal/broker/broker.go` — add `ElicitationEnabled bool` field
 

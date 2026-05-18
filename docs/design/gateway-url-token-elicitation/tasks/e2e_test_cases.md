@@ -7,12 +7,12 @@ tags: Happy,URLElicitation,Security
 
 ### [Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client
 
-- When an MCPServerRegistration is configured with `tokenURLElicitation: {}` and `--enable-elicitation` is true, and a client that declares `elicitation.url` capability during initialize calls a tool on that server without an Authorization header, the gateway should return a URLElicitationRequiredError (-32042) as an SSE response. The error should contain an `elicitations` array with a single entry containing `mode: "url"`, an `elicitationId`, a `url` pointing to the broker's `/credentials` page with the correct server name and elicitation ID as query parameters, and a `message` describing what token is needed.
+- When an MCPServerRegistration is configured with `tokenURLElicitation: {}` and `--enable-url-elicitation` is true, and a client that declares `elicitation.url` capability during initialize calls a tool on that server without an Authorization header, the gateway should return a URLElicitationRequiredError (-32042) as an SSE response. The error should contain an `elicitations` array with a single entry containing `mode: "url"`, an `elicitationId`, a `url` pointing to the broker's `/tokens` page with the correct server name and elicitation ID as query parameters, and a `message` describing what token is needed.
 
 
 ### [Happy,URLElicitation] Token provided via broker page is used for upstream auth
 
-- When a client receives a -32042 error and the user provides a token via the broker's `/credentials` page (POST with the correct elicitation ID and server name), the token should be stored in the session cache. When the client retries the same tool call, the gateway should read the token from cache, set the Authorization header with the token value, and forward the request to the upstream MCP server. The upstream server should receive the token and return a successful tool result.
+- When a client receives a -32042 error and the user provides a token via the broker's `/tokens` page (POST with the correct elicitation ID and server name), the token should be stored in the session cache. When the client retries the same tool call, the gateway should read the token from cache, set the Authorization header with the token value, and forward the request to the upstream MCP server. The upstream server should receive the token and return a successful tool result.
 
 
 ### [Happy,URLElicitation] Full elicitation round-trip with token validation
@@ -27,7 +27,7 @@ tags: Happy,URLElicitation,Security
 
 ### [URLElicitation] Elicitation with external URL returns configured URL
 
-- When an MCPServerRegistration is configured with `tokenURLElicitation: { url: "https://vault.example.com/ui" }`, the -32042 error returned to the client should contain the external URL verbatim instead of the broker's `/credentials` page URL. The gateway should not generate a broker page URL when an external URL is configured.
+- When an MCPServerRegistration is configured with `tokenURLElicitation: { url: "https://vault.example.com/ui" }`, the -32042 error returned to the client should contain the external URL verbatim instead of the broker's `/tokens` page URL. The gateway should not generate a broker page URL when an external URL is configured.
 
 
 ### [Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation
@@ -37,7 +37,7 @@ tags: Happy,URLElicitation,Security
 
 ### [URLElicitation] Non-elicitation-capable client gets standard error on missing token
 
-- When a client does not declare `elicitation.url` capability during initialize, and calls a tool on a server configured with `tokenURLElicitation: {}` without an Authorization header, the gateway should return a standard error (not -32042). The client should not be directed to a credential page.
+- When a client does not declare `elicitation.url` capability during initialize, and calls a tool on a server configured with `tokenURLElicitation: {}` without an Authorization header, the gateway should return a standard error (not -32042). The client should not be directed to a token page.
 
 
 ### [Happy,URLElicitation] Non-elicitation-capable client with Authorization header succeeds
@@ -52,22 +52,22 @@ tags: Happy,URLElicitation,Security
 
 ### [URLElicitation] Elicitation disabled via feature flag has no effect
 
-- When `--enable-elicitation` is false, even if an MCPServerRegistration has `tokenURLElicitation` configured, the gateway should not return -32042 errors and should not check the token cache. Tool calls should behave as if `tokenURLElicitation` is not set. The Authorization header from the client request should be used as-is.
+- When `--enable-url-elicitation` is false (the default), even if an MCPServerRegistration has `tokenURLElicitation` configured, the gateway should not return -32042 errors and should not check the token cache. Tool calls should behave as if `tokenURLElicitation` is not set. The Authorization header from the client request should be used as-is.
 
 
-### [URLElicitation] Broker credential page rejects invalid elicitation ID
+### [URLElicitation] Broker token page rejects invalid elicitation ID
 
-- When a user navigates to the broker's `/credentials` page with an invalid or missing `elicitation_id` parameter, the page should return an error and not store any token. A missing `server` parameter should also result in an error.
-
-
-### [URLElicitation,Security] Broker credential page rejects session mismatch
-
-- When a user submits a token to the broker's `/credentials` page but the session JWT on the request does not match the session ID embedded in the elicitation ID, the broker should reject the request and not store the token. This prevents an attacker from submitting a token into another user's session using a stolen elicitation URL.
+- When a user navigates to the broker's `/tokens` page with an invalid or missing `elicitation_id` parameter, the page should return an error and not store any token. A missing `server` parameter should also result in an error.
 
 
-### [URLElicitation,Security] Credential page rejects mismatched session (phishing prevention)
+### [URLElicitation,Security] Broker token page rejects session mismatch
 
-- When client Alice triggers elicitation and receives a -32042 with an elicitation URL containing her session ID, a direct HTTP request to the broker's `/credentials` POST endpoint with a different `mcp-session-id` header (emulating a different user) should be rejected. The broker should not store the token. This emulates the MCP spec's phishing scenario where an attacker forwards an elicitation URL to a victim — in practice browsers cannot set the custom header on navigation, but the e2e test verifies the broker's server-side session mismatch check.
+- When a user submits a token to the broker's `/tokens` page but the session JWT on the request does not match the session ID embedded in the elicitation ID, the broker should reject the request and not store the token. This prevents an attacker from submitting a token into another user's session using a stolen elicitation URL.
+
+
+### [URLElicitation,Security] Token page rejects mismatched session (phishing prevention)
+
+- When client Alice triggers elicitation and receives a -32042 with an elicitation URL containing her session ID, a direct HTTP request to the broker's `/tokens` POST endpoint with a different `mcp-session-id` header (emulating a different user) should be rejected. The broker should not store the token. This emulates the MCP spec's phishing scenario where an attacker forwards an elicitation URL to a victim — in practice browsers cannot set the custom header on navigation, but the e2e test verifies the broker's server-side session mismatch check.
 
 
 ### [URLElicitation] Expired JWT token treated as cache miss

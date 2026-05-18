@@ -24,8 +24,12 @@ var _ = Describe("URL Elicitation", func() {
 		Expect(SetURLElicitation(SystemNamespace, MCPExtensionName, true)).To(Succeed())
 		Expect(WaitForDeploymentReady(context.Background(), SystemNamespace, "mcp-gateway")).To(Succeed())
 
-		By("Registering api-key-server with tokenURLElicitation and credentialRef")
+		By("Pre-cleaning credential secret from prior runs")
 		cred := BuildCredentialSecret("url-elicit-cred", "test-api-key-secret-token")
+		CleanupResource(ctx, k8sClient, cred)
+
+		By("Registering api-key-server with tokenURLElicitation and credentialRef")
+		cred = BuildCredentialSecret("url-elicit-cred", "test-api-key-secret-token")
 		registration := NewMCPServerResourcesWithDefaults("urlelicit", k8sClient).
 			WithCredential(cred, "token").
 			WithBackendTarget("mcp-api-key-server", 9090).
