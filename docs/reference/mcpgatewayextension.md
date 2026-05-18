@@ -53,10 +53,23 @@
 
 ## AuditConfig
 
+Configuration options for configuring the model context protocol (MCP) audit trail via Envoy access logs.
+
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
-| `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. `Enabled`: `params.arguments` from `tools/call` requests are logged, truncated to 1KB. `Disabled` (default): parameters are not logged |
-| `identityHeaders` | []String | No | Header names to check (in order) for caller identity when W3C Baggage `user.id` is absent. Default: `["x-forwarded-email", "x-auth-user"]` |
+| `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. <br/>- **Allowed Values**: `Enabled`, `Disabled`<br/>- **Default**: `Disabled`<br/>- **Behavior**: When `Enabled`, the arguments (`params.arguments`) from `tools/call` requests are parsed, serialized to JSON, and logged (truncated to a maximum of 1KB to protect log performance and storage). |
+| `identityHeaders` | []String | No | An ordered list of HTTP header names to inspect for the caller's identity when the W3C Baggage `user.id` field is absent or empty. <br/>- **Default**: `["x-forwarded-email", "x-auth-user"]`<br/>- **Behavior**: The gateway checks these headers in the specified order and uses the first non-empty value. |
+
+### Example Schema
+
+```yaml
+audit:
+  parameterLogging: Enabled
+  identityHeaders:
+    - x-forwarded-email
+    - x-auth-user
+    - x-authenticated-userid
+```
 
 ## MCPGatewayExtensionStatus
 
