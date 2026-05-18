@@ -72,7 +72,23 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 	if up.init == nil {
 		return false
 	}
-	return up.init.Capabilities.Tools.ListChanged
+	return up.init.Capabilities.Tools != nil && up.init.Capabilities.Tools.ListChanged
+}
+
+// SupportsLogging reports whether the backend advertises logging capability
+func (up *MCPServer) SupportsLogging() bool {
+	if up.init == nil {
+		return false
+	}
+	return up.init.Capabilities.Logging != nil
+}
+
+// SupportsResourceSubscribe reports whether the backend advertises resource subscription capability
+func (up *MCPServer) SupportsResourceSubscribe() bool {
+	if up.init == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources != nil && up.init.Capabilities.Resources.Subscribe
 }
 
 // Connect establishes a connection to the upstream MCP server. It creates a

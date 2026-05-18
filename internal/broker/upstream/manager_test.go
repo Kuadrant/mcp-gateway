@@ -69,6 +69,10 @@ func (m *MockMCP) SupportsToolsListChanged() bool {
 	return m.hasToolsCap
 }
 
+func (m *MockMCP) SupportsLogging() bool { return false }
+
+func (m *MockMCP) SupportsResourceSubscribe() bool { return false }
+
 func (m *MockMCP) Disconnect() error {
 	m.connected.Store(false)
 	return nil
