@@ -370,6 +370,8 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
 
+	s.setAuditHeaders(mcpReq, headers)
+
 	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
 }
 
@@ -451,6 +453,8 @@ data: {"error":{"code":-32602,"message":"Prompt not found"},"jsonrpc":"2.0"}`)
 	headers.WithMCPPromptName(upstreamPromptName)
 	mcpReq.ReWritePromptName(upstreamPromptName)
 	headers.WithMCPServerName(serverInfo.Name)
+
+	s.setAuditHeaders(mcpReq, headers)
 
 	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
 }
@@ -594,6 +598,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 		return response.Build()
 	}
 
+	s.setAuditHeaders(mcpReq, headers)
 	headers.WithContentLength(len(body))
 	response.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
 
@@ -784,7 +789,7 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
-	// none tool call set headers
+	s.setAuditHeaders(mcpReq, headers)
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
 }

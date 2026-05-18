@@ -34,10 +34,10 @@ The implementation builds on:
 - `internal/mcp-router/audit_test.go` (new)
 
 **Acceptance criteria:**
-- [ ] When `MCP_AUDIT_LOG_PARAMS=true`, extract `params.arguments` from parsed MCP request body
+- [ ] When `MCP_AUDIT_PARAMETER_LOGGING=Enabled`, extract `params.arguments` from parsed MCP request body
 - [ ] Serialize as JSON string
 - [ ] Truncate to 1KB
-- [ ] When env var is unset or `false`, return empty string
+- [ ] When env var is unset or `Disabled`, return empty string
 - [ ] Handle missing `params.arguments` gracefully
 
 **Verification:** `make test-unit`
@@ -52,7 +52,7 @@ The implementation builds on:
 **Acceptance criteria:**
 - [ ] `x-mcp-user-id` set on all tool call ProcessingResponses
 - [ ] `x-mcp-agent-id` set on all tool call ProcessingResponses
-- [ ] `x-mcp-tool-params` set only when `MCP_AUDIT_LOG_PARAMS=true`
+- [ ] `x-mcp-tool-params` set only when `MCP_AUDIT_PARAMETER_LOGGING=Enabled`
 - [ ] Headers set to `-` when source data is unavailable
 - [ ] Existing `x-mcp-*` headers unchanged
 
@@ -62,16 +62,16 @@ The implementation builds on:
 
 **Files:**
 - `api/v1alpha1/mcpgatewayextension_types.go` (modify — add `AuditConfig` struct and `Audit` field to spec)
-- `internal/controller/broker_router.go` (modify — inject `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars, add to `managedEnvVarNames`)
+- `internal/controller/broker_router.go` (modify — inject `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` env vars, add to `managedEnvVarNames`)
 - `docs/reference/mcpgatewayextension.md` (modify — add audit field documentation)
 
 **Acceptance criteria:**
 - [ ] `AuditConfig` struct with `ParameterLogging` (`ParameterLoggingPolicy` enum: `Enabled`/`Disabled`) and `IdentityHeaders` ([]string)
 - [ ] `Audit *AuditConfig` optional pointer field on `MCPGatewayExtensionSpec`
-- [ ] When `spec.audit` is set, operator injects `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment
-- [ ] `ParameterLogging` enum translated to env var: `Enabled` -> `"true"`, `Disabled`/empty -> `"false"`
+- [ ] When `spec.audit` is set, operator injects `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment
+- [ ] `ParameterLogging` enum passed through as-is (`Enabled` / `Disabled`), defaulting to `Disabled` when empty
 - [ ] When `spec.audit` is nil, no audit env vars are injected
-- [ ] `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` added to `managedEnvVarNames`
+- [ ] `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` added to `managedEnvVarNames`
 - [ ] `make generate-all` succeeds (deepcopy, CRDs, Helm sync)
 - [ ] CRD reference doc updated
 

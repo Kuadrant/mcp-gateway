@@ -748,6 +748,40 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 		return nil, fmt.Errorf("failed to create ext_proc config struct: %w", err)
 	}
 
+	configPatches := []*istiov1alpha3.EnvoyFilter_EnvoyConfigObjectPatch{
+		{
+			ApplyTo: istiov1alpha3.EnvoyFilter_HTTP_FILTER,
+			Match: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch{
+				Context: istiov1alpha3.EnvoyFilter_GATEWAY,
+				ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
+					Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
+						PortNumber: listenerConfig.Port,
+						FilterChain: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterChainMatch{
+							Filter: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterMatch{
+								Name: "envoy.filters.network.http_connection_manager",
+								SubFilter: &istiov1alpha3.EnvoyFilter_ListenerMatch_SubFilterMatch{
+									Name: "envoy.filters.http.router",
+								},
+							},
+						},
+					},
+				},
+			},
+			Patch: &istiov1alpha3.EnvoyFilter_Patch{
+				Operation: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST,
+				Value:     extProcConfig,
+			},
+		},
+	}
+
+	if mcpExt.Spec.Audit != nil {
+		accessLogPatch, err := buildAccessLogPatch(listenerConfig.Port)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build access log patch: %w", err)
+		}
+		configPatches = append(configPatches, accessLogPatch)
+	}
+
 	envoyFilterName, _ := envoyFilterNameAndNamespace(mcpExt)
 
 	return &istionetv1alpha3.EnvoyFilter{
@@ -762,31 +796,69 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 					"gateway.networking.k8s.io/gateway-name": targetGateway.Name,
 				},
 			},
-			ConfigPatches: []*istiov1alpha3.EnvoyFilter_EnvoyConfigObjectPatch{
-				{
-					ApplyTo: istiov1alpha3.EnvoyFilter_HTTP_FILTER,
-					Match: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch{
-						Context: istiov1alpha3.EnvoyFilter_GATEWAY,
-						ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
-							Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
-								PortNumber: listenerConfig.Port,
-								FilterChain: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterChainMatch{
-									Filter: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterMatch{
-										Name: "envoy.filters.network.http_connection_manager",
-										SubFilter: &istiov1alpha3.EnvoyFilter_ListenerMatch_SubFilterMatch{
-											Name: "envoy.filters.http.router",
-										},
-									},
-								},
+			ConfigPatches: configPatches,
+		},
+	}, nil
+}
+
+func buildAccessLogPatch(port uint32) (*istiov1alpha3.EnvoyFilter_EnvoyConfigObjectPatch, error) {
+	accessLogConfig, err := structpb.NewStruct(map[string]any{
+		"name": "envoy.filters.network.http_connection_manager",
+		"typed_config": map[string]any{
+			"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+			"access_log": []any{
+				map[string]any{
+					"name": "envoy.access_loggers.stdout",
+					"typed_config": map[string]any{
+						"@type": "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
+						"log_format": map[string]any{
+							"json_format": map[string]any{
+								"timestamp":       "%START_TIME%",
+								"method":          "%REQ(:METHOD)%",
+								"path":            "%REQ(:PATH)%",
+								"response_code":   "%RESPONSE_CODE%",
+								"request_id":      "%REQ(X-REQUEST-ID)%",
+								"traceparent":     "%REQ(TRACEPARENT)%",
+								"mcp_method":      "%REQ(X-MCP-METHOD)%",
+								"mcp_tool_name":   "%REQ(X-MCP-TOOLNAME)%",
+								"mcp_server_name": "%REQ(X-MCP-SERVERNAME)%",
+								"mcp_session_id":  "%REQ(MCP-SESSION-ID)%",
+								"mcp_user_id":     "%REQ(X-MCP-USER-ID)%",
+								"mcp_agent_id":    "%REQ(X-MCP-AGENT-ID)%",
+								"mcp_tool_params": "%REQ(X-MCP-TOOL-PARAMS)%",
+								"duration_ms":     "%DURATION%",
+								"upstream_host":   "%UPSTREAM_HOST%",
+								"bytes_sent":      "%BYTES_SENT%",
+								"bytes_received":  "%BYTES_RECEIVED%",
 							},
 						},
 					},
-					Patch: &istiov1alpha3.EnvoyFilter_Patch{
-						Operation: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST,
-						Value:     extProcConfig,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create access log config struct: %w", err)
+	}
+
+	return &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectPatch{
+		ApplyTo: istiov1alpha3.EnvoyFilter_NETWORK_FILTER,
+		Match: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch{
+			Context: istiov1alpha3.EnvoyFilter_GATEWAY,
+			ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
+				Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
+					PortNumber: port,
+					FilterChain: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterChainMatch{
+						Filter: &istiov1alpha3.EnvoyFilter_ListenerMatch_FilterMatch{
+							Name: "envoy.filters.network.http_connection_manager",
+						},
 					},
 				},
 			},
+		},
+		Patch: &istiov1alpha3.EnvoyFilter_Patch{
+			Operation: istiov1alpha3.EnvoyFilter_Patch_MERGE,
+			Value:     accessLogConfig,
 		},
 	}, nil
 }

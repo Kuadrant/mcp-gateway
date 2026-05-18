@@ -1449,6 +1449,18 @@ func TestFilterManagedEnvVars(t *testing.T) {
 			},
 		},
 		{
+			name: "audit env vars are managed",
+			env: []corev1.EnvVar{
+				{Name: "MCP_AUDIT_PARAMETER_LOGGING", Value: "Enabled"},
+				{Name: "MCP_AUDIT_IDENTITY_HEADERS", Value: "x-custom-user"},
+				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+			},
+			want: []corev1.EnvVar{
+				{Name: "MCP_AUDIT_PARAMETER_LOGGING", Value: "Enabled"},
+				{Name: "MCP_AUDIT_IDENTITY_HEADERS", Value: "x-custom-user"},
+			},
+		},
+		{
 			name: "no managed vars",
 			env: []corev1.EnvVar{
 				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
@@ -1596,6 +1608,113 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected RequestHeaderModifier filter to be present in HTTPRoute rules")
+	}
+}
+
+func TestBuildBrokerRouterDeployment_AuditConfig(t *testing.T) {
+	tests := []struct {
+		name                 string
+		audit                *mcpv1alpha1.AuditConfig
+		wantParameterLogging string
+		wantIdentityHeaders  string
+		wantNoAuditEnvVars   bool
+	}{
+		{
+			name:               "no audit env vars when Audit is nil",
+			audit:              nil,
+			wantNoAuditEnvVars: true,
+		},
+		{
+			name:                 "parameter logging enabled",
+			audit:                &mcpv1alpha1.AuditConfig{ParameterLogging: mcpv1alpha1.ParameterLoggingEnabled},
+			wantParameterLogging: "Enabled",
+			wantIdentityHeaders:  "",
+		},
+		{
+			name:                 "parameter logging disabled",
+			audit:                &mcpv1alpha1.AuditConfig{ParameterLogging: mcpv1alpha1.ParameterLoggingDisabled},
+			wantParameterLogging: "Disabled",
+			wantIdentityHeaders:  "",
+		},
+		{
+			name:                 "parameter logging empty defaults to Disabled",
+			audit:                &mcpv1alpha1.AuditConfig{},
+			wantParameterLogging: "Disabled",
+			wantIdentityHeaders:  "",
+		},
+		{
+			name: "identity headers set",
+			audit: &mcpv1alpha1.AuditConfig{
+				ParameterLogging: mcpv1alpha1.ParameterLoggingEnabled,
+				IdentityHeaders:  []string{"x-custom-user", "x-other-header"},
+			},
+			wantParameterLogging: "Enabled",
+			wantIdentityHeaders:  "x-custom-user,x-other-header",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &MCPGatewayExtensionReconciler{
+				BrokerRouterImage: "test-image:v1",
+			}
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ext",
+					Namespace: "test-ns",
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					Audit: tt.audit,
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:      "my-gateway",
+						Namespace: "gateway-system",
+					},
+				},
+			}
+
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
+			container := deployment.Spec.Template.Spec.Containers[0]
+
+			var paramLoggingEnv, identityHeadersEnv *corev1.EnvVar
+			for i := range container.Env {
+				switch container.Env[i].Name {
+				case "MCP_AUDIT_PARAMETER_LOGGING":
+					paramLoggingEnv = &container.Env[i]
+				case "MCP_AUDIT_IDENTITY_HEADERS":
+					identityHeadersEnv = &container.Env[i]
+				}
+			}
+
+			if tt.wantNoAuditEnvVars {
+				if paramLoggingEnv != nil {
+					t.Errorf("expected no MCP_AUDIT_PARAMETER_LOGGING env var, but found one with value %q", paramLoggingEnv.Value)
+				}
+				if identityHeadersEnv != nil {
+					t.Errorf("expected no MCP_AUDIT_IDENTITY_HEADERS env var, but found one with value %q", identityHeadersEnv.Value)
+				}
+				return
+			}
+
+			if paramLoggingEnv == nil {
+				t.Fatal("expected MCP_AUDIT_PARAMETER_LOGGING env var to be present")
+			}
+			if paramLoggingEnv.Value != tt.wantParameterLogging {
+				t.Errorf("MCP_AUDIT_PARAMETER_LOGGING = %q, want %q", paramLoggingEnv.Value, tt.wantParameterLogging)
+			}
+
+			if tt.wantIdentityHeaders == "" {
+				if identityHeadersEnv != nil {
+					t.Errorf("expected no MCP_AUDIT_IDENTITY_HEADERS env var, but found one with value %q", identityHeadersEnv.Value)
+				}
+			} else {
+				if identityHeadersEnv == nil {
+					t.Fatal("expected MCP_AUDIT_IDENTITY_HEADERS env var to be present")
+				}
+				if identityHeadersEnv.Value != tt.wantIdentityHeaders {
+					t.Errorf("MCP_AUDIT_IDENTITY_HEADERS = %q, want %q", identityHeadersEnv.Value, tt.wantIdentityHeaders)
+				}
+			}
+		})
 	}
 }
 

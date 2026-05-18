@@ -164,7 +164,7 @@ spec:
       - x-auth-user
 ```
 
-The operator translates these fields into env vars on the router deployment (`MCP_AUDIT_LOG_PARAMS`, `MCP_AUDIT_IDENTITY_HEADERS`). The router reads env vars — it has no direct CRD dependency.
+The operator translates these fields into env vars on the router deployment (`MCP_AUDIT_PARAMETER_LOGGING`, `MCP_AUDIT_IDENTITY_HEADERS`). The router reads env vars — it has no direct CRD dependency.
 
 ### Data Storage
 
@@ -197,7 +197,7 @@ None. Audit data is written to Envoy access logs on stdout — storage and reten
 
 ### Operator Changes
 
-When `spec.audit` is set, the operator adds a second `ConfigPatch` to the EnvoyFilter it builds in `buildEnvoyFilter()`. This patch uses `ApplyTo: NETWORK_FILTER` to merge an `access_log` configuration into the `envoy.filters.network.http_connection_manager` on the same listener (matching the same `listenerConfig.Port`) as the ext_proc filter. The operator also injects `MCP_AUDIT_LOG_PARAMS` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment based on the CRD fields.
+When `spec.audit` is set, the operator adds a second `ConfigPatch` to the EnvoyFilter it builds in `buildEnvoyFilter()`. This patch uses `ApplyTo: NETWORK_FILTER` to merge an `access_log` configuration into the `envoy.filters.network.http_connection_manager` on the same listener (matching the same `listenerConfig.Port`) as the ext_proc filter. The operator also injects `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment based on the CRD fields.
 
 The patch operation is `MERGE` — this differs from the ext_proc patch which uses `INSERT_FIRST`. The ext_proc patch inserts a new HTTP filter into the filter chain, so it needs `INSERT_FIRST` to position it before the router filter. The access log patch modifies an existing network filter (HCM) to add an `access_log` field, so `MERGE` is correct — it applies proto merge semantics to combine the access log config into the existing HCM configuration. See [Istio EnvoyFilter patch operations](https://istio.io/latest/docs/reference/config/networking/envoy-filter/) for details on `MERGE` vs `INSERT_FIRST`.
 
@@ -287,7 +287,7 @@ The operator translates these into env vars on the router deployment:
 
 | Env Var | Source | Translation |
 |---------|--------|-------------|
-| `MCP_AUDIT_LOG_PARAMS` | `spec.audit.parameterLogging` | `Enabled` -> `"true"`, `Disabled`/empty -> `"false"` |
+| `MCP_AUDIT_PARAMETER_LOGGING` | `spec.audit.parameterLogging` | Passed through as-is (`Enabled` / `Disabled`) |
 | `MCP_AUDIT_IDENTITY_HEADERS` | `spec.audit.identityHeaders` | Comma-joined |
 
 These env vars are operator-managed. The router reads them at startup — it has no direct CRD dependency.

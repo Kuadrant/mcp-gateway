@@ -108,22 +108,7 @@ func TestProcess_HappyPath(t *testing.T) {
 					},
 				},
 			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_RequestBody{
-						RequestBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								HeaderMutation: &extProcV3.HeaderMutation{
-									SetHeaders: []*corev3.HeaderValueOption{
-										{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte("tools/list")}},
-										{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+			resp: []*extProcV3.ProcessingResponse{brokerPassthroughResponse("tools/list")},
 		},
 		responseHeadersStep(),
 	})
@@ -389,22 +374,7 @@ func TestProcess_StreamedBodyMultipleChunks(t *testing.T) {
 					},
 				},
 			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_RequestBody{
-						RequestBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								HeaderMutation: &extProcV3.HeaderMutation{
-									SetHeaders: []*corev3.HeaderValueOption{
-										{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte("initialize")}},
-										{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+			resp: []*extProcV3.ProcessingResponse{brokerPassthroughResponse("initialize")},
 		},
 		responseHeadersStep(),
 	})
@@ -497,22 +467,7 @@ func TestProcess_StreamedBodyEmptyFinalChunk(t *testing.T) {
 					},
 				},
 			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_RequestBody{
-						RequestBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								HeaderMutation: &extProcV3.HeaderMutation{
-									SetHeaders: []*corev3.HeaderValueOption{
-										{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte("initialize")}},
-										{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+			resp: []*extProcV3.ProcessingResponse{brokerPassthroughResponse("initialize")},
 		},
 		responseHeadersStep(),
 	})
@@ -606,6 +561,23 @@ func immediateResponse(code typev3.StatusCode) *extProcV3.ProcessingResponse {
 			ImmediateResponse: &extProcV3.ImmediateResponse{
 				Body:   []byte("dummy"),
 				Status: &typev3.HttpStatus{Code: code},
+			},
+		},
+	}
+}
+
+func brokerPassthroughResponse(mcpMethod string) *extProcV3.ProcessingResponse {
+	return &extProcV3.ProcessingResponse{
+		Response: &extProcV3.ProcessingResponse_RequestBody{
+			RequestBody: &extProcV3.BodyResponse{
+				Response: &extProcV3.CommonResponse{
+					HeaderMutation: &extProcV3.HeaderMutation{
+						SetHeaders: []*corev3.HeaderValueOption{
+							{Header: &corev3.HeaderValue{Key: "x-mcp-method", RawValue: []byte(mcpMethod)}},
+							{Header: &corev3.HeaderValue{Key: "x-mcp-servername", RawValue: []byte("mcpBroker")}},
+						},
+					},
+				},
 			},
 		},
 	}

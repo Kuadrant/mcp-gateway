@@ -55,6 +55,8 @@ var managedEnvVarNames = []string{
 	"TRUSTED_HEADER_PUBLIC_KEY",
 	"CACHE_CONNECTION_STRING",
 	sessionSigningKeyEnvVar,
+	"MCP_AUDIT_PARAMETER_LOGGING",
+	"MCP_AUDIT_IDENTITY_HEADERS",
 }
 
 func brokerRouterLabels() map[string]string {
@@ -115,6 +117,22 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 				},
 			},
 		})
+	}
+	if mcpExt.Spec.Audit != nil {
+		paramLogging := string(mcpExt.Spec.Audit.ParameterLogging)
+		if paramLogging == "" {
+			paramLogging = string(mcpv1alpha1.ParameterLoggingDisabled)
+		}
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "MCP_AUDIT_PARAMETER_LOGGING",
+			Value: paramLogging,
+		})
+		if len(mcpExt.Spec.Audit.IdentityHeaders) > 0 {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "MCP_AUDIT_IDENTITY_HEADERS",
+				Value: strings.Join(mcpExt.Spec.Audit.IdentityHeaders, ","),
+			})
+		}
 	}
 
 	return &appsv1.Deployment{

@@ -57,6 +57,33 @@ spec:
           spec:
             description: spec defines the desired state of MCPGatewayExtension
             properties:
+              audit:
+                description: |-
+                  audit configures the MCP audit trail via Envoy access logs.
+                  When set, the operator adds an access log to the gateway and injects
+                  audit env vars into the router deployment.
+                  When not set, no audit access log is added.
+                properties:
+                  identityHeaders:
+                    description: |-
+                      identityHeaders specifies header names to check (in order) for caller
+                      identity when baggage user.id is absent.
+                      Defaults to ["x-forwarded-email", "x-auth-user"] in the router when empty.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  parameterLogging:
+                    default: Disabled
+                    description: |-
+                      parameterLogging controls whether tool call parameters are included in the audit trail.
+                      Enabled: params.arguments from tools/call requests are logged (truncated to 1KB).
+                      Disabled (default): parameters are not logged.
+                    enum:
+                    - Enabled
+                    - Disabled
+                    type: string
+                type: object
               backendPingIntervalSeconds:
                 default: 60
                 description: backendPingIntervalSeconds specifies how often the broker

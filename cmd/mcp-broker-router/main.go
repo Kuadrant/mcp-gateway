@@ -12,6 +12,7 @@ import (
 	_ "net/http/pprof" //nolint:gosec // G108: intentional pprof endpoint for performance profiling
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -364,6 +365,16 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
+	var audit *mcpRouter.AuditConfig
+	if v := os.Getenv("MCP_AUDIT_PARAMETER_LOGGING"); v != "" {
+		audit = &mcpRouter.AuditConfig{
+			ParameterLogging: v,
+		}
+		if h := os.Getenv("MCP_AUDIT_IDENTITY_HEADERS"); h != "" {
+			audit.IdentityHeaders = strings.Split(h, ",")
+		}
+	}
+
 	server := &mcpRouter.ExtProcServer{
 		RoutingConfig:      mcpConfig,
 		Logger:             logger.With("component", "router"),
@@ -373,6 +384,7 @@ func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *sessi
 		ElicitationMap:     elicitationMap,
 		Broker:             broker, // TODO we shouldn't need a handle to broker in the router
 		MaxRequestBodySize: maxRequestBodySize,
+		Audit:              audit,
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)

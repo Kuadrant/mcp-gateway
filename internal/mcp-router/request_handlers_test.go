@@ -249,6 +249,160 @@ func TestHandleRequestBody(t *testing.T) {
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
 }
 
+func TestHandleToolCallAuditHeaders(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	setup := func(t *testing.T, audit *AuditConfig) (*ExtProcServer, string) {
+		t.Helper()
+		cache, err := session.NewCache()
+		require.NoError(t, err)
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+		validToken := jwtManager.Generate()
+		_, err = cache.AddSession(context.Background(), validToken, "dummy", "mock-session")
+		require.NoError(t, err)
+
+		serverConfigs := []*config.MCPServer{
+			{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", Enabled: true, Hostname: "localhost"},
+		}
+		srv := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{Servers: serverConfigs},
+			JWTManager:    jwtManager,
+			Logger:        logger,
+			SessionCache:  cache,
+			Audit:         audit,
+			InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+				return nil, fmt.Errorf("should not be called")
+			},
+			Broker: newMockBroker(serverConfigs, map[string]string{"s_greet": "dummy"}),
+		}
+		return srv, validToken
+	}
+
+	findHeader := func(headers []*corev3.HeaderValueOption, key string) string {
+		for _, h := range headers {
+			if h.Header.Key == key {
+				return string(h.Header.RawValue)
+			}
+		}
+		return ""
+	}
+
+	t.Run("baggage user and agent populate headers", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet"},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+				{Key: "baggage", RawValue: []byte("user.id=jane,agent.id=bot-v2")},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		require.Len(t, resp, 1)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "jane", findHeader(auditHeaders, userIDHeader))
+		require.Equal(t, "bot-v2", findHeader(auditHeaders, agentIDHeader))
+		require.Equal(t, "-", findHeader(auditHeaders, toolParamsHeader))
+	})
+
+	t.Run("no baggage sets dash values", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet"},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "-", findHeader(auditHeaders, userIDHeader))
+		require.Equal(t, "-", findHeader(auditHeaders, agentIDHeader))
+	})
+
+	t.Run("identity fallback from auth-layer header", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet"},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+				{Key: "x-forwarded-email", RawValue: []byte("jane@example.com")},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "jane@example.com", findHeader(auditHeaders, userIDHeader))
+	})
+
+	t.Run("tool params logged when enabled", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{ParameterLogging: "Enabled"})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet", "arguments": map[string]any{"msg": "hi"}},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, `{"msg":"hi"}`, findHeader(auditHeaders, toolParamsHeader))
+	})
+
+	t.Run("tool params dash when disabled", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{ParameterLogging: "Disabled"})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet", "arguments": map[string]any{"msg": "hi"}},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "-", findHeader(auditHeaders, toolParamsHeader))
+	})
+
+	t.Run("custom identity headers used when configured", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{IdentityHeaders: []string{"x-custom-user"}})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet"},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+				{Key: "x-forwarded-email", RawValue: []byte("should-be-ignored")},
+				{Key: "x-custom-user", RawValue: []byte("custom-jane")},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "custom-jane", findHeader(auditHeaders, userIDHeader))
+	})
+
+	t.Run("CRLF in identity header stripped", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet"},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+				{Key: "x-forwarded-email", RawValue: []byte("ja\r\nne")},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "jane", findHeader(auditHeaders, userIDHeader))
+	})
+}
+
 func TestMCPRequest_isNotificationRequest(t *testing.T) {
 	testCases := []struct {
 		name     string

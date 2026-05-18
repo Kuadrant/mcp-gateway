@@ -19,6 +19,10 @@ type KeyGenerationPolicy string
 // +kubebuilder:validation:Enum=FilterOut;RejectServer
 type InvalidToolPolicy string
 
+// ParameterLoggingPolicy controls whether tool call parameters are included in the audit trail.
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type ParameterLoggingPolicy string
+
 const (
 	// ConditionTypeReady signals if a resource is ready
 	ConditionTypeReady = "Ready"
@@ -49,6 +53,11 @@ const (
 	InvalidToolPolicyFilterOut InvalidToolPolicy = "FilterOut"
 	// InvalidToolPolicyRejectServer rejects all tools from a server if any are invalid
 	InvalidToolPolicyRejectServer InvalidToolPolicy = "RejectServer"
+
+	// ParameterLoggingEnabled includes tool call parameters in the audit trail
+	ParameterLoggingEnabled ParameterLoggingPolicy = "Enabled"
+	// ParameterLoggingDisabled excludes tool call parameters from the audit trail
+	ParameterLoggingDisabled ParameterLoggingPolicy = "Disabled"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -97,6 +106,13 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// audit configures the MCP audit trail via Envoy access logs.
+	// When set, the operator adds an access log to the gateway and injects
+	// audit env vars into the router deployment.
+	// When not set, no audit access log is added.
+	// +optional
+	Audit *AuditConfig `json:"audit,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
@@ -130,6 +146,23 @@ type TrustedHeadersKey struct {
 	// +optional
 	// +default="Disabled"
 	Generate KeyGenerationPolicy `json:"generate,omitempty"`
+}
+
+// AuditConfig configures the MCP audit trail via Envoy access logs.
+type AuditConfig struct {
+	// parameterLogging controls whether tool call parameters are included in the audit trail.
+	// Enabled: params.arguments from tools/call requests are logged (truncated to 1KB).
+	// Disabled (default): parameters are not logged.
+	// +optional
+	// +default="Disabled"
+	ParameterLogging ParameterLoggingPolicy `json:"parameterLogging,omitempty"`
+
+	// identityHeaders specifies header names to check (in order) for caller
+	// identity when baggage user.id is absent.
+	// Defaults to ["x-forwarded-email", "x-auth-user"] in the router when empty.
+	// +optional
+	// +listType=atomic
+	IdentityHeaders []string `json:"identityHeaders,omitempty"`
 }
 
 // MCPGatewayExtensionStatus defines the observed state of MCPGatewayExtension.

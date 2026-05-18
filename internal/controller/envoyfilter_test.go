@@ -208,6 +208,92 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 	}
 }
 
+func TestBuildEnvoyFilter_AuditAccessLog(t *testing.T) {
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gateway",
+			Namespace: "gateway-system",
+		},
+	}
+	listenerConfig := &mcpv1alpha1.ListenerConfig{
+		Port:     8080,
+		Hostname: "mcp.example.com",
+		Name:     "mcp",
+		Protocol: "HTTP",
+	}
+
+	t.Run("no access log patch when audit is nil", func(t *testing.T) {
+		mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-ext",
+				Namespace: "test-ns",
+			},
+			Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "test-gateway",
+					Namespace: "gateway-system",
+				},
+			},
+		}
+		r := &MCPGatewayExtensionReconciler{BrokerRouterImage: "test:latest"}
+		ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerConfig)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(ef.Spec.ConfigPatches) != 1 {
+			t.Errorf("expected 1 ConfigPatch (ext_proc only), got %d", len(ef.Spec.ConfigPatches))
+		}
+	})
+
+	t.Run("access log patch added when audit is set", func(t *testing.T) {
+		mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-ext",
+				Namespace: "test-ns",
+			},
+			Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "test-gateway",
+					Namespace: "gateway-system",
+				},
+				Audit: &mcpv1alpha1.AuditConfig{},
+			},
+		}
+		r := &MCPGatewayExtensionReconciler{BrokerRouterImage: "test:latest"}
+		ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerConfig)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(ef.Spec.ConfigPatches) != 2 {
+			t.Fatalf("expected 2 ConfigPatches (ext_proc + access log), got %d", len(ef.Spec.ConfigPatches))
+		}
+
+		accessLogPatch := ef.Spec.ConfigPatches[1]
+		if accessLogPatch.ApplyTo != istiov1alpha3.EnvoyFilter_NETWORK_FILTER {
+			t.Errorf("expected ApplyTo = NETWORK_FILTER, got %v", accessLogPatch.ApplyTo)
+		}
+		if accessLogPatch.Patch.Operation != istiov1alpha3.EnvoyFilter_Patch_MERGE {
+			t.Errorf("expected Operation = MERGE, got %v", accessLogPatch.Patch.Operation)
+		}
+
+		match := accessLogPatch.Match
+		if match == nil {
+			t.Fatal("expected match to be set")
+		}
+		listenerMatch := match.GetListener()
+		if listenerMatch == nil {
+			t.Fatal("expected listener match to be set")
+		}
+		if listenerMatch.PortNumber != 8080 {
+			t.Errorf("expected port 8080, got %d", listenerMatch.PortNumber)
+		}
+		filterMatch := listenerMatch.FilterChain.GetFilter()
+		if filterMatch == nil || filterMatch.Name != "envoy.filters.network.http_connection_manager" {
+			t.Errorf("expected filter match on envoy.filters.network.http_connection_manager")
+		}
+	})
+}
+
 func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {
 	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{

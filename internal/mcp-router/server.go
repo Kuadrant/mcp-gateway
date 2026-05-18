@@ -36,6 +36,12 @@ type SessionCache interface {
 // the hairpin request re-enters the gateway.
 type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
 
+// AuditConfig holds runtime audit configuration read from env vars.
+type AuditConfig struct {
+	ParameterLogging string
+	IdentityHeaders  []string
+}
+
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
 	RoutingConfig      *config.MCPServersConfig
@@ -45,6 +51,7 @@ type ExtProcServer struct {
 	SessionCache       SessionCache
 	ElicitationMap     idmap.Map
 	MaxRequestBodySize int
+	Audit              *AuditConfig
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 	// initGroup serializes backend session initialization per (gatewaySessionID, serverName)
