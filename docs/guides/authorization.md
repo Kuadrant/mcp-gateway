@@ -4,10 +4,10 @@ This guide covers configuring fine-grained authorization and access control for 
 
 ## Overview
 
-Authorization in MCP Gateway controls which authenticated users can access specific MCP tools. This guide demonstrates using Kuadrant's AuthPolicy with Common Expression Language (CEL) to implement role-based access control.
+Authorization in MCP Gateway controls which authenticated users can access specific MCP tools and prompts. This guide demonstrates using Kuadrant's AuthPolicy with Common Expression Language (CEL) to implement role-based access control.
 
 Key concepts:
-- **Tool-Level Authorization**: Control access to individual MCP tools
+- **Tool and Prompt-Level Authorization**: Control access to individual MCP tools and prompts
 - **Role-Based Access**: Use Keycloak client roles and group bindings for permission decisions
 - **Self-contained ACL**: Access control lists stored in the signed JWT tokens
 - **CEL Expressions**: Define complex authorization logic using Common Expression Language
@@ -38,10 +38,10 @@ The issued OAuth token should include claims similar to:
 {
   "resource_access": {
     "mcp-ns/arithmetic-mcp-server": { // matches the namespaced name of the MCPServerRegistration CR
-      "roles": ["tool:add", "tool:sum", "tool:multiply", "tool:divide"] // roles prefixed with capability type
+      "roles": ["tool:add", "tool:sum", "tool:multiply", "tool:divide", "prompt:math_tutor"] // roles prefixed with capability type
     },
     "mcp-ns/geometry-mcp-server": {
-      "roles": ["tool:area", "tool:distance", "tool:volume"]
+      "roles": ["tool:area", "tool:distance", "tool:volume", "prompt:calculate_area"]
     }
   }
 }
@@ -49,9 +49,9 @@ The issued OAuth token should include claims similar to:
 
 > **Note:** The test Keycloak instance deployed in the [authentication guide](./authentication.md) is already configured to include these claims based on user group membership. The `mcp` user is part of the `accounting` group, which maps to specific tool permissions.
 
-## Step 2: Configure Tool-Level Authorization
+## Step 2: Configure Tool and Prompt Authorization
 
-Apply an AuthPolicy that enforces tool-level access control:
+Apply an AuthPolicy that enforces access control for both tools and prompts:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -73,10 +73,19 @@ spec:
           issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
     authorization:
       'tool-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-toolname')"
         patternMatching:
           patterns:
             - predicate: |
                 ('tool:' + request.headers['x-mcp-toolname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+      'prompt-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-promptname')"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('prompt:' + request.headers['x-mcp-promptname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
     response:
       unauthenticated:
         headers:
@@ -86,14 +95,14 @@ spec:
           value: |
             {
               "error": "Unauthorized",
-              "message": "MCP Tool Access denied: Authentication required."
+              "message": "MCP Access denied: Authentication required."
             }
       unauthorized:
         body:
           value: |
             {
               "error": "Forbidden",
-              "message": "MCP Tool Access denied: Insufficient permissions for this tool."
+              "message": "MCP Access denied: Insufficient permissions."
             }
 EOF
 ```
@@ -101,12 +110,41 @@ EOF
 **Key Configuration Explained:**
 
 - **Authentication**: Validates the JWT token using the configured issuer URL
-- **Authorization Logic**: CEL expression checks if user's roles allow access to the requested tool
+- **Authorization Logic**: CEL expressions check if the user's roles allow access to the requested tool or prompt. The appropriate check is triggered based on the presence of the `x-mcp-toolname` or `x-mcp-promptname` header.
 - **CEL Breakdown**:
-  - `request.headers['x-mcp-toolname']`: The name of the requested MCP tool (stripped from prefix)
+  - `request.headers['x-mcp-toolname']` / `x-mcp-promptname`: The name of the requested capability
   - `request.headers['x-mcp-servername']`: The namespaced name of the MCP server matching the MCPServerRegistration resource
-  - `auth.identity.resource_access`: The JWT claim containing roles prefixed by capability type (e.g. `tool:greet`), grouped by MCP server
+  - `auth.identity.resource_access`: The JWT claim containing roles prefixed by capability type (e.g. `tool:greet`, `prompt:math_tutor`), grouped by MCP server
 - **Response Handling**: Custom 401 and 403 responses for unauthenticated and unauthorized access attempts
+
+For more advanced policy examples covering token exchange and `tools/list` filtering, see the [Vault Token Exchange guide](./vault-token-exchange.md).
+
+You can also apply a policy that filters available tools and prompts during the `initialize` flow using an OPA rule:
+
+```yaml
+authorization:
+  'authorized-capabilities':
+    opa:
+      rego: |
+        allow = true
+        capabilities = {
+          "tools": { server: tools |
+            server := object.keys(input.auth.identity.resource_access)[_]
+            tools := [substring(r, count("tool:"), -1) |
+              r := input.auth.identity.resource_access[server].roles[_]
+              startswith(r, "tool:")
+            ]
+          },
+          "prompts": { server: prompts |
+            server := object.keys(input.auth.identity.resource_access)[_]
+            prompts := [substring(r, count("prompt:"), -1) |
+              r := input.auth.identity.resource_access[server].roles[_]
+              startswith(r, "prompt:")
+            ]
+          }
+        }
+      allValues: true
+```
 
 ## Step 3: Test Authorization
 
