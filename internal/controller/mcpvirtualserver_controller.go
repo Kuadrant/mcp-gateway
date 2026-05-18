@@ -50,12 +50,28 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
     }
     logger.Info("reconciling mcpvirtualserver", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
 
+    targetNamespaceName := types.NamespacedName{
+        Namespace: mcpVS.Namespace,
+        Name:      config.DefaultNamespaceName.Name,
+    }
+
     // handle deletion
     if !mcpVS.DeletionTimestamp.IsZero() {
         logger.Info("mcpvirtualserver is being deleted", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
         if controllerutil.ContainsFinalizer(mcpVS, mcpGatewayFinalizer) {
-            logger.Info("deleting mcpvirtualserver", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
-            // TODO remove from config
+            logger.Info("deleting mcpvirtualserver and updating config", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
+            
+            // Generate config (this automatically excludes the deleted item)
+            vsConfig, err := r.generateVirtualServerConfig(ctx, mcpVS.Namespace)
+            if err != nil {
+                return ctrl.Result{}, fmt.Errorf("failed to generate config during deletion %w", err)
+            }
+
+            // Write the updated config to completely remove the deleted server's footprint
+            if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, targetNamespaceName); err != nil {
+                return ctrl.Result{}, fmt.Errorf("failed to write config during deletion %w", err)
+            }
+
             controllerutil.RemoveFinalizer(mcpVS, mcpGatewayFinalizer)
             if err := r.Update(ctx, mcpVS); err != nil {
                 return ctrl.Result{}, err
@@ -63,6 +79,7 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
         }
         return ctrl.Result{}, nil
     }
+    
     // add finalizer if not present
     if !controllerutil.ContainsFinalizer(mcpVS, mcpGatewayFinalizer) {
         if controllerutil.AddFinalizer(mcpVS, mcpGatewayFinalizer) {
@@ -78,14 +95,9 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
     logger.V(1).Info("mcpvirtualserver generating config")
 
-    vsConfig, err := r.generateVirtualServerConfig(ctx)
+    vsConfig, err := r.generateVirtualServerConfig(ctx, mcpVS.Namespace)
     if err != nil {
         return ctrl.Result{}, fmt.Errorf("mcpvirtualserver failed to generate virtual server config during reconcile %w", err)
-    }
-
-    targetNamespaceName := types.NamespacedName{
-        Namespace: mcpVS.Namespace,
-        Name:      config.DefaultNamespaceName.Name,
     }
 
     logger.V(1).Info("mcpvirtualserver writing config")
@@ -101,14 +113,18 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
     return ctrl.Result{}, nil
 }
 
-func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context) ([]config.VirtualServerConfig, error) {
+// Updated to accept namespace and scope the list query
+func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context, namespace string) ([]config.VirtualServerConfig, error) {
     log := log.FromContext(ctx)
     virtualServers := []config.VirtualServerConfig{}
     mcpVirtualServerList := &mcpv1alpha1.MCPVirtualServerList{}
-    if err := r.List(ctx, mcpVirtualServerList); err != nil {
+    
+    // Pass client.InNamespace to ensure we only pull configs for this specific tenant
+    if err := r.List(ctx, mcpVirtualServerList, client.InNamespace(namespace)); err != nil {
         log.Error(err, "Failed to list MCPVirtualServers")
         return virtualServers, err
     }
+    
     // generate the entire virtual server config fresh rather than merge etc (future optimization)
     for _, mcpVirtualServer := range mcpVirtualServerList.Items {
         if mcpVirtualServer.DeletionTimestamp != nil {
