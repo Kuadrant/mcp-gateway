@@ -60,8 +60,24 @@ type MCPServerRegistrationSpec struct {
 	// credentialRef references a Secret containing authentication credentials for the MCP server.
 	// The Secret should contain a key with the authentication token or credentials.
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
+	// Used exclusively by the broker for tool discovery and session management. Never injected into client tools/call requests.
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// tokenURLElicitation enables per-user token collection via URL elicitation.
+	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+	// to collect tokens from capable clients at tool-call time.
+	// +optional
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
+}
+
+// TokenURLElicitationConfig configures per-user token collection via URL elicitation.
+type TokenURLElicitationConfig struct {
+	// url overrides the default broker token page URL.
+	// When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://`
+	URL string `json:"url,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

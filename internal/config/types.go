@@ -67,6 +67,11 @@ func (config *MCPServersConfig) Notify(ctx context.Context) {
 	}
 }
 
+// GetExternalHostname returns the public hostname of the gateway
+func (config *MCPServersConfig) GetExternalHostname() string {
+	return config.MCPGatewayExternalHostname
+}
+
 // GetServerConfigByName get the routing config by server name
 func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPServer, error) {
 	config.lock.RLock()
@@ -82,13 +87,19 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name       string      `json:"name"                 yaml:"name"`
-	URL        string      `json:"url"                  yaml:"url"`
-	Hostname   string      `json:"hostname,omitempty"   yaml:"hostname,omitempty"`
-	Prefix     string      `json:"prefix,omitempty"     yaml:"prefix,omitempty"`
-	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
-	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
-	Enabled    bool        `json:"enabled"              yaml:"enabled"`
+	Name                string                     `json:"name"                              yaml:"name"`
+	URL                 string                     `json:"url"                               yaml:"url"`
+	Hostname            string                     `json:"hostname,omitempty"                yaml:"hostname,omitempty"`
+	Prefix              string                     `json:"prefix,omitempty"                  yaml:"prefix,omitempty"`
+	Auth                *AuthConfig                `json:"auth,omitempty"                    yaml:"auth,omitempty"`
+	Credential          string                     `json:"credential,omitempty"              yaml:"credential,omitempty"`
+	Enabled             bool                       `json:"enabled"                           yaml:"enabled"`
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
+}
+
+// TokenURLElicitationConfig configures per-user token collection via URL elicitation.
+type TokenURLElicitationConfig struct {
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -102,7 +113,18 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation)
+}
+
+func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {
+	if (a == nil) != (b == nil) {
+		return true
+	}
+	if a == nil {
+		return false
+	}
+	return a.URL != b.URL
 }
 
 // Path returns the path part of the mcp url
