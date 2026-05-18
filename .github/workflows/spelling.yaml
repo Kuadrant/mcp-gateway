@@ -19,7 +19,15 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Run spell check
+      - name: Setup reviewdog
+        uses: reviewdog/action-setup@v1
+
+      - name: Run cspell with reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           npm install -g cspell@9.4.0
-          make spell
+          # Run cspell and pipe to reviewdog. 
+          # The output format is 'filename:line:col - Unknown word (word)'
+          cspell --quiet . | reviewdog -efm="%f:%l:%c - %m" -name="cspell" -reporter=github-pr-review -level=warning -filter-mode=nofilter -fail-on-error=true

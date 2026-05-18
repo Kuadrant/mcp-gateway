@@ -533,7 +533,11 @@ func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
 	}
 }
 
-func TestBuildBrokerRouterDeployment_RouterKey(t *testing.T) {
+// TestBuildBrokerRouterDeployment_NoRouterKeyFlag verifies the legacy
+// --mcp-router-key flag is no longer emitted. Backend-init authentication is
+// now performed via a short-lived JWT signed by the session signing key
+// (GHSA-g53w-w6mj-hrpp).
+func TestBuildBrokerRouterDeployment_NoRouterKeyFlag(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",
 	}
@@ -554,51 +558,43 @@ func TestBuildBrokerRouterDeployment_RouterKey(t *testing.T) {
 	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
 	command := deployment.Spec.Template.Spec.Containers[0].Command
 
-	// verify router key flag is present
-	found := false
-	var keyValue string
 	for _, arg := range command {
 		if strings.HasPrefix(arg, "--mcp-router-key=") {
-			found = true
-			keyValue = strings.TrimPrefix(arg, "--mcp-router-key=")
-			break
+			t.Errorf("--mcp-router-key flag must not be emitted by the controller, found %q", arg)
 		}
 	}
-	if !found {
-		t.Fatalf("expected command to contain --mcp-router-key flag, got %v", command)
-	}
-	if keyValue == "" {
-		t.Error("expected router key to have a non-empty value")
-	}
+}
 
-	// verify key is deterministic for same UID
-	deployment2 := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
-	command2 := deployment2.Spec.Template.Spec.Containers[0].Command
-	var keyValue2 string
-	for _, arg := range command2 {
+// TestMergeCommand_StripsLegacyRouterKeyFlag exercises the upgrade path: an
+// existing deployment that still has the old --mcp-router-key=... flag should
+// have it stripped on the next reconcile rather than preserved as a user flag.
+func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
+	desired := []string{
+		"./mcp_gateway",
+		"--mcp-broker-public-address=0.0.0.0:8080",
+		"--mcp-gateway-public-host=example.com",
+	}
+	existing := []string{
+		"./mcp_gateway",
+		"--mcp-broker-public-address=0.0.0.0:8080",
+		"--mcp-gateway-public-host=example.com",
+		"--mcp-router-key=deadbeefcafebabe",
+		"--log-level=debug",
+	}
+	got := mergeCommand(desired, existing)
+	for _, arg := range got {
 		if strings.HasPrefix(arg, "--mcp-router-key=") {
-			keyValue2 = strings.TrimPrefix(arg, "--mcp-router-key=")
-			break
+			t.Errorf("mergeCommand should strip legacy --mcp-router-key, got %v", got)
 		}
 	}
-	if keyValue != keyValue2 {
-		t.Errorf("expected same key for same UID, got %q and %q", keyValue, keyValue2)
-	}
-
-	// verify different UID produces different key
-	mcpExt2 := mcpExt.DeepCopy()
-	mcpExt2.UID = types.UID("different-uid-67890")
-	deployment3 := r.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", mcpExt2.InternalHost(8080))
-	command3 := deployment3.Spec.Template.Spec.Containers[0].Command
-	var keyValue3 string
-	for _, arg := range command3 {
-		if strings.HasPrefix(arg, "--mcp-router-key=") {
-			keyValue3 = strings.TrimPrefix(arg, "--mcp-router-key=")
-			break
+	foundLogLevel := false
+	for _, arg := range got {
+		if arg == "--log-level=debug" {
+			foundLogLevel = true
 		}
 	}
-	if keyValue == keyValue3 {
-		t.Errorf("expected different key for different UID, both got %q", keyValue)
+	if !foundLogLevel {
+		t.Errorf("mergeCommand should preserve unrelated user flags, got %v", got)
 	}
 }
 
@@ -922,6 +918,94 @@ func TestDerivePublicHost(t *testing.T) {
 	}
 }
 
+func TestDerivePrivateHost(t *testing.T) {
+	tests := []struct {
+		name           string
+		spec           mcpv1alpha1.MCPGatewayExtensionSpec
+		listenerConfig *mcpv1alpha1.ListenerConfig
+		want           string
+	}{
+		{
+			name: "HTTP listener: bare host, no scheme prefix (backwards compatible)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:8080",
+		},
+		{
+			name: "HTTPS listener: scheme is prepended (issue #917)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			want:           "https://my-gw-istio.gateway-system.svc.cluster.local:443",
+		},
+		{
+			name: "HTTPS listener with mixed-case protocol value still detected",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "https"},
+			want:           "https://my-gw-istio.gateway-system.svc.cluster.local:443",
+		},
+		{
+			name: "PrivateHost override is honoured verbatim (no scheme injection)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+				PrivateHost: "my-gw-istio.gateway-system.svc.cluster.local:8081",
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:8081",
+		},
+		{
+			name: "PrivateHost override may carry its own scheme",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+				PrivateHost: "https://custom.example.com:443",
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			want:           "https://custom.example.com:443",
+		},
+		{
+			name: "TCP listener (no recognised TLS): fallback to plain host (no scheme)",
+			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name:      "my-gw",
+					Namespace: "gateway-system",
+				},
+			},
+			listenerConfig: &mcpv1alpha1.ListenerConfig{Port: 9090, Protocol: "TCP"},
+			want:           "my-gw-istio.gateway-system.svc.cluster.local:9090",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{Spec: tt.spec}
+			got := derivePrivateHost(mcpExt, tt.listenerConfig)
+			if got != tt.want {
+				t.Errorf("derivePrivateHost() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindListenerConfig(t *testing.T) {
 	hostname := gatewayv1.Hostname("mcp.example.com")
 	wildcardHostname := gatewayv1.Hostname("*.example.com")
@@ -955,32 +1039,36 @@ func TestFindListenerConfig(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		sectionName string
-		wantPort    uint32
-		wantHost    string
-		wantErr     bool
+		name         string
+		sectionName  string
+		wantPort     uint32
+		wantHost     string
+		wantProtocol string
+		wantErr      bool
 	}{
 		{
-			name:        "finds http listener",
-			sectionName: "http",
-			wantPort:    8080,
-			wantHost:    "mcp.example.com",
-			wantErr:     false,
+			name:         "finds http listener",
+			sectionName:  "http",
+			wantPort:     8080,
+			wantHost:     "mcp.example.com",
+			wantProtocol: "HTTP",
+			wantErr:      false,
 		},
 		{
-			name:        "finds https listener with wildcard",
-			sectionName: "https",
-			wantPort:    8443,
-			wantHost:    "*.example.com",
-			wantErr:     false,
+			name:         "finds https listener with wildcard",
+			sectionName:  "https",
+			wantPort:     8443,
+			wantHost:     "*.example.com",
+			wantProtocol: "HTTPS",
+			wantErr:      false,
 		},
 		{
-			name:        "finds listener without hostname",
-			sectionName: "no-hostname",
-			wantPort:    9090,
-			wantHost:    "",
-			wantErr:     false,
+			name:         "finds listener without hostname",
+			sectionName:  "no-hostname",
+			wantPort:     9090,
+			wantHost:     "",
+			wantProtocol: "HTTP",
+			wantErr:      false,
 		},
 		{
 			name:        "returns error for non-existent listener",
@@ -1010,6 +1098,9 @@ func TestFindListenerConfig(t *testing.T) {
 			}
 			if config.Name != tt.sectionName {
 				t.Errorf("findListenerConfigByName() name = %q, want %q", config.Name, tt.sectionName)
+			}
+			if config.Protocol != tt.wantProtocol {
+				t.Errorf("findListenerConfigByName() protocol = %q, want %q", config.Protocol, tt.wantProtocol)
 			}
 		})
 	}
@@ -1454,6 +1545,57 @@ func TestDeploymentNeedsUpdate_UserEnvVarsIgnored(t *testing.T) {
 	needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
 	if needsUpdate {
 		t.Error("deploymentNeedsUpdate() should not trigger for user-added env vars")
+	}
+}
+
+// TestBuildGatewayHTTPRoute_StripsRouterHeaders verifies the route always
+// includes a RequestHeaderModifier filter that removes the router-internal
+// `mcp-init-host` and `router-key` headers. This is defense-in-depth so that
+// caller-controlled values for these headers can never reach a backend MCP
+// server (GHSA-g53w-w6mj-hrpp).
+func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:        "my-gateway",
+				Namespace:   "gateway-ns",
+				SectionName: "mcp",
+			},
+		},
+	}
+
+	route := reconciler.buildGatewayHTTPRoute(mcpExt, "mcp.example.com")
+	if len(route.Spec.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+	}
+
+	var found bool
+	for _, f := range route.Spec.Rules[0].Filters {
+		if f.Type != gatewayv1.HTTPRouteFilterRequestHeaderModifier {
+			continue
+		}
+		if f.RequestHeaderModifier == nil {
+			continue
+		}
+		removed := map[string]bool{}
+		for _, h := range f.RequestHeaderModifier.Remove {
+			removed[h] = true
+		}
+		if !removed["mcp-init-host"] {
+			t.Errorf("expected RequestHeaderModifier.Remove to contain mcp-init-host, got %v", f.RequestHeaderModifier.Remove)
+		}
+		if !removed["router-key"] {
+			t.Errorf("expected RequestHeaderModifier.Remove to contain router-key, got %v", f.RequestHeaderModifier.Remove)
+		}
+		found = true
+	}
+	if !found {
+		t.Errorf("expected RequestHeaderModifier filter to be present in HTTPRoute rules")
 	}
 }
 

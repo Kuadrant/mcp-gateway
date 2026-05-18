@@ -481,11 +481,11 @@ bin/golangci-lint-kube-api-linter:
 
 # To install cspell, do `npm install -g cspell@latest`.
 # If this reports "Unknown word" for valid spellings, do
-# `cspell --words-only --config cspell.json --unique . | sort --ignore-case >> project-words.txt`
+# `cspell --words-only --unique . | sort --ignore-case >> project-words.txt`
 # to add new words to the list.
 .PHONY: spell
 spell:
-	cspell --quiet --config cspell.json .
+	cspell --quiet .
 
 .PHONY: lint-go
 lint-go: check-gofmt check-goimports check-newlines fmt vet golangci-lint kube-api-linter ## Run Go linting and style checks

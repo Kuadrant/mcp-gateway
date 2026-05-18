@@ -1,7 +1,7 @@
 
 # Configure MCP Gateway Listener and Route
 
-This guide covers adding an MCP listener to your existing Gateway. The controller automatically creates an HTTPRoute when the MCPGatewayExtension becomes ready. This guide also covers how to use a custom HTTPRoute if you need CORS headers or additional path rules.
+This guide covers adding the required MCP listeners to your existing Gateway. The controller automatically creates an HTTPRoute when the MCPGatewayExtension becomes ready. This guide also covers how to use a custom HTTPRoute if you need CORS headers or additional path rules.
 
 ## Prerequisites
 
@@ -9,9 +9,14 @@ This guide covers adding an MCP listener to your existing Gateway. The controlle
 - Existing [Gateway](https://gateway-api.sigs.k8s.io/) resource
 - Gateway API provider (e.g. Istio) configured
 
-## Step 1: Add MCP Listener to Gateway
+## Step 1: Add MCP Listeners to Gateway
 
-Add a listener for MCP traffic to your existing Gateway. Patch it to add a new listener entry:
+MCP Gateway requires two listeners on your Gateway:
+
+- **`mcp`**: the public-facing listener for MCP client traffic. The hostname must resolve to your Gateway's external address.
+- **`mcps`**: an internal listener used for routing to registered MCP servers. MCPServerRegistration HTTPRoutes attach to this listener. The hostname is a wildcard that does not need to be publicly resolvable.
+
+Patch your Gateway to add both listeners:
 
 ```bash
 kubectl patch gateway your-gateway-name -n your-gateway-namespace --type merge -p '
@@ -24,10 +29,17 @@ spec:
     allowedRoutes:
       namespaces:
         from: All
+  - name: mcps
+    hostname: "*.mcp.local"
+    port: 8080
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All
 '
 ```
 
-Replace `your-gateway-name`, `your-gateway-namespace`, and the hostname with your values. The hostname must resolve to your Gateway's external address.
+Replace `your-gateway-name`, `your-gateway-namespace`, and the `mcp` hostname with your values. The `mcps` wildcard hostname (`*.mcp.local`) is only used for internal cluster routing. You can use any wildcard hostname here (e.g. `*.mcp.internal`).
 
 > **Note:** The patch above replaces all listeners. To preserve existing listeners, use a JSON patch or edit the Gateway directly with `kubectl edit gateway your-gateway-name -n your-gateway-namespace`.
 
@@ -36,6 +48,14 @@ Replace `your-gateway-name`, `your-gateway-namespace`, and the hostname with you
 > helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
 >   --set gateway.publicHost=mcp.127-0-0-1.sslip.io
 > ```
+
+Verify both listeners were added:
+
+```bash
+kubectl get gateway your-gateway-name -n your-gateway-namespace -o jsonpath='{.spec.listeners[*].name}'
+```
+
+You should see both `mcp` and `mcps` in the output.
 
 ## Step 2: HTTPRoute (Automatic)
 

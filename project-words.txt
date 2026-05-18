@@ -28,7 +28,6 @@ boltdb
 btlspolicy
 buger
 buildx
-bulder
 cainjector
 caitlinelfring
 catalogsource
@@ -86,7 +85,6 @@ eppb
 erlene
 errcheck
 Errorf
-evals
 evanphx
 EXITVAL
 externalname
@@ -110,7 +108,6 @@ genproto
 getent
 gethostbyname
 getline
-Gevals
 Ginko
 githubcopilot
 gitops
@@ -137,6 +134,7 @@ gotool
 grpcroute
 grpcroutes
 hairpinned
+hairpinning
 heades
 healthz
 Healthz
@@ -155,7 +153,6 @@ inmemory
 inotify
 installplan
 integration
-intialise
 intstr
 invopop
 ipaddresspool
@@ -194,7 +191,6 @@ kubebuilder
 kubeconfig
 KUBECONFIG
 kubelet
-kuberenetes
 kustomization
 kvstore
 kylelemons
@@ -213,7 +209,6 @@ maleck
 manifestskustomizesamples
 mapstructure
 maruel
-mcpchecker
 mcpclient
 mcpgateway
 mcpgatewayextension
@@ -302,7 +297,6 @@ planetscale
 pmezard
 printcolumn
 procv
-protectected
 protoc
 pubout
 python3
@@ -325,7 +319,6 @@ regpour
 regset
 regslow
 regtime
-Reponse
 retval
 rhcl
 Rkfdsw
@@ -344,7 +337,6 @@ serviceentry
 servicemeshoperator
 sess
 sessionid
-sesssion
 Sjlm
 sjson
 socket
@@ -414,3 +406,10 @@ HKDF
 HMAC
 usercred
 myprefix
+SIEM
+SIEMs
+GHSA
+hrpp
+deadbeefcafebabe
+myprompt
+promptname

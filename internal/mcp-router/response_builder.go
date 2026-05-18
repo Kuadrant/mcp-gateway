@@ -13,8 +13,8 @@ type ResponseBuilder struct {
 	response []*eppb.ProcessingResponse
 }
 
-// WithRequestHeadersReponse adds a request headers response with header mutations, clears route cache
-func (rb *ResponseBuilder) WithRequestHeadersReponse(headers []*basepb.HeaderValueOption) *ResponseBuilder {
+// WithRequestHeadersResponse adds a request headers response with header mutations, clears route cache
+func (rb *ResponseBuilder) WithRequestHeadersResponse(headers []*basepb.HeaderValueOption) *ResponseBuilder {
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_RequestHeaders{
 			RequestHeaders: &eppb.HeadersResponse{
@@ -30,8 +30,8 @@ func (rb *ResponseBuilder) WithRequestHeadersReponse(headers []*basepb.HeaderVal
 	return rb
 }
 
-// WithRequestBodyHeadersAndBodyReponse adds request body response with header and body mutations, clears route cache
-func (rb *ResponseBuilder) WithRequestBodyHeadersAndBodyReponse(headers []*basepb.HeaderValueOption, body []byte) *ResponseBuilder {
+// WithRequestBodyHeadersAndBodyResponse adds request body response with header and body mutations, clears route cache
+func (rb *ResponseBuilder) WithRequestBodyHeadersAndBodyResponse(headers []*basepb.HeaderValueOption, body []byte) *ResponseBuilder {
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_RequestBody{
 			RequestBody: &eppb.BodyResponse{

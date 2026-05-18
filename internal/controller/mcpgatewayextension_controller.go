@@ -339,6 +339,7 @@ func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*
 				Port:     port,
 				Hostname: hostname,
 				Name:     sectionName,
+				Protocol: string(listener.Protocol),
 			}, nil
 		}
 	}

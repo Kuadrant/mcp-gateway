@@ -8,7 +8,6 @@ on:
       - 'docs/**'
       - 'examples/**'
       - 'LICENSE'
-      - 'evals/**'
       - '.coderabbit.yaml'
       - '.gitignore'
   merge_group:

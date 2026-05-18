@@ -131,7 +131,7 @@ func (b *TestResourcesBuilder) WithBackendNamespace(namespace string) *TestResou
 	return b
 }
 
-// overrides the auto-generated registration name for external references (e.g. keycloak client IDs)
+// WithRegistrationName overrides the auto-generated registration name for external references (e.g. keycloak client IDs).
 func (b *TestResourcesBuilder) WithRegistrationName(name string) *TestResourcesBuilder {
 	b.registrationName = name
 	return b
@@ -188,7 +188,7 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 	backendRef := gatewayapiv1.BackendObjectReference{
 		Name: gatewayapiv1.ObjectName(b.serviceName),
-		Port: (*gatewayapiv1.PortNumber)(&b.port),
+		Port: &b.port,
 	}
 
 	// add namespace if cross-namespace backend reference
@@ -258,7 +258,7 @@ func (b *TestResourcesBuilder) buildExternalResources(routeName string) {
 	externalHost := b.serviceName
 	istioGroup := gatewayapiv1.Group("networking.istio.io")
 	hostnameKind := gatewayapiv1.Kind("Hostname")
-	portNum := gatewayapiv1.PortNumber(b.port)
+	portNum := b.port
 
 	b.serviceEntry = &istionetv1beta1.ServiceEntry{
 		ObjectMeta: metav1.ObjectMeta{
@@ -426,6 +426,7 @@ type MCPVirtualServerBuilder struct {
 	namespace   string
 	description string
 	tools       []string
+	prompts     []string
 }
 
 // NewMCPVirtualServerBuilder creates a new MCPVirtualServerBuilder
@@ -448,6 +449,12 @@ func (b *MCPVirtualServerBuilder) WithTools(tools []string) *MCPVirtualServerBui
 	return b
 }
 
+// WithPrompts sets the prompts list
+func (b *MCPVirtualServerBuilder) WithPrompts(prompts []string) *MCPVirtualServerBuilder {
+	b.prompts = prompts
+	return b
+}
+
 // Build creates the MCPVirtualServer resource
 func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 	return &mcpv1alpha1.MCPVirtualServer{
@@ -458,6 +465,7 @@ func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 		Spec: mcpv1alpha1.MCPVirtualServerSpec{
 			Description: b.description,
 			Tools:       b.tools,
+			Prompts:     b.prompts,
 		},
 	}
 }

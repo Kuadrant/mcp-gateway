@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -17,8 +18,8 @@ import (
 
 var keycloakTokenURL = goenv.GetDefault("KEYCLOAK_TOKEN_URL", "https://keycloak."+e2eDomain+":8002/realms/mcp/protocol/openid-connect/token")
 
-// obtains an access token via ROPC grant (test automation only)
-func GetKeycloakUserToken(username, password string) (string, error) {
+// GetKeycloakUserToken obtains an access token via ROPC grant (test automation only).
+func GetKeycloakUserToken(ctx context.Context, username, password string) (string, error) {
 	data := url.Values{
 		"grant_type":    {"password"},
 		"client_id":     {"mcp-gateway"},
@@ -28,7 +29,7 @@ func GetKeycloakUserToken(username, password string) (string, error) {
 		"scope":         {"openid groups roles"},
 	}
 
-	req, err := http.NewRequest("POST", keycloakTokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, keycloakTokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -44,7 +45,7 @@ func GetKeycloakUserToken(username, password string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

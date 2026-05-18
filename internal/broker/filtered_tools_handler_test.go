@@ -59,7 +59,7 @@ func createTestManager(t *testing.T, serverName, prefix string, tools []mcp.Tool
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
 	})
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	// populate tools directly for testing (this requires accessing internal state)
 	manager.SetToolsForTesting(tools)
@@ -72,7 +72,7 @@ func TestFilteredTools(t *testing.T) {
 		Name                 string
 		FullToolList         *mcp.ListToolsResult
 		AllowedToolsList     map[string][]string
-		RegisteredMCPServers map[config.UpstreamMCPID]*upstream.MCPManager
+		RegisteredMCPServers map[config.UpstreamMCPID]upstream.ActiveMCPServer
 		enforceFilterList    bool
 		ExpectedTools        []mcp.Tool
 	}{
@@ -82,12 +82,12 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test_tool"},
 				{Name: "test_tool2"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			AllowedToolsList: map[string][]string{
 				"mcp-test/test-server1": {"tool"},
@@ -103,17 +103,17 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test2_tool"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
-				"mcp-test/test-server2:test2_:http://test.local/mcp": createTestManager(t,
+				)),
+				"mcp-test/test-server2:test2_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server2",
 					"test2_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			AllowedToolsList: map[string][]string{
 				"mcp-test/test-server1": {"tool"},
@@ -131,17 +131,17 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test2_tool"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
-				"mcp-test/test-server2:test2_:http://test.local/mcp": createTestManager(t,
+				)),
+				"mcp-test/test-server2:test2_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server2",
 					"test2_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			AllowedToolsList:  map[string][]string{},
 			enforceFilterList: true,
@@ -153,12 +153,12 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			AllowedToolsList:  nil,
 			enforceFilterList: false,
@@ -180,7 +180,7 @@ func TestFilteredTools(t *testing.T) {
 		Name                 string
 		FullToolList         *mcp.ListToolsResult
 		AllowedToolsList     map[string][]string
-		RegisteredMCPServers map[config.UpstreamMCPID]*upstream.MCPManager
+		RegisteredMCPServers map[config.UpstreamMCPID]upstream.ActiveMCPServer
 		enforceFilterList    bool
 		ExpectedTools        []mcp.Tool
 		jwtOverride          string
@@ -191,12 +191,12 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			enforceFilterList: false,
 			jwtOverride:       promptsOnlyJWT,
@@ -211,12 +211,12 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			enforceFilterList: true,
 			jwtOverride:       promptsOnlyJWT,
@@ -228,12 +228,12 @@ func TestFilteredTools(t *testing.T) {
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
-			RegisteredMCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/test-server1:test1_:http://test.local/mcp": createTestManager(t,
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/test-server1:test1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/test-server1",
 					"test1_",
 					[]mcp.Tool{{Name: "tool"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			enforceFilterList: true,
 			jwtOverride:       toolsAndPromptsJWT,
@@ -461,7 +461,7 @@ func TestFilterToolsSerializesAsEmptyArray(t *testing.T) {
 func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 	testCases := []struct {
 		Name             string
-		MCPServers       map[config.UpstreamMCPID]*upstream.MCPManager
+		MCPServers       map[config.UpstreamMCPID]upstream.ActiveMCPServer
 		VirtualServers   map[string]*config.VirtualServer
 		AllowedToolsList map[string][]string
 		VirtualServerID  string
@@ -469,12 +469,12 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 	}{
 		{
 			Name: "x-mcp-authorized filtered first then virtual server filters further",
-			MCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/server1:s1_:http://test.local/mcp": createTestManager(t,
+			MCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/server1:s1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/server1",
 					"s1_",
 					[]mcp.Tool{{Name: "tool1"}, {Name: "tool2"}, {Name: "tool3"}},
-				),
+				)),
 			},
 			VirtualServers: map[string]*config.VirtualServer{
 				"mcp-test/my-vs": {
@@ -493,12 +493,12 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 		},
 		{
 			Name: "x-mcp-authorized only when no virtual server header",
-			MCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/server1:s1_:http://test.local/mcp": createTestManager(t,
+			MCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/server1:s1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/server1",
 					"s1_",
 					[]mcp.Tool{{Name: "tool1"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			VirtualServers: map[string]*config.VirtualServer{
 				"mcp-test/my-vs": {
@@ -514,12 +514,12 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 		},
 		{
 			Name: "virtual server only when no x-mcp-authorized header",
-			MCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/server1:s1_:http://test.local/mcp": createTestManager(t,
+			MCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/server1:s1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/server1",
 					"s1_",
 					[]mcp.Tool{{Name: "tool1"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			VirtualServers: map[string]*config.VirtualServer{
 				"mcp-test/my-vs": {
@@ -533,12 +533,12 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 		},
 		{
 			Name: "empty result when filters have no intersection",
-			MCPServers: map[config.UpstreamMCPID]*upstream.MCPManager{
-				"mcp-test/server1:s1_:http://test.local/mcp": createTestManager(t,
+			MCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/server1:s1_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
 					"mcp-test/server1",
 					"s1_",
 					[]mcp.Tool{{Name: "tool1"}, {Name: "tool2"}},
-				),
+				)),
 			},
 			VirtualServers: map[string]*config.VirtualServer{
 				"mcp-test/my-vs": {
@@ -572,7 +572,7 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 			for _, manager := range tc.MCPServers {
 				for _, tool := range manager.GetManagedTools() {
 					inputTools.Tools = append(inputTools.Tools, mcp.Tool{
-						Name: manager.MCP.GetPrefix() + tool.Name,
+						Name: manager.Config().Prefix + tool.Name,
 					})
 				}
 			}

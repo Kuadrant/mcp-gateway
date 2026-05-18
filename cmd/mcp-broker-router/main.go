@@ -59,7 +59,6 @@ var (
 	mcpBrokerAddrFlag              string
 	mcpRoutePublicHost             string
 	mcpRoutePrivateHost            string
-	mcpRouterKey                   string
 	cacheConnectionStringFlag      string
 	mcpConfigFile                  string
 	jwtSigningKeyFlag              string
@@ -100,13 +99,6 @@ func main() {
 		"The private host the MCP Gateway. The gateway router will use this to hairpin request to initialize MCP servers etc.",
 	)
 
-	// TODO ick not sure how to describe this
-	flag.StringVar(
-		&mcpRouterKey,
-		"mcp-router-key",
-		goenv.GetDefault("MCP_ROUTER_API_KEY", "secret-api-key"),
-		"this key is used to allow the router to send request through the gateway and be trusted by the router",
-	)
 	flag.StringVar(
 		&mcpConfigFile,
 		"mcp-gateway-config",
@@ -230,7 +222,6 @@ func main() {
 
 	mcpConfig.MCPGatewayExternalHostname = mcpRoutePublicHost
 	mcpConfig.MCPGatewayInternalHostname = mcpRoutePrivateHost
-	mcpConfig.RouterAPIKey = mcpRouterKey
 
 	// Only load config and run broker/router in standalone mode
 	mutex.Lock()
@@ -400,26 +391,26 @@ func LoadConfig(path string) {
 	if err != nil {
 		log.Fatalf("Error reading config file: %s", err)
 	}
-	// reset the servers to avoid old configs being written to
-	mcpConfig.Servers = []*config.MCPServer{}
-	err = viper.UnmarshalKey("servers", &mcpConfig.Servers)
+	var newServers []*config.MCPServer
+	err = viper.UnmarshalKey("servers", &newServers)
 	if err != nil {
 		log.Fatalf("Unable to decode server config into struct: %s", err)
 	}
-	mcpConfig.VirtualServers = []*config.VirtualServer{}
+	var newVirtualServers []*config.VirtualServer
 	// Load virtualServers if present - this is optional
 	if viper.IsSet("virtualServers") {
-		err = viper.UnmarshalKey("virtualServers", &mcpConfig.VirtualServers)
+		err = viper.UnmarshalKey("virtualServers", &newVirtualServers)
 		if err != nil {
 			log.Fatal("Failed to parse virtualServers configuration", "error", err)
 		}
 	} else {
 		logger.Debug("No virtualServers section found in configuration")
 	}
+	mcpConfig.SetServers(newServers, newVirtualServers)
 
-	logger.Debug("config successfully loaded", "# servers", len(mcpConfig.Servers))
+	logger.Debug("config successfully loaded", "# servers", len(newServers))
 
-	for _, s := range mcpConfig.Servers {
+	for _, s := range newServers {
 		logger.Debug(
 			"server config",
 			"server name",

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
+func TestResponseBuilder_WithRequestHeadersResponse(t *testing.T) {
 	rb := NewResponse()
 	headers := []*basepb.HeaderValueOption{
 		{
@@ -25,7 +25,7 @@ func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
 		},
 	}
 
-	rb.WithRequestHeadersReponse(headers)
+	rb.WithRequestHeadersResponse(headers)
 	responses := rb.Build()
 	require.Len(t, responses, 1)
 	require.IsType(t, &eppb.ProcessingResponse_RequestHeaders{}, responses[0].Response)
@@ -39,7 +39,7 @@ func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
 	require.Equal(t, []byte("example.com"), rh.RequestHeaders.Response.HeaderMutation.SetHeaders[0].Header.RawValue)
 }
 
-func TestResponseBuilder_WithRequestBodyHeadersAndBodyReponse(t *testing.T) {
+func TestResponseBuilder_WithRequestBodyHeadersAndBodyResponse(t *testing.T) {
 	rb := NewResponse()
 	headers := []*basepb.HeaderValueOption{
 		{
@@ -51,7 +51,7 @@ func TestResponseBuilder_WithRequestBodyHeadersAndBodyReponse(t *testing.T) {
 	}
 	body := []byte(`{"test":"data"}`)
 
-	rb.WithRequestBodyHeadersAndBodyReponse(headers, body)
+	rb.WithRequestBodyHeadersAndBodyResponse(headers, body)
 	responses := rb.Build()
 	require.Len(t, responses, 1)
 
@@ -220,7 +220,7 @@ func TestResponseBuilder_ChainedCalls(t *testing.T) {
 		},
 	}
 
-	rb.WithRequestHeadersReponse(headers).
+	rb.WithRequestHeadersResponse(headers).
 		WithImmediateResponse(400, "bad request")
 
 	responses := rb.Build()
@@ -234,7 +234,7 @@ func TestResponseBuilder_EmptyHeaders(t *testing.T) {
 	rb := NewResponse()
 	emptyHeaders := []*basepb.HeaderValueOption{}
 
-	rb.WithRequestHeadersReponse(emptyHeaders)
+	rb.WithRequestHeadersResponse(emptyHeaders)
 
 	responses := rb.Build()
 	require.Len(t, responses, 1)
@@ -250,7 +250,7 @@ func TestResponseBuilder_EmptyBody(t *testing.T) {
 	headers := []*basepb.HeaderValueOption{}
 	emptyBody := []byte{}
 
-	rb.WithRequestBodyHeadersAndBodyReponse(headers, emptyBody)
+	rb.WithRequestBodyHeadersAndBodyResponse(headers, emptyBody)
 
 	responses := rb.Build()
 	require.Len(t, responses, 1)

@@ -21,7 +21,6 @@ type MCPServersConfig struct {
 	//MCPGatewayExternalHostname is the accessible host of the gateway listener
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
-	RouterAPIKey               string
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -30,6 +29,32 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 	defer config.lock.Unlock()
 
 	config.observers = append(config.observers, obs)
+}
+
+// SetServers atomically replaces the server and virtual-server lists.
+func (config *MCPServersConfig) SetServers(servers []*MCPServer, virtualServers []*VirtualServer) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.Servers = servers
+	config.VirtualServers = virtualServers
+}
+
+// ListServers returns a consistent snapshot of the current server list.
+func (config *MCPServersConfig) ListServers() []*MCPServer {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	out := make([]*MCPServer, len(config.Servers))
+	copy(out, config.Servers)
+	return out
+}
+
+// ListVirtualServers returns a consistent snapshot of the current virtual-server list.
+func (config *MCPServersConfig) ListVirtualServers() []*VirtualServer {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	out := make([]*VirtualServer, len(config.VirtualServers))
+	copy(out, config.VirtualServers)
+	return out
 }
 
 // Notify notifies registered observers of config changes
@@ -91,8 +116,9 @@ func (mcpServer *MCPServer) Path() (string, error) {
 
 // VirtualServer represents a virtual server configuration
 type VirtualServer struct {
-	Name  string
-	Tools []string
+	Name    string
+	Tools   []string
+	Prompts []string
 }
 
 // Observer provides an interface to implement in order to register as an Observer of config changes
@@ -116,6 +142,7 @@ type AuthConfig struct {
 
 // VirtualServerConfig represents virtual server config
 type VirtualServerConfig struct {
-	Name  string   `json:"name"  yaml:"name"`
-	Tools []string `json:"tools" yaml:"tools"`
+	Name    string   `json:"name"    yaml:"name"`
+	Tools   []string `json:"tools"   yaml:"tools"`
+	Prompts []string `json:"prompts,omitempty" yaml:"prompts,omitempty"`
 }

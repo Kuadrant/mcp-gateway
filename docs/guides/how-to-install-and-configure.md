@@ -81,8 +81,9 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 | `--mcp-broker-public-address` | `0.0.0.0:8080` | Fixed |
 | `--mcp-gateway-private-host` | `<gateway>-istio.<namespace>.svc.cluster.local:<listener-port>` | Listener port + Gateway name/namespace |
 | `--mcp-gateway-public-host` | Listener hostname (wildcards like `*.example.com` become `mcp.example.com`) | Listener hostname |
-| `--mcp-router-key` | Auto-generated hash | MCPGatewayExtension UID |
 | `--mcp-gateway-config` | `/config/config.yaml` | Fixed |
+
+> **Note:** The router authenticates its own hairpin backend-init requests with a short-lived JWT signed by the same HMAC key as client session JWTs (`JWT_SESSION_SIGNING_KEY`). There is no separate router-key secret to manage; the previous `--mcp-router-key` flag has been removed.
 
 The `--mcp-gateway-private-host` flag enables hair-pinning: when a `tools/call` request arrives, the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec.
 

@@ -56,9 +56,6 @@ func main() {
 			"protocolVersion": "2025-06-18",
 			"capabilities": {
 			"logging": {},
-			"prompts": {
-				"listChanged": true
-			},
 			"resources": {
 				"subscribe": true,
 				"listChanged": true

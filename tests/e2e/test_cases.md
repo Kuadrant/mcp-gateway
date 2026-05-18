@@ -26,6 +26,11 @@
 - When a client makes multiple tool calls to the same backend MCP server, the gateway should reuse the same backend session for efficiency. The backend session ID should remain consistent across multiple calls from the same client. When a client disconnects and reconnects, a new backend session should be created.
 
 
+### [Happy] Concurrent tool calls on a fresh session create only one backend session
+
+- When multiple concurrent tool calls arrive for the same gateway session before any backend session has been established, the gateway should initialize exactly one backend session and all concurrent calls should complete successfully using that same backend session ID. No backend connections should be leaked regardless of how many concurrent callers race to trigger initialization.
+
+
 ### [Happy] Test MCPVirtualServer behaves as expected when defined
 
 - When a developer defines an MCPVirtualServer resource and specifies the value of the `X-Mcp-Virtualserver` header as the name in the format `namespace/name`, where the namespace and name come from the created MCPVirtualServer resource, they should only get the tools specified in the MCPVirtualServer resource when they do a tools/list request to the MCP Gateway host.
@@ -143,6 +148,18 @@
 ### [Happy] Tool schema validation filters invalid tools
 
 - When a backend MCP server presents tools with invalid JSON schemas (e.g. `inputSchema.properties` with `"type": "int"` instead of `"integer"`), the gateway should filter out the invalid tools and not serve them to clients. The default `FilterOut` policy means the server is still registered and any valid tools are served, but invalid tools are excluded from `tools/list` responses. The `/status` endpoint should report the invalid tool count and details for the affected server. The custom-response-server is used for this test as it has a tool with `"type": "int"` in its input schema.
+
+### [Happy] Prompt listing, invocation, and unregistration
+
+- When an MCPServerRegistration is registered with a backend MCP server that has prompts (e.g., server1 with a "greet" prompt), the gateway should discover and serve those prompts with the server's prefix applied. A prompts/list request should return the prompt with the prefixed name. A prompts/get request using the prefixed prompt name should return the prompt's messages. When the MCPServerRegistration is deleted, the prompt should no longer appear in prompts/list.
+
+### [Happy] Multi-server prompt aggregation
+
+- When multiple MCPServerRegistration resources are created pointing to servers with prompts and different prefixes, a prompts/list request should return prompts from all registered servers, each prefixed with the corresponding server's prefix. For example, two registrations of server1 with prefixes "s1a_" and "s1b_" should produce "s1a_greet" and "s1b_greet" in the prompts list.
+
+### [Happy] MCPVirtualServer filters prompts
+
+- When an MCPVirtualServer resource specifies a subset of prompt names in its `prompts` field, a client using the `X-Mcp-Virtualserver` header should only see the specified prompts in a prompts/list response. A client without the header should still see all prompts.
 
 ### [Happy] Elicitation accept flow
 

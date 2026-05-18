@@ -16,7 +16,6 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
-      - 'evals/**'
       - 'tests/servers/**'
   pull_request:
     branches: [ main ]
@@ -26,7 +25,6 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
-      - 'evals/**'
       - 'tests/servers/**'
   merge_group:
     types: [ checks_requested ]

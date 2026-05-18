@@ -34,7 +34,7 @@ func createTestManagerForStatus(t *testing.T, serverName string, tools []mcp.Too
 		Prefix: "test_",
 		URL:    "http://test.local/mcp",
 	})
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)
 	manager.SetStatusForTesting(upstream.ServerValidationStatus{
@@ -58,10 +58,10 @@ func TestStatusHandlerGetSingleServer(t *testing.T) {
 	// Add a server
 	brokerImpl, ok := mcpBroker.(*mcpBrokerImpl)
 	require.True(t, ok)
-	brokerImpl.mcpServers["dummyServer:test_:http://test.local/mcp"] = createTestManagerForStatus(t,
+	brokerImpl.mcpServers["dummyServer:test_:http://test.local/mcp"] = upstream.NewActiveForTesting(createTestManagerForStatus(t,
 		"dummyServer",
 		[]mcp.Tool{{Name: "dummyTool"}},
-	)
+	))
 
 	w = httptest.NewRecorder()
 	sh.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status/dummyServer", nil))
@@ -77,10 +77,10 @@ func TestStatusHandlerGetAll(t *testing.T) {
 	// Add a server
 	brokerImpl, ok := mcpBroker.(*mcpBrokerImpl)
 	require.True(t, ok)
-	brokerImpl.mcpServers["dummyServer:test_:http://test.local/mcp"] = createTestManagerForStatus(t,
+	brokerImpl.mcpServers["dummyServer:test_:http://test.local/mcp"] = upstream.NewActiveForTesting(createTestManagerForStatus(t,
 		"dummyServer",
 		[]mcp.Tool{{Name: "dummyTool"}},
-	)
+	))
 
 	w := httptest.NewRecorder()
 	sh.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -115,7 +115,7 @@ func TestValidateAllServers(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				mgr := createTestManagerForStatus(t, "s1", nil)
 				mgr.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
-				b.mcpServers["s1"] = mgr
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(mgr)
 			},
 			wantTotal:        1,
 			wantHealthy:      0,
@@ -127,7 +127,7 @@ func TestValidateAllServers(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				mgr := createTestManagerForStatus(t, "s1", nil)
 				mgr.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: true})
-				b.mcpServers["s1"] = mgr
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(mgr)
 			},
 			wantTotal:        1,
 			wantHealthy:      1,
@@ -139,10 +139,10 @@ func TestValidateAllServers(t *testing.T) {
 			setup: func(b *mcpBrokerImpl) {
 				m1 := createTestManagerForStatus(t, "s1", nil)
 				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: true})
-				b.mcpServers["s1"] = m1
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
 				m2 := createTestManagerForStatus(t, "s2", nil)
 				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
-				b.mcpServers["s2"] = m2
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
 			},
 			wantTotal:        2,
 			wantHealthy:      1,

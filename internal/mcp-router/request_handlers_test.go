@@ -129,7 +129,7 @@ func TestMCPRequestToolName(t *testing.T) {
 			Name: "test with not a tool call",
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
-				Method:  "intialise",
+				Method:  "initialise",
 				Params: map[string]any{
 					"name": "test",
 				},
@@ -140,7 +140,7 @@ func TestMCPRequestToolName(t *testing.T) {
 			Name: "test with not a tool call",
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
-				Method:  "intialise",
+				Method:  "initialise",
 				Params: map[string]any{
 					"name": 2,
 				},
@@ -1035,6 +1035,247 @@ func mustStoreIDMap(t *testing.T, m idmap.Map, backendID any, serverName, sessio
 	return id
 }
 
+// TestHandleNoneToolCall_HairpinJWTValidation covers the GHSA-g53w-w6mj-hrpp
+// fix: the router only honours an `mcp-init-host` rewrite when accompanied by
+// a valid short-lived JWT bound to that host. Static keys, missing tokens, or
+// host mismatches are rejected.
+func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	newServer := func(t *testing.T) *ExtProcServer {
+		t.Helper()
+		cache, err := session.NewCache()
+		require.NoError(t, err)
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+		return &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{},
+			JWTManager:    jwtManager,
+			Logger:        logger,
+			SessionCache:  cache,
+			Broker:        newMockBroker(nil, map[string]string{}),
+		}
+	}
+
+	mustImmediate := func(t *testing.T, resp []*eppb.ProcessingResponse, expectedCode int32) {
+		t.Helper()
+		require.Len(t, resp, 1)
+		ir, ok := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.True(t, ok, "expected ImmediateResponse, got %T", resp[0].Response)
+		require.Equal(t, expectedCode, int32(ir.ImmediateResponse.Status.Code))
+	}
+
+	t.Run("rejects request with no token", func(t *testing.T) {
+		srv := newServer(t)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-init-host", RawValue: []byte("backend.example.com")},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
+	})
+
+	t.Run("rejects request with static key (legacy attack)", func(t *testing.T) {
+		srv := newServer(t)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-init-host", RawValue: []byte("backend.example.com")},
+					{Key: RoutingKey, RawValue: []byte("secret-api-key")},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
+	})
+
+	t.Run("rejects token bound to different host", func(t *testing.T) {
+		srv := newServer(t)
+		token, err := srv.JWTManager.GenerateBackendInitToken("good.example.com")
+		require.NoError(t, err)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-init-host", RawValue: []byte("attacker.example.com")},
+					{Key: RoutingKey, RawValue: []byte(token)},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
+	})
+
+	t.Run("accepts valid token bound to same host and strips router headers", func(t *testing.T) {
+		srv := newServer(t)
+		const targetHost = "backend.example.com"
+		token, err := srv.JWTManager.GenerateBackendInitToken(targetHost)
+		require.NoError(t, err)
+
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-init-host", RawValue: []byte(targetHost)},
+					{Key: RoutingKey, RawValue: []byte(token)},
+				},
+			},
+		}
+		resp := srv.HandleNoneToolCall(context.Background(), req)
+		require.Len(t, resp, 1)
+		rb, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.True(t, ok, "expected RequestBody response, got %T", resp[0].Response)
+		require.NotNil(t, rb.RequestBody.Response)
+
+		// authority should be rewritten to the target host
+		var authoritySet bool
+		for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+			if h.Header.Key == ":authority" {
+				require.Equal(t, targetHost, string(h.Header.RawValue))
+				authoritySet = true
+			}
+		}
+		require.True(t, authoritySet, "expected :authority to be rewritten")
+
+		// router-internal headers must be unset before forwarding to backend
+		removed := rb.RequestBody.Response.HeaderMutation.RemoveHeaders
+		require.Contains(t, removed, "mcp-init-host")
+		require.Contains(t, removed, RoutingKey)
+	})
+
+	t.Run("rejects token signed by a different gateway", func(t *testing.T) {
+		srv := newServer(t)
+		const targetHost = "backend.example.com"
+		other, err := session.NewJWTManager("other-key", 0, logger, nil)
+		require.NoError(t, err)
+		token, err := other.GenerateBackendInitToken(targetHost)
+		require.NoError(t, err)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-init-host", RawValue: []byte(targetHost)},
+					{Key: RoutingKey, RawValue: []byte(token)},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
+	})
+
+	t.Run("no init host header is a regular broker passthrough", func(t *testing.T) {
+		srv := newServer(t)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{},
+			},
+		}
+		resp := srv.HandleNoneToolCall(context.Background(), req)
+		require.Len(t, resp, 1)
+		_, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.True(t, ok, "expected RequestBody response (broker passthrough), got %T", resp[0].Response)
+	})
+}
+
+// TestInitializeMCPSeverSession_PassThroughHeaders verifies that headers
+// forwarded to the upstream initialize call drop the router-internal headers
+// (mcp-init-host, router-key) and the gateway-bound mcp-session-id even when
+// supplied by a client. Anything else is preserved so custom headers still
+// flow through. This is defense-in-depth on top of the explicit override in
+// clients.Initialize.
+func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	var captured map[string]string
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, headers map[string]string, _ bool) (*client.Client, error) {
+		captured = make(map[string]string, len(headers))
+		for k, v := range headers {
+			captured[k] = v
+		}
+		// short-circuit: returning an error skips the rest of the init flow,
+		// which is fine since we only care about what was passed in.
+		return nil, fmt.Errorf("mock init: skip further work")
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			Enabled:  true,
+			Hostname: "backend.example.com",
+		},
+	}
+	srv := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers:                    serverConfigs,
+			MCPGatewayInternalHostname: "mcp-gateway.local",
+		},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker:        newMockBroker(serverConfigs, map[string]string{}),
+	}
+
+	req := &MCPRequest{
+		ID:         ptr.To(0),
+		JSONRPC:    "2.0",
+		Method:     "tools/call",
+		serverName: "dummy",
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":authority", RawValue: []byte("mcp-gateway.local")},
+				{Key: ":path", RawValue: []byte("/mcp")},
+				{Key: "mcp-session-id", RawValue: []byte("client-supplied-gateway-session")},
+				{Key: "mcp-init-host", RawValue: []byte("attacker.example.com")},
+				{Key: RoutingKey, RawValue: []byte("attacker-supplied-key")},
+				{Key: "x-custom-header", RawValue: []byte("custom-value")},
+				{Key: "authorization", RawValue: []byte("Bearer client-token")},
+			},
+		},
+	}
+
+	_, err = srv.initializeMCPSeverSession(context.Background(), req)
+	require.Error(t, err, "expected mock init error to surface")
+	require.NotNil(t, captured, "InitForClient must have been called")
+
+	// router-internal and pseudo-headers are dropped
+	require.NotContains(t, captured, ":authority", "pseudo-header must not be forwarded")
+	require.NotContains(t, captured, ":path", "pseudo-header must not be forwarded")
+	require.NotContains(t, captured, "mcp-session-id", "gateway session id must not be forwarded")
+	require.NotContains(t, captured, "mcp-init-host", "router-internal header must not leak from client input")
+	require.NotContains(t, captured, RoutingKey, "router-internal header must not leak from client input")
+
+	// custom headers and authorization are passed through
+	require.Equal(t, "custom-value", captured["x-custom-header"])
+	require.Equal(t, "Bearer client-token", captured["authorization"])
+
+	// gateway-set headers are present
+	require.Equal(t, "tools/call", captured["x-mcp-method"])
+	require.Equal(t, "dummy", captured["x-mcp-servername"])
+	require.Equal(t, "mcp-router", captured["user-agent"])
+}
+
 func TestHandleRequestHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -1091,4 +1332,162 @@ func TestHandleRequestHeaders(t *testing.T) {
 			require.Equal(t, tc.GatewayHostname, string(headerMutation.SetHeaders[0].Header.RawValue))
 		})
 	}
+}
+
+func TestMCPRequest_PromptName(t *testing.T) {
+	testCases := []struct {
+		Name         string
+		Input        *MCPRequest
+		ExpectPrompt string
+	}{
+		{
+			Name: "extracts prompt name from prompts/get",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params: map[string]any{
+					"name": "test_prompt",
+				},
+			},
+			ExpectPrompt: "test_prompt",
+		},
+		{
+			Name: "returns empty for non prompts/get method",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params: map[string]any{
+					"name": "test",
+				},
+			},
+			ExpectPrompt: "",
+		},
+		{
+			Name: "returns empty when no name param",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params:  map[string]any{},
+			},
+			ExpectPrompt: "",
+		},
+		{
+			Name: "returns empty for non-string name",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "prompts/get",
+				Params: map[string]any{
+					"name": 42,
+				},
+			},
+			ExpectPrompt: "",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			require.Equal(t, tc.ExpectPrompt, tc.Input.PromptName())
+		})
+	}
+}
+
+func TestMCPRequest_isPromptGet(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   string
+		expected bool
+	}{
+		{name: "prompts/get is prompt get", method: "prompts/get", expected: true},
+		{name: "prompts/list is not prompt get", method: "prompts/list", expected: false},
+		{name: "tools/call is not prompt get", method: "tools/call", expected: false},
+		{name: "empty is not prompt get", method: "", expected: false},
+		{name: "PROMPTS/GET uppercase is not prompt get", method: "PROMPTS/GET", expected: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &MCPRequest{Method: tc.method}
+			require.Equal(t, tc.expected, req.isPromptGet())
+		})
+	}
+}
+
+func TestHandlePromptGet(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	require.NoError(t, err)
+	require.True(t, sessionAdded)
+
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+		return nil, fmt.Errorf("InitForClient should not be called when session exists")
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			Enabled:  true,
+			Hostname: "localhost",
+		},
+	}
+
+	testBroker := newMockBroker(serverConfigs, map[string]string{})
+	testBroker.(*mockBrokerImpl).prompt2svr = map[string]string{
+		"s_myprompt": "dummy",
+	}
+
+	srv := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers: serverConfigs,
+		},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker:        testBroker,
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "prompts/get",
+		Params: map[string]any{
+			"name": "s_myprompt",
+		},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      "mcp-session-id",
+					RawValue: []byte(validToken),
+				},
+			},
+		},
+	}
+
+	resp := srv.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	require.NotNil(t, rb.RequestBody.Response)
+
+	headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+	require.Equal(t, "x-mcp-method", headers[0].Header.Key)
+	require.Equal(t, []uint8("prompts/get"), headers[0].Header.RawValue)
+	require.Equal(t, "x-mcp-promptname", headers[1].Header.Key)
+	require.Equal(t, []uint8("myprompt"), headers[1].Header.RawValue)
+	require.Equal(t, "x-mcp-servername", headers[2].Header.Key)
+	require.Equal(t, []uint8("dummy"), headers[2].Header.RawValue)
+
+	body := rb.RequestBody.Response.BodyMutation.GetBody()
+	require.Contains(t, string(body), `"name":"myprompt"`)
+	require.NotContains(t, string(body), `"name":"s_myprompt"`)
 }
