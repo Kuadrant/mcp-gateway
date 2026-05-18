@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -95,27 +96,46 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 	return nil
 }
 
-// AddDeploymentCommandFlag patches a deployment's first container to add a command-line flag
-// if it isn't already present. Triggers a rollout and waits for it to complete.
-func AddDeploymentCommandFlag(namespace, name, flag string) error {
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", name,
-		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}")
+// AddDeploymentCommandFlag appends a flag to a deployment's container command array.
+func AddDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"%s"}]`, flag)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to get deployment args: %s: %w", string(output), err)
+		return fmt.Errorf("failed to add command flag on deployment %s: %s: %w", deploymentName, string(output), err)
 	}
-	if strings.Contains(string(output), flag) {
+	return nil
+}
+
+// RemoveDeploymentCommandFlag removes a flag from a deployment's container command array by value.
+func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].command}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get command array: %s: %w", string(output), err)
+	}
+	var command []string
+	if err := json.Unmarshal(output, &command); err != nil {
+		return fmt.Errorf("failed to parse command array: %w: %s", err, string(output))
+	}
+	idx := -1
+	for i, c := range command {
+		if c == flag {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
 		return nil
 	}
-
-	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":"%s","args":["%s"]}]}}}}`, name, flag)
-	// use strategic merge so the args array is merged, not replaced
-	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", name,
-		"-n", namespace, "--type=strategic", "-p", patch)
+	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/command/%d"}]`, idx)
+	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to patch deployment %s: %s: %w", name, string(output), err)
+		return fmt.Errorf("failed to remove command flag on deployment %s: %s: %w", deploymentName, string(output), err)
 	}
 	return nil
 }

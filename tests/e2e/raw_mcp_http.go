@@ -200,7 +200,68 @@ func extractBackendSession(content []toolContent) string {
 	return ""
 }
 
-// readJSONRPCResult reads a JSON-RPC result from an HTTP response, handling both JSON and SSE content types
+// discoverToolsResponse mirrors the broker's discover_tools output
+type discoverToolsResponse struct {
+	Servers []discoverServerInfo `json:"servers"`
+}
+
+type discoverServerInfo struct {
+	Name       string   `json:"name"`
+	Categories []string `json:"categories"`
+	Hint       string   `json:"hint,omitempty"`
+	Tools      []string `json:"tools"`
+}
+
+// mcpCallDiscoverTools calls discover_tools via tools/call and parses the response
+func mcpCallDiscoverTools(ctx context.Context, url, sessionID string, args map[string]any, headers map[string]string) (int, *discoverToolsResponse, error) { //nolint:unparam
+	status, content, err := mcpCallTool(ctx, url, sessionID, "discover_tools", args, headers)
+	if err != nil {
+		return status, nil, err
+	}
+	if len(content) == 0 {
+		return status, nil, fmt.Errorf("discover_tools returned no content")
+	}
+	var resp discoverToolsResponse
+	if err := json.Unmarshal([]byte(content[0].Text), &resp); err != nil {
+		return status, nil, fmt.Errorf("failed to parse discover_tools response: %w: %s", err, content[0].Text)
+	}
+	return status, &resp, nil
+}
+
+// selectToolsResult mirrors the broker's select_tools output
+type selectToolsResult struct {
+	Status  string   `json:"status"`
+	Tools   []string `json:"tools,omitempty"`
+	Warning string   `json:"warning,omitempty"`
+}
+
+// mcpCallSelectTools calls select_tools via tools/call and parses the response
+func mcpCallSelectTools(ctx context.Context, url, sessionID string, tools []string, headers map[string]string) (int, *selectToolsResult, error) { //nolint:unparam
+	args := map[string]any{"tools": toAnySlice(tools)}
+	status, content, err := mcpCallTool(ctx, url, sessionID, "select_tools", args, headers)
+	if err != nil {
+		return status, nil, err
+	}
+	if len(content) == 0 {
+		return status, nil, fmt.Errorf("select_tools returned no content")
+	}
+	var resp selectToolsResult
+	if err := json.Unmarshal([]byte(content[0].Text), &resp); err != nil {
+		return status, nil, fmt.Errorf("failed to parse select_tools response: %w: %s", err, content[0].Text)
+	}
+	return status, &resp, nil
+}
+
+func toAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// readJSONRPCResult reads a JSON-RPC result from an HTTP response, handling both JSON and SSE content types.
+// It checks Content-Type first, then falls back to content sniffing if JSON parsing fails.
 func readJSONRPCResult(resp *http.Response) (json.RawMessage, error) {
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -217,12 +278,22 @@ func readJSONRPCResult(resp *http.Response) (json.RawMessage, error) {
 		Error  json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(rawBody, &msg); err != nil {
+		// content-type was not SSE but body looks like SSE (e.g. ext_proc immediate response)
+		if looksLikeSSE(rawBody) {
+			return parseSSEResult(rawBody)
+		}
 		return nil, fmt.Errorf("failed to parse JSON response: %w: %s", err, string(rawBody))
 	}
 	if msg.Error != nil {
 		return nil, fmt.Errorf("JSON-RPC error: %s", string(msg.Error))
 	}
 	return msg.Result, nil
+}
+
+// looksLikeSSE returns true if the body starts with an SSE field prefix
+func looksLikeSSE(body []byte) bool {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	return bytes.HasPrefix(trimmed, []byte("event:")) || bytes.HasPrefix(trimmed, []byte("data:"))
 }
 
 // parseSSEResult extracts the JSON-RPC result from an SSE response body
@@ -236,9 +307,15 @@ func parseSSEResult(body []byte) (json.RawMessage, error) {
 		data := strings.TrimPrefix(line, "data: ")
 		var msg struct {
 			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
 		}
-		if json.Unmarshal([]byte(data), &msg) == nil && msg.Result != nil {
-			return msg.Result, nil
+		if json.Unmarshal([]byte(data), &msg) == nil {
+			if msg.Error != nil {
+				return nil, fmt.Errorf("JSON-RPC error: %s", string(msg.Error))
+			}
+			if msg.Result != nil {
+				return msg.Result, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("no result found in SSE response: %s", string(body))

@@ -149,7 +149,7 @@ var _ = BeforeSuite(func() {
 	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 	By("enabling debug logging on the gateway")
-	Expect(AddDeploymentCommandFlag(SystemNamespace, "mcp-gateway", "--log-level=-4")).To(Succeed())
+	Expect(AddDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--log-level=-4")).To(Succeed())
 	Expect(WaitForDeploymentReady(ctx, SystemNamespace, "mcp-gateway")).To(Succeed())
 
 })

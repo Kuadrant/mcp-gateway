@@ -34,6 +34,8 @@ type TestResourcesBuilder struct {
 	port                int32
 	prefix              string
 	path                string
+	category            []string
+	hint                string
 	credential          *corev1.Secret
 	credentialKey       string
 	tokenURLElicitation *mcpv1alpha1.TokenURLElicitationConfig
@@ -92,7 +94,9 @@ func (b *TestResourcesBuilder) WithHostname(hostname string) *TestResourcesBuild
 	return b
 }
 
-// WithPrefix sets the prefix for the MCPServerRegistration
+// WithPrefix sets the prefix for the MCPServerRegistration.
+// avoid empty prefix: strings.HasPrefix(name, "") matches everything,
+// including broker meta-tools (discover_tools, select_tools).
 func (b *TestResourcesBuilder) WithPrefix(p string) *TestResourcesBuilder {
 	b.prefix = p
 	return b
@@ -101,6 +105,18 @@ func (b *TestResourcesBuilder) WithPrefix(p string) *TestResourcesBuilder {
 // WithPath sets a custom MCP path
 func (b *TestResourcesBuilder) WithPath(path string) *TestResourcesBuilder {
 	b.path = path
+	return b
+}
+
+// WithCategory sets discovery categories on the MCPServerRegistration
+func (b *TestResourcesBuilder) WithCategory(categories ...string) *TestResourcesBuilder {
+	b.category = categories
+	return b
+}
+
+// WithHint sets the discovery hint on the MCPServerRegistration
+func (b *TestResourcesBuilder) WithHint(hint string) *TestResourcesBuilder {
+	b.hint = hint
 	return b
 }
 
@@ -193,6 +209,14 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	if b.tokenURLElicitation != nil {
 		b.mcpServer.Spec.TokenURLElicitation = b.tokenURLElicitation
 	}
+
+	if len(b.category) > 0 {
+		b.mcpServer.Spec.Category = b.category
+	}
+	if b.hint != "" {
+		b.mcpServer.Spec.Hint = b.hint
+	}
+
 	return b
 }
 

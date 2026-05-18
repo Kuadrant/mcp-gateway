@@ -644,6 +644,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Registering an MCPServerRegistration pointing to server3")
 		registration := NewMCPServerResourcesWithDefaults("unavailable-test", k8sClient).
+			WithPrefix("unavailable_").
 			WithBackendTarget(scaledMCPTestServer, 9090).Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
