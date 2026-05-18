@@ -172,3 +172,23 @@
 ### [Happy] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
+
+### [Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client
+
+- When an elicitation-capable client calls a tool on an MCPServerRegistration that has `tokenURLElicitation` configured but the client has no cached token, the gateway should return a -32042 URLElicitationRequired error containing a URL pointing to the token page. The response should be an SSE JSON-RPC error with code -32042 and a `data.url` field.
+
+### [Happy,URLElicitation] Full round-trip: token page submit then retry succeeds
+
+- When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response.
+
+### [URLElicitation] Cached token reused across multiple tool calls
+
+- After a token has been submitted via the token page, subsequent tool calls to the same server from the same session should reuse the cached token without triggering a new -32042 error. The upstream server should receive the token on each call.
+
+### [URLElicitation] Non-elicitation-capable client gets standard error on missing token
+
+- When a client that did NOT declare `capabilities.elicitation` in its initialize request calls a tool on a server with `tokenURLElicitation` configured and no cached token, the gateway should return a tool result with `isError: true` and a message about elicitation (not a -32042 JSON-RPC error). The client should not receive a URL for token submission.
+
+### [Happy,URLElicitation] Server without tokenURLElicitation is unaffected
+
+- When an MCPServerRegistration does NOT have `tokenURLElicitation` configured and the backend does not require auth, tool calls should proceed without any token resolution or -32042 errors, regardless of whether the client declares elicitation capability.

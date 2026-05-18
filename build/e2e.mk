@@ -2,7 +2,7 @@
 
 GINKGO = $(shell pwd)/bin/ginkgo
 GINKGO_VERSION = v2.27.2
-E2E_TIMEOUT ?=15m
+E2E_TIMEOUT ?=20m
 
 .PHONY: ginkgo
 ginkgo: ## Download ginkgo locally if necessary
