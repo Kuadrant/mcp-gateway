@@ -59,15 +59,13 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
     if !mcpVS.DeletionTimestamp.IsZero() {
         logger.Info("mcpvirtualserver is being deleted", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
         if controllerutil.ContainsFinalizer(mcpVS, mcpGatewayFinalizer) {
-            logger.Info("deleting mcpvirtualserver and updating config", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
+            logger.Info("deleting mcpvirtualserver", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
             
-            // Generate config (this automatically excludes the deleted item)
             vsConfig, err := r.generateVirtualServerConfig(ctx, mcpVS.Namespace)
             if err != nil {
                 return ctrl.Result{}, fmt.Errorf("failed to generate config during deletion %w", err)
             }
 
-            // Write the updated config to completely remove the deleted server's footprint
             if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, targetNamespaceName); err != nil {
                 return ctrl.Result{}, fmt.Errorf("failed to write config during deletion %w", err)
             }
@@ -86,7 +84,7 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
             if err := r.Update(ctx, mcpVS); err != nil {
                 if errors.IsConflict(err) {
                     logger.V(1).Info("mcpvirtualserver conflict err requeuing")
-                    return ctrl.Result{RequeueAfter: defaultRequeueTime}, err
+                    return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
                 }
                 return ctrl.Result{}, err
             }
@@ -103,7 +101,7 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
     logger.V(1).Info("mcpvirtualserver writing config")
     if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, targetNamespaceName); err != nil {
         if errors.IsConflict(err) {
-            logger.Info("mcpvirtualserver conflict on updating the config for virtual servers will retry in 5 seconds")
+            logger.Info("mcpvirtualserver conflict on updating the config for virtual servers, will retry")
             return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
         }
         return ctrl.Result{}, fmt.Errorf("mcpvirtualserver failed to write virtual server config during reconcile %w", err)
@@ -113,13 +111,11 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
     return ctrl.Result{}, nil
 }
 
-// Updated to accept namespace and scope the list query
 func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context, namespace string) ([]config.VirtualServerConfig, error) {
     log := log.FromContext(ctx)
     virtualServers := []config.VirtualServerConfig{}
     mcpVirtualServerList := &mcpv1alpha1.MCPVirtualServerList{}
     
-    // Pass client.InNamespace to ensure we only pull configs for this specific tenant
     if err := r.List(ctx, mcpVirtualServerList, client.InNamespace(namespace)); err != nil {
         log.Error(err, "Failed to list MCPVirtualServers")
         return virtualServers, err
