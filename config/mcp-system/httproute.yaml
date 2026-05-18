@@ -9,7 +9,8 @@ spec:
   hostnames:
     - 'mcp.127-0-0-1.sslip.io'
   rules:
-    - matches:
+    - name: mcp
+      matches:
         - path:
             type: PathPrefix
             value: /mcp
@@ -30,7 +31,16 @@ spec:
       backendRefs:
         - name: mcp-gateway
           port: 8080
-    - matches:
+    - name: tokens
+      matches:
+        - path:
+            type: PathPrefix
+            value: /tokens
+      backendRefs:
+        - name: mcp-gateway
+          port: 8080
+    - name: well-known
+      matches:
         - path:
             type: PathPrefix
             value: /.well-known/oauth-protected-resource
