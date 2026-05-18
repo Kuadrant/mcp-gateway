@@ -323,6 +323,13 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 		err = infoErr
 	}
 	if err != nil {
+		// broker meta-tools (discover_tools, select_tools) are not upstream tools;
+		// route them to the broker like any non-tool-call request
+		if s.Broker.IsBrokerToolName(toolName) {
+			s.Logger.DebugContext(ctx, "routing broker meta-tool to broker", "toolName", toolName)
+			span.SetAttributes(attribute.String("mcp.route", "broker-meta-tool"))
+			return s.HandleNoneToolCall(ctx, mcpReq)
+		}
 		s.Logger.DebugContext(ctx, "no server for tool", "toolName", toolName)
 		mcpotel.SpanError(span, err, "tool not found")
 		span.SetAttributes(attribute.String("error.type", "tool_not_found"))

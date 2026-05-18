@@ -53,6 +53,9 @@ type MCPBroker interface {
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
 
+	// IsBrokerToolName returns true if the given tool name is a broker-internal meta-tool
+	IsBrokerToolName(name string) bool
+
 	// Shutdown closes any resources associated with this Broker
 	Shutdown(ctx context.Context) error
 
@@ -88,6 +91,12 @@ type mcpBrokerImpl struct {
 
 	// elicitationEnabled gates URL elicitation credential collection
 	elicitationEnabled bool
+
+	// discovery holds config for the discover_tools / select_tools feature
+	discovery discoveryConfig
+
+	// scopeStore manages per-session tool scoping
+	scopeStore *scopeStore
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -131,6 +140,20 @@ func WithElicitationEnabled(enabled bool) Option {
 	}
 }
 
+// WithDiscoveryToolsEnabled enables or disables the discover_tools and select_tools meta-tools
+func WithDiscoveryToolsEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discovery.enabled = enabled
+	}
+}
+
+// WithDiscoveryToolThreshold sets the tool count above which only meta-tools are shown
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discovery.threshold = threshold
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -138,6 +161,8 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		logger:                logger,
 		virtualServers:        map[string]*config.VirtualServer{},
 		managerTickerInterval: time.Second * 60,
+		scopeStore:            newScopeStore(defaultScopeTTL, defaultScopeMaxSize),
+		discovery:             discoveryConfig{enabled: true},
 	}
 
 	for _, option := range opts {
@@ -153,6 +178,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
 		mcpBkr.logger.DebugContext(ctx, "gateway client session unregistered", "gatewaySessionID", session.SessionID())
+		mcpBkr.scopeStore.deleteScope(session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
@@ -191,13 +217,25 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		mcpBkr.FilterPrompts(ctx, id, message, result)
 	})
 
-	mcpBkr.listeningMCPServer = server.NewMCPServer(
-		"Kuadrant MCP Gateway",
-		"0.0.1",
+	serverOpts := []server.ServerOption{
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 		server.WithPromptCapabilities(true),
+	}
+	if mcpBkr.discovery.enabled {
+		serverOpts = append(serverOpts, server.WithInstructions(gatewayInstructions))
+	}
+
+	mcpBkr.listeningMCPServer = server.NewMCPServer(
+		"Kuadrant MCP Gateway",
+		"0.0.1",
+		serverOpts...,
 	)
+
+	if mcpBkr.discovery.enabled {
+		mcpBkr.registerDiscoveryTools()
+	}
+
 	return mcpBkr
 }
 
@@ -334,16 +372,28 @@ func (m *mcpBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer,
 	return nil, fmt.Errorf("prompt name %q doesn't match any configured server", prompt)
 }
 
+// IsBrokerToolName returns true if the given tool name belongs to a broker-internal
+// meta-tool (discover_tools, select_tools). The router uses this to decide whether
+// to pass a tools/call through to the broker instead of looking for an upstream server.
+func (m *mcpBrokerImpl) IsBrokerToolName(name string) bool {
+	if !m.discovery.enabled {
+		return false
+	}
+	return isBrokerToolName(name)
+}
+
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
 	// Avoid race with OnConfigChange()
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
-	// Close the long-running notification channel
 	for _, mcpServer := range m.mcpServers {
 		if mcpServer != nil {
 			mcpServer.Stop()
 		}
+	}
+	if m.scopeStore != nil {
+		m.scopeStore.stop()
 	}
 	return nil
 }
@@ -372,6 +422,7 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		HealthyServers:   0,
 		UnHealthyServers: 0,
 		ToolConflicts:    0,
+		ScopedSessions:   m.scopeStore.size(),
 		Timestamp:        time.Now(),
 	}
 

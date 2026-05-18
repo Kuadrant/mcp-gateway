@@ -545,6 +545,11 @@ func (m *mockBrokerImpl) ValidateAllServers() broker.StatusResponse {
 	panic("unimplemented")
 }
 
+// IsBrokerToolName implements broker.MCPBroker.
+func (m *mockBrokerImpl) IsBrokerToolName(_ string) bool {
+	return false
+}
+
 // IsReady implements broker.MCPBroker.
 func (m *mockBrokerImpl) IsReady() bool {
 	return true

@@ -606,3 +606,37 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 		})
 	}
 }
+
+// TestFilterToolsWithDiscoveryMetaToolsOnly exercises FilterTools when discovery
+// is enabled and only the broker meta-tools remain (upstream server removed).
+// Reproduces the tools/list 500 seen in the E2E test
+// "[Full] should gracefully handle an MCP Server becoming unavailable".
+func TestFilterToolsWithDiscoveryMetaToolsOnly(t *testing.T) {
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+
+	// build a tools list containing only the broker meta-tools,
+	// exactly as handleListTools would return after upstream removal
+	serverTools := b.listeningMCPServer.ListTools()
+	var tools []mcp.Tool
+	for _, st := range serverTools {
+		tools = append(tools, st.Tool)
+	}
+	require.NotEmpty(t, tools, "should have discovery tools registered")
+
+	session := &mockSession{id: "sess-1", init: true}
+	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
+
+	result := &mcp.ListToolsResult{Tools: tools}
+	request := &mcp.ListToolsRequest{Header: http.Header{}}
+
+	// must not panic
+	b.FilterTools(ctx, 1, request, result)
+
+	// meta-tool markers should be stripped from the response
+	for _, tool := range result.Tools {
+		if tool.Meta != nil {
+			_, hasBrokerKey := tool.Meta.AdditionalFields[brokerToolMetaKey]
+			require.False(t, hasBrokerKey, "broker meta key should be stripped from %s", tool.Name)
+		}
+	}
+}
