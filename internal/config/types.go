@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 )
 
@@ -120,15 +121,7 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) {
 		return true
 	}
-	if len(existingConfig.Category) != len(mcpServer.Category) {
-		return true
-	}
-	for i := range mcpServer.Category {
-		if existingConfig.Category[i] != mcpServer.Category[i] {
-			return true
-		}
-	}
-	return false
+	return !slices.Equal(existingConfig.Category, mcpServer.Category)
 }
 
 func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {

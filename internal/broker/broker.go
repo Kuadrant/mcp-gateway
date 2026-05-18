@@ -161,12 +161,15 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		logger:                logger,
 		virtualServers:        map[string]*config.VirtualServer{},
 		managerTickerInterval: time.Second * 60,
-		scopeStore:            newScopeStore(defaultScopeTTL, defaultScopeMaxSize),
 		discovery:             discoveryConfig{enabled: true},
 	}
 
 	for _, option := range opts {
 		option(mcpBkr)
+	}
+
+	if mcpBkr.discovery.enabled {
+		mcpBkr.scopeStore = newScopeStore(defaultScopeTTL, defaultScopeMaxSize)
 	}
 
 	hooks := &server.Hooks{}
@@ -178,7 +181,9 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
 		mcpBkr.logger.DebugContext(ctx, "gateway client session unregistered", "gatewaySessionID", session.SessionID())
-		mcpBkr.scopeStore.deleteScope(session.SessionID())
+		if mcpBkr.scopeStore != nil {
+			mcpBkr.scopeStore.deleteScope(session.SessionID())
+		}
 	})
 
 	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
@@ -415,6 +420,11 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
+	scopedSessions := 0
+	if m.scopeStore != nil {
+		scopedSessions = m.scopeStore.size()
+	}
+
 	response := StatusResponse{
 		Servers:          make([]upstream.ServerValidationStatus, 0),
 		OverallValid:     true,
@@ -422,7 +432,7 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		HealthyServers:   0,
 		UnHealthyServers: 0,
 		ToolConflicts:    0,
-		ScopedSessions:   m.scopeStore.size(),
+		ScopedSessions:   scopedSessions,
 		Timestamp:        time.Now(),
 	}
 

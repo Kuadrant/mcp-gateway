@@ -74,6 +74,8 @@ var (
 	invalidToolPolicyFlag          string
 	maxRequestBodySize             int
 	enableURLElicitationFlag       bool
+	discoveryToolsEnabledFlag      bool
+	discoveryToolThresholdFlag     int
 )
 
 func main() {
@@ -135,6 +137,8 @@ func main() {
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
 	flag.BoolVar(&enableURLElicitationFlag, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
+	flag.BoolVar(&discoveryToolsEnabledFlag, "discovery-tools-enabled", true, "enable discover_tools and select_tools meta-tools for progressive tool discovery")
+	flag.IntVar(&discoveryToolThresholdFlag, "discovery-tool-threshold", 0, "tool count above which real tools are hidden and only meta-tools are shown. 0 means never hide.")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -231,6 +235,8 @@ func main() {
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
 		broker.WithElicitationEnabled(enableURLElicitationFlag),
+		broker.WithDiscoveryToolsEnabled(discoveryToolsEnabledFlag),
+		broker.WithDiscoveryToolThreshold(discoveryToolThresholdFlag),
 	)
 	tokenHandler := broker.NewTokenHandler(sessionCache, tokenElicitationMap, *logger)
 	elicitationHandler := &broker.ElicitationHandler{

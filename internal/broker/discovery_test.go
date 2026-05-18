@@ -484,6 +484,26 @@ func TestScopeStore_SizeOnStatus(t *testing.T) {
 	require.Equal(t, 2, status.ScopedSessions)
 }
 
+func TestDiscoveryEnabled_ScopeStoreAllocated(t *testing.T) {
+	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+	require.NotNil(t, b.scopeStore, "scope store should be allocated when discovery enabled")
+	require.True(t, b.discovery.enabled)
+
+	tools := b.MCPServer().ListTools()
+	_, hasDiscover := tools[discoverToolsName]
+	require.True(t, hasDiscover, "discover_tools should be registered when enabled")
+}
+
+func TestDiscoveryDisabled_NoScopeStore(t *testing.T) {
+	b := NewBroker(logger, WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	require.Nil(t, b.scopeStore, "scope store should be nil when discovery disabled")
+	require.False(t, b.discovery.enabled)
+
+	tools := b.MCPServer().ListTools()
+	_, hasDiscover := tools[discoverToolsName]
+	require.False(t, hasDiscover, "discover_tools should not be registered when disabled")
+}
+
 // mockSession implements server.ClientSession for testing
 type mockSession struct {
 	id   string

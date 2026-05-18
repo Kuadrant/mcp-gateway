@@ -139,6 +139,7 @@ func (m *JWTManager) ValidateBackendInitToken(tokenValue, expectedHost string) e
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(backendInitAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBackendInitToken, err)
@@ -178,6 +179,7 @@ func (m *JWTManager) Validate(tokenValue string) (bool, error) {
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(sessionAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return true, fmt.Errorf("failed to parse token: %w", err)
@@ -200,6 +202,7 @@ func (m *JWTManager) GetExpiresIn(tokenValue string) (time.Time, error) {
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(sessionAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return time.Now(), fmt.Errorf("failed to parse token: %w", err)

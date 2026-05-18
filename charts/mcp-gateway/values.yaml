@@ -23,6 +23,10 @@ controller:
 broker:
   # How often (in seconds) the broker pings upstream MCP servers
   pollInterval: 60
+  # Enable discover_tools and select_tools meta-tools
+  discoveryToolsEnabled: true
+  # Tool count above which real tools are hidden, only meta-tools shown. 0 = never hide.
+  discoveryToolThreshold: 0
 
 # Gateway configuration
 gateway:
