@@ -60,10 +60,16 @@ Users must create the Istio ServiceEntry, DestinationRule, and HTTPRoute resourc
 
 ### Authentication
 
-Broker authenticates with MCP Servers fronted by the Gateway via a credential in the config secret. This credential is stored in a secret referenced by the MCPServerRegistration resource. This credential is NOT and MUST NOT be used for client requests from outside the gateway.
+There are two separate auth paths:
 
-Users authenticate based AuthPolicies applied on the Gateway Resource or the HTTPRoute resource. There can be different policies for each MCP Server as each server has its own HTTPRoute. There can be two forms of Auth applied 1) The policy applied to access the Gateway route and the MCP Broker endpoints 2) A distinct policy applied to a listener or HTTPRoute for a specific MCP server for example leveraging a PAT for GH MCP access.
+1. **Broker → upstream** (`credentialRef`): The broker uses credentials from the MCPServerRegistration's `credentialRef` secret to connect to upstream MCP servers for tool listing and session management. This credential is NEVER injected into client `tools/call` requests. The router does not have access to `credentialRef`.
 
+2. **Client → upstream** (`tools/call`): Client tool call requests are routed by the router directly to the backend via Envoy. Clients must authenticate through one of:
+   - AuthPolicy applied to the Gateway/HTTPRoute (e.g. OIDC, API key)
+   - URL token elicitation (`tokenURLElicitation`) — user submits a token via the token page, cached and injected by the router
+   - Client-provided headers passed through by the router during session initialization
+
+Users can apply different AuthPolicies per MCP Server since each server has its own HTTPRoute. There can be two layers: (1) a policy on the Gateway route / MCP Broker endpoints, (2) a distinct policy on a listener or HTTPRoute for a specific MCP server (e.g. a PAT for GitHub MCP access).
 
 
 ## Key Dependencies

@@ -14,6 +14,7 @@
     - [External MCP Servers](./external-mcp-server.md)
 - [Authentication](./authentication.md)
 - [Authorization](./authorization.md)
+- [URL Elicitation](./url-elicitation.md)
 - [Scaling](./scaling.md)
 - [Tool Revocation](./tool-revocation.md)
 - [Vault Integration](./vault-integration.md)

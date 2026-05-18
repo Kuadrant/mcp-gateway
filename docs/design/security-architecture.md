@@ -109,6 +109,38 @@ The MCP protocol is stateful. The gateway manages three session types to prevent
 
 Gateway sessions expire (default 24 hours), and all associated backend sessions are closed on expiry. Session IDs from backends are never exposed to clients — the router rewrites them to the gateway session ID.
 
+## URL Token Elicitation
+
+URL elicitation (`tokenURLElicitation`) enables per-user token collection at tool-call time. An AuthPolicy on the gateway route is required to ensure per-user token binding — without one, the token page has no identity check. The router triggers the MCP spec's `-32042 URLElicitationRequired` flow for elicitation-capable clients.
+
+### Token data boundaries
+
+| Boundary | Data | Isolation |
+|----------|------|-----------|
+| Client → Gateway (token page) | User-submitted token via HTML form POST | Bound to a single-use elicitation ID tied to the gateway session |
+| Gateway session cache | Token stored by session ID + server name | Per-session, per-server. One client cannot access another client's cached token |
+| Router → Upstream | Cached token injected as `Authorization` header | Only injected for the specific server that triggered elicitation |
+
+### Separation from `credentialRef`
+
+`credentialRef` and `tokenURLElicitation` serve distinct purposes and never overlap:
+
+- `credentialRef` is used exclusively by the broker for tool discovery and upstream session management. It is never injected into client `tools/call` requests.
+- `tokenURLElicitation` collects per-user tokens at tool-call time via the router. These tokens are cached per session and injected by the router into `tools/call` requests.
+
+### Security properties
+
+- **Single-use elicitation IDs**: each elicitation entry is consumed atomically on first use (`Claim` semantics), preventing replay.
+- **Session binding**: the elicitation entry is tied to the gateway session JWT. A token submitted for one session cannot be used by another.
+- **No credential leakage**: the broker's `credentialRef` is never exposed to clients or injected into the `tools/call` path.
+- **Token page served over gateway**: the built-in `/tokens` page is served by the broker behind Envoy, so gateway-level policies (TLS, rate limiting) apply. External URL overrides delegate security to the external service.
+
+### Known risks
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Cached tokens persist for the gateway session lifetime | Low | Tokens are deleted on session expiry; 401 invalidation planned ([#830](https://github.com/Kuadrant/mcp-gateway/issues/830)) |
+
 ## Prompt Injection and Context Pollution
 
 ### Gateway position
