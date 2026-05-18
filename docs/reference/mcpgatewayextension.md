@@ -55,6 +55,9 @@
 
 Configuration options for configuring the model context protocol (MCP) audit trail via Envoy access logs.
 
+> [!NOTE]
+> The configuration fields in `AuditConfig` depend on the auditing infrastructure introduced in issue #992 and may not be available in older versions of the `MCPGatewayExtension` CRD.
+
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. <br/>- **Allowed Values**: `Enabled`, `Disabled`<br/>- **Default**: `Disabled`<br/>- **Behavior**: When `Enabled`, the arguments (`params.arguments`) from `tools/call` requests are parsed, serialized to JSON, and logged (truncated to a maximum of 1KB to protect log performance and storage). |
