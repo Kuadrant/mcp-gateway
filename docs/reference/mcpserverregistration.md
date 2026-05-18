@@ -23,6 +23,8 @@
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
 | `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials used exclusively by the broker for tool discovery and session management. Never injected into client `tools/call` requests. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
 | `tokenURLElicitation` | [TokenURLElicitationConfig](#tokenurlelicitationconfig) | No | Enables per-user token collection via URL elicitation (-32042 flow). When set, the router collects tokens from elicitation-capable clients at tool-call time. See [URL Elicitation guide](../guides/url-elicitation.md) |
+| `category` | []String | No | One or more categories for tool discovery filtering. Used by `discover_tools` to let agents filter servers by category. Default: `["uncategorised"]`. Max 3 items, max 128 chars each |
+| `hint` | String | No | Short description of what this MCP server offers. Returned by `discover_tools` to help agents decide which tools to select. Max 256 chars |
 
 ## TargetReference
 

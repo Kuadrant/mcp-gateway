@@ -38,6 +38,10 @@ spec:
       jsonPath: .status.discoveredTools
       name: Tools
       type: integer
+    - description: Server categories for discovery
+      jsonPath: .spec.category
+      name: Category
+      type: string
     - jsonPath: .spec.credentialRef.name
       name: Credentials
       type: string
@@ -47,9 +51,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: |-
-          MCPServerRegistration defines a collection of MCP (Model Context Protocol) servers to be aggregated by the gateway.
-          It enables discovery and federation of tools from multiple backend MCP servers through HTTPRoute references, providing a declarative way to configure which MCP servers should be accessible through the gateway.
+        description: MCPServerRegistration registers an upstream MCP server for tool
+          federation through the gateway.
         properties:
           apiVersion:
             description: |-
@@ -71,6 +74,19 @@ spec:
           spec:
             description: spec defines the desired state of MCPServerRegistration.
             properties:
+              category:
+                default:
+                - uncategorised
+                description: |-
+                  category assigns one or more categories to this MCP server for tool discovery.
+                  Used by the discover_tools meta-tool to allow agents to filter servers by category.
+                items:
+                  maxLength: 128
+                  minLength: 1
+                  type: string
+                maxItems: 3
+                type: array
+                x-kubernetes-list-type: atomic
               credentialRef:
                 description: |-
                   credentialRef references a Secret containing authentication credentials for the MCP server.
@@ -91,6 +107,12 @@ spec:
                 required:
                 - name
                 type: object
+              hint:
+                description: |-
+                  hint provides a short description of what this MCP server offers.
+                  Returned by the discover_tools meta-tool to help agents decide which tools to select.
+                maxLength: 256
+                type: string
               path:
                 default: /mcp
                 description: |-

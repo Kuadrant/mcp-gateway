@@ -87,14 +87,16 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name                string                     `json:"name"                              yaml:"name"`
-	URL                 string                     `json:"url"                               yaml:"url"`
-	Hostname            string                     `json:"hostname,omitempty"                yaml:"hostname,omitempty"`
-	Prefix              string                     `json:"prefix,omitempty"                  yaml:"prefix,omitempty"`
-	Auth                *AuthConfig                `json:"auth,omitempty"                    yaml:"auth,omitempty"`
-	Credential          string                     `json:"credential,omitempty"              yaml:"credential,omitempty"`
-	Enabled             bool                       `json:"enabled"                           yaml:"enabled"`
+	Name                string                     `json:"name"                         yaml:"name"`
+	URL                 string                     `json:"url"                          yaml:"url"`
+	Hostname            string                     `json:"hostname,omitempty"           yaml:"hostname,omitempty"`
+	Prefix              string                     `json:"prefix,omitempty"             yaml:"prefix,omitempty"`
+	Auth                *AuthConfig                `json:"auth,omitempty"               yaml:"auth,omitempty"`
+	Credential          string                     `json:"credential,omitempty"         yaml:"credential,omitempty"`
+	Enabled             bool                       `json:"enabled"                      yaml:"enabled"`
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
+	Category            []string                   `json:"category,omitempty"           yaml:"category,omitempty"`
+	Hint                string                     `json:"hint,omitempty"               yaml:"hint,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -108,13 +110,25 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, hostname, or credential variable.
+// This means having a different name, prefix, hostname, credential, category, or hint.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
-	return existingConfig.Name != mcpServer.Name ||
+	if existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
 		existingConfig.Credential != mcpServer.Credential ||
-		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation)
+		existingConfig.Hint != mcpServer.Hint ||
+		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) {
+		return true
+	}
+	if len(existingConfig.Category) != len(mcpServer.Category) {
+		return true
+	}
+	for i := range mcpServer.Category {
+		if existingConfig.Category[i] != mcpServer.Category[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {
