@@ -26,6 +26,11 @@
 - When a client makes multiple tool calls to the same backend MCP server, the gateway should reuse the same backend session for efficiency. The backend session ID should remain consistent across multiple calls from the same client. When a client disconnects and reconnects, a new backend session should be created.
 
 
+### [Happy] Concurrent tool calls on a fresh session create only one backend session
+
+- When multiple concurrent tool calls arrive for the same gateway session before any backend session has been established, the gateway should initialize exactly one backend session and all concurrent calls should complete successfully using that same backend session ID. No backend connections should be leaked regardless of how many concurrent callers race to trigger initialization.
+
+
 ### [Happy] Test MCPVirtualServer behaves as expected when defined
 
 - When a developer defines an MCPVirtualServer resource and specifies the value of the `X-Mcp-Virtualserver` header as the name in the format `namespace/name`, where the namespace and name come from the created MCPVirtualServer resource, they should only get the tools specified in the MCPVirtualServer resource when they do a tools/list request to the MCP Gateway host.

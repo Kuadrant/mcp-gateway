@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -251,6 +252,64 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 				Expect(textContent.Text).To(Not(ContainSubstring(mcpClient.GetSessionId())))
 			}
 		}
+	})
+
+	It("[Happy] concurrent tool calls on a fresh session should create only one backend session", func() {
+		By("Registering an MCPServerRegistration")
+		registration := NewMCPServerResourcesWithDefaults("concurrent-session", k8sClient).Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server and tools are available")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
+
+		By("Initializing a fresh raw HTTP session (no backend session exists yet)")
+		var sessionID string
+		Eventually(func(g Gomega) {
+			var initErr error
+			sessionID, initErr = mcpInitialize(ctx, gatewayURL, nil)
+			g.Expect(initErr).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
+
+		const concurrency = 8
+		type callResult struct {
+			backendSession string
+			err            error
+		}
+		results := make([]callResult, concurrency)
+		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "headers")
+
+		By(fmt.Sprintf("Firing %d concurrent tool calls before any backend session exists", concurrency))
+		var wg sync.WaitGroup
+		for i := range concurrency {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				_, content, err := mcpCallTool(ctx, gatewayURL, sessionID, toolName, nil, nil)
+				if err != nil {
+					results[idx] = callResult{err: err}
+					return
+				}
+				results[idx] = callResult{backendSession: extractBackendSession(content)}
+			}(i)
+		}
+		wg.Wait()
+
+		By("Asserting all calls succeeded and all used the same backend session")
+		var firstSession string
+		for i, r := range results {
+			Expect(r.err).NotTo(HaveOccurred(), "concurrent call %d should succeed", i)
+			Expect(r.backendSession).NotTo(BeEmpty(), "concurrent call %d should return a backend session ID", i)
+			if firstSession == "" {
+				firstSession = r.backendSession
+			}
+			Expect(r.backendSession).To(Equal(firstSession), "concurrent call %d should share the same backend session", i)
+		}
+		GinkgoWriter.Printf("all %d concurrent calls used backend session: %s\n", concurrency, firstSession)
 	})
 
 	It("[Full] Redis session cache persists backend sessions across pod restarts", func() {

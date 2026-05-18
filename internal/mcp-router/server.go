@@ -48,6 +48,9 @@ type ExtProcServer struct {
 	MaxRequestBodySize int
 	//TODO this should not be needed
 	Broker broker.MCPBroker
+	// initGroup serializes backend session initialization per (gatewaySessionID, serverName)
+	// pair, preventing concurrent tool calls from creating duplicate backend sessions.
+	initGroup singleflight.Group
 }
 
 // OnConfigChange is used to register the router for config changes
