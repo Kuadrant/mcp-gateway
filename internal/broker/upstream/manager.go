@@ -129,6 +129,8 @@ type MCPManager struct {
 
 	// toolsLock protects tools, serverTools, prompts, serverPrompts
 	toolsLock sync.RWMutex
+	// statusMu protects status; kept separate from toolsLock to avoid contention
+	statusMu sync.RWMutex
 
 	logger *slog.Logger
 
@@ -452,12 +454,14 @@ func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
 }
 
 // GetStatus returns the current status of the MCP Server
-// no locking is done here as it is expected to be called multiple times
 func (man *MCPManager) GetStatus() ServerValidationStatus {
+	man.statusMu.RLock()
+	defer man.statusMu.RUnlock()
 	return man.status
 }
 
 func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, invalidTools []InvalidToolInfo, invalidPrompts []InvalidPromptInfo) {
+	man.statusMu.Lock()
 	man.status.ID = string(man.mcp.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()
@@ -468,12 +472,16 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
+		man.statusMu.Unlock()
+		man.applyBackoff()
 		return
 	}
 	man.status.TotalTools = toolCount
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
+	man.statusMu.Unlock()
+	man.resetBackoff()
 }
 
 func (man *MCPManager) resetBackoff() {
@@ -571,6 +579,8 @@ func (man *MCPManager) SetToolsForTesting(tools []mcp.Tool) {
 // SetStatusForTesting sets the status directly for testing purposes.
 // This bypasses the normal status update flow and should only be used in tests.
 func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
+	man.statusMu.Lock()
+	defer man.statusMu.Unlock()
 	man.status = status
 }
 
