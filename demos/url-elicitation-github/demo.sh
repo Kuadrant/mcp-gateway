@@ -38,27 +38,6 @@ fi
 
 output "Checking prerequisites"
 
-if [ -z "$GITHUB_PAT" ]; then
-  echo "ERROR: GITHUB_PAT environment variable is not set"
-  echo ""
-  echo "Set your GitHub Personal Access Token:"
-  echo "  export GITHUB_PAT=\"ghp_YOUR_TOKEN\""
-  echo ""
-  echo "Get a token at: https://github.com/settings/tokens/new"
-  echo "Required permissions: read:user"
-  exit 1
-fi
-
-if [[ ! "$GITHUB_PAT" =~ ^ghp_ ]]; then
-  echo "Warning: GITHUB_PAT should start with 'ghp_' (Personal Access Token)"
-  echo "Current value starts with: ${GITHUB_PAT:0:4}..."
-  read -p "Continue anyway? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 1
-  fi
-fi
-
 if ! command -v kubectl &>/dev/null; then
   echo "ERROR: kubectl is required"
   exit 1
@@ -116,11 +95,6 @@ kubectl apply -f "$SAMPLES_DIR/destinationrule.yaml"
 
 echo "  HTTPRoute..."
 kubectl apply -f "$SAMPLES_DIR/httproute.yaml"
-
-# --- Deploy secret ---
-
-output "Step 3: Creating broker credential secret"
-envsubst < "$SAMPLES_DIR/secret.yaml" | kubectl apply -f -
 
 # --- Enable URL elicitation and disable HTTPRoute management ---
 
