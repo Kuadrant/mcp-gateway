@@ -11,6 +11,48 @@ import (
 // UpstreamMCPID is used as type for identifying individual upstreams
 type UpstreamMCPID string
 
+// UpstreamID is a generic identifier for any upstream server (MCP, A2A, etc.)
+type UpstreamID string
+
+// Protocol represents the communication protocol of an upstream server
+type Protocol string
+
+const (
+	// ProtocolMCP represents the Model Context Protocol
+	ProtocolMCP Protocol = "mcp"
+	// ProtocolA2A represents the Agent-to-Agent protocol
+	ProtocolA2A Protocol = "a2a"
+)
+
+// UpstreamServer represents the interface that any upstream server config must satisfy,
+// regardless of the protocol (MCP, A2A, etc.)
+type UpstreamServer interface {
+	// GetName returns the unique name of the upstream server
+	GetName() string
+	// GetProtocol returns the protocol type (e.g., "mcp", "a2a")
+	GetProtocol() Protocol
+	// GetURL returns the backend endpoint URL
+	GetURL() string
+	// GetHostname returns the target hostname
+	GetHostname() string
+	// GetPrefix returns the prefix used for resource/tool naming isolation
+	GetPrefix() string
+	// IsEnabled returns true if the server is active
+	IsEnabled() bool
+	// GetID returns a unique UpstreamID
+	GetID() UpstreamID
+}
+
+// UpstreamRegistry represents a protocol-neutral registry for looking up upstream servers
+type UpstreamRegistry interface {
+	// ListUpstreams returns all registered upstream servers across all protocols
+	ListUpstreams() []UpstreamServer
+	// GetUpstreamByName retrieves an upstream server by its unique name
+	GetUpstreamByName(name string) (UpstreamServer, error)
+	// GetExternalHostname returns the public hostname of the gateway
+	GetExternalHostname() string
+}
+
 // MCPServersConfig holds server configuration
 type MCPServersConfig struct {
 	lock sync.RWMutex
@@ -85,6 +127,26 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 	return nil, fmt.Errorf("unknown server")
 }
 
+// ListUpstreams returns all registered upstream servers across all protocols
+func (config *MCPServersConfig) ListUpstreams() []UpstreamServer {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	out := make([]UpstreamServer, len(config.Servers))
+	for i, server := range config.Servers {
+		out[i] = server
+	}
+	return out
+}
+
+// GetUpstreamByName retrieves an upstream server by its unique name
+func (config *MCPServersConfig) GetUpstreamByName(name string) (UpstreamServer, error) {
+	server, err := config.GetServerConfigByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
 // MCPServer represents a server
 type MCPServer struct {
 	Name                string                     `json:"name"                              yaml:"name"`
@@ -105,6 +167,92 @@ type TokenURLElicitationConfig struct {
 // ID returns a unique id for the a registered server
 func (mcpServer *MCPServer) ID() UpstreamMCPID {
 	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.Prefix, mcpServer.Hostname))
+}
+
+// GetName returns the unique name of the upstream server
+func (mcpServer *MCPServer) GetName() string {
+	return mcpServer.Name
+}
+
+// GetProtocol returns the protocol type (always ProtocolMCP for MCPServer)
+func (mcpServer *MCPServer) GetProtocol() Protocol {
+	return ProtocolMCP
+}
+
+// GetURL returns the backend endpoint URL
+func (mcpServer *MCPServer) GetURL() string {
+	return mcpServer.URL
+}
+
+// GetHostname returns the target hostname
+func (mcpServer *MCPServer) GetHostname() string {
+	return mcpServer.Hostname
+}
+
+// GetPrefix returns the prefix used for resource/tool naming isolation
+func (mcpServer *MCPServer) GetPrefix() string {
+	return mcpServer.Prefix
+}
+
+// IsEnabled returns true if the server is active
+func (mcpServer *MCPServer) IsEnabled() bool {
+	return mcpServer.Enabled
+}
+
+// GetID returns a unique UpstreamID
+func (mcpServer *MCPServer) GetID() UpstreamID {
+	return UpstreamID(mcpServer.ID())
+}
+
+// A2AServer represents the configuration for an Agent-to-Agent (A2A) upstream server.
+// It implements the UpstreamServer interface.
+type A2AServer struct {
+	Name            string            `json:"name"                      yaml:"name"`
+	URL             string            `json:"url"                       yaml:"url"`
+	Hostname        string            `json:"hostname,omitempty"        yaml:"hostname,omitempty"`
+	Prefix          string            `json:"prefix,omitempty"          yaml:"prefix,omitempty"`
+	Auth            *AuthConfig       `json:"auth,omitempty"            yaml:"auth,omitempty"`
+	Enabled         bool              `json:"enabled"                   yaml:"enabled"`
+	AgentID         string            `json:"agentId,omitempty"         yaml:"agentId,omitempty"`
+	AgentCardURL    string            `json:"agentCardUrl,omitempty"    yaml:"agentCardUrl,omitempty"`
+	TaskEndpoint    string            `json:"taskEndpoint,omitempty"    yaml:"taskEndpoint,omitempty"`
+	ProtocolBinding string            `json:"protocolBinding,omitempty" yaml:"protocolBinding,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"        yaml:"metadata,omitempty"`
+}
+
+// GetName returns the unique name of the upstream server
+func (a2aServer *A2AServer) GetName() string {
+	return a2aServer.Name
+}
+
+// GetProtocol returns the protocol type (always ProtocolA2A for A2AServer)
+func (a2aServer *A2AServer) GetProtocol() Protocol {
+	return ProtocolA2A
+}
+
+// GetURL returns the backend endpoint URL
+func (a2aServer *A2AServer) GetURL() string {
+	return a2aServer.URL
+}
+
+// GetHostname returns the target hostname
+func (a2aServer *A2AServer) GetHostname() string {
+	return a2aServer.Hostname
+}
+
+// GetPrefix returns the prefix used for resource/tool naming isolation
+func (a2aServer *A2AServer) GetPrefix() string {
+	return a2aServer.Prefix
+}
+
+// IsEnabled returns true if the server is active
+func (a2aServer *A2AServer) IsEnabled() bool {
+	return a2aServer.Enabled
+}
+
+// GetID returns a unique UpstreamID
+func (a2aServer *A2AServer) GetID() UpstreamID {
+	return UpstreamID(fmt.Sprintf("%s:%s:%s", a2aServer.Name, a2aServer.Prefix, a2aServer.Hostname))
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
@@ -150,7 +298,8 @@ type Observer interface {
 
 // BrokerConfig holds broker configuration
 type BrokerConfig struct {
-	Servers        []MCPServer           `json:"servers" yaml:"servers"`
+	Servers        []MCPServer           `json:"servers"                  yaml:"servers"`
+	A2AServers     []A2AServer           `json:"a2aServers,omitempty"     yaml:"a2aServers,omitempty"`
 	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
 }
 

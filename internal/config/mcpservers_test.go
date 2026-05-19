@@ -462,3 +462,87 @@ func TestMCPServersConfig_Notify(t *testing.T) {
 	require.Equal(t, config, observer.receivedConf)
 	observer.mu.Unlock()
 }
+
+func TestMultiProtocolConfigModel(t *testing.T) {
+	t.Run("MCPServer implements UpstreamServer", func(t *testing.T) {
+		mcpServer := &MCPServer{
+			Name:     "weather",
+			URL:      "http://weather-service/mcp",
+			Hostname: "weather.mcp.local",
+			Prefix:   "weather_",
+			Enabled:  true,
+		}
+
+		var upstream UpstreamServer = mcpServer
+
+		require.Equal(t, "weather", upstream.GetName())
+		require.Equal(t, ProtocolMCP, upstream.GetProtocol())
+		require.Equal(t, "http://weather-service/mcp", upstream.GetURL())
+		require.Equal(t, "weather.mcp.local", upstream.GetHostname())
+		require.Equal(t, "weather_", upstream.GetPrefix())
+		require.True(t, upstream.IsEnabled())
+		require.Equal(t, UpstreamID("weather:weather_:weather.mcp.local"), upstream.GetID())
+	})
+
+	t.Run("A2AServer implements UpstreamServer", func(t *testing.T) {
+		a2aServer := &A2AServer{
+			Name:            "agent1",
+			URL:             "http://agent-service/a2a",
+			Hostname:        "agent.a2a.local",
+			Prefix:          "agent_",
+			Enabled:         true,
+			AgentID:         "agent-xyz-987",
+			AgentCardURL:    "http://agent-service/card.json",
+			TaskEndpoint:    "http://agent-service/tasks",
+			ProtocolBinding: "http-sse",
+			Metadata:        map[string]string{"version": "1.0"},
+		}
+
+		var upstream UpstreamServer = a2aServer
+
+		require.Equal(t, "agent1", upstream.GetName())
+		require.Equal(t, ProtocolA2A, upstream.GetProtocol())
+		require.Equal(t, "http://agent-service/a2a", upstream.GetURL())
+		require.Equal(t, "agent.a2a.local", upstream.GetHostname())
+		require.Equal(t, "agent_", upstream.GetPrefix())
+		require.True(t, upstream.IsEnabled())
+		require.Equal(t, UpstreamID("agent1:agent_:agent.a2a.local"), upstream.GetID())
+
+		// Verify A2A-specific fields are correctly accessible on concrete struct
+		require.Equal(t, "agent-xyz-987", a2aServer.AgentID)
+		require.Equal(t, "http://agent-service/card.json", a2aServer.AgentCardURL)
+		require.Equal(t, "http://agent-service/tasks", a2aServer.TaskEndpoint)
+		require.Equal(t, "http-sse", a2aServer.ProtocolBinding)
+		require.Equal(t, "1.0", a2aServer.Metadata["version"])
+	})
+
+	t.Run("MCPServersConfig implements UpstreamRegistry", func(t *testing.T) {
+		servers := []*MCPServer{
+			{Name: "server1", URL: "http://server1/mcp", Enabled: true},
+			{Name: "server2", URL: "http://server2/mcp", Enabled: false},
+		}
+
+		mcpConfig := &MCPServersConfig{
+			Servers:                    servers,
+			MCPGatewayExternalHostname: "gateway.public.host",
+		}
+
+		var registry UpstreamRegistry = mcpConfig
+
+		require.Equal(t, "gateway.public.host", registry.GetExternalHostname())
+
+		upstreams := registry.ListUpstreams()
+		require.Len(t, upstreams, 2)
+		require.Equal(t, "server1", upstreams[0].GetName())
+		require.Equal(t, "server2", upstreams[1].GetName())
+
+		upstream1, err := registry.GetUpstreamByName("server1")
+		require.NoError(t, err)
+		require.Equal(t, "server1", upstream1.GetName())
+		require.True(t, upstream1.IsEnabled())
+
+		_, err = registry.GetUpstreamByName("nonexistent")
+		require.Error(t, err)
+	})
+}
+
