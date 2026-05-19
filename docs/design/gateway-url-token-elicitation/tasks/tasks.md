@@ -76,20 +76,16 @@ Branch: `ute-crds-feature-flag`
 ### Task 3: User token cache with encryption (CONNLINK-996)
 
 **Files:**
-- `internal/mcp-router/user_token_cache.go` (new) — `UserTokenCache` interface:
+- `internal/session/cache.go` — extends existing `SessionCache` with user token methods:
   ```go
-  type UserTokenCache interface {
-      SetUserToken(ctx context.Context, sessionID, serverName, token string) error
-      GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
-      DeleteUserToken(ctx context.Context, sessionID, serverName string) error
-  }
+  SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+  GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
+  DeleteUserToken(ctx context.Context, sessionID, serverName string) error
   ```
-- `internal/mcp-router/user_token_cache_memory.go` (new) — in-memory implementation (no encryption)
-- `internal/mcp-router/user_token_cache_redis.go` (new) — redis protocol compliant backend with AES-GCM encryption
-  - Store as `usercred:<serverName>` field on session hash
-  - Encryption key derived from session signing key via HKDF (RFC 5869)
-  - Reuse existing Redis connection from session cache
-- `internal/mcp-router/user_token_cache_test.go` (new) — unit tests for both backends
+- Stores as `token:<serverName>` field on session hash
+- Redis backend uses AES-GCM encryption; encryption key derived from session signing key via HKDF (RFC 5869)
+- In-memory backend stores plaintext (no encryption overhead)
+- Unit tests in existing session cache test files
 
 **JWT Expiry Check:**
 On `GetUserToken`, attempt to parse the token as a JWT (three dot-separated base64url segments). If it parses successfully, check the `exp` claim — if expired, delete the token and return a cache miss. If the token doesn't parse as a JWT (e.g. opaque PAT like a GitHub token), skip expiry checking and return it as-is for upstream use.
@@ -157,11 +153,11 @@ Depends on: Task 3. Core router logic — can be unit-tested with mock cache bef
 Depends on: Task 3. Independent of Task 4 — touches broker, not router.
 
 **Files:**
-- `internal/broker/credentials.go` (new) — HTTP handler for token page
-  - `GET /credentials?server=<name>&elicitation_id=<id>` — renders HTML form
-  - `POST /credentials` — stores token in cache, returns success
-- `internal/broker/credentials_test.go` (new) — unit tests
-- `cmd/mcp-broker-router/main.go` — register `/credentials` endpoint (gated behind `--enable-url-elicitation`)
+- `internal/broker/tokens.go` (new) — HTTP handler for token page
+  - `GET /tokens?elicitation_id=<id>` — renders HTML form
+  - `POST /tokens` — stores token in cache, returns success
+- `internal/broker/tokens_test.go` (new) — unit tests
+- `cmd/mcp-broker-router/main.go` — register `/tokens` endpoint (gated behind `--enable-url-elicitation`)
 - `internal/broker/broker.go` — broker needs access to `UserTokenCache`
 
 **Acceptance criteria:**
@@ -173,9 +169,9 @@ Depends on: Task 3. Independent of Task 4 — touches broker, not router.
 - [ ] Endpoint only registered when `--enable-url-elicitation` is true
 
 **E2E test cases (from `e2e_test_cases.md`):**
-- `[URLElicitation] Broker credential page rejects invalid elicitation ID`
-- `[URLElicitation,Security] Broker credential page rejects session mismatch`
-- `[URLElicitation,Security] Credential page rejects mismatched session (phishing prevention)`
+- `[URLElicitation] Broker token page rejects invalid elicitation ID`
+- `[URLElicitation,Security] Broker token page rejects session mismatch`
+- `[URLElicitation,Security] Token page rejects mismatched session (phishing prevention)`
 
 **Documentation (from `documentation.md`):**
 - Guide section: "When I want to protect the token page from unauthorized access" — session JWT binding, custom header CORS protection, AuthPolicy as additional layer

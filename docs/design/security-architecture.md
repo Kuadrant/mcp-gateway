@@ -128,10 +128,18 @@ URL elicitation (`tokenURLElicitation`) enables per-user token collection at too
 - `credentialRef` is used exclusively by the broker for tool discovery and upstream session management. It is never injected into client `tools/call` requests.
 - `tokenURLElicitation` collects per-user tokens at tool-call time via the router. These tokens are cached per session and injected by the router into `tools/call` requests.
 
+### Encryption at rest
+
+User tokens in the session cache (added via URL elicitation) are encrypted when using an external cache backend (Redis). Encryption uses AES-256-GCM with keys derived from the session signing key via HKDF (RFC 5869). The in-memory backend stores tokens in plaintext since the data is process-local.
+
+### CSRF protection
+
+The token page uses a cookie-based CSRF token to prevent cross-site form submissions. On GET, the broker generates a random token, sets it as an `HttpOnly` cookie, and includes a matching hidden field in the HTML form. On POST, the broker validates that the cookie value and form field match using constant-time comparison.
+
 ### Security properties
 
 - **Single-use elicitation IDs**: each elicitation entry is consumed atomically on first use (`Claim` semantics), preventing replay.
-- **Session binding**: the elicitation entry is tied to the gateway session JWT. A token submitted for one session cannot be used by another.
+- **Identity verification (`sub` claim)**: the broker compares the `sub` claim from the browser request's JWT with the `sub` stored in the elicitation entry. The broker implicitly trusts that the JWT has been verified by the AuthPolicy — it does not repeat signature or expiry validation.
 - **No credential leakage**: the broker's `credentialRef` is never exposed to clients or injected into the `tools/call` path.
 - **Token page served over gateway**: the built-in `/tokens` page is served by the broker behind Envoy, so gateway-level policies (TLS, rate limiting) apply. External URL overrides delegate security to the external service.
 

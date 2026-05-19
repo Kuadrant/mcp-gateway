@@ -10,7 +10,7 @@ When a platform engineer has an upstream MCP server that requires each user to a
 
 **Cover:**
 - Adding `tokenURLElicitation: {}` to an MCPServerRegistration
-- Enabling the feature with `--enable-elicitation`
+- Enabling the feature with `--enable-url-elicitation`
 - What the user experience looks like (tool call → prompt → browser → retry)
 - Prerequisites (HTTPS, client capability)
 
@@ -28,8 +28,8 @@ When a platform engineer already has credential infrastructure (e.g., Vault web 
 When a platform engineer deploys URL elicitation, they want to ensure only the authenticated user who triggered the elicitation can submit a token, so that attackers cannot inject credentials into other users' sessions.
 
 **Cover:**
-- How session JWT binding prevents cross-session token injection (broker verifies session JWT matches elicitation ID)
-- Why `mcp-session-id` as a custom header prevents browser-based forgery (CORS blocks cross-origin header setting)
+- How `sub` claim comparison prevents cross-session token injection (broker verifies the `sub` from the browser request matches the `sub` stored in the elicitation entry)
+- CSRF protection via cookie-based token (form includes hidden `csrf_token` field, validated against cookie on POST)
 - AuthPolicy as an additional layer restricting access to authenticated and authorized users
 - Link to the MCP spec's phishing warning
 
@@ -61,7 +61,7 @@ When a security reviewer or contributor needs to assess the token handling in UR
 - Token data flow: broker writes → cache stores (encrypted) → router reads → upstream receives
 - Encryption at rest: AES-GCM with HKDF-derived key, only for external cache backends
 - Session scoping: tokens bound to gateway session, lost on session expiry
-- Identity verification: session JWT binding (broker verifies match), custom header prevents browser forgery, AuthPolicy as additional hardening
+- Identity verification: AuthPolicy enforces authentication on the token page, `sub` claim comparison ensures the browser user matches the MCP client session, CSRF cookie token prevents cross-site forgery
 - Known risks: no completion callback for external URL pattern, cache eviction loses tokens
 
 ## API Reference Update (`docs/reference/mcpserverregistration.md`)

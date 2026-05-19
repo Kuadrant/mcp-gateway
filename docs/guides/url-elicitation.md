@@ -137,9 +137,10 @@ JWT tokens are also checked for expiry before use — an expired JWT is treated 
 
 ## Security Considerations
 
-- **Session binding**: Each elicitation entry is tied to the gateway session. The broker verifies that the session JWT on the token page request matches the session that triggered the elicitation.
+- **AuthPolicy required**: An AuthPolicy on the gateway route is the primary security control. It authenticates both the MCP client and the browser token page against the same identity provider, preventing token injection by unauthorized users. The broker implicitly trusts that the JWT has been verified by the AuthPolicy — it does not repeat signature or expiry validation.
+- **Identity verification (`sub` claim)**: The broker compares the `sub` claim from the browser request's JWT with the `sub` stored in the elicitation entry (captured from the MCP client session). This ensures the user submitting the token is the same user whose tool call triggered the elicitation.
+- **CSRF protection**: The token page uses a cookie-based CSRF token. The GET response sets a `csrf` cookie and includes a matching hidden form field. The POST handler validates that the cookie and form values match, preventing cross-site form submissions.
 - **Single-use entries**: Each elicitation ID can only be claimed once — submitting the form consumes the entry, providing anti-replay protection.
-- **AuthPolicy required**: An AuthPolicy on the gateway route is required before enabling URL elicitation. It authenticates both the MCP client and the browser token page against the same identity provider, preventing token injection by unauthorized users.
 
 > **Note:** The MCP specification includes a [phishing warning](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/elicitation) about URL elicitation. Ensure your users understand they should only enter tokens on URLs they trust.
 
