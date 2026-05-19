@@ -92,20 +92,22 @@ func mcpNotifyInitialized(ctx context.Context, url, sessionID string, headers ma
 	return nil
 }
 
-func mcpListTools(ctx context.Context, url, sessionID string, headers map[string]string) (int, []string, error) { //nolint:unparam
-	body := `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
+// mcpListNames posts a JSON-RPC list request (e.g. tools/list, prompts/list)
+// and extracts the name strings from the given result key.
+func mcpListNames(ctx context.Context, url, sessionID, method, resultKey string, headers map[string]string) (int, []string, error) {
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"%s"}`, method)
 	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
 	if err != nil {
-		return 0, nil, fmt.Errorf("tools/list failed: %w", err)
+		return 0, nil, fmt.Errorf("%s failed: %w", method, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return resp.StatusCode, nil, fmt.Errorf("tools/list returned status %d (body unreadable: %w)", resp.StatusCode, readErr)
+			return resp.StatusCode, nil, fmt.Errorf("%s returned status %d (body unreadable: %w)", method, resp.StatusCode, readErr)
 		}
-		return resp.StatusCode, nil, fmt.Errorf("tools/list returned status %d: %s", resp.StatusCode, string(respBody))
+		return resp.StatusCode, nil, fmt.Errorf("%s returned status %d: %s", method, resp.StatusCode, string(respBody))
 	}
 
 	result, err := readJSONRPCResult(resp)
@@ -113,19 +115,22 @@ func mcpListTools(ctx context.Context, url, sessionID string, headers map[string
 		return resp.StatusCode, nil, err
 	}
 
-	var listResult struct {
-		Tools []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
+	var parsed map[string][]struct {
+		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(result, &listResult); err != nil {
-		return resp.StatusCode, nil, fmt.Errorf("failed to parse tools/list result: %w: %s", err, string(result))
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("failed to parse %s result: %w: %s", method, err, string(result))
 	}
-	names := make([]string, len(listResult.Tools))
-	for i, t := range listResult.Tools {
-		names[i] = t.Name
+	items := parsed[resultKey]
+	names := make([]string, len(items))
+	for i, item := range items {
+		names[i] = item.Name
 	}
 	return resp.StatusCode, names, nil
+}
+
+func mcpListTools(ctx context.Context, url, sessionID string, headers map[string]string) (int, []string, error) {
+	return mcpListNames(ctx, url, sessionID, "tools/list", "tools", headers)
 }
 
 func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[string]any, headers map[string]string) (int, []toolContent, error) {
@@ -172,40 +177,8 @@ func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[
 	return resp.StatusCode, callResult.Content, nil
 }
 
-func mcpListPrompts(ctx context.Context, url, sessionID string, headers map[string]string) ([]string, error) {
-	body := `{"jsonrpc":"2.0","id":2,"method":"prompts/list"}`
-	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
-	if err != nil {
-		return nil, fmt.Errorf("prompts/list failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return nil, fmt.Errorf("prompts/list returned status %d (body unreadable: %w)", resp.StatusCode, readErr)
-		}
-		return nil, fmt.Errorf("prompts/list returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	result, err := readJSONRPCResult(resp)
-	if err != nil {
-		return nil, err
-	}
-
-	var listResult struct {
-		Prompts []struct {
-			Name string `json:"name"`
-		} `json:"prompts"`
-	}
-	if err := json.Unmarshal(result, &listResult); err != nil {
-		return nil, fmt.Errorf("failed to parse prompts/list result: %w: %s", err, string(result))
-	}
-	names := make([]string, len(listResult.Prompts))
-	for i, p := range listResult.Prompts {
-		names[i] = p.Name
-	}
-	return names, nil
+func mcpListPrompts(ctx context.Context, url, sessionID string, headers map[string]string) (int, []string, error) {
+	return mcpListNames(ctx, url, sessionID, "prompts/list", "prompts", headers)
 }
 
 func mcpGetPrompt(ctx context.Context, url, sessionID, promptName string, args map[string]string, headers map[string]string) (int, string, error) {

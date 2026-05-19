@@ -167,7 +167,15 @@
 
 ### [Happy] prompts/get for nonexistent prompt returns error
 
-- When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return an error.
+- When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return a JSON-RPC error with code -32602 (Invalid params).
+
+### [Happy] Prompt notifications on registration
+
+- When an MCPServerRegistration is registered with a backend MCP server that has prompts, a `list_changed` notification should be sent to any clients connected to the MCP Gateway. Multiple connected clients should all receive the notification. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.
+
+### [Happy] Prompt conflicts with same prefix
+
+- When two MCPServerRegistrations with the same prefix point to backends that both have prompts with the same name (e.g., both have a "greet" prompt producing "pconflict_greet"), at least one MCPServerRegistration should report a conflict in its status. This mirrors the tool conflict behavior where overlapping prefixed names cause a conflict.
 
 ### [Auth] JWT-filtered prompts/list with Keycloak
 
@@ -179,7 +187,7 @@
 
 ### [Auth] Combined JWT + VirtualServer prompt filtering
 
-- When a client sends a prompts/list request with both a valid auth token and an x-mcp-virtualserver header, the result should be the intersection of both filters. If the JWT allows `test1_greet` but the VirtualServer only allows `everything_simple-prompt`, the result should be empty.
+- When a client sends a prompts/list request with both a valid auth token and an `X-Mcp-Virtualserver` header, the result should be the intersection of both filters. The everything-server is registered with prefix `everything_` and its prompts are federated. If the JWT allows `test1_greet` but the VirtualServer only allows `everything_simple_prompt` (which the user has no JWT role for), the result should be empty.
 
 ### [Happy] Elicitation accept flow
 

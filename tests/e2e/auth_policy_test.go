@@ -182,7 +182,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		var prompts []string
 		Eventually(func(g Gomega) {
 			var listErr error
-			prompts, listErr = mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			_, prompts, listErr = mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
 			g.Expect(listErr).NotTo(HaveOccurred())
 			g.Expect(prompts).NotTo(BeEmpty())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
@@ -208,16 +208,34 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 	})
 
 	It("[Auth] should return empty prompts for combined JWT + VirtualServer with no intersection", func() {
-		By("Creating a VirtualServer that allows only an everything-server prompt (user has no role for)")
+		By("Registering the everything-server so its prompts are federated")
+		evReg := NewTestResources("auth-everything", k8sClient).
+			ForInternalService("everything-server", 9090).
+			WithPrefix("everything_").
+			Build()
+		evObjects := evReg.GetObjects()
+		evServer := evReg.Register(ctx)
+		defer func() {
+			for i := len(evObjects) - 1; i >= 0; i-- {
+				CleanupResource(ctx, k8sClient, evObjects[i])
+			}
+			CleanupResource(ctx, k8sClient, evServer)
+		}()
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, evServer.Name, evServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating a VirtualServer that allows only the everything-server prompt (user has no JWT role for it)")
 		virtualServer := NewMCPVirtualServerBuilder("auth-prompt-combined-vs", TestServerNameSpace).
 			WithTools([]string{"test1_greet"}).
-			WithPrompts([]string{"everything_simple-prompt"}).Build()
+			WithPrompts([]string{"everything_simple_prompt"}).Build()
 		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
 		defer func() {
 			CleanupResource(ctx, k8sClient, virtualServer)
 		}()
 
-		By("Obtaining a token and initialising a session")
+		By("Obtaining a token and initialising a session with VirtualServer header")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
@@ -230,9 +248,9 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
 
-		By("Listing prompts — JWT allows test1_greet, VirtualServer allows everything_simple-prompt, intersection is empty")
+		By("Listing prompts — JWT allows test1_greet, VirtualServer allows everything_simple_prompt, intersection is empty")
 		Eventually(func(g Gomega) {
-			prompts, listErr := mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			_, prompts, listErr := mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
 			g.Expect(listErr).NotTo(HaveOccurred())
 			g.Expect(prompts).To(BeEmpty(), "intersection of JWT and VirtualServer should be empty")
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
