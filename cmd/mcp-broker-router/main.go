@@ -422,6 +422,15 @@ func LoadConfig(path string) {
 	if err != nil {
 		log.Fatalf("Unable to decode server config into struct: %s", err)
 	}
+
+	var newA2AServers []*config.A2AServer
+	if viper.IsSet("a2aServers") {
+		err = viper.UnmarshalKey("a2aServers", &newA2AServers)
+		if err != nil {
+			log.Fatal("Failed to parse a2aServers configuration", "error", err)
+		}
+	}
+
 	var newVirtualServers []*config.VirtualServer
 	// Load virtualServers if present - this is optional
 	if viper.IsSet("virtualServers") {
@@ -432,7 +441,7 @@ func LoadConfig(path string) {
 	} else {
 		logger.Debug("No virtualServers section found in configuration")
 	}
-	mcpConfig.SetServers(newServers, newVirtualServers)
+	mcpConfig.SetServers(newServers, newA2AServers, newVirtualServers)
 
 	logger.Debug("config successfully loaded", "# servers", len(newServers))
 

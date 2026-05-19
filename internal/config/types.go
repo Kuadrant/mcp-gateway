@@ -8,6 +8,32 @@ import (
 	"sync"
 )
 
+// UpstreamServer defines common properties for any upstream provider.
+type UpstreamServer interface {
+	ServerName() string
+	ServerURL() string
+	Protocol() string
+}
+
+// A2AServer represents a future Agent-to-Agent upstream configuration
+type A2AServer struct {
+	Name            string            `json:"name" yaml:"name"`
+	URL             string            `json:"url" yaml:"url"`
+	AgentCardURL    string            `json:"agentCardUrl,omitempty" yaml:"agentCardUrl,omitempty"`
+	TaskEndpoint    string            `json:"taskEndpoint,omitempty" yaml:"taskEndpoint,omitempty"`
+	ProtocolBinding string            `json:"protocolBinding,omitempty" yaml:"protocolBinding,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+}
+
+func (a2aServer *A2AServer) ServerName() string { return a2aServer.Name }
+func (a2aServer *A2AServer) ServerURL() string  { return a2aServer.URL }
+func (a2aServer *A2AServer) Protocol() string {
+	if a2aServer.ProtocolBinding != "" {
+		return a2aServer.ProtocolBinding
+	}
+	return "a2a"
+}
+
 // UpstreamMCPID is used as type for identifying individual upstreams
 type UpstreamMCPID string
 
@@ -16,6 +42,7 @@ type MCPServersConfig struct {
 	lock sync.RWMutex
 
 	Servers        []*MCPServer
+	A2AServers     []*A2AServer
 	VirtualServers []*VirtualServer
 	observers      []Observer
 	//MCPGatewayExternalHostname is the accessible host of the gateway listener
@@ -32,10 +59,11 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 }
 
 // SetServers atomically replaces the server and virtual-server lists.
-func (config *MCPServersConfig) SetServers(servers []*MCPServer, virtualServers []*VirtualServer) {
+func (config *MCPServersConfig) SetServers(servers []*MCPServer, a2aServers []*A2AServer, virtualServers []*VirtualServer) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.Servers = servers
+	config.A2AServers = a2aServers
 	config.VirtualServers = virtualServers
 }
 
@@ -45,6 +73,15 @@ func (config *MCPServersConfig) ListServers() []*MCPServer {
 	defer config.lock.RUnlock()
 	out := make([]*MCPServer, len(config.Servers))
 	copy(out, config.Servers)
+	return out
+}
+
+// ListA2AServers returns a consistent snapshot of the current A2A server list.
+func (config *MCPServersConfig) ListA2AServers() []*A2AServer {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	out := make([]*A2AServer, len(config.A2AServers))
+	copy(out, config.A2AServers)
 	return out
 }
 
@@ -96,6 +133,10 @@ type MCPServer struct {
 	Enabled             bool                       `json:"enabled"                           yaml:"enabled"`
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
 }
+
+func (mcpServer *MCPServer) ServerName() string { return mcpServer.Name }
+func (mcpServer *MCPServer) ServerURL() string  { return mcpServer.URL }
+func (mcpServer *MCPServer) Protocol() string   { return "mcp" }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
 type TokenURLElicitationConfig struct {
@@ -151,6 +192,7 @@ type Observer interface {
 // BrokerConfig holds broker configuration
 type BrokerConfig struct {
 	Servers        []MCPServer           `json:"servers" yaml:"servers"`
+	A2AServers     []A2AServer           `json:"a2aServers,omitempty" yaml:"a2aServers,omitempty"`
 	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
 }
 
