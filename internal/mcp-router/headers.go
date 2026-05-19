@@ -11,6 +11,7 @@ const (
 	toolAnnotationsHeader = "x-mcp-annotation-hints"
 	toolHeader            = "x-mcp-toolname"
 	promptHeader          = "x-mcp-promptname"
+	resourceHeader        = "x-mcp-resourceuri"
 	methodHeader          = "x-mcp-method"
 	sessionHeader         = "mcp-session-id"
 	authorityHeader       = ":authority"
@@ -143,6 +144,17 @@ func (hb *HeadersBuilder) WithMCPPromptName(promptName string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      promptHeader,
 			RawValue: []byte(promptName),
+		},
+	})
+	return hb
+}
+
+// WithMCPResourceURI will set the x-mcp-resourceuri header
+func (hb *HeadersBuilder) WithMCPResourceURI(resourceURI string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      resourceHeader,
+			RawValue: []byte(resourceURI),
 		},
 	})
 	return hb

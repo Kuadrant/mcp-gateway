@@ -225,3 +225,33 @@ func (up *MCPServer) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*
 	}
 	return up.client.ListTools(ctx, req)
 }
+
+// SupportsResources checks if the upstream server declared resource capabilities
+func (up *MCPServer) SupportsResources() bool {
+	if up.init == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources != nil
+}
+
+// SupportsResourcesListChanged validates the mcp server supports resources/list_changed notifications
+func (up *MCPServer) SupportsResourcesListChanged() bool {
+	if up.init == nil {
+		return false
+	}
+	if up.init.Capabilities.Resources == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources.ListChanged
+}
+
+// ListResources retrieves the list of available resources from the upstream MCP server
+func (up *MCPServer) ListResources(ctx context.Context, req mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
+
+	if up.client == nil {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return up.client.ListResources(ctx, req)
+}

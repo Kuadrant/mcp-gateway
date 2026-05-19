@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,10 +42,18 @@ type PromptsAdderDeleter interface {
 	ListPrompts() map[string]*server.ServerPrompt
 }
 
+// ResourcesAdderDeleter defines the interface for managing resources on the gateway server
+type ResourcesAdderDeleter interface {
+	AddResources(resources ...server.ServerResource)
+	DeleteResources(names ...string)
+	ListResources() map[string]*server.ServerResource
+}
+
 const (
-	notificationToolsListChanged   = "notifications/tools/list_changed"
-	notificationPromptsListChanged = "notifications/prompts/list_changed"
-	gatewayServerID                = "kuadrant/id"
+	notificationToolsListChanged     = "notifications/tools/list_changed"
+	notificationPromptsListChanged   = "notifications/prompts/list_changed"
+	notificationResourcesListChanged = "notifications/resources/list_changed"
+	gatewayServerID                  = "kuadrant/id"
 )
 
 type eventType int
@@ -52,6 +62,7 @@ const (
 	eventTypeTimer eventType = iota
 	eventTypeToolNotification
 	eventTypePromptNotification
+	eventTypeResourceNotification
 )
 
 // ServerValidationStatus contains the validation results for an upstream MCP server
@@ -63,6 +74,7 @@ type ServerValidationStatus struct {
 	Ready             bool                `json:"ready"`
 	TotalTools        int                 `json:"totalTools"`
 	TotalPrompts      int                 `json:"totalPrompts"`
+	TotalResources    int                 `json:"totalResources"`
 	InvalidTools      int                 `json:"invalidTools"`
 	InvalidToolList   []InvalidToolInfo   `json:"invalidToolList,omitempty"`
 	InvalidPrompts    int                 `json:"invalidPrompts"`
@@ -80,8 +92,11 @@ type MCP interface {
 	Disconnect() error
 	ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
 	ListPrompts(context.Context, mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error)
+	ListResources(context.Context, mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error)
 	SupportsPrompts() bool
 	SupportsPromptsListChanged() bool
+	SupportsResources() bool
+	SupportsResourcesListChanged() bool
 	OnNotification(func(notification mcp.JSONRPCNotification))
 	OnConnectionLost(func(err error))
 	Ping(context.Context) error
@@ -97,6 +112,8 @@ type ActiveMCPServer interface {
 	GetServedManagedTool(toolName string) *mcp.Tool
 	GetManagedPrompts() []mcp.Prompt
 	GetServedManagedPrompt(promptName string) *mcp.Prompt
+	GetManagedResources() []mcp.Resource
+	GetServedManagedResource(resourceURI string) *mcp.Resource
 	Config() config.MCPServer
 }
 
@@ -127,7 +144,15 @@ type MCPManager struct {
 	promptsMap       map[string]*mcp.Prompt
 	servedPromptsMap map[string]*mcp.Prompt
 
-	// toolsLock protects tools, serverTools, prompts, serverPrompts
+	resourcesServer ResourcesAdderDeleter
+	// serverResources is an internal copy with prefixed names
+	serverResources []server.ServerResource
+	// resources is the original set from MCP server with no prefix
+	resources          []mcp.Resource
+	resourcesMap       map[string]*mcp.Resource
+	servedResourcesMap map[string]*mcp.Resource
+
+	// toolsLock protects tools, serverTools, prompts, serverPrompts, resources, serverResources
 	toolsLock sync.RWMutex
 
 	logger *slog.Logger
@@ -139,10 +164,11 @@ type MCPManager struct {
 	// Separate channels with buffer of 1 each ensure a tool notification cannot
 	// block a prompt notification (or vice versa) while still coalescing rapid
 	// same-type notifications.
-	toolEvents   chan struct{}
-	promptEvents chan struct{}
-	done         chan struct{} // closed when the event loop exits
-	status       ServerValidationStatus
+	toolEvents     chan struct{}
+	promptEvents   chan struct{}
+	resourceEvents chan struct{}
+	done           chan struct{} // closed when the event loop exits
+	status         ServerValidationStatus
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
@@ -151,7 +177,15 @@ const DefaultTickerInterval = time.Minute * 1
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, promptsServer PromptsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) (*MCPManager, error) {
+func NewUpstreamMCPManager(
+	upstream MCP,
+	gatewayServer ToolsAdderDeleter,
+	promptsServer PromptsAdderDeleter,
+	resourcesServer ResourcesAdderDeleter,
+	logger *slog.Logger,
+	tickerInterval time.Duration,
+	policy mcpv1alpha1.InvalidToolPolicy,
+) (*MCPManager, error) {
 	if gatewayServer == nil {
 		return nil, fmt.Errorf("gateway server is required for upstream MCP manager")
 	}
@@ -168,24 +202,32 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 	}
 
 	return &MCPManager{
-		mcp:               upstream,
-		gatewayServer:     gatewayServer,
-		promptsServer:     promptsServer,
-		tickerInterval:    tickerInterval,
-		ticker:            time.NewTicker(tickerInterval),
-		backoff:           bo,
-		baseBackoff:       bo,
-		logger:            logger,
-		invalidToolPolicy: policy,
-		toolEvents:        make(chan struct{}, 1),
-		promptEvents:      make(chan struct{}, 1),
-		done:              make(chan struct{}),
-		toolsMap:          map[string]*mcp.Tool{},
-		servedToolsMap:    map[string]*mcp.Tool{},
-		serverTools:       []server.ServerTool{},
-		promptsMap:        map[string]*mcp.Prompt{},
-		servedPromptsMap:  map[string]*mcp.Prompt{},
-		serverPrompts:     []server.ServerPrompt{},
+		mcp:                upstream,
+		gatewayServer:      gatewayServer,
+		promptsServer:      promptsServer,
+		resourcesServer:    resourcesServer,
+		tickerInterval:     tickerInterval,
+		ticker:             time.NewTicker(tickerInterval),
+		backoff:            bo,
+		baseBackoff:        bo,
+		logger:             logger,
+		invalidToolPolicy:  policy,
+		toolEvents:         make(chan struct{}, 1),
+		promptEvents:       make(chan struct{}, 1),
+		resourceEvents:     make(chan struct{}, 1),
+		done:               make(chan struct{}),
+		toolsMap:           map[string]*mcp.Tool{},
+		servedToolsMap:     map[string]*mcp.Tool{},
+		serverTools:        []server.ServerTool{},
+		tools:              []mcp.Tool{},
+		promptsMap:         map[string]*mcp.Prompt{},
+		servedPromptsMap:   map[string]*mcp.Prompt{},
+		serverPrompts:      []server.ServerPrompt{},
+		prompts:            []mcp.Prompt{},
+		resourcesMap:       map[string]*mcp.Resource{},
+		servedResourcesMap: map[string]*mcp.Resource{},
+		serverResources:    []server.ServerResource{},
+		resources:          []mcp.Resource{},
 	}, nil
 }
 
@@ -212,6 +254,7 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				}
 				man.removeAllPrompts()
 				man.removeAllTools()
+				man.removeAllResources()
 
 				close(man.done)
 				man.logger.Debug("manager stopped", "upstream mcp server", man.mcp.ID())
@@ -225,6 +268,9 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 			case <-man.promptEvents:
 				man.logger.Debug("received prompt notification", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypePromptNotification)
+			case <-man.resourceEvents:
+				man.logger.Debug("received resource notification", "upstream mcp server", man.mcp.ID())
+				man.manage(ctx, eventTypeResourceNotification)
 			}
 		}
 	}()
@@ -251,6 +297,10 @@ func (a *activeMCP) GetManagedPrompts() []mcp.Prompt { return a.manager.GetManag
 func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
 }
+func (a *activeMCP) GetManagedResources() []mcp.Resource { return a.manager.GetManagedResources() }
+func (a *activeMCP) GetServedManagedResource(r string) *mcp.Resource {
+	return a.manager.GetServedManagedResource(r)
+}
 func (a *activeMCP) Config() config.MCPServer { return a.manager.mcp.GetConfig() }
 
 func (man *MCPManager) registerCallbacks() func() {
@@ -270,6 +320,12 @@ func (man *MCPManager) registerCallbacks() func() {
 				case man.promptEvents <- struct{}{}:
 				default:
 				}
+			case notificationResourcesListChanged:
+				man.logger.Debug("received notification", "upstream mcp server", man.mcp.ID(), "notification", notification.Method)
+				select {
+				case man.resourceEvents <- struct{}{}:
+				default:
+				}
 			}
 		})
 
@@ -285,6 +341,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.Debug("managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)
+	numberOfResources := len(man.resources)
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.Debug("attempting to connect", "upstream mcp server", man.mcp.ID())
 	if err := man.mcp.Connect(ctx, man.registerCallbacks()); err != nil {
@@ -292,9 +349,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.Error("connection failed", "upstream mcp server", man.mcp.ID(), "error", err)
 		man.removeAllTools()
 		man.removeAllPrompts()
+		man.removeAllResources()
 		// we call disconnect here as we may have connected but failed to initialize
 		_ = man.mcp.Disconnect()
-		man.setStatus(err, numberOfTools, numberOfPrompts, nil, nil)
+		man.setStatus(err, numberOfTools, numberOfPrompts, numberOfResources, nil, nil, nil)
 		return
 	}
 	// there may be an active client so we also ping
@@ -304,8 +362,9 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.Error("ping failed", "upstream mcp server", man.mcp.ID(), "error", err)
 		man.removeAllTools()
 		man.removeAllPrompts()
+		man.removeAllResources()
 		_ = man.mcp.Disconnect()
-		man.setStatus(err, numberOfTools, numberOfPrompts, nil, nil)
+		man.setStatus(err, numberOfTools, numberOfPrompts, numberOfResources, nil, nil, nil)
 		return
 	}
 
@@ -421,8 +480,63 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 			}
 		}
 	}
-	jointErr := errors.Join(toolErr, promptErr)
-	man.setStatus(jointErr, numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
+
+	var resourceErr error
+	var invalidResources []InvalidResourceInfo
+	if man.resourcesServer != nil && man.mcp.SupportsResources() && man.shouldFetchResources(event) {
+		currentResources, fetchedResources, listErr := man.getResources(ctx)
+		if listErr != nil {
+			resourceErr = fmt.Errorf("upstream mcp failed to list resources server %s : %w", man.mcp.ID(), listErr)
+			man.logger.Error("failed to list resources", "upstream mcp server", man.mcp.ID(), "error", resourceErr)
+		} else {
+			validResources, invalids := ValidateResources(fetchedResources)
+			if len(invalids) > 0 {
+				man.logger.Error("invalid resources detected", "upstream mcp server", man.mcp.ID(), "invalid", len(invalids), "valid", len(validResources))
+				for _, info := range invalids {
+					man.logger.Error("invalid resource", "upstream mcp server", man.mcp.ID(), "resourceName", info.Name, "errors", info.Errors)
+				}
+				invalidResources = invalids
+				fetchedResources = validResources
+			}
+
+			toAddResources, toRemoveResources := man.diffResources(currentResources, fetchedResources)
+			if conflictErr := man.findResourceConflicts(toAddResources); conflictErr != nil {
+				resourceErr = fmt.Errorf("upstream mcp failed to add resources to gateway %s : %w", man.mcp.ID(), conflictErr)
+				man.logger.Error("resource conflict detected", "upstream mcp server", man.mcp.ID(), "error", resourceErr)
+			} else {
+				man.toolsLock.Lock()
+				man.resources = fetchedResources
+				numberOfResources = len(fetchedResources)
+				man.resourcesMap = make(map[string]*mcp.Resource, len(fetchedResources))
+				man.servedResourcesMap = make(map[string]*mcp.Resource, len(fetchedResources))
+				for i := range fetchedResources {
+					man.resourcesMap[fetchedResources[i].URI] = &fetchedResources[i]
+					prefixedURI := PrefixURI(fetchedResources[i].URI, man.mcp.GetPrefix())
+					man.servedResourcesMap[prefixedURI] = &fetchedResources[i]
+				}
+				man.serverResources = slices.DeleteFunc(man.serverResources, func(res server.ServerResource) bool {
+					return slices.Contains(toRemoveResources, res.Resource.URI)
+				})
+				man.serverResources = append(man.serverResources, toAddResources...)
+				man.toolsLock.Unlock()
+
+				man.logger.Debug("updating gateway resources", "upstream mcp server", man.mcp.ID(), "adding", len(toAddResources), "removing", len(toRemoveResources))
+				if len(toRemoveResources) > 0 {
+					man.resourcesServer.DeleteResources(toRemoveResources...)
+				}
+				if len(toAddResources) > 0 {
+					man.resourcesServer.AddResources(toAddResources...)
+				}
+			}
+		}
+	} else {
+		man.toolsLock.RLock()
+		numberOfResources = len(man.resources)
+		man.toolsLock.RUnlock()
+	}
+
+	jointErr := errors.Join(toolErr, promptErr, resourceErr)
+	man.setStatus(jointErr, numberOfTools, numberOfPrompts, numberOfResources, invalidTools, invalidPrompts, invalidResources)
 	if jointErr != nil {
 		man.applyBackoff()
 	} else {
@@ -451,13 +565,23 @@ func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
 	return event == eventTypeTimer && len(man.serverPrompts) == 0
 }
 
+func (man *MCPManager) shouldFetchResources(event eventType) bool {
+	if !man.mcp.SupportsResourcesListChanged() {
+		return true
+	}
+	if event == eventTypeResourceNotification {
+		return true
+	}
+	return event == eventTypeTimer && len(man.serverResources) == 0
+}
+
 // GetStatus returns the current status of the MCP Server
 // no locking is done here as it is expected to be called multiple times
 func (man *MCPManager) GetStatus() ServerValidationStatus {
 	return man.status
 }
 
-func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, invalidTools []InvalidToolInfo, invalidPrompts []InvalidPromptInfo) {
+func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, resourceCount int, invalidTools []InvalidToolInfo, invalidPrompts []InvalidPromptInfo, invalidResources []InvalidResourceInfo) {
 	man.status.ID = string(man.mcp.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()
@@ -472,8 +596,9 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	}
 	man.status.TotalTools = toolCount
 	man.status.TotalPrompts = promptCount
+	man.status.TotalResources = resourceCount
 	man.status.Ready = true
-	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
+	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d. Total resources added %d", toolCount, promptCount, resourceCount)
 }
 
 func (man *MCPManager) resetBackoff() {
@@ -776,4 +901,195 @@ func (man *MCPManager) SetPromptsForTesting(prompts []mcp.Prompt) {
 		man.promptsMap[prompts[i].Name] = &prompts[i]
 		man.servedPromptsMap[prefixedName(man.mcp.GetPrefix(), prompts[i].Name)] = &prompts[i]
 	}
+}
+
+// PrefixURI prepends a prefix to the scheme of a resource URI.
+func PrefixURI(uriStr string, prefix string) string {
+	if prefix == "" {
+		return uriStr
+	}
+	u, err := url.Parse(uriStr)
+	if err != nil || u.Scheme == "" {
+		return prefix + uriStr
+	}
+	u.Scheme = prefix + u.Scheme
+	return u.String()
+}
+
+// StripURIPrefix removes a prefix from the scheme of a resource URI.
+func StripURIPrefix(uriStr string, prefix string) string {
+	if prefix == "" {
+		return uriStr
+	}
+	u, err := url.Parse(uriStr)
+	if err != nil || u.Scheme == "" {
+		if strings.HasPrefix(uriStr, prefix) {
+			return uriStr[len(prefix):]
+		}
+		return uriStr
+	}
+	if strings.HasPrefix(u.Scheme, prefix) {
+		u.Scheme = u.Scheme[len(prefix):]
+		return u.String()
+	}
+	return uriStr
+}
+
+type InvalidResourceInfo struct {
+	Name   string   `json:"name"`
+	Errors []string `json:"errors"`
+}
+
+// ValidateResources validates resource fields.
+func ValidateResources(resources []mcp.Resource) ([]mcp.Resource, []InvalidResourceInfo) {
+	var valid []mcp.Resource
+	var invalid []InvalidResourceInfo
+	for _, res := range resources {
+		var errs []string
+		if res.URI == "" {
+			errs = append(errs, "uri is required")
+		}
+		if res.Name == "" {
+			errs = append(errs, "name is required")
+		}
+		if len(errs) > 0 {
+			invalid = append(invalid, InvalidResourceInfo{Name: res.Name, Errors: errs})
+		} else {
+			valid = append(valid, res)
+		}
+	}
+	return valid, invalid
+}
+
+func (man *MCPManager) resourceToServerResource(newResource mcp.Resource) server.ServerResource {
+	newResource.URI = PrefixURI(newResource.URI, man.mcp.GetPrefix())
+	newResource.Meta = mcp.NewMetaFromMap(map[string]any{
+		gatewayServerID: string(man.mcp.ID()),
+	})
+	return server.ServerResource{
+		Resource: newResource,
+		Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return nil, fmt.Errorf("Kagenti MCP Broker doesn't forward resource reads")
+		},
+	}
+}
+
+func (man *MCPManager) diffResources(oldResources, newResources []mcp.Resource) ([]server.ServerResource, []string) {
+	oldResourceMap := make(map[string]mcp.Resource)
+	for _, oldRes := range oldResources {
+		oldResourceMap[oldRes.URI] = oldRes
+	}
+
+	newResourceMap := make(map[string]mcp.Resource)
+	for _, newRes := range newResources {
+		newResourceMap[newRes.URI] = newRes
+	}
+
+	addedResources := make([]server.ServerResource, 0)
+	for _, newRes := range newResourceMap {
+		_, ok := oldResourceMap[newRes.URI]
+		if !ok {
+			addedResources = append(addedResources, man.resourceToServerResource(newRes))
+		}
+	}
+
+	removedResources := make([]string, 0)
+	for _, oldRes := range oldResourceMap {
+		if _, ok := newResourceMap[oldRes.URI]; !ok {
+			removedResources = append(removedResources, PrefixURI(oldRes.URI, man.mcp.GetPrefix()))
+		}
+	}
+
+	return addedResources, removedResources
+}
+
+func (man *MCPManager) getResources(ctx context.Context) ([]mcp.Resource, []mcp.Resource, error) {
+	man.toolsLock.RLock()
+	resources := make([]mcp.Resource, len(man.resources))
+	copy(resources, man.resources)
+	man.toolsLock.RUnlock()
+
+	res, err := man.mcp.ListResources(ctx, mcp.ListResourcesRequest{})
+	if err != nil {
+		return resources, resources, fmt.Errorf("failed to get resources: %w", err)
+	}
+	return resources, res.Resources, nil
+}
+
+func (man *MCPManager) findResourceConflicts(mcpResources []server.ServerResource) error {
+	if man.resourcesServer == nil {
+		return nil
+	}
+	gatewayServerResources := man.resourcesServer.ListResources()
+	var conflictingResourceURIs []string
+	for _, res := range mcpResources {
+		for existingResourceURI, existingResourceInfo := range gatewayServerResources {
+			existingResource := existingResourceInfo.Resource
+			if existingResource.Meta == nil || existingResource.Meta.AdditionalFields == nil {
+				man.logger.Error("unable to check conflict, resource meta is nil", "upstream mcp server", man.mcp.ID(), "resource", existingResourceURI)
+				continue
+			}
+			existingResourceID, ok := existingResource.Meta.AdditionalFields[gatewayServerID]
+			if !ok {
+				man.logger.Error("unable to check conflict, resource id is missing", "upstream mcp server", man.mcp.ID())
+				continue
+			}
+			resourceID, is := existingResourceID.(string)
+			if !is {
+				man.logger.Error("unable to check conflict, resource id is not a string", "upstream mcp server", man.mcp.ID(), "type", reflect.TypeOf(existingResourceID))
+				continue
+			}
+			if existingResourceURI == res.Resource.URI && resourceID != string(man.mcp.ID()) {
+				conflictingResourceURIs = append(conflictingResourceURIs, res.Resource.URI)
+			}
+		}
+	}
+	if len(conflictingResourceURIs) > 0 {
+		return fmt.Errorf("conflicting resources discovered. conflicting resource URIs %v", conflictingResourceURIs)
+	}
+	return nil
+}
+
+// GetManagedResources returns a copy of all resources discovered from the upstream server.
+func (man *MCPManager) GetManagedResources() []mcp.Resource {
+	man.toolsLock.RLock()
+	result := make([]mcp.Resource, len(man.resources))
+	copy(result, man.resources)
+	man.toolsLock.RUnlock()
+	return result
+}
+
+// GetServedManagedResource returns the resource if present that is being served by the gateway.
+func (man *MCPManager) GetServedManagedResource(resourceURI string) *mcp.Resource {
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
+	return man.servedResourcesMap[resourceURI]
+}
+
+// SetResourcesForTesting sets resources directly for testing purposes.
+func (man *MCPManager) SetResourcesForTesting(resources []mcp.Resource) {
+	man.toolsLock.Lock()
+	defer man.toolsLock.Unlock()
+	man.resources = resources
+	for i := range resources {
+		man.resourcesMap[resources[i].URI] = &resources[i]
+		man.servedResourcesMap[PrefixURI(resources[i].URI, man.mcp.GetPrefix())] = &resources[i]
+	}
+}
+
+func (man *MCPManager) removeAllResources() {
+	if man.resourcesServer == nil {
+		return
+	}
+	man.toolsLock.Lock()
+	resourcesToRemove := make([]string, 0, len(man.serverResources))
+	for _, res := range man.serverResources {
+		resourcesToRemove = append(resourcesToRemove, res.Resource.URI)
+	}
+	man.serverResources = []server.ServerResource{}
+	man.resources = []mcp.Resource{}
+	man.resourcesMap = map[string]*mcp.Resource{}
+	man.servedResourcesMap = map[string]*mcp.Resource{}
+	man.toolsLock.Unlock()
+	man.resourcesServer.DeleteResources(resourcesToRemove...)
 }

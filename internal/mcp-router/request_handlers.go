@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
@@ -63,10 +64,11 @@ func NewRouterErrorf(code int32, format string, args ...any) *RouterError {
 }
 
 const (
-	methodToolCall    = "tools/call"
-	methodPromptGet   = "prompts/get"
-	methodInitialize  = "initialize"
-	methodInitialized = "notification/initialized"
+	methodToolCall     = "tools/call"
+	methodPromptGet    = "prompts/get"
+	methodResourceRead = "resources/read"
+	methodInitialize   = "initialize"
+	methodInitialized  = "notification/initialized"
 
 	elicitationResultAction  = "action"
 	elicitationActionAccept  = "accept"
@@ -219,6 +221,32 @@ func (mr *MCPRequest) ReWritePromptName(actualPrompt string) {
 	mr.Params["name"] = actualPrompt
 }
 
+// isResourceRead will check if the request is a resources/read request
+func (mr *MCPRequest) isResourceRead() bool {
+	return mr.Method == methodResourceRead
+}
+
+// ResourceURI returns the resource URI in a resources/read request
+func (mr *MCPRequest) ResourceURI() string {
+	if !mr.isResourceRead() {
+		return ""
+	}
+	uriVal, ok := mr.Params["uri"]
+	if !ok {
+		return ""
+	}
+	u, ok := uriVal.(string)
+	if !ok {
+		return ""
+	}
+	return u
+}
+
+// ReWriteResourceURI will allow re-setting the resource URI to remove prefix
+func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
+	mr.Params["uri"] = actualURI
+}
+
 // ToBytes marshals the data ready to send on
 func (mr *MCPRequest) ToBytes() ([]byte, error) {
 	return json.Marshal(mr)
@@ -253,6 +281,9 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	case mcpReq.Method == methodPromptGet:
 		span.SetAttributes(attribute.String("mcp.route", "prompt-get"))
 		return s.HandlePromptGet(ctx, mcpReq)
+	case mcpReq.Method == methodResourceRead:
+		span.SetAttributes(attribute.String("mcp.route", "resource-read"))
+		return s.HandleResourceRead(ctx, mcpReq)
 	default:
 		span.SetAttributes(attribute.String("mcp.route", "broker"))
 		return s.HandleNoneToolCall(ctx, mcpReq)
@@ -488,6 +519,88 @@ data: {"error":{"code":-32602,"message":"Prompt not found"},"jsonrpc":"2.0"}`)
 	upstreamPromptName, _ := strings.CutPrefix(promptName, serverInfo.Prefix)
 	headers.WithMCPPromptName(upstreamPromptName)
 	mcpReq.ReWritePromptName(upstreamPromptName)
+	headers.WithMCPServerName(serverInfo.Name)
+
+	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
+}
+
+// HandleResourceRead handles an MCP resources/read request by routing to the correct upstream server
+func (s *ExtProcServer) HandleResourceRead(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
+	resourceURI := mcpReq.ResourceURI()
+
+	ctx, span := tracer().Start(ctx, "mcp-router.resource-read",
+		trace.WithAttributes(
+			attribute.String("mcp.resource.uri", resourceURI),
+			attribute.String("mcp.session.id", mcpReq.GetSessionID()),
+		),
+	)
+	defer span.End()
+
+	calculatedResponse := NewResponse()
+	if resourceURI == "" {
+		s.Logger.ErrorContext(ctx, "[EXT-PROC] HandleResourceRead no resource URI set in resources/read")
+		span.SetStatus(codes.Error, "no resource URI set")
+		span.SetAttributes(attribute.String("error.type", "missing_resource_uri"))
+		calculatedResponse.WithImmediateResponse(400, "no resource URI set")
+		return calculatedResponse.Build()
+	}
+	if sessionErr := s.validateSession(mcpReq.GetSessionID()); sessionErr != nil {
+		s.Logger.ErrorContext(ctx, "session validation failed", "session", mcpReq.GetSessionID(), "error", sessionErr)
+		span.RecordError(sessionErr)
+		span.SetStatus(codes.Error, sessionErr.Error())
+		span.SetAttributes(attribute.String("error.type", "invalid_session"))
+		calculatedResponse.WithImmediateResponse(sessionErr.Code(), sessionErr.Error())
+		return calculatedResponse.Build()
+	}
+
+	headers := NewHeaders()
+	var serverInfo *config.MCPServer
+	var err error
+	{
+		_, infoSpan := tracer().Start(ctx, "mcp-router.broker.get-server-info-by-resource",
+			trace.WithAttributes(
+				attribute.String("mcp.resource.uri", resourceURI),
+			),
+		)
+		var infoErr error
+		serverInfo, infoErr = s.Broker.GetServerInfoByResource(resourceURI)
+		if infoErr != nil {
+			infoSpan.RecordError(infoErr)
+			infoSpan.SetStatus(codes.Error, "resource not found")
+		}
+		infoSpan.End()
+		err = infoErr
+	}
+	if err != nil {
+		s.Logger.DebugContext(ctx, "no server for resource", "resourceURI", resourceURI)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "resource not found")
+		span.SetAttributes(attribute.String("error.type", "resource_not_found"))
+		calculatedResponse.WithImmediateJSONRPCResponse(200,
+			[]*corev3.HeaderValueOption{
+				{
+					Header: &corev3.HeaderValue{
+						Key:   "mcp-session-id",
+						Value: mcpReq.GetSessionID(),
+					},
+				},
+			},
+			`
+event: message
+data: {"error":{"code":-32602,"message":"Resource not found"},"jsonrpc":"2.0"}`)
+		return calculatedResponse.Build()
+	}
+
+	span.SetAttributes(
+		attribute.String("mcp.server", serverInfo.Name),
+		attribute.String("mcp.server.hostname", serverInfo.Hostname),
+	)
+
+	headers.WithMCPMethod(mcpReq.Method)
+	mcpReq.serverName = serverInfo.Name
+	upstreamResourceURI := upstream.StripURIPrefix(resourceURI, serverInfo.Prefix)
+	headers.WithMCPResourceURI(upstreamResourceURI)
+	mcpReq.ReWriteResourceURI(upstreamResourceURI)
 	headers.WithMCPServerName(serverInfo.Name)
 
 	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)

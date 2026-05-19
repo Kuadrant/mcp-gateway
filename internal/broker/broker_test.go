@@ -227,6 +227,43 @@ func TestGetServerInfo(t *testing.T) {
 	require.Nil(t, svr)
 }
 
+func TestGetServerInfoByResource(t *testing.T) {
+	b := NewBroker(logger)
+
+	// Attach phony tools/resources to the upstreams
+	bImpl, ok := b.(*mcpBrokerImpl)
+	require.True(t, ok)
+
+	m1 := createTestManager(t, "test1", "", nil)
+	m1.SetResourcesForTesting([]mcp.Resource{
+		{URI: "file://settings"},
+	})
+	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(m1)
+
+	m2 := createTestManager(t, "test2", "t_", nil)
+	m2.SetResourcesForTesting([]mcp.Resource{
+		{URI: "file://settings"},
+	})
+	bImpl.mcpServers["test2"] = upstream.NewActiveForTesting(m2)
+
+	// Direct lookup for server 1 (no prefix)
+	svr, err := b.GetServerInfoByResource("file://settings")
+	require.NoError(t, err)
+	require.NotNil(t, svr)
+	require.Equal(t, "test1", svr.Name)
+
+	// Prefixed lookup for server 2
+	svr, err = b.GetServerInfoByResource("t_file://settings")
+	require.NoError(t, err)
+	require.NotNil(t, svr)
+	require.Equal(t, "test2", svr.Name)
+
+	// Unregistered resource URI
+	svr, err = b.GetServerInfoByResource("file://unregistered")
+	require.Error(t, err)
+	require.Nil(t, svr)
+}
+
 func TestToolAnnotations(t *testing.T) {
 	b := NewBroker(logger,
 		WithEnforceCapabilityFilter(true),

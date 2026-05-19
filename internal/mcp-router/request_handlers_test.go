@@ -1495,6 +1495,87 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NotContains(t, string(body), `"name":"s_myprompt"`)
 }
 
+func TestHandleResourceRead(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	require.NoError(t, err)
+	require.True(t, sessionAdded)
+
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+		return nil, fmt.Errorf("InitForClient should not be called when session exists")
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			Enabled:  true,
+			Hostname: "localhost",
+		},
+	}
+
+	testBroker := newMockBroker(serverConfigs, map[string]string{})
+	testBroker.(*mockBrokerImpl).resource2svr = map[string]string{
+		"s_myresource": "dummy",
+	}
+
+	srv := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers: serverConfigs,
+		},
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker:        testBroker,
+	}
+
+	data := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "resources/read",
+		Params: map[string]any{
+			"uri": "s_myresource",
+		},
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{
+					Key:      "mcp-session-id",
+					RawValue: []byte(validToken),
+				},
+			},
+		},
+	}
+
+	resp := srv.RouteMCPRequest(context.Background(), data)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	require.NotNil(t, rb.RequestBody.Response)
+
+	headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+	require.Equal(t, "x-mcp-method", headers[0].Header.Key)
+	require.Equal(t, []uint8("resources/read"), headers[0].Header.RawValue)
+	require.Equal(t, "x-mcp-resourceuri", headers[1].Header.Key)
+	require.Equal(t, []uint8("myresource"), headers[1].Header.RawValue)
+	require.Equal(t, "x-mcp-servername", headers[2].Header.Key)
+	require.Equal(t, []uint8("dummy"), headers[2].Header.RawValue)
+
+	body := rb.RequestBody.Response.BodyMutation.GetBody()
+	require.Contains(t, string(body), `"uri":"myresource"`)
+	require.NotContains(t, string(body), `"uri":"s_myresource"`)
+}
+
 func testBearerJWT(sub string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"%s"}`, sub)))

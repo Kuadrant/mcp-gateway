@@ -31,6 +31,9 @@ type MCPBroker interface {
 	// Returns server info for a given prompt name
 	GetServerInfoByPrompt(prompt string) (*config.MCPServer, error)
 
+	// Returns server info for a given resource URI
+	GetServerInfoByResource(resourceURI string) (*config.MCPServer, error)
+
 	// MCPServer gets an MCP server that federates the upstreams known to this MCPBroker
 	MCPServer() *server.MCPServer
 
@@ -172,12 +175,17 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		mcpBkr.FilterPrompts(ctx, id, message, result)
 	})
 
+	hooks.AddAfterListResources(func(ctx context.Context, id any, message *mcp.ListResourcesRequest, result *mcp.ListResourcesResult) {
+		mcpBkr.FilterResources(ctx, id, message, result)
+	})
+
 	mcpBkr.listeningMCPServer = server.NewMCPServer(
 		"Kuadrant MCP Gateway",
 		"0.0.1",
 		server.WithHooks(hooks),
 		server.WithToolCapabilities(true),
 		server.WithPromptCapabilities(true),
+		server.WithResourceCapabilities(false, true),
 	)
 	return mcpBkr
 }
@@ -222,7 +230,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			if err != nil {
 				m.logger.Error("failed to create manager", "server id", mcpServer.ID(), "error", err)
 				continue
@@ -313,6 +321,27 @@ func (m *mcpBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer,
 	}
 
 	return nil, fmt.Errorf("prompt name %q doesn't match any configured server", prompt)
+}
+
+// GetServerInfoByResource implements MCPBroker by providing a lookup of the server that implements a resource.
+func (m *mcpBrokerImpl) GetServerInfoByResource(resourceURI string) (*config.MCPServer, error) {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+
+	for _, upstream := range m.mcpServers {
+		r := upstream.GetServedManagedResource(resourceURI)
+		if r != nil {
+			cfg := upstream.Config()
+			m.logger.Debug("found matching server for resource",
+				"resourceURI", resourceURI,
+				"serverPrefix", cfg.Prefix,
+				"serverName", upstream.MCPName())
+			retval := cfg
+			return &retval, nil
+		}
+	}
+
+	return nil, fmt.Errorf("resource URI %q doesn't match any configured server", resourceURI)
 }
 
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {

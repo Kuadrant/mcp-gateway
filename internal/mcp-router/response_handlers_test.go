@@ -20,9 +20,10 @@ import (
 )
 
 type mockBrokerImpl struct {
-	svrConfigs []*config.MCPServer
-	tool2svr   map[string]string
-	prompt2svr map[string]string
+	svrConfigs   []*config.MCPServer
+	tool2svr     map[string]string
+	prompt2svr   map[string]string
+	resource2svr map[string]string
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -470,10 +471,24 @@ func TestHandleResponseHeaders_SkipsElicitationForHairpinInit(t *testing.T) {
 
 func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) broker.MCPBroker {
 	return &mockBrokerImpl{
-		svrConfigs: svrConfigs,
-		tool2svr:   tool2svr,
-		prompt2svr: map[string]string{},
+		svrConfigs:   svrConfigs,
+		tool2svr:     tool2svr,
+		prompt2svr:   map[string]string{},
+		resource2svr: map[string]string{},
 	}
+}
+
+func (m *mockBrokerImpl) GetServerInfoByResource(resourceURI string) (*config.MCPServer, error) {
+	svrName, ok := m.resource2svr[resourceURI]
+	if !ok {
+		return nil, fmt.Errorf("No server for resource %q", resourceURI)
+	}
+	for _, svrInfo := range m.svrConfigs {
+		if svrName == svrInfo.Name {
+			return svrInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get server %q for resource %q", svrName, resourceURI)
 }
 
 func (m *mockBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer, error) {
