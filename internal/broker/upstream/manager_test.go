@@ -1125,6 +1125,38 @@ func TestMCPManager_ConcurrentReadsDuringManage(t *testing.T) {
 	assert.NotEmpty(t, tools, "tools should be present after concurrent access")
 }
 
+// TestMCPManager_ConcurrentManageCalls verifies that concurrent manage() calls
+// are serialized safely and do not cause data races.
+func TestMCPManager_ConcurrentManageCalls(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.hasToolsCap = false
+	gateway := newMockToolsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	const concurrentCalls = 10
+
+	for i := range concurrentCalls {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			if id%2 == 0 {
+				mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
+			} else {
+				mock.tools = []mcp.Tool{validTool("tool1")}
+			}
+			manager.manage(ctx, eventTypeTimer)
+		}(i)
+	}
+
+	wg.Wait()
+	tools := manager.GetManagedTools()
+	assert.NotEmpty(t, tools, "tools should be present after concurrent manage calls")
+}
+
 // TestMCPManager_StopDuringManage starts the event loop, triggers a manage()
 // cycle via the events channel (with a slow ListTools), then calls Stop() while
 // manage() is in-flight. Verifies the shutdown path completes without deadlock.

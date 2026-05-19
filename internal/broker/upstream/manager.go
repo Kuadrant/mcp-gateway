@@ -130,6 +130,9 @@ type MCPManager struct {
 	// toolsLock protects tools, serverTools, prompts, serverPrompts
 	toolsLock sync.RWMutex
 
+	// manageMu protects against concurrent executions of manage()
+	manageMu sync.Mutex
+
 	logger *slog.Logger
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
@@ -282,6 +285,9 @@ func (man *MCPManager) registerCallbacks() func() {
 
 // manage should be the only entry point that triggers changes to tools
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
+	man.manageMu.Lock()
+	defer man.manageMu.Unlock()
+
 	man.logger.Debug("managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)
@@ -438,6 +444,8 @@ func (man *MCPManager) shouldFetchTools(event eventType) bool {
 	if event == eventTypeToolNotification {
 		return true
 	}
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
 	return event == eventTypeTimer && len(man.serverTools) == 0
 }
 
@@ -448,6 +456,8 @@ func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
 	if event == eventTypePromptNotification {
 		return true
 	}
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
 	return event == eventTypeTimer && len(man.serverPrompts) == 0
 }
 
