@@ -383,7 +383,7 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
 
-	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
+	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse, &routeStatus)
 }
 
 // HandlePromptGet handles an MCP prompts/get request by routing to the correct upstream server
@@ -465,10 +465,10 @@ data: {"error":{"code":-32602,"message":"Prompt not found"},"jsonrpc":"2.0"}`)
 	mcpReq.ReWritePromptName(upstreamPromptName)
 	headers.WithMCPServerName(serverInfo.Name)
 
-	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
+	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse, nil)
 }
 
-func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder, calculatedResponse *ResponseBuilder) []*eppb.ProcessingResponse {
+func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder, calculatedResponse *ResponseBuilder, routeStatus *string) []*eppb.ProcessingResponse {
 	var exists map[string]string
 	{
 		_, cacheSpan := tracer().Start(ctx, "mcp-router.session-cache.get",
@@ -538,7 +538,9 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 	}
 	headers.WithPath(path)
 	headers.WithContentLength(len(body))
-	routeStatus = "ok"
+	if routeStatus != nil {
+		*routeStatus = "ok"
+	}
 	if mcpReq.Streaming {
 		s.Logger.DebugContext(ctx, "returning streaming response")
 		calculatedResponse.WithStreamingResponse(headers.Build(), body)
@@ -691,35 +693,30 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpReq.clientElicitation = clientElicitation
 		}
 
-	clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, s.RoutingConfig.RouterAPIKey, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
-	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
-		initSpan.RecordError(err)
-		initSpan.SetStatus(codes.Error, "failed to initialize backend session")
-		return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
-	}
-	// closerCtx must not be the request-scoped ctx: the ext_proc gRPC stream context
-	// is cancelled as soon as the tool call completes (seconds), but this closure fires
-	// when the JWT session expires (up to 24 h later). Using a fresh context avoids
-	// both cancellation and retaining request-scoped trace/log values for the session lifetime.
-	closerCtx := context.Background()
-	var sessionCloser = func() {
-		s.Logger.DebugContext(closerCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
-		if err := clientHandle.Close(); err != nil {
-			s.Logger.DebugContext(closerCtx, "failed to close client connection", "err", err)
+		initToken, err := s.JWTManager.GenerateBackendInitToken(mcpServerConfig.Hostname)
+		if err != nil {
+			s.Logger.ErrorContext(ctx, "failed to generate backend init token", "error", err)
+			return "", NewRouterErrorf(500, "failed to generate init token: %w", err)
 		}
-		if err := s.SessionCache.DeleteSessions(closerCtx, mcpReq.GetSessionID()); err != nil {
-			s.Logger.DebugContext(closerCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
+		if err != nil {
+			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
+			initSpan.RecordError(err)
+			initSpan.SetStatus(codes.Error, "failed to initialize backend session")
+			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
 		}
+		// closerCtx must not be the request-scoped ctx: the ext_proc gRPC stream context
+		// is cancelled as soon as the tool call completes (seconds), but this closure fires
+		// when the JWT session expires (up to 24 h later). Using a fresh context avoids
+		// both cancellation and retaining request-scoped trace/log values for the session lifetime.
+		closerCtx := context.Background()
 		var sessionCloser = func() {
-			// use a fresh context: the request-scoped ctx is canceled long before this fires
-			cleanupCtx := context.Background()
-			s.Logger.DebugContext(cleanupCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
+			s.Logger.DebugContext(closerCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
 			if err := clientHandle.Close(); err != nil {
-				s.Logger.DebugContext(cleanupCtx, "failed to close client connection", "err", err)
+				s.Logger.DebugContext(closerCtx, "failed to close client connection", "err", err)
 			}
-			if err := s.SessionCache.DeleteSessions(cleanupCtx, mcpReq.GetSessionID()); err != nil {
-				s.Logger.DebugContext(cleanupCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
+			if err := s.SessionCache.DeleteSessions(closerCtx, mcpReq.GetSessionID()); err != nil {
+				s.Logger.DebugContext(closerCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
 			}
 		}
 		// close connection with remote backend and delete any sessions when our gateway session expires
