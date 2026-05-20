@@ -1416,3 +1416,71 @@ func TestMCPManager_Backoff(t *testing.T) {
 	manager.manage(ctx, eventTypeTimer)
 	assert.True(t, manager.GetStatus().Ready)
 }
+
+func TestSetStatusForTestingNoRaceWithGetStatus(t *testing.T) {
+	man := &MCPManager{}
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			man.SetStatusForTesting(ServerValidationStatus{
+				Ready: true,
+			})
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_ = man.GetStatus()
+		}
+	}()
+
+	wg.Wait()
+}
+
+func TestSetStatusForTestingNoRaceConcurrentWrites(t *testing.T) {
+	man := &MCPManager{}
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			man.SetStatusForTesting(ServerValidationStatus{
+				Ready: false,
+			})
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			man.SetStatusForTesting(ServerValidationStatus{
+				Ready: true,
+			})
+		}
+	}()
+
+	wg.Wait()
+}
+
+func TestSetStatusForTestingValueIsVisible(t *testing.T) {
+	man := &MCPManager{}
+
+	expected := ServerValidationStatus{
+		Ready: true,
+	}
+
+	man.SetStatusForTesting(expected)
+	got := man.GetStatus()
+
+	if got.Ready != expected.Ready {
+		t.Errorf("expected Ready=%v, got Ready=%v", expected.Ready, got.Ready)
+	}
+}
+
