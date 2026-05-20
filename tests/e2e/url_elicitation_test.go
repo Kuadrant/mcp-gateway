@@ -262,6 +262,111 @@ var _ = Describe("URL Elicitation", func() {
 		Expect(body).NotTo(ContainSubstring("-32042"))
 	})
 
+	It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", func() {
+		toolName := fmt.Sprintf("%shello_world", prefix)
+
+		By("Initializing with elicitation capability")
+		var sessionID string
+		Eventually(func(g Gomega) {
+			var err error
+			sessionID, err = mcpInitializeWithElicitation(gatewayURL, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		Expect(mcpNotifyInitialized(context.Background(), gatewayURL, sessionID, nil)).To(Succeed())
+
+		By("Waiting for tools to be available")
+		Eventually(func(g Gomega) {
+			_, tools, err := mcpListTools(context.Background(), gatewayURL, sessionID, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(tools).To(ContainElement(toolName))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("Calling tool — should get -32042 (no token yet)")
+		_, body, _, err := mcpCallToolRaw(gatewayURL, sessionID, toolName, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		sseErr, err := parseSSEError(body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sseErr.Code).To(Equal(-32042))
+
+		By("Submitting a WRONG token via broker page")
+		elicitURL, err := extractElicitationURL(sseErr)
+		Expect(err).NotTo(HaveOccurred())
+		testURL, err := adaptElicitationURL(elicitURL, gatewayURL)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, htmlBody, cookies, err := rawHTTPGetFull(testURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		csrfToken := extractHiddenField(htmlBody, "csrf_token")
+		Expect(csrfToken).NotTo(BeEmpty())
+
+		parsed, err := url.Parse(testURL)
+		Expect(err).NotTo(HaveOccurred())
+		elicitationID := parsed.Query().Get("elicitation_id")
+
+		formValues := url.Values{
+			"elicitation_id": {elicitationID},
+			"token":          {"Bearer wrong-token-value"},
+			"csrf_token":     {csrfToken},
+		}
+		postStatus, _, postErr := rawHTTPPostForm(
+			strings.TrimSuffix(gatewayURL, "/mcp")+"/tokens",
+			formValues,
+			nil,
+			cookies...,
+		)
+		Expect(postErr).NotTo(HaveOccurred())
+		Expect(postStatus).To(Equal(200))
+
+		By("Retrying tool call — upstream should reject with 401, gateway invalidates token")
+		retryStatus, _, _, err := mcpCallToolRaw(gatewayURL, sessionID, toolName, map[string]any{"name": "retry1"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retryStatus).To(Equal(401))
+
+		By("Retrying again — should get -32042 (token was invalidated)")
+		_, body2, _, err := mcpCallToolRaw(gatewayURL, sessionID, toolName, map[string]any{"name": "retry2"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		sseErr2, err := parseSSEError(body2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sseErr2.Code).To(Equal(-32042))
+
+		By("Submitting the CORRECT token")
+		elicitURL2, err := extractElicitationURL(sseErr2)
+		Expect(err).NotTo(HaveOccurred())
+		testURL2, err := adaptElicitationURL(elicitURL2, gatewayURL)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, htmlBody2, cookies2, err := rawHTTPGetFull(testURL2, nil)
+		Expect(err).NotTo(HaveOccurred())
+		csrfToken2 := extractHiddenField(htmlBody2, "csrf_token")
+		Expect(csrfToken2).NotTo(BeEmpty())
+
+		parsed2, err := url.Parse(testURL2)
+		Expect(err).NotTo(HaveOccurred())
+		elicitationID2 := parsed2.Query().Get("elicitation_id")
+
+		formValues2 := url.Values{
+			"elicitation_id": {elicitationID2},
+			"token":          {"Bearer test-api-key-secret-token"},
+			"csrf_token":     {csrfToken2},
+		}
+		postStatus2, _, postErr2 := rawHTTPPostForm(
+			strings.TrimSuffix(gatewayURL, "/mcp")+"/tokens",
+			formValues2,
+			nil,
+			cookies2...,
+		)
+		Expect(postErr2).NotTo(HaveOccurred())
+		Expect(postStatus2).To(Equal(200))
+
+		By("Final retry — should succeed with correct token")
+		finalStatus, finalContent, err := mcpCallTool(context.Background(), gatewayURL, sessionID, toolName, map[string]any{"name": "final"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(finalStatus).To(Equal(200))
+		Expect(finalContent).NotTo(BeEmpty())
+		Expect(finalContent[0].Text).To(ContainSubstring("Hello"))
+	})
+
 	It("[Happy,URLElicitation] Server without tokenURLElicitation is unaffected", func() {
 		By("Registering a server WITHOUT tokenURLElicitation or credentialRef")
 		registration2 := NewMCPServerResourcesWithDefaults("urlelicit-nocfg", k8sClient).

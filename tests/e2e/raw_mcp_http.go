@@ -328,7 +328,7 @@ func extractElicitationURL(sseErr *sseError) (string, error) {
 }
 
 // extractHiddenField extracts the value of a hidden input field from HTML
-func extractHiddenField(html, fieldName string) string {
+func extractHiddenField(html, fieldName string) string { //nolint:unparam
 	re := regexp.MustCompile(`<input[^>]+name="` + regexp.QuoteMeta(fieldName) + `"[^>]+value="([^"]*)"`)
 	m := re.FindStringSubmatch(html)
 	if len(m) < 2 {
@@ -357,7 +357,7 @@ func adaptElicitationURL(elicitationURL, gatewayBaseURL string) (string, error) 
 }
 
 // rawHTTPGetFull performs a GET and returns status, body, and response cookies
-func rawHTTPGetFull(targetURL string, headers map[string]string) (int, string, []*http.Cookie, error) {
+func rawHTTPGetFull(targetURL string, headers map[string]string) (int, string, []*http.Cookie, error) { //nolint:unparam
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
 	if err != nil {
 		return 0, "", nil, err

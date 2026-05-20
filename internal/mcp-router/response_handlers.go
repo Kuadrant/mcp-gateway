@@ -45,6 +45,18 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 		}
 	}
 
+	// intercept 401 from backend: if the server uses URL token elicitation,
+	// delete the cached user token so the next tool call triggers re-elicitation
+	if status == "401" && req != nil && s.ElicitationEnabled {
+		serverInfo, cfgErr := s.RoutingConfig.GetServerConfigByName(req.serverName)
+		if cfgErr == nil && serverInfo.TokenURLElicitation != nil {
+			s.Logger.InfoContext(ctx, "received 401 from upstream, invalidating cached user token", "server", req.serverName)
+			if err := s.SessionCache.DeleteUserToken(ctx, req.GetSessionID(), req.serverName); err != nil {
+				s.Logger.ErrorContext(ctx, "failed to delete user token", "server", req.serverName, "session", req.GetSessionID(), "error", err)
+			}
+		}
+	}
+
 	responses := response.WithResponseHeaderResponse(responseHeaderBuilder.Build()).Build()
 
 	// for tool calls where the client supports elicitation, switch response body
