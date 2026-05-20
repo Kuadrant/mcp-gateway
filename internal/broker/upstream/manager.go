@@ -146,6 +146,8 @@ type MCPManager struct {
 	toolEvents   chan struct{}
 	promptEvents chan struct{}
 	done         chan struct{} // closed when the event loop exits
+	// statusLock protects status
+	statusLock   sync.RWMutex
 	status       ServerValidationStatus
 }
 
@@ -472,12 +474,15 @@ func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
 }
 
 // GetStatus returns the current status of the MCP Server
-// no locking is done here as it is expected to be called multiple times
 func (man *MCPManager) GetStatus() ServerValidationStatus {
-	return man.status
+	man.statusLock.RLock()
+	defer man.statusLock.RUnlock()
+	return cloneStatus(man.status)
 }
 
 func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, invalidTools []InvalidToolInfo, invalidPrompts []InvalidPromptInfo) {
+	man.statusLock.Lock()
+	defer man.statusLock.Unlock()
 	man.status.ID = string(man.mcp.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()
@@ -600,7 +605,16 @@ func (man *MCPManager) SetToolsForTesting(tools []mcp.Tool) {
 // SetStatusForTesting sets the status directly for testing purposes.
 // This bypasses the normal status update flow and should only be used in tests.
 func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
-	man.status = status
+	man.statusLock.Lock()
+	defer man.statusLock.Unlock()
+	man.status = cloneStatus(status)
+}
+
+func cloneStatus(in ServerValidationStatus) ServerValidationStatus {
+	out := in
+	out.InvalidToolList = slices.Clone(in.InvalidToolList)
+	out.InvalidPromptList = slices.Clone(in.InvalidPromptList)
+	return out
 }
 
 // NewActiveForTesting wraps a manager as an ActiveMCPServer without starting
