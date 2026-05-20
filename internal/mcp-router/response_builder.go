@@ -6,6 +6,7 @@ import (
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typepb "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ResponseBuilder builds envoy external processor responses
@@ -190,6 +191,17 @@ func (rb *ResponseBuilder) WithResponseHeaderResponse(headers []*basepb.HeaderVa
 			},
 		},
 	})
+	return rb
+}
+
+// WithDynamicMetadata sets dynamic metadata on the last response in the builder.
+// Dynamic metadata is consumed by Envoy filters (e.g. access logs) but is not
+// forwarded to upstream servers. No-op when metadata is nil or builder is empty.
+func (rb *ResponseBuilder) WithDynamicMetadata(metadata *structpb.Struct) *ResponseBuilder {
+	if metadata == nil || len(rb.response) == 0 {
+		return rb
+	}
+	rb.response[len(rb.response)-1].DynamicMetadata = metadata
 	return rb
 }
 

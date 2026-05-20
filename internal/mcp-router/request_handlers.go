@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ErrInvalidRequest is an error for an invalid request
@@ -370,9 +371,9 @@ data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool not fo
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers.WithMCPServerName(serverInfo.Name)
 
-	s.setAuditHeaders(mcpReq, headers)
+	metadata := s.buildAuditMetadata(mcpReq)
 
-	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
+	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse, metadata)
 }
 
 // HandlePromptGet handles an MCP prompts/get request by routing to the correct upstream server
@@ -454,12 +455,12 @@ data: {"error":{"code":-32602,"message":"Prompt not found"},"jsonrpc":"2.0"}`)
 	mcpReq.ReWritePromptName(upstreamPromptName)
 	headers.WithMCPServerName(serverInfo.Name)
 
-	s.setAuditHeaders(mcpReq, headers)
+	metadata := s.buildAuditMetadata(mcpReq)
 
-	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse)
+	return s.routeToUpstream(ctx, span, mcpReq, serverInfo, headers, calculatedResponse, metadata)
 }
 
-func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder, calculatedResponse *ResponseBuilder) []*eppb.ProcessingResponse {
+func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers *HeadersBuilder, calculatedResponse *ResponseBuilder, metadata *structpb.Struct) []*eppb.ProcessingResponse {
 	var exists map[string]string
 	{
 		_, cacheSpan := tracer().Start(ctx, "mcp-router.session-cache.get",
@@ -531,10 +532,10 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 	headers.WithContentLength(len(body))
 	if mcpReq.Streaming {
 		s.Logger.DebugContext(ctx, "returning streaming response")
-		calculatedResponse.WithStreamingResponse(headers.Build(), body)
+		calculatedResponse.WithStreamingResponse(headers.Build(), body).WithDynamicMetadata(metadata)
 		return calculatedResponse.Build()
 	}
-	calculatedResponse.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
+	calculatedResponse.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body).WithDynamicMetadata(metadata)
 	return calculatedResponse.Build()
 }
 
@@ -598,9 +599,9 @@ func (s *ExtProcServer) HandleElicitationResponse(
 		return response.Build()
 	}
 
-	s.setAuditHeaders(mcpReq, headers)
+	metadata := s.buildAuditMetadata(mcpReq)
 	headers.WithContentLength(len(body))
-	response.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body)
+	response.WithRequestBodyHeadersAndBodyResponse(headers.Build(), body).WithDynamicMetadata(metadata)
 
 	// remove the mapping only after the response was successfully built
 	s.ElicitationMap.Remove(ctx, gatewayID)
@@ -789,7 +790,7 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
-	s.setAuditHeaders(mcpReq, headers)
-	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
+	metadata := s.buildAuditMetadata(mcpReq)
+	return response.WithRequestBodyHeadersResponse(headers.Build()).WithDynamicMetadata(metadata).Build()
 
 }

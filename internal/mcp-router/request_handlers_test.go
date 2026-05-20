@@ -249,7 +249,7 @@ func TestHandleRequestBody(t *testing.T) {
 		string(rb.RequestBody.Response.BodyMutation.GetBody()))
 }
 
-func TestHandleToolCallAuditHeaders(t *testing.T) {
+func TestHandleToolCallAuditMetadata(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	setup := func(t *testing.T, audit *AuditConfig) (*ExtProcServer, string) {
@@ -279,16 +279,18 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 		return srv, validToken
 	}
 
-	findHeader := func(headers []*corev3.HeaderValueOption, key string) string {
-		for _, h := range headers {
-			if h.Header.Key == key {
-				return string(h.Header.RawValue)
-			}
-		}
-		return ""
+	getMetadataField := func(t *testing.T, resp *eppb.ProcessingResponse, field string) string {
+		t.Helper()
+		md := resp.DynamicMetadata
+		require.NotNil(t, md, "expected DynamicMetadata to be set")
+		auditNS := md.Fields[auditMetadataNS]
+		require.NotNil(t, auditNS, "expected mcp.audit namespace")
+		val := auditNS.GetStructValue().Fields[field]
+		require.NotNil(t, val, "expected field %s", field)
+		return val.GetStringValue()
 	}
 
-	t.Run("baggage user and agent populate headers", func(t *testing.T) {
+	t.Run("baggage user and agent populate metadata", func(t *testing.T) {
 		srv, token := setup(t, &AuditConfig{})
 		req := &MCPRequest{
 			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
@@ -300,11 +302,9 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
 		require.Len(t, resp, 1)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "jane", findHeader(auditHeaders, userIDHeader))
-		require.Equal(t, "bot-v2", findHeader(auditHeaders, agentIDHeader))
-		require.Equal(t, "-", findHeader(auditHeaders, toolParamsHeader))
+		require.Equal(t, "jane", getMetadataField(t, resp[0], metadataUserID))
+		require.Equal(t, "bot-v2", getMetadataField(t, resp[0], metadataAgentID))
+		require.Equal(t, "-", getMetadataField(t, resp[0], metadataToolParam))
 	})
 
 	t.Run("no baggage sets dash values", func(t *testing.T) {
@@ -317,26 +317,8 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 			}},
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "-", findHeader(auditHeaders, userIDHeader))
-		require.Equal(t, "-", findHeader(auditHeaders, agentIDHeader))
-	})
-
-	t.Run("identity fallback from auth-layer header", func(t *testing.T) {
-		srv, token := setup(t, &AuditConfig{})
-		req := &MCPRequest{
-			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-			Params: map[string]any{"name": "s_greet"},
-			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-				{Key: "mcp-session-id", RawValue: []byte(token)},
-				{Key: "x-forwarded-email", RawValue: []byte("jane@example.com")},
-			}},
-		}
-		resp := srv.RouteMCPRequest(context.Background(), req)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "jane@example.com", findHeader(auditHeaders, userIDHeader))
+		require.Equal(t, "-", getMetadataField(t, resp[0], metadataUserID))
+		require.Equal(t, "-", getMetadataField(t, resp[0], metadataAgentID))
 	})
 
 	t.Run("tool params logged when enabled", func(t *testing.T) {
@@ -349,9 +331,7 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 			}},
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, `{"msg":"hi"}`, findHeader(auditHeaders, toolParamsHeader))
+		require.Equal(t, `{"msg":"hi"}`, getMetadataField(t, resp[0], metadataToolParam))
 	})
 
 	t.Run("tool params dash when disabled", func(t *testing.T) {
@@ -364,9 +344,7 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 			}},
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "-", findHeader(auditHeaders, toolParamsHeader))
+		require.Equal(t, "-", getMetadataField(t, resp[0], metadataToolParam))
 	})
 
 	t.Run("custom identity headers used when configured", func(t *testing.T) {
@@ -381,13 +359,31 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 			}},
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
+		require.Equal(t, "custom-jane", getMetadataField(t, resp[0], metadataUserID))
+	})
+
+	t.Run("no audit headers forwarded to upstream", func(t *testing.T) {
+		srv, token := setup(t, &AuditConfig{ParameterLogging: "Enabled"})
+		req := &MCPRequest{
+			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+			Params: map[string]any{"name": "s_greet", "arguments": map[string]any{"msg": "hi"}},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(token)},
+				{Key: "baggage", RawValue: []byte("user.id=jane")},
+			}},
+		}
+		resp := srv.RouteMCPRequest(context.Background(), req)
 		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "custom-jane", findHeader(auditHeaders, userIDHeader))
+		for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+			key := h.Header.Key
+			require.NotEqual(t, "x-mcp-user-id", key, "audit data should not be in request headers")
+			require.NotEqual(t, "x-mcp-agent-id", key, "audit data should not be in request headers")
+			require.NotEqual(t, "x-mcp-tool-params", key, "audit data should not be in request headers")
+		}
 	})
 
 	t.Run("CRLF in identity header stripped", func(t *testing.T) {
-		srv, token := setup(t, &AuditConfig{})
+		srv, token := setup(t, &AuditConfig{IdentityHeaders: []string{"x-forwarded-email"}})
 		req := &MCPRequest{
 			ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
 			Params: map[string]any{"name": "s_greet"},
@@ -397,9 +393,7 @@ func TestHandleToolCallAuditHeaders(t *testing.T) {
 			}},
 		}
 		resp := srv.RouteMCPRequest(context.Background(), req)
-		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-		auditHeaders := rb.RequestBody.Response.HeaderMutation.SetHeaders
-		require.Equal(t, "jane", findHeader(auditHeaders, userIDHeader))
+		require.Equal(t, "jane", getMetadataField(t, resp[0], metadataUserID))
 	})
 }
 

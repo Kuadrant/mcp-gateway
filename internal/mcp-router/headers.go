@@ -16,10 +16,6 @@ const (
 	authorityHeader       = ":authority"
 	authorizationHeader   = "authorization"
 	mcpTarget             = "mcp-target"
-	userIDHeader          = "x-mcp-user-id"
-	agentIDHeader         = "x-mcp-agent-id"
-	toolParamsHeader      = "x-mcp-tool-params"
-	baggageHeader         = "baggage"
 	// RoutingKey is an internal header used to authenticate a request from the router
 	RoutingKey = "router-key"
 )
@@ -147,39 +143,6 @@ func (hb *HeadersBuilder) WithMCPPromptName(promptName string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      promptHeader,
 			RawValue: []byte(promptName),
-		},
-	})
-	return hb
-}
-
-// WithMCPUserID sets the x-mcp-user-id header
-func (hb *HeadersBuilder) WithMCPUserID(userID string) *HeadersBuilder {
-	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
-		Header: &basepb.HeaderValue{
-			Key:      userIDHeader,
-			RawValue: []byte(userID),
-		},
-	})
-	return hb
-}
-
-// WithMCPAgentID sets the x-mcp-agent-id header
-func (hb *HeadersBuilder) WithMCPAgentID(agentID string) *HeadersBuilder {
-	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
-		Header: &basepb.HeaderValue{
-			Key:      agentIDHeader,
-			RawValue: []byte(agentID),
-		},
-	})
-	return hb
-}
-
-// WithMCPToolParams sets the x-mcp-tool-params header
-func (hb *HeadersBuilder) WithMCPToolParams(params string) *HeadersBuilder {
-	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
-		Header: &basepb.HeaderValue{
-			Key:      toolParamsHeader,
-			RawValue: []byte(params),
 		},
 	})
 	return hb

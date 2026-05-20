@@ -158,8 +158,9 @@ type AuditConfig struct {
 	ParameterLogging ParameterLoggingPolicy `json:"parameterLogging,omitempty"`
 
 	// identityHeaders specifies header names to check (in order) for caller
-	// identity when baggage user.id is absent.
-	// Defaults to ["x-forwarded-email", "x-auth-user"] in the router when empty.
+	// identity when baggage user.id is absent. No defaults: operators must
+	// explicitly list the headers their auth layer sets.
+	// When empty, only baggage user.id is used.
 	// +optional
 	// +listType=atomic
 	IdentityHeaders []string `json:"identityHeaders,omitempty"`

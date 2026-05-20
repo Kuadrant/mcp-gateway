@@ -3,6 +3,8 @@ package mcprouter
 import (
 	"strings"
 	"testing"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 func TestExtractToolParams(t *testing.T) {
@@ -82,4 +84,106 @@ func TestTruncateID(t *testing.T) {
 	if len(got) != maxIDBytes {
 		t.Errorf("truncateID() len = %d, want %d", len(got), maxIDBytes)
 	}
+}
+
+func TestBuildAuditMetadata(t *testing.T) {
+	getMetadataField := func(t *testing.T, srv *ExtProcServer, req *MCPRequest, field string) string {
+		t.Helper()
+		md := srv.buildAuditMetadata(req)
+		if md == nil {
+			t.Fatal("expected non-nil metadata")
+		}
+		auditNS := md.Fields[auditMetadataNS]
+		if auditNS == nil {
+			t.Fatal("expected mcp.audit namespace in metadata")
+		}
+		val := auditNS.GetStructValue().Fields[field]
+		if val == nil {
+			t.Fatalf("expected field %q in metadata", field)
+		}
+		return val.GetStringValue()
+	}
+
+	t.Run("nil audit config returns nil", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: nil}
+		req := &MCPRequest{}
+		md := srv.buildAuditMetadata(req)
+		if md != nil {
+			t.Errorf("expected nil metadata, got %v", md)
+		}
+	})
+
+	t.Run("baggage user and agent populate metadata", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{}}
+		req := &MCPRequest{
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "baggage", RawValue: []byte("user.id=jane,agent.id=bot-v2")},
+			}},
+		}
+		if got := getMetadataField(t, srv, req, metadataUserID); got != "jane" {
+			t.Errorf("user_id = %q, want %q", got, "jane")
+		}
+		if got := getMetadataField(t, srv, req, metadataAgentID); got != "bot-v2" {
+			t.Errorf("agent_id = %q, want %q", got, "bot-v2")
+		}
+	})
+
+	t.Run("no baggage sets dash values", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{}}
+		req := &MCPRequest{
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{}},
+		}
+		if got := getMetadataField(t, srv, req, metadataUserID); got != "-" {
+			t.Errorf("user_id = %q, want %q", got, "-")
+		}
+		if got := getMetadataField(t, srv, req, metadataAgentID); got != "-" {
+			t.Errorf("agent_id = %q, want %q", got, "-")
+		}
+	})
+
+	t.Run("params enabled populates tool_params", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{ParameterLogging: "Enabled"}}
+		req := &MCPRequest{
+			Params:  map[string]any{"arguments": map[string]any{"msg": "hi"}},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{}},
+		}
+		if got := getMetadataField(t, srv, req, metadataToolParam); got != `{"msg":"hi"}` {
+			t.Errorf("tool_params = %q, want %q", got, `{"msg":"hi"}`)
+		}
+	})
+
+	t.Run("params disabled sets dash", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{ParameterLogging: "Disabled"}}
+		req := &MCPRequest{
+			Params:  map[string]any{"arguments": map[string]any{"msg": "hi"}},
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{}},
+		}
+		if got := getMetadataField(t, srv, req, metadataToolParam); got != "-" {
+			t.Errorf("tool_params = %q, want %q", got, "-")
+		}
+	})
+
+	t.Run("identity headers fallback when no baggage", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{IdentityHeaders: []string{"x-custom-user"}}}
+		req := &MCPRequest{
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "x-custom-user", RawValue: []byte("custom-jane")},
+			}},
+		}
+		if got := getMetadataField(t, srv, req, metadataUserID); got != "custom-jane" {
+			t.Errorf("user_id = %q, want %q", got, "custom-jane")
+		}
+	})
+
+	t.Run("empty identity headers means baggage only", func(t *testing.T) {
+		srv := &ExtProcServer{Audit: &AuditConfig{IdentityHeaders: nil}}
+		req := &MCPRequest{
+			Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "x-forwarded-email", RawValue: []byte("should-be-ignored")},
+			}},
+		}
+		if got := getMetadataField(t, srv, req, metadataUserID); got != "-" {
+			t.Errorf("user_id = %q, want %q (should not fall back to x-forwarded-email)", got, "-")
+		}
+	})
 }

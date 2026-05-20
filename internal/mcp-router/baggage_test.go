@@ -146,11 +146,11 @@ func TestResolveUserID(t *testing.T) {
 			want:            "",
 		},
 		{
-			name:            "nil identity headers uses defaults",
+			name:            "nil identity headers means no fallback",
 			baggageUserID:   "",
-			headers:         map[string]string{"x-forwarded-email": "from-default"},
+			headers:         map[string]string{"x-forwarded-email": "should-not-match"},
 			identityHeaders: nil,
-			want:            "from-default",
+			want:            "",
 		},
 	}
 
@@ -159,11 +159,7 @@ func TestResolveUserID(t *testing.T) {
 			headerFn := func(name string) string {
 				return tt.headers[name]
 			}
-			identityHeaders := tt.identityHeaders
-			if identityHeaders == nil {
-				identityHeaders = defaultIdentityHeaders
-			}
-			got := resolveUserID(tt.baggageUserID, headerFn, identityHeaders)
+			got := resolveUserID(tt.baggageUserID, headerFn, tt.identityHeaders)
 			if got != tt.want {
 				t.Errorf("resolveUserID() = %q, want %q", got, tt.want)
 			}

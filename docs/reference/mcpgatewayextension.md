@@ -56,7 +56,7 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. `Enabled`: `params.arguments` from `tools/call` requests are logged, truncated to 1KB. `Disabled` (default): parameters are not logged |
-| `identityHeaders` | []String | No | Header names to check (in order) for caller identity when W3C Baggage `user.id` is absent. Default: `["x-forwarded-email", "x-auth-user"]` |
+| `identityHeaders` | []String | No | Header names to check (in order) for caller identity when W3C Baggage `user.id` is absent. No defaults: operators must explicitly list the headers their auth layer sets. When empty, only baggage `user.id` is used. |
 
 ## MCPGatewayExtensionStatus
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var defaultIdentityHeaders = []string{"x-forwarded-email", "x-auth-user"}
+const baggageHeader = "baggage"
 
 // parseBaggage extracts user.id and agent.id from a W3C Baggage header value.
 // Values are URL-decoded and control characters (CR, LF, null) are stripped.
@@ -43,7 +43,7 @@ func parseBaggage(header string) (userID, agentID string) {
 	return userID, agentID
 }
 
-// stripControlChars removes CR, LF, and null bytes to prevent header injection.
+// stripControlChars removes CR, LF, and null bytes to prevent metadata injection.
 func stripControlChars(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\r' || r == '\n' || r == 0 {
