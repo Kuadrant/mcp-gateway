@@ -1,5 +1,7 @@
 # MCP Gateway Auditing Guide
 
+> **Availability Note:** Full auditing support (including caller identity extraction and optional parameter logging) requires the implementation from [Issue #992](https://github.com/Kuadrant/mcp-gateway/issues/992). The guide below reflects the behavior available once that implementation lands.
+
 This guide covers enabling, configuring, and collecting audit logs for the Model Context Protocol (MCP) Gateway.
 
 An audit trail provides a persistent, queryable record of all MCP tool and prompt interactions flowing through the gateway. This record is essential for security compliance, caller attribution, and operational troubleshooting.
@@ -110,23 +112,23 @@ Once applied, the operator injects the audit configuration into the gateway's En
 
 ---
 
-## Step 2: Configure Envoy Access Logs using Dynamic Metadata
+## Step 2: Configure Envoy Access Logs using HTTP Headers
 
-When auditing is enabled, the MCP Gateway operator adds an access log configuration patch to the target Gateway's EnvoyFilter. This patch configures the Envoy HTTP Connection Manager to emit access logs using ext_proc dynamic metadata.
+When auditing is enabled, the MCP Gateway operator adds an access log configuration patch to the target Gateway's EnvoyFilter. This patch configures the Envoy HTTP Connection Manager to emit access logs.
 
-### Dynamic Metadata Fields
+### Audit Headers
 
-The MCP Router processor sets audited MCP properties within the `mcp-audit` dynamic metadata namespace. These properties can be extracted in the Envoy access log format using `%DYNAMIC_METADATA(mcp-audit:<field>)%` format strings:
+The MCP Router processor sets audited MCP properties as HTTP headers on request forwarding. These properties can be extracted in the Envoy access log format using `%REQ(X-MCP-<FIELD>)%` format strings:
 
 | Field | Description | Format String |
 |-------|-------------|---------------|
-| `method` | The MCP method being called (e.g., `tools/call`) | `%DYNAMIC_METADATA(mcp-audit:method)%` |
-| `tool_name` | The name of the tool (after prefix stripping) | `%DYNAMIC_METADATA(mcp-audit:tool_name)%` |
-| `server_name` | The target backend MCP server | `%DYNAMIC_METADATA(mcp-audit:server_name)%` |
-| `session_id` | The unique persistent MCP session ID | `%DYNAMIC_METADATA(mcp-audit:session_id)%` |
-| `user_id` | The user identity (resolved from baggage/fallback) | `%DYNAMIC_METADATA(mcp-audit:user_id)%` |
-| `agent_id` | The agent identity (resolved from baggage) | `%DYNAMIC_METADATA(mcp-audit:agent_id)%` |
-| `tool_params` | Tool call parameters (only if parameter logging is enabled) | `%DYNAMIC_METADATA(mcp-audit:tool_params)%` |
+| `method` | The MCP method being called (e.g., `tools/call`) | `%REQ(X-MCP-METHOD)%` |
+| `tool_name` | The name of the tool (after prefix stripping) | `%REQ(X-MCP-TOOLNAME)%` |
+| `server_name` | The target backend MCP server | `%REQ(X-MCP-SERVERNAME)%` |
+| `session_id` | The unique persistent MCP session ID | `%REQ(MCP-SESSION-ID)%` |
+| `user_id` | The user identity (resolved from baggage/fallback) | `%REQ(X-MCP-USER-ID)%` |
+| `agent_id` | The agent identity (resolved from baggage) | `%REQ(X-MCP-AGENT-ID)%` |
+| `tool_params` | Tool call parameters (only if parameter logging is enabled) | `%REQ(X-MCP-TOOL-PARAMS)%` |
 
 ### Default JSON Access Log Format
 
@@ -140,21 +142,19 @@ By default, the gateway operator configures the Envoy proxy to emit structured J
   "response_code": "%RESPONSE_CODE%",
   "request_id": "%REQ(X-REQUEST-ID)%",
   "traceparent": "%REQ(TRACEPARENT)%",
-  "mcp_method": "%DYNAMIC_METADATA(mcp-audit:method)%",
-  "mcp_tool_name": "%DYNAMIC_METADATA(mcp-audit:tool_name)%",
-  "mcp_server_name": "%DYNAMIC_METADATA(mcp-audit:server_name)%",
-  "mcp_session_id": "%DYNAMIC_METADATA(mcp-audit:session_id)%",
-  "mcp_user_id": "%DYNAMIC_METADATA(mcp-audit:user_id)%",
-  "mcp_agent_id": "%DYNAMIC_METADATA(mcp-audit:agent_id)%",
-  "mcp_tool_params": "%DYNAMIC_METADATA(mcp-audit:tool_params)%",
+  "mcp_method": "%REQ(X-MCP-METHOD)%",
+  "mcp_tool_name": "%REQ(X-MCP-TOOLNAME)%",
+  "mcp_server_name": "%REQ(X-MCP-SERVERNAME)%",
+  "mcp_session_id": "%REQ(MCP-SESSION-ID)%",
+  "mcp_user_id": "%REQ(X-MCP-USER-ID)%",
+  "mcp_agent_id": "%REQ(X-MCP-AGENT-ID)%",
+  "mcp_tool_params": "%REQ(X-MCP-TOOL-PARAMS)%",
   "duration_ms": "%DURATION%",
   "upstream_host": "%UPSTREAM_HOST%",
   "bytes_sent": "%BYTES_SENT%",
   "bytes_received": "%BYTES_RECEIVED%"
 }
 ```
-
-> **Note:** If you are using header-based log parsing in legacy environments, these properties are also set as HTTP headers on request forwarding and can be retrieved using `%REQ(X-MCP-<FIELD>)%` (e.g., `%REQ(X-MCP-TOOLNAME)%`). Both mechanisms are fully compatible.
 
 ---
 
@@ -165,11 +165,11 @@ By default, tool call parameters are excluded from the audit trail to prevent ac
 When enabled:
 1. The MCP Router parses the JSON-RPC request body for `tools/call` requests.
 2. It extracts the arguments from `params.arguments`.
-3. The arguments are serialized into a JSON string and populated in the `tool_params` dynamic metadata namespace.
+3. The arguments are serialized into a JSON string and populated in the `x-mcp-tool-params` HTTP header.
 
 ### Parameter Truncation
 
-To protect gateway performance and prevent excessively large log lines, tool parameters are automatically truncated to **1KB (1024 bytes)** before being added to the metadata and logged.
+To protect gateway performance and prevent excessively large log lines, tool parameters are automatically truncated to **1KB (1024 bytes)** before being added to the HTTP header and logged.
 
 ---
 
@@ -222,7 +222,7 @@ Additionally, both the Authorino decision logs and the MCP Gateway access logs c
 
 ## Annotated JSON Audit Log Examples
 
-Below are representative structured JSON logs emitted by the gateway pod to stdout:
+Below are representative structured JSON logs emitted by the Envoy Gateway pods in the `gateway-system` namespace to stdout:
 
 ### Example 1: Successful Tool Call with Full Correlation Context
 
@@ -306,7 +306,7 @@ This entry shows a request where the client did not send W3C Baggage, but the ga
 
 ## Log Shipping and Aggregation (SIEM)
 
-Gateway audit logs are written directly to stdout of the gateway pods. In standard Kubernetes production environments, these logs are captured by container runtimes and forwarded to centralized SIEM platforms.
+Gateway audit logs are written directly to stdout of the **Envoy proxy pods** (usually located in the `gateway-system` namespace, not `mcp-system`). In standard Kubernetes production environments, these logs are captured by container runtimes and forwarded to centralized SIEM platforms.
 
 ### Tracing Workflows Across Systems
 
@@ -343,12 +343,12 @@ scrape_configs:
 
 *   **Find all tool calls made by a specific user:**
     ```logql
-    {namespace="mcp-system"} | json | mcp_user_id = "dev-jane" and mcp_method = "tools/call"
+    {namespace="gateway-system", container="envoy"} | json | mcp_user_id = "dev-jane" and mcp_method = "tools/call"
     ```
 
 *   **Trace a specific workflow via Trace ID:**
     ```logql
-    {namespace="mcp-system"} | json | traceparent =~ ".*4bf92f3577b34da6a3ce929d0e0e4736.*"
+    {namespace="gateway-system", container="envoy"} | json | traceparent =~ ".*4bf92f3577b34da6a3ce929d0e0e4736.*"
     ```
 
 ### Elasticsearch / Logstash / Kibana (ELK)
@@ -359,7 +359,7 @@ In the ELK stack, configure Logstash to parse the JSON output from your filebeat
 
 ```ruby
 filter {
-  if [kubernetes][container][name] == "mcp-gateway" {
+  if [kubernetes][namespace] == "gateway-system" {
     json {
       source => "message"
       target => "mcp_audit"
@@ -412,7 +412,7 @@ The `user_id` and `agent_id` dynamic metadata and headers are populated in two w
 
 ### Log Injection Mitigation
 
-To prevent malicious clients from injecting control characters (like newlines) into the audit logs via client-controlled headers like `baggage`, the gateway automatically sanitizes these values. Any control characters (CR, LF, null bytes) are stripped before being added to the dynamic metadata and log entry.
+To prevent malicious clients from injecting control characters (like newlines) into the audit logs via client-controlled headers like `baggage`, the gateway automatically sanitizes these values. Any control characters (CR, LF, null bytes) are stripped before being added to the HTTP headers and log entry.
 
 ---
 
