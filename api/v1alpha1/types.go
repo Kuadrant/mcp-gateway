@@ -12,11 +12,11 @@ import (
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".status.discoveredTools",description="Number of discovered tools"
+// +kubebuilder:printcolumn:name="Category",type="string",JSONPath=".spec.category",description="Server categories for discovery"
 // +kubebuilder:printcolumn:name="Credentials",type="string",JSONPath=".spec.credentialRef.name"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// MCPServerRegistration defines a collection of MCP (Model Context Protocol) servers to be aggregated by the gateway.
-// It enables discovery and federation of tools from multiple backend MCP servers through HTTPRoute references, providing a declarative way to configure which MCP servers should be accessible through the gateway.
+// MCPServerRegistration registers an upstream MCP server for tool federation through the gateway.
 type MCPServerRegistration struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -60,8 +60,40 @@ type MCPServerRegistrationSpec struct {
 	// credentialRef references a Secret containing authentication credentials for the MCP server.
 	// The Secret should contain a key with the authentication token or credentials.
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
+	// Used exclusively by the broker for tool discovery and session management. Never injected into client tools/call requests.
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// tokenURLElicitation enables per-user token collection via URL elicitation.
+	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+	// to collect tokens from capable clients at tool-call time.
+	// +optional
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
+
+	// category assigns one or more categories to this MCP server for tool discovery.
+	// Used by the discover_tools meta-tool to allow agents to filter servers by category.
+	// +optional
+	// +listType=atomic
+	// +default=["uncategorised"]
+	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	Category []string `json:"category,omitempty"`
+
+	// hint provides a short description of what this MCP server offers.
+	// Returned by the discover_tools meta-tool to help agents decide which tools to select.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Hint string `json:"hint,omitempty"`
+}
+
+// TokenURLElicitationConfig configures per-user token collection via URL elicitation.
+type TokenURLElicitationConfig struct {
+	// url overrides the default broker token page URL.
+	// When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://`
+	URL string `json:"url,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

@@ -167,4 +167,92 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(callErr).To(HaveOccurred())
 		Expect(status).NotTo(Equal(http.StatusOK), "unauthorised tool call must not succeed")
 	})
+
+	It("[Auth] should filter prompts/list by JWT roles", func() {
+		By("Obtaining a token and initialising a session")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		headers := map[string]string{"Authorization": "Bearer " + token}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Listing prompts — accounting has prompt:greet on test-server1")
+		var prompts []string
+		Eventually(func(g Gomega) {
+			var listErr error
+			_, prompts, listErr = mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			g.Expect(listErr).NotTo(HaveOccurred())
+			g.Expect(prompts).NotTo(BeEmpty())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		Expect(prompts).To(ContainElement("test1_greet"), "accounting has prompt:greet for test-server1")
+	})
+
+	It("[Auth] should allow prompts/get with auth as first request to a server", func() {
+		By("Obtaining a token and initialising a session")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		headers := map[string]string{"Authorization": "Bearer " + token}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Calling prompts/get for test1_greet without any prior tool call (triggers hairpin init)")
+		status, respBody, err := mcpGetPrompt(ctx, authGatewayURL, sessionID, "test1_greet", map[string]string{"name": "reviewer"}, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(respBody).To(ContainSubstring("Say hi to reviewer"))
+	})
+
+	It("[Auth] should return empty prompts for combined JWT + VirtualServer with no intersection", func() {
+		By("Registering the everything-server so its prompts are federated")
+		evReg := NewTestResources("auth-everything", k8sClient).
+			ForInternalService("everything-server", 9090).
+			WithPrefix("everything_").
+			Build()
+		evObjects := evReg.GetObjects()
+		evServer := evReg.Register(ctx)
+		defer func() {
+			for i := len(evObjects) - 1; i >= 0; i-- {
+				CleanupResource(ctx, k8sClient, evObjects[i])
+			}
+			CleanupResource(ctx, k8sClient, evServer)
+		}()
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, evServer.Name, evServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating a VirtualServer that allows only the everything-server prompt (user has no JWT role for it)")
+		virtualServer := NewMCPVirtualServerBuilder("auth-prompt-combined-vs", TestServerNameSpace).
+			WithTools([]string{"test1_greet"}).
+			WithPrompts([]string{"everything_simple_prompt"}).Build()
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+		defer func() {
+			CleanupResource(ctx, k8sClient, virtualServer)
+		}()
+
+		By("Obtaining a token and initialising a session with VirtualServer header")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		headers := map[string]string{
+			"Authorization":       "Bearer " + token,
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		}
+
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+
+		By("Listing prompts — JWT allows test1_greet, VirtualServer allows everything_simple_prompt, intersection is empty")
+		Eventually(func(g Gomega) {
+			_, prompts, listErr := mcpListPrompts(ctx, authGatewayURL, sessionID, headers)
+			g.Expect(listErr).NotTo(HaveOccurred())
+			g.Expect(prompts).To(BeEmpty(), "intersection of JWT and VirtualServer should be empty")
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+	})
 })

@@ -109,6 +109,11 @@ func (rb *ResponseBuilder) WithImmediateResponse(statusCode int32, message strin
 // WithImmediateJSONRPCResponse adds an immediate response, typically JSON-RPC format,
 // that terminates request processing
 func (rb *ResponseBuilder) WithImmediateJSONRPCResponse(statusCode int32, setHeaders []*basepb.HeaderValueOption, message string) *ResponseBuilder {
+	allHeaders := make([]*basepb.HeaderValueOption, 0, len(setHeaders)+1)
+	allHeaders = append(allHeaders, setHeaders...)
+	allHeaders = append(allHeaders, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{Key: "content-type", Value: "text/event-stream"},
+	})
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_ImmediateResponse{
 			ImmediateResponse: &eppb.ImmediateResponse{
@@ -117,7 +122,7 @@ func (rb *ResponseBuilder) WithImmediateJSONRPCResponse(statusCode int32, setHea
 				},
 				Body: []byte(message),
 				Headers: &eppb.HeaderMutation{
-					SetHeaders: setHeaders,
+					SetHeaders: allHeaders,
 				},
 				Details: fmt.Sprintf("ext-proc error: %s", message),
 			},

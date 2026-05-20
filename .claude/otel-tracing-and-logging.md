@@ -18,28 +18,49 @@ The logger is created with `NewTracingLogger()` which wraps slog with trace cont
 ## Tracing Conventions
 
 ### Span Naming
-All spans use the prefix `mcp-router.` followed by a descriptive name:
+Spans are prefixed by component:
+
+**Router** (`mcp-router.`):
 - `mcp-router.process` -- root span for the full ext_proc stream lifecycle
-- `mcp-router.route-decision` -- routing decision (tool-call vs broker passthrough)
+- `mcp-router.route-decision` -- routing decision (tool-call, prompt-get, elicitation-response, or broker)
 - `mcp-router.tool-call` -- full tool call handling
+- `mcp-router.prompt-get` -- full prompt get handling
+- `mcp-router.elicitation-response` -- elicitation response routing
 - `mcp-router.broker-passthrough` -- pass-through to broker
-- `mcp-router.broker.get-server-info` -- broker lookup for server info
+- `mcp-router.broker.get-server-info` -- broker lookup for tool server info
+- `mcp-router.broker.get-server-info-by-prompt` -- broker lookup for prompt server info
 - `mcp-router.session-cache.get` -- session cache read
 - `mcp-router.session-cache.store` -- session cache write
 - `mcp-router.session-init` -- hairpin initialize to backend
 
-When adding new spans, follow this naming pattern: `mcp-router.<component>.<action>`.
+**Broker** (`mcp-broker.`):
+- `mcp-broker.handle-request` -- wraps every MCP request to the broker
+- `mcp-broker.tools-list` -- tools/list filtering (authorization, virtual server, gateway metadata)
+- `mcp-broker.prompts-list` -- prompts/list filtering
+- `mcp-broker.upstream-manage` -- periodic backend health check and tool/prompt discovery
+
+When adding new spans, follow the naming pattern: `<component>.<action>`.
+
+### Tracer Names
+Tracer names are defined as constants:
+- `mcpotel.BrokerTracerName` (`internal/otel/otel.go`) -- used by broker and upstream packages
+- `tracerName` (`internal/mcp-router/tracing.go`) -- router-local constant
 
 
 ### Span Attributes
 Follow [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#server):
 
-- `mcp.method.name` -- MCP method (initialize, tools/call, tools/list)
+- `mcp.method.name` -- MCP method (initialize, tools/call, tools/list, prompts/get, prompts/list)
+- `mcp.method` -- MCP method (broker spans use this shorter form)
+- `mcp.route` -- routing decision: `tool-call`, `prompt-get`, `elicitation-response`, or `broker`
 - `gen_ai.tool.name` -- tool name
 - `gen_ai.operation.name` -- same as mcp.method.name
 - `mcp.session.id` -- gateway session ID
 - `mcp.server` -- backend server name
 - `mcp.server.hostname` -- backend server hostname
+- `mcp.prompt.name` -- prompt name (prompts/get)
+- `mcp.tools.count` -- number of tools after filtering (broker tools-list span)
+- `mcp.prompts.count` -- number of prompts after filtering (broker prompts-list span)
 - `jsonrpc.request.id` -- JSON-RPC request ID
 - `jsonrpc.protocol.version` -- always "2.0"
 - `http.method`, `http.path`, `http.request_id`, `http.status_code`
@@ -48,20 +69,19 @@ Follow [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/sp
 For new attributes, check OTel semantic conventions first before inventing custom ones.
 
 ### Error Recording
-Use the `recordError()` helper for consistent error attributes:
+Use `mcpotel.SpanError()` (`internal/otel/otel.go`) for the common `RecordError` + `SetStatus` pair:
 
 ```go
-recordError(span, err, 500)
+mcpotel.SpanError(span, err, "description of what failed")
 ```
 
-This sets `error.type`, `error_source`, and `http.status_code` on the span. For inline
-error recording without the helper:
+The component-specific wrappers add extra attributes on top of `SpanError`:
+- `recordError(span, err, statusCode)` in `internal/mcp-router/tracing.go` -- adds `error_source=ext-proc` and `http.status_code`
+- `recordBrokerError(span, err)` in `internal/broker/tracing.go` -- adds `error_source=broker`
+- `recordBackendError(span, err)` in `internal/broker/upstream/manager.go` -- adds `error_source=backend` and `mcp.server`
 
-```go
-span.RecordError(err)
-span.SetStatus(codes.Error, "description")
-span.SetAttributes(attribute.String("error.type", "specific_error_type"))
-```
+Use the component wrapper when you need the extra attributes. Use `mcpotel.SpanError` directly
+when only the error + status is needed (most cases).
 
 ### Trace Context Propagation
 The router extracts W3C `traceparent` from Envoy headers via `extractTraceContext()`.

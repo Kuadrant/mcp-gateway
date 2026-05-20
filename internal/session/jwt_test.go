@@ -354,6 +354,54 @@ func TestValidate_RejectsTokenWithWrongAudience(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+
+	// craft a token with no exp claim
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte("test-key"))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	isNotAllowed, err := manager.Validate(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+	if !isNotAllowed {
+		t.Error("expected isNotAllowed to be true for token without exp")
+	}
+}
+
+func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte("test-key"))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	_, err = manager.GetExpiresIn(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+}
+
 func TestTerminate(t *testing.T) {
 	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
 

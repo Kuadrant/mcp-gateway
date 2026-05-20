@@ -1,0 +1,16 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: github
+  namespace: mcp-test
+spec:
+  prefix: github_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: github-mcp-external
+  credentialRef:
+    name: github-token
+    key: token
+  tokenURLElicitation:
+    url: http://mcp.127-0-0-1.sslip.io:8001/tokens

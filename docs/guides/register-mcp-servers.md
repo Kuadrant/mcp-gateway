@@ -1,6 +1,16 @@
 # MCP Server Registration
 
-You must register your MCP servers to be discovered and routed by the MCP Gateway. To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that routes to your MCP server and an `MCPServerRegistration` resource that references the `HTTPRoute`.
+You must register your MCP servers to be discovered and routed by the MCP Gateway. When a server is registered, the gateway automatically discovers and federates its capabilities (tools and prompts), applying a prefix to avoid name collisions across multiple servers.
+
+## Overview
+
+MCP Gateway supports federating both MCP Tools and MCP Prompts.
+
+- **Discovery**: The gateway's broker automatically discovers available tools and prompts from registered upstream servers.
+- **Prefixing**: To prevent collisions between capabilities with the same name on different servers, the gateway applies the `prefix` defined in the `MCPServerRegistration` to each tool and prompt name (e.g., `greet` becomes `myserver_greet`).
+- **Routing**: When a client calls a tool or requests a prompt, the gateway identifies the target upstream server by the prefix, strips the prefix, and routes the request to the correct server.
+
+To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that routes to your MCP server and an `MCPServerRegistration` resource that references the `HTTPRoute`.
 
 ## Prerequisites
 
@@ -113,7 +123,7 @@ EOF
 
 ## Step 4: Verify Registration
 
-Wait for the MCPServerRegistration to become ready (the broker needs a moment to connect and discover tools):
+Wait for the MCPServerRegistration to become ready (the broker needs a moment to connect and discover tools and prompts):
 
 ```bash
 kubectl wait --for=condition=Ready mcpsr/my-mcp-server -n mcp-test --timeout=120s
@@ -159,12 +169,49 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
   -H "Content-Type: application/json" \
   -H "mcp-session-id: $SESSION_ID" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
+```
+
+You should now see your MCP server tools in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+
+## Step 6: Test Prompt Discovery
+
+Verify that your MCP server prompts are also available through the gateway:
+
+```bash
+# Use the same SESSION_ID from the previous step
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "prompts/list"}'
+```
+
+You should see your MCP server prompts in the response, also prefixed with your configured `prefix`.
+
+## Step 7: Getting a Prompt
+
+To retrieve a specific prompt, use the `prompts/get` method with the federated (prefixed) name:
+
+```bash
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "prompts/get",
+    "params": {
+      "name": "myserver_gh_pr_review",
+      "arguments": {
+        "pr_number": "42"
+      }
+    }
+  }'
 
 # Clean up
 rm -f /tmp/mcp_headers
 ```
 
-You should now see your MCP server tools in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
 
 ## Next Steps
 

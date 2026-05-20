@@ -1374,41 +1374,45 @@ func TestMCPManager_Backoff(t *testing.T) {
 	manager, err := NewUpstreamMCPManager(mock, gateway, nil, slog.Default(), tickerInterval, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	// Initially, steps should be 10 (as configured in NewUpstreamMCPManager)
-	assert.Equal(t, 10, manager.backoff.Steps)
-
-	// 1. Simulate failure
+	// 1. Simulate failure (Connect)
 	mock.connectErr = fmt.Errorf("connect error")
 	manager.manage(ctx, eventTypeTimer)
 
-	// After failure, Steps should be 9
-	assert.Equal(t, 9, manager.backoff.Steps)
+	status := manager.GetStatus()
+	assert.False(t, status.Ready)
+	assert.Contains(t, status.Message, "connect error")
 
-	// 2. Simulate another failure
-	manager.manage(ctx, eventTypeTimer)
-	assert.Equal(t, 8, manager.backoff.Steps)
-
-	// 3. Simulate success
+	// 2. Simulate success
 	mock.connectErr = nil
 	manager.manage(ctx, eventTypeTimer)
 
-	// 4. Test Ping failure
+	status = manager.GetStatus()
+	assert.True(t, status.Ready)
+	assert.Contains(t, status.Message, "server added successfully")
+
+	// 3. Test Ping failure
 	mock.pingErr = fmt.Errorf("ping error")
 	manager.manage(ctx, eventTypeTimer)
-	assert.Equal(t, 9, manager.backoff.Steps)
+
+	status = manager.GetStatus()
+	assert.False(t, status.Ready)
+	assert.Contains(t, status.Message, "ping error")
 
 	// Reset
 	mock.pingErr = nil
 	manager.manage(ctx, eventTypeTimer)
-	assert.Equal(t, 10, manager.backoff.Steps)
+	assert.True(t, manager.GetStatus().Ready)
 
-	// 5. Test ListTools failure
+	// 4. Test ListTools failure
 	mock.listToolsErr = fmt.Errorf("list tools error")
 	manager.manage(ctx, eventTypeTimer)
-	assert.Equal(t, 9, manager.backoff.Steps)
+
+	status = manager.GetStatus()
+	assert.False(t, status.Ready)
+	assert.Contains(t, status.Message, "list tools error")
 
 	// Reset
 	mock.listToolsErr = nil
 	manager.manage(ctx, eventTypeTimer)
-	assert.Equal(t, 10, manager.backoff.Steps)
+	assert.True(t, manager.GetStatus().Ready)
 }

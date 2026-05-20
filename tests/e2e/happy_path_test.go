@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -644,6 +645,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Registering an MCPServerRegistration pointing to server3")
 		registration := NewMCPServerResourcesWithDefaults("unavailable-test", k8sClient).
+			WithPrefix("unavailable_").
 			WithBackendTarget(scaledMCPTestServer, 9090).Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
@@ -955,6 +957,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(promptResult).NotTo(BeNil())
 		Expect(len(promptResult.Messages)).To(BeNumerically(">=", 1), "prompt should return at least one message")
+		content, ok := promptResult.Messages[0].Content.(mcp.TextContent)
+		Expect(ok).To(BeTrue(), "prompt message content should be TextContent")
+		Expect(content.Text).To(Equal("Say hi to e2e"))
 
 		By("Unregistering the MCPServerRegistration")
 		Expect(k8sClient.Delete(ctx, registeredServer)).To(Succeed())
@@ -1041,6 +1046,161 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
+	})
+
+	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", func() {
+		By("Creating MCPServerRegistration for server1 with prompts")
+		registration := NewMCPServerResourcesWithDefaults("prompt-vs-nofilter", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("nofilt_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying prompts are available")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
+
+		By("Creating an MCPVirtualServer with tools only (no prompts field)")
+		allowedTool := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+		virtualServer := NewMCPVirtualServerBuilder("prompt-nofilter-vs", TestServerNameSpace).
+			WithTools([]string{allowedTool}).Build()
+		testResources = append(testResources, virtualServer)
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+
+		By("Creating a client with X-Mcp-Virtualserver header")
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = virtualServerClient.Close() }()
+
+		By("Verifying all prompts are returned (no prompts field = no filtering)")
+		Eventually(func(g Gomega) {
+			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredPrompts).NotTo(BeNil())
+			expectedPrompt := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+			g.Expect(PromptsListHasPrompt(filteredPrompts, expectedPrompt)).To(BeTrueBecause("all prompts should be exposed when prompts field is omitted"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools ARE filtered by the VirtualServer")
+		Eventually(func(g Gomega) {
+			filteredTools, err := virtualServerClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredTools).NotTo(BeNil())
+			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server")
+			g.Expect(filteredTools.Tools[0].Name).To(Equal(allowedTool))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should send notifications to connected clients when server with prompts is registered", func() {
+		By("Creating clients with notification handlers")
+		client1Notification := false
+		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
+			if strings.Contains(j.Method, "list_changed") {
+				GinkgoWriter.Println("client 1 received notification", j.Method)
+				client1Notification = true
+			}
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = client1.Close() }()
+
+		client2Notification := false
+		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
+			if strings.Contains(j.Method, "list_changed") {
+				GinkgoWriter.Println("client 2 received notification", j.Method)
+				client2Notification = true
+			}
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = client2.Close() }()
+
+		By("Registering a new MCPServerRegistration with prompts")
+		registration := NewMCPServerResourcesWithDefaults("prompt-notification-test", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("pnotif_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Waiting for the server to become ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for prompts to show up")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
+
+		By("Verifying both clients received list_changed notifications")
+		Eventually(func(g Gomega) {
+			_, err := client1.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(client1Notification).To(BeTrue(), "client1 should have received a list_changed notification")
+			g.Expect(client2Notification).To(BeTrue(), "client2 should have received a list_changed notification")
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should report prompt conflicts in MCPServerRegistration status when same prefix is used", func() {
+		By("Creating first MCPServerRegistration with a specific prefix pointing to server1")
+		registration1 := NewMCPServerResources("prompt-conflict-1", "pconflict-s1.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+			WithPrefix("pconflict_").Build()
+		testResources = append(testResources, registration1.GetObjects()...)
+		server1 := registration1.Register(ctx)
+
+		By("Ensuring first server becomes ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating second MCPServerRegistration with the SAME prefix pointing to server1 via different hostname")
+		registration2 := NewMCPServerResources("prompt-conflict-2", "pconflict-s2.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+			WithPrefix("pconflict_").Build()
+		testResources = append(testResources, registration2.GetObjects()...)
+		server2 := registration2.Register(ctx)
+
+		By("Verifying at least one MCPServerRegistration reports conflict in status")
+		Eventually(func(g Gomega) {
+			msg1, err1 := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server1.Name, server1.Namespace)
+			msg2, err2 := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server2.Name, server2.Namespace)
+
+			g.Expect(err1).NotTo(HaveOccurred())
+			g.Expect(err2).NotTo(HaveOccurred())
+
+			GinkgoWriter.Println("Server1 status:", msg1)
+			GinkgoWriter.Println("Server2 status:", msg2)
+
+			hasConflict := strings.Contains(msg1, "conflict") || strings.Contains(msg2, "conflict")
+			g.Expect(hasConflict).To(BeTrue(), "expected at least one server to report prompt conflict")
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should return error for prompts/get with nonexistent prompt", func() {
+		By("Creating MCPServerRegistration for server1")
+		registration := NewMCPServerResourcesWithDefaults("prompt-notfound", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("notfound_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Initialising a raw HTTP session for JSON-RPC error inspection")
+		sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
+
+		By("Calling prompts/get with a nonexistent prompt name")
+		status, body, err := mcpGetPrompt(ctx, gatewayURL, sessionID, "nonexistent_prompt_that_does_not_exist", nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK))
+
+		rpcErr, parseErr := parseSSEError(body)
+		Expect(parseErr).NotTo(HaveOccurred(), "expected a JSON-RPC error in SSE response")
+		Expect(rpcErr.Code).To(Equal(mcp.INVALID_PARAMS), "expected JSON-RPC invalid-params error code (-32602)")
 	})
 
 	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", func() {

@@ -25,6 +25,7 @@ const (
 	// broker-router deployment constants
 	brokerRouterName     = "mcp-gateway"
 	gatewayHTTPRouteName = "mcp-gateway-route"
+	tokensHTTPRouteName  = "mcp-gateway-tokens-route" //nolint:gosec // not a credential
 
 	// DefaultBrokerRouterImage is the default image for the broker-router deployment
 	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
@@ -47,6 +48,7 @@ var managedCommandFlags = []string{
 	"--mcp-check-interval",
 	"--mcp-gateway-public-host",
 	"--mcp-router-key",
+	"--enable-url-elicitation",
 }
 
 // managedEnvVarNames are the env var names the controller owns and reconciles.
@@ -76,6 +78,9 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		command = append(command, fmt.Sprintf("--mcp-check-interval=%d", *mcpExt.Spec.BackendPingIntervalSeconds))
 	}
 	command = append(command, "--mcp-gateway-public-host="+publicHost)
+	if mcpExt.Spec.URLElicitation == mcpv1alpha1.URLElicitationEnabled {
+		command = append(command, "--enable-url-elicitation")
+	}
 
 	envVars := []corev1.EnvVar{
 		{
@@ -420,6 +425,13 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		}
 	}
 
+	// reconcile tokens HTTPRoute for URL elicitation (unless route management is disabled)
+	if !mcpExt.HTTPRouteDisabled() {
+		if err := r.reconcileTokensHTTPRoute(ctx, mcpExt, publicHost); err != nil {
+			return false, err
+		}
+	}
+
 	// check deployment readiness
 	deploymentReady := existingDeployment.Status.ReadyReplicas > 0 &&
 		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
@@ -547,23 +559,57 @@ func mergeEnvVars(desired, existing []corev1.EnvVar) []corev1.EnvVar {
 func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
-	pathValue := "/mcp"
+	mcpPath := "/mcp"
+	wellKnownPath := "/.well-known/oauth-protected-resource"
 	port := gatewayv1.PortNumber(brokerHTTPPort)
 	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
 	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
 
-	// Defense-in-depth: strip router-internal headers from any client request
-	// so even a buggy or unauthenticated path through the ext_proc cannot
-	// surface caller-controlled values for `mcp-init-host` or `router-key` to
-	// backend MCP servers. The router itself signs and validates a short-lived
-	// JWT in the `router-key` header on the hairpin path; the HTTPRoute filter
-	// ensures these headers never leak out of the gateway towards a backend.
 	stripRouterHeaders := []gatewayv1.HTTPRouteFilter{
 		{
 			Type: gatewayv1.HTTPRouteFilterRequestHeaderModifier,
 			RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
 				Remove: []string{"mcp-init-host", "router-key"},
 			},
+		},
+	}
+
+	backendRefs := []gatewayv1.HTTPBackendRef{
+		{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: gatewayv1.ObjectName(brokerRouterName),
+					Port: &port,
+				},
+			},
+		},
+	}
+
+	rules := []gatewayv1.HTTPRouteRule{
+		{
+			Name: ptr.To(gatewayv1.SectionName("mcp")),
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &mcpPath,
+					},
+				},
+			},
+			Filters:     stripRouterHeaders,
+			BackendRefs: backendRefs,
+		},
+		{
+			Name: ptr.To(gatewayv1.SectionName("well-known")),
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &wellKnownPath,
+					},
+				},
+			},
+			BackendRefs: backendRefs,
 		},
 	}
 
@@ -588,29 +634,7 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha
 			Hostnames: []gatewayv1.Hostname{
 				gatewayv1.Hostname(publicHost),
 			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: &pathValue,
-							},
-						},
-					},
-					Filters: stripRouterHeaders,
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name: gatewayv1.ObjectName(brokerRouterName),
-									Port: &port,
-								},
-							},
-						},
-					},
-				},
-			},
+			Rules: rules,
 		},
 	}
 }
@@ -627,4 +651,107 @@ func httpRouteNeedsUpdate(desired, existing *gatewayv1.HTTPRoute) (bool, string)
 		return true, "rules changed"
 	}
 	return false, ""
+}
+
+func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
+	labels := brokerRouterLabels()
+	pathType := gatewayv1.PathMatchPathPrefix
+	tokensPath := "/tokens"
+	port := gatewayv1.PortNumber(brokerHTTPPort)
+	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
+	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
+
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tokensHTTPRouteName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{
+						Group:       ptr.To(gatewayv1.Group("gateway.networking.k8s.io")),
+						Kind:        ptr.To(gatewayv1.Kind("Gateway")),
+						Name:        gatewayv1.ObjectName(mcpExt.Spec.TargetRef.Name),
+						Namespace:   &gatewayNamespace,
+						SectionName: &sectionName,
+					},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{
+				gatewayv1.Hostname(publicHost),
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Name: ptr.To(gatewayv1.SectionName("tokens")),
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{
+							Path: &gatewayv1.HTTPPathMatch{
+								Type:  &pathType,
+								Value: &tokensPath,
+							},
+						},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: gatewayv1.ObjectName(brokerRouterName),
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) error {
+	key := client.ObjectKey{Name: tokensHTTPRouteName, Namespace: mcpExt.Namespace}
+	existing := &gatewayv1.HTTPRoute{}
+	exists := true
+	if err := r.Get(ctx, key, existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			exists = false
+		} else {
+			return fmt.Errorf("failed to get tokens httproute: %w", err)
+		}
+	}
+
+	if mcpExt.Spec.URLElicitation != mcpv1alpha1.URLElicitationEnabled {
+		if exists {
+			r.log.Info("deleting tokens httproute (url elicitation disabled)", "namespace", mcpExt.Namespace)
+			if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete tokens httproute: %w", err)
+			}
+		}
+		return nil
+	}
+
+	desired := r.buildTokensHTTPRoute(mcpExt, publicHost)
+	if err := controllerutil.SetControllerReference(mcpExt, desired, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on tokens httproute: %w", err)
+	}
+
+	if !exists {
+		r.log.Info("creating tokens httproute", "namespace", mcpExt.Namespace)
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("failed to create tokens httproute: %w", err)
+		}
+		return nil
+	}
+
+	if needsUpdate, reason := httpRouteNeedsUpdate(desired, existing); needsUpdate {
+		r.log.Info("updating tokens httproute", "namespace", mcpExt.Namespace, "reason", reason)
+		existing.Spec.ParentRefs = desired.Spec.ParentRefs
+		existing.Spec.Hostnames = desired.Spec.Hostnames
+		existing.Spec.Rules = desired.Spec.Rules
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("failed to update tokens httproute: %w", err)
+		}
+	}
+	return nil
 }

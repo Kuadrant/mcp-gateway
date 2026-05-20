@@ -382,8 +382,15 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		URL:      serverInfo.Endpoint,
 		Hostname: serverInfo.Hostname,
 		Prefix:   mcpsr.Spec.Prefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		Category: append([]string(nil), mcpsr.Spec.Category...),
+		Hint:     mcpsr.Spec.Hint,
+		Enabled:  true,
+	}
+
+	if mcpsr.Spec.TokenURLElicitation != nil {
+		serverConfig.TokenURLElicitation = &config.TokenURLElicitationConfig{
+			URL: mcpsr.Spec.TokenURLElicitation.URL,
+		}
 	}
 
 	// add credential env var if configured

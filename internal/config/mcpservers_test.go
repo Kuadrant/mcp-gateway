@@ -256,6 +256,68 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			},
 			expectChanged: false,
 		},
+		{
+			name: "tokenURLElicitation added",
+			current: &MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			expectChanged: true,
+		},
+		{
+			name: "tokenURLElicitation removed",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			existing: MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "tokenURLElicitation URL changed",
+			current: &MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{URL: "https://new.example.com"},
+			},
+			existing: MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{URL: "https://old.example.com"},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "tokenURLElicitation unchanged",
+			current: &MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{},
+			},
+			existing: MCPServer{
+				Name:                "server1",
+				Prefix:              "s1_",
+				Hostname:            "server1.local",
+				TokenURLElicitation: &TokenURLElicitationConfig{},
+			},
+			expectChanged: false,
+		},
 	}
 
 	for _, tc := range testCases {

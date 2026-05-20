@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><head><title>MCP Gateway - Token Required</title>
+<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:40px auto;padding:0 20px}
+h1{font-size:1.4em}form{margin-top:20px}label{display:block;margin-bottom:6px;font-weight:600}
+input[type=password]{width:100%;padding:8px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
+button{margin-top:12px;padding:8px 20px;background:#0066cc;color:#fff;border:none;border-radius:4px;cursor:pointer}
+button:hover{background:#0052a3}</style></head>
+<body><h1>Token Required</h1>
+<p>The MCP server <strong>{{.ServerName}}</strong> requires a token to proceed.</p>
+<form method="POST" action="/tokens">
+<input type="hidden" name="elicitation_id" value="{{.ElicitationID}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label for="token">Token or API Key</label>
+<input type="password" id="token" name="token" required placeholder="Enter your token or API key">
+<button type="submit">Submit</button>
+</form></body></html>

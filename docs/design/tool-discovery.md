@@ -59,7 +59,7 @@
 - Federation scales without degrading agent experience
 - Operators add metadata once (category + hint per server registration), agents benefit automatically
 - Auth filtering applies to the catalog — agents only discover tools they're authorized to use
-- The threshold flag (`--discovery-tool-threshold`) auto-scales: small gateways show all tools, large ones enforce discovery
+- The threshold flag (`--discovery-tool-threshold`, default `0`) controls when discovery is enforced. `0` means never hide tools (meta-tools are available but all tools are also returned). A positive value hides real tools when the visible count exceeds the threshold, requiring agents to use the discovery flow
 
 ### Scale considerations
 

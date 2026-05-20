@@ -1,0 +1,62 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-tokens-oidc-callback
+  namespace: mcp-system
+spec:
+  overrides:
+    strategy: merge
+    rules:
+      authorization:
+        deny:
+          opa:
+            allValues: false
+            rego: allow = false
+          priority: 2
+        location:
+          opa:
+            allValues: true
+            rego: |-
+              cookies := { name: value | raw_cookies := input.request.headers.cookie; cookie_parts := split(raw_cookies, ";"); part := cookie_parts[_]; trimmed := trim(part, " "); eq := indexof(trimmed, "="); eq > 0; name := substring(trimmed, 0, eq); value := substring(trimmed, eq + 1, count(trimmed) - eq - 1)}
+              default scheme := "http"
+              scheme := input.request.scheme
+              host_has_port := contains(input.request.host, ":")
+              host := input.request.host { host_has_port }
+              host := concat(":", [input.request.host, "8001"]) { not host_has_port }
+              base := concat("", [scheme, "://", host])
+              location := concat("", [base, cookies.target]) { input.auth.metadata.token.id_token; cookies.target; startswith(cookies.target, "/tokens") }
+              location := base { input.auth.metadata.token.id_token; not cookies.target }
+              location := "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/auth?client_id=mcp-token-browser&redirect_uri=http%3A%2F%2Fmcp.127-0-0-1.sslip.io%3A8001%2Fauth%2Fcallback&response_type=code&scope=openid" { not input.auth.metadata.token.id_token }
+              allow = true
+          priority: 1
+      metadata:
+        token:
+          http:
+            body:
+              expression: >-
+                "code=" + request.query.split("&").map(entry, entry.split("=")).filter(pair, pair[0] == "code").map(pair, pair[1])[0] + "&grant_type=authorization_code&redirect_uri=http%3A%2F%2Fmcp.127-0-0-1.sslip.io%3A8001%2Fauth%2Fcallback&client_id=mcp-token-browser"
+            contentType: application/x-www-form-urlencoded
+            credentials: {}
+            method: POST
+            url: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/token
+          priority: 0
+          when:
+            - predicate: >-
+                request.query.split("&").map(entry, entry.split("=")).filter(pair, pair[0] == "code").map(pair, pair[1]).size() > 0
+      response:
+        success: {}
+        unauthorized:
+          code: 302
+          headers:
+            location:
+              expression: auth.authorization.location.location
+            # SameSite=Lax is required because the browser arrives here via cross-site
+            # redirect from Keycloak. Strict would cause the cookie to be dropped.
+            # If your IdP shares the same parent domain, Strict may be possible.
+            set-cookie:
+              expression: >-
+                "jwt=" + auth.metadata.token.id_token + "; domain=mcp.127-0-0-1.sslip.io; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-tokens-oidc-callback

@@ -49,25 +49,56 @@ request (request headers -> request body -> response headers).
 | Span | When | Description |
 |------|------|-------------|
 | `mcp-router.process` | Every ext_proc stream | Root span. Starts when request headers arrive, ends after response headers are processed. |
-| `mcp-router.route-decision` | Request body parsed | Routing decision: tool-call vs pass-through to broker. |
-| `mcp-router.broker-passthrough` | Non-tool-call requests | Pass-through to broker (initialize, tools/list, notifications). No child spans — broker is not instrumented. |
+| `mcp-router.route-decision` | Request body parsed | Routing decision: tool-call, prompt-get, elicitation-response, or broker. |
+| `mcp-router.broker-passthrough` | Non-routed requests | Pass-through to broker (initialize, tools/list, prompts/list, notifications). |
 | `mcp-router.tool-call` | `tools/call` requests | Full tool call handling including session and server resolution. |
-| `mcp-router.broker.get-server-info` | Inside tool-call | Call out to broker to resolve which backend server owns the tool. |
-| `mcp-router.session-cache.get` | Inside tool-call | Call out to session cache to look up an existing backend session. |
-| `mcp-router.session-init` | Cache miss during tool-call | Hairpin initialize request through the gateway to the backend MCP server. |
-| `mcp-router.session-cache.store` | After session-init | Call out to session cache to store the new backend session. |
+| `mcp-router.broker.get-server-info` | Inside tool-call | Resolve which backend server owns the tool. |
+| `mcp-router.prompt-get` | `prompts/get` requests | Full prompt get handling including session and server resolution. |
+| `mcp-router.broker.get-server-info-by-prompt` | Inside prompt-get | Resolve which backend server owns the prompt. |
+| `mcp-router.elicitation-response` | Elicitation responses | Routes client elicitation responses to the correct backend server. |
+| `mcp-router.session-cache.get` | Inside tool-call or prompt-get | Look up an existing backend session in the cache. |
+| `mcp-router.session-init` | Cache miss | Hairpin initialize request through the gateway to the backend MCP server. |
+| `mcp-router.session-cache.store` | After session-init | Store the new backend session in the cache. |
+
+### MCP Broker Spans
+
+The MCP Broker emits spans for request handling, capability filtering, and upstream management.
+
+| Span | When | Description |
+|------|------|-------------|
+| `mcp-broker.handle-request` | Every MCP request to the broker | Wraps the full request lifecycle (initialize, tools/list, prompts/list, etc.). |
+| `mcp-broker.tools-list` | `tools/list` response filtering | Filters tools by authorization, virtual server, and removes gateway metadata. |
+| `mcp-broker.prompts-list` | `prompts/list` response filtering | Filters prompts by authorization, virtual server, and removes gateway metadata. |
+| `mcp-broker.upstream-manage` | Periodic health check tick | Backend connection management: connect, ping, tool/prompt discovery. |
 
 ### Span Hierarchy
 
-```
+The router and broker run in the same process. Broker spans are correlated to the
+router trace via W3C Trace Context propagation (the `traceContextMiddleware` extracts
+`traceparent` from the forwarded HTTP request), so they appear in the same trace but
+are **not** direct parent-child spans of the router spans.
+
+```text
 mcp-router.process
 ├── mcp-router.route-decision
-│   ├── mcp-router.broker-passthrough        (if initialize, tools/list, etc.)
-│   └── mcp-router.tool-call                (if tools/call)
-│       ├── mcp-router.broker.get-server-info
-│       ├── mcp-router.session-cache.get
-│       ├── mcp-router.session-init          (if cache miss)
-│       └── mcp-router.session-cache.store   (if cache miss)
+│   ├── mcp-router.broker-passthrough        (if initialize, tools/list, prompts/list, etc.)
+│   ├── mcp-router.tool-call                 (if tools/call)
+│   │   ├── mcp-router.broker.get-server-info
+│   │   ├── mcp-router.session-cache.get
+│   │   ├── mcp-router.session-init          (if cache miss)
+│   │   └── mcp-router.session-cache.store   (if cache miss)
+│   ├── mcp-router.prompt-get                (if prompts/get)
+│   │   ├── mcp-router.broker.get-server-info-by-prompt
+│   │   ├── mcp-router.session-cache.get
+│   │   ├── mcp-router.session-init          (if cache miss)
+│   │   └── mcp-router.session-cache.store   (if cache miss)
+│   └── mcp-router.elicitation-response      (if elicitation response)
+
+mcp-broker.handle-request                    (correlated via traceparent, not a child of router spans)
+├── mcp-broker.tools-list                    (if tools/list)
+└── mcp-broker.prompts-list                  (if prompts/list)
+
+mcp-broker.upstream-manage                   (periodic, not request-scoped)
 ```
 
 ### Span Attributes
@@ -95,7 +126,7 @@ Attributes follow the [OpenTelemetry MCP Semantic Conventions](https://opentelem
 | Attribute | Description |
 |-----------|-------------|
 | `mcp.method.name` | MCP method |
-| `mcp.route` | Routing decision: `tool-call` or `broker` |
+| `mcp.route` | Routing decision: `tool-call`, `prompt-get`, `elicitation-response`, or `broker` |
 
 #### Tool call span (`mcp-router.tool-call`)
 
@@ -106,13 +137,32 @@ Attributes follow the [OpenTelemetry MCP Semantic Conventions](https://opentelem
 | `mcp.server` | Resolved backend server name |
 | `mcp.server.hostname` | Resolved backend server hostname |
 
+#### Prompt get span (`mcp-router.prompt-get`)
+
+| Attribute | Description |
+|-----------|-------------|
+| `mcp.prompt.name` | Prompt name from the request |
+| `mcp.session.id` | Gateway session ID |
+| `mcp.server` | Resolved backend server name |
+| `mcp.server.hostname` | Resolved backend server hostname |
+
+#### Broker spans
+
+| Attribute | Span | Description |
+|-----------|------|-------------|
+| `mcp.method` | `handle-request` | MCP method being processed |
+| `mcp.session.id` | `handle-request`, `tools-list`, `prompts-list` | Gateway session ID |
+| `mcp.tools.count` | `tools-list` | Number of tools after filtering |
+| `mcp.prompts.count` | `prompts-list` | Number of prompts after filtering |
+| `mcp.server` | `upstream-manage` | Backend server name |
+
 #### Error attributes
 
 On error, spans include:
 
 | Attribute | Description |
 |-----------|-------------|
-| `error.type` | Error classification (e.g. `tool_not_found`, `invalid_session`, `session_cache_error`) |
+| `error.type` | Error classification (e.g. `tool_not_found`, `prompt_not_found`, `invalid_session`, `session_cache_error`) |
 | `error_source` | Component that generated the error (`ext-proc` or `backend`) |
 | `http.status_code` | HTTP status code returned |
 
@@ -149,7 +199,7 @@ outside the mesh to create end-to-end traces.
 
 ## Architecture
 
-```
+```text
 ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────┐
 │   MCP Gateway   │────▶│   OTEL Collector     │────▶│    Tempo    │
 │                 │     │                      │     │  (traces)   │

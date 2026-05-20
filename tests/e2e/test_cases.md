@@ -161,6 +161,34 @@
 
 - When an MCPVirtualServer resource specifies a subset of prompt names in its `prompts` field, a client using the `X-Mcp-Virtualserver` header should only see the specified prompts in a prompts/list response. A client without the header should still see all prompts.
 
+### [Happy] VirtualServer with no prompts field exposes all prompts
+
+- When an MCPVirtualServer resource omits the `prompts` field, all federated prompts should be returned in a prompts/list response. Tools should still be filtered by the `tools` field. This matches the behavior where omitting a field means "no filtering" rather than "deny all".
+
+### [Happy] prompts/get for nonexistent prompt returns error
+
+- When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return a JSON-RPC error with code -32602 (Invalid params).
+
+### [Happy] Prompt notifications on registration
+
+- When an MCPServerRegistration is registered with a backend MCP server that has prompts, a `list_changed` notification should be sent to any clients connected to the MCP Gateway. Multiple connected clients should all receive the notification. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.
+
+### [Happy] Prompt conflicts with same prefix
+
+- When two MCPServerRegistrations with the same prefix point to backends that both have prompts with the same name (e.g., both have a "greet" prompt producing "pconflict_greet"), at least one MCPServerRegistration should report a conflict in its status. This mirrors the tool conflict behavior where overlapping prefixed names cause a conflict.
+
+### [Auth] JWT-filtered prompts/list with Keycloak
+
+- When a client authenticates via Keycloak and sends a prompts/list request, only prompts the user has `prompt:*` roles for should be returned. The `mcp` user in the `accounting` group should see `test1_greet` but not prompts from servers where they have no prompt roles.
+
+### [Auth] prompts/get with auth as first request (hairpin test)
+
+- When a client sends a prompts/get request as the first request to a server (no prior tools/call), the hairpin initialize should pass through the AuthPolicy correctly and return prompt messages.
+
+### [Auth] Combined JWT + VirtualServer prompt filtering
+
+- When a client sends a prompts/list request with both a valid auth token and an `X-Mcp-Virtualserver` header, the result should be the intersection of both filters. The everything-server is registered with prefix `everything_` and its prompts are federated. If the JWT allows `test1_greet` but the VirtualServer only allows `everything_simple_prompt` (which the user has no JWT role for), the result should be empty.
+
 ### [Happy] Elicitation accept flow
 
 - When a client connects to the gateway with an elicitation handler that accepts requests and provides user information, and calls a tool that triggers an elicitation request, the gateway should broker the elicitation between the upstream server and the client. The tool response should indicate that the user provided the requested information.
@@ -172,3 +200,103 @@
 ### [Happy] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
+
+### [Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client
+
+- When an elicitation-capable client calls a tool on an MCPServerRegistration that has `tokenURLElicitation` configured but the client has no cached token, the gateway should return a -32042 URLElicitationRequired error containing a URL pointing to the token page. The response should be an SSE JSON-RPC error with code -32042 and a `data.url` field.
+
+### [Happy,URLElicitation] Full round-trip: token page submit then retry succeeds
+
+- When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response.
+
+### [URLElicitation] Cached token reused across multiple tool calls
+
+- After a token has been submitted via the token page, subsequent tool calls to the same server from the same session should reuse the cached token without triggering a new -32042 error. The upstream server should receive the token on each call.
+
+### [URLElicitation] Non-elicitation-capable client gets standard error on missing token
+
+- When a client that did NOT declare `capabilities.elicitation` in its initialize request calls a tool on a server with `tokenURLElicitation` configured and no cached token, the gateway should return a tool result with `isError: true` and a message about elicitation (not a -32042 JSON-RPC error). The client should not receive a URL for token submission.
+
+### [Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation
+
+- When a client has a valid cached token and an established backend session, and the upstream server rejects a subsequent tool call with 401 (simulated via `X-Force-Auth-Reject` header on the api-key-server), the gateway should delete the cached token and pass the 401 through. The next tool call should trigger a fresh -32042 elicitation error. The client can then re-submit the correct token and retry successfully.
+
+### [Happy,URLElicitation] Server without tokenURLElicitation is unaffected
+
+- When an MCPServerRegistration does NOT have `tokenURLElicitation` configured and the backend does not require auth, tool calls should proceed without any token resolution or -32042 errors, regardless of whether the client declares elicitation capability.
+
+### [Happy] discover_tools returns correct metadata for registered servers
+
+- When an MCPServerRegistration is created with `category` and `hint` fields, calling `discover_tools` should return a server entry containing the correct categories, hint, and prefixed tool names.
+
+### [Happy] discover_tools category filter returns only matching servers (case-insensitive)
+
+- When multiple servers are registered with different categories, calling `discover_tools` with a `category` parameter should return only servers whose category list contains a case-insensitive match. Servers with non-matching categories should be excluded from the response.
+
+### [Happy] discover_tools multi-category server matched by either category value
+
+- When an MCPServerRegistration has multiple categories (e.g. `["dining", "reservations"]`), calling `discover_tools` with either category as the filter should return that server.
+
+### [Happy] discover_tools returns empty servers for non-matching category
+
+- When `discover_tools` is called with a category value that no registered server has, the response should contain no servers matching that category.
+
+### [Happy] discover_tools respects auth filtering
+
+- When a client sends requests with an `X-Mcp-Authorized` JWT that restricts visible tools, `discover_tools` should only return tools that the JWT authorises. Servers with no authorised tools should be excluded entirely.
+
+### [Happy] discover_tools respects MCPVirtualServer scoping
+
+- When a client sends requests with an `X-Mcp-Virtualserver` header, `discover_tools` should only return tools that the MCPVirtualServer allows. Servers with no allowed tools should be excluded.
+
+### [Happy] select_tools scopes subsequent tools/list
+
+- When a client calls `select_tools` with a list of tool names, subsequent `tools/list` requests should return only those tools (plus the discover_tools and select_tools meta-tools).
+
+### [Happy] select_tools returns error for invalid tool name
+
+- When `select_tools` is called with a tool name that does not exist or is not visible, the response should contain a "not available" error.
+
+### [Happy] select_tools all-or-nothing with partial valid list
+
+- When `select_tools` is called with a list containing both valid and invalid tool names, the entire selection should fail. No partial scope should be applied.
+
+### [Happy] select_tools re-scoping replaces previous selection
+
+- When `select_tools` is called twice in the same session, the second selection should completely replace the first. The `tools/list` response should reflect only the most recent selection.
+
+### [Happy] select_tools empty list resets to full tool set
+
+- When `select_tools` is called with an empty tools array, the session scope should be reset to the full tool set. Subsequent `tools/list` should return all tools.
+
+### [Happy] notifications/tools/list_changed delivered after select_tools
+
+- When a client with SSE notification support calls `select_tools`, a `notifications/tools/list_changed` notification should be delivered to that client over the SSE channel.
+
+### [Happy] discovery-tools-enabled=false hides meta-tools
+
+- When the broker is started with `--discovery-tools-enabled=false`, `tools/list` should not include `discover_tools` or `select_tools`. Calling these tools should return an error.
+
+### [Happy] discovery-tool-threshold=0 means never hide
+
+- When the threshold is 0 (default), all real tools should be visible alongside the meta-tools regardless of how many tools are registered.
+
+### [Happy] threshold above: only meta-tools shown
+
+- When the `--discovery-tool-threshold` is set to a value lower than the number of registered tools, `tools/list` should return only the meta-tools. After using `select_tools` to scope down, the selected tools should become visible.
+
+### [Happy] session scope does not leak across sessions
+
+- When one session calls `select_tools` to scope down its tools, another session should still see the full tool set. Session scoping is per-session, not global.
+
+### [Happy] concurrent select_tools calls do not corrupt scope state
+
+- When two concurrent `select_tools` calls are made on the same session, the result should be a consistent single scope (one of the two wins), not a corrupted mixed state.
+
+### [Happy] controller re-reconciles when category/hint updated
+
+- When the `category` or `hint` fields on a live MCPServerRegistration are updated, the controller should re-reconcile and the broker should reflect the new metadata in subsequent `discover_tools` calls. The old category should no longer match.
+
+## Common pitfalls
+
+- MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

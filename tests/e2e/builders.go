@@ -25,26 +25,29 @@ import (
 
 // TestResourcesBuilder is a unified builder for creating test resources
 type TestResourcesBuilder struct {
-	k8sClient        client.Client
-	testName         string
-	registrationName string
-	namespace        string
-	hostname         string
-	serviceName      string
-	port             int32
-	prefix           string
-	path             string
-	credential       *corev1.Secret
-	credentialKey    string
-	httpRoute        *gatewayapiv1.HTTPRoute
-	mcpServer        *mcpv1alpha1.MCPServerRegistration
-	serviceEntry     *istionetv1beta1.ServiceEntry
-	destinationRule  *istionetv1beta1.DestinationRule
-	isExternal       bool
-	gatewayName      string
-	gatewayNamespace string
-	backendNamespace string
-	referenceGrant   *gatewayv1beta1.ReferenceGrant
+	k8sClient           client.Client
+	testName            string
+	registrationName    string
+	namespace           string
+	hostname            string
+	serviceName         string
+	port                int32
+	prefix              string
+	path                string
+	category            []string
+	hint                string
+	credential          *corev1.Secret
+	credentialKey       string
+	tokenURLElicitation *mcpv1alpha1.TokenURLElicitationConfig
+	httpRoute           *gatewayapiv1.HTTPRoute
+	mcpServer           *mcpv1alpha1.MCPServerRegistration
+	serviceEntry        *istionetv1beta1.ServiceEntry
+	destinationRule     *istionetv1beta1.DestinationRule
+	isExternal          bool
+	gatewayName         string
+	gatewayNamespace    string
+	backendNamespace    string
+	referenceGrant      *gatewayv1beta1.ReferenceGrant
 }
 
 // NewTestResources creates a new TestResourcesBuilder with defaults for internal services
@@ -91,7 +94,9 @@ func (b *TestResourcesBuilder) WithHostname(hostname string) *TestResourcesBuild
 	return b
 }
 
-// WithPrefix sets the prefix for the MCPServerRegistration
+// WithPrefix sets the prefix for the MCPServerRegistration.
+// avoid empty prefix: strings.HasPrefix(name, "") matches everything,
+// including broker meta-tools (discover_tools, select_tools).
 func (b *TestResourcesBuilder) WithPrefix(p string) *TestResourcesBuilder {
 	b.prefix = p
 	return b
@@ -100,6 +105,18 @@ func (b *TestResourcesBuilder) WithPrefix(p string) *TestResourcesBuilder {
 // WithPath sets a custom MCP path
 func (b *TestResourcesBuilder) WithPath(path string) *TestResourcesBuilder {
 	b.path = path
+	return b
+}
+
+// WithCategory sets discovery categories on the MCPServerRegistration
+func (b *TestResourcesBuilder) WithCategory(categories ...string) *TestResourcesBuilder {
+	b.category = categories
+	return b
+}
+
+// WithHint sets the discovery hint on the MCPServerRegistration
+func (b *TestResourcesBuilder) WithHint(hint string) *TestResourcesBuilder {
+	b.hint = hint
 	return b
 }
 
@@ -144,6 +161,13 @@ func (b *TestResourcesBuilder) WithCredential(secret *corev1.Secret, key string)
 	return b
 }
 
+// WithTokenURLElicitation enables per-user token collection via URL elicitation.
+// Pass an empty string for url to use the default broker token page.
+func (b *TestResourcesBuilder) WithTokenURLElicitation(url string) *TestResourcesBuilder {
+	b.tokenURLElicitation = &mcpv1alpha1.TokenURLElicitationConfig{URL: url}
+	return b
+}
+
 // Build constructs all the resources based on configuration. Must be called before GetObjects() or Register().
 func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	routeName := UniqueName("e2e-route-" + b.testName)
@@ -182,6 +206,17 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 			Key:  b.credentialKey,
 		}
 	}
+	if b.tokenURLElicitation != nil {
+		b.mcpServer.Spec.TokenURLElicitation = b.tokenURLElicitation
+	}
+
+	if len(b.category) > 0 {
+		b.mcpServer.Spec.Category = b.category
+	}
+	if b.hint != "" {
+		b.mcpServer.Spec.Hint = b.hint
+	}
+
 	return b
 }
 
