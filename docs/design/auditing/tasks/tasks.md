@@ -4,8 +4,9 @@
 
 The implementation builds on:
 
-- **Router headers**: `internal/mcp-router/headers.go` — `HeadersBuilder` already sets `x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`, and `mcp-session-id` via `ProcessingResponse` header mutations.
-- **Router request handling**: `internal/mcp-router/request_handlers.go` — MCP request body is already parsed (method, tool name, server name extracted). New audit headers plug into the same `HeadersBuilder` chain.
+- **Router headers**: `internal/mcp-router/headers.go` — `HeadersBuilder` already sets `x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`, and `mcp-session-id` via `ProcessingResponse` header mutations. Audit data uses dynamic metadata instead of headers.
+- **Router response builder**: `internal/mcp-router/response_builder.go` — `ResponseBuilder` constructs `ProcessingResponse` chains. `WithDynamicMetadata` method attaches audit metadata to the last response.
+- **Router request handling**: `internal/mcp-router/request_handlers.go` — MCP request body is already parsed (method, tool name, server name extracted). Audit metadata is built via `buildAuditMetadata` and attached to the `ProcessingResponse` via `WithDynamicMetadata`.
 - **Operator EnvoyFilter**: `internal/controller/mcpgatewayextension_controller.go` — `buildEnvoyFilter()` (line ~719) builds an EnvoyFilter with a single `HTTP_FILTER` ConfigPatch for ext_proc. The access log patch adds a second `NETWORK_FILTER` ConfigPatch to the same EnvoyFilter.
 - **Operator deployment**: `internal/controller/broker_router.go` — `buildBrokerRouterDeployment()` builds the router deployment with env vars. `managedEnvVarNames` controls which env vars the operator owns. `mergeEnvVars()` preserves user-added env vars during reconciliation.
 - **CRD types**: `api/v1alpha1/mcpgatewayextension_types.go` — existing patterns for optional nested config: `SessionStore`, `TrustedHeadersKey` (pointer to struct, conditional env var injection).
@@ -22,7 +23,7 @@ The implementation builds on:
 - [ ] URL-decode extracted values
 - [ ] Strip control characters (CR, LF, null bytes) from decoded values to prevent header injection
 - [ ] Handle malformed baggage, missing baggage, missing keys gracefully (return empty string)
-- [ ] When `user.id` absent from baggage, check headers from `MCP_AUDIT_IDENTITY_HEADERS` env var (default: `x-forwarded-email,x-auth-user`) in order
+- [ ] When `user.id` absent from baggage, check headers from `MCP_AUDIT_IDENTITY_HEADERS` env var (no defaults, empty means baggage only) in order
 - [ ] First non-empty fallback value used; empty string if none found
 
 **Verification:** `make test-unit`
@@ -42,19 +43,21 @@ The implementation builds on:
 
 **Verification:** `make test-unit`
 
-### Task 3: Audit headers on ProcessingResponse
+### Task 3: Audit dynamic metadata on ProcessingResponse
 
 **Files:**
-- `internal/mcp-router/headers.go` (modify — add `WithMCPUserID`, `WithMCPAgentID`, `WithMCPToolParams` methods)
-- `internal/mcp-router/request_handlers.go` (modify — call baggage parsing and wire audit headers into the builder chain)
+- `internal/mcp-router/audit.go` (modify — `buildAuditMetadata` returns `*structpb.Struct` with namespace `mcp.audit`)
+- `internal/mcp-router/response_builder.go` (modify — add `WithDynamicMetadata` method)
+- `internal/mcp-router/request_handlers.go` (modify — call `buildAuditMetadata` and attach via `WithDynamicMetadata`)
 - `internal/mcp-router/request_handlers_test.go` (modify)
 
 **Acceptance criteria:**
-- [ ] `x-mcp-user-id` set on all tool call ProcessingResponses
-- [ ] `x-mcp-agent-id` set on all tool call ProcessingResponses
-- [ ] `x-mcp-tool-params` set only when `MCP_AUDIT_PARAMETER_LOGGING=Enabled`
-- [ ] Headers set to `-` when source data is unavailable
-- [ ] Existing `x-mcp-*` headers unchanged
+- [ ] `DynamicMetadata` set on all MCP method ProcessingResponses when audit is enabled
+- [ ] Metadata namespace `mcp.audit` contains `user_id`, `agent_id`, `tool_params` keys
+- [ ] `tool_params` populated only when `MCP_AUDIT_PARAMETER_LOGGING=Enabled`
+- [ ] Metadata values set to `-` when source data is unavailable
+- [ ] No `x-mcp-user-id`, `x-mcp-agent-id`, `x-mcp-tool-params` headers on any ProcessingResponse
+- [ ] Existing `x-mcp-*` routing headers unchanged
 
 **Verification:** `make test-unit`
 
@@ -66,10 +69,11 @@ The implementation builds on:
 - `docs/reference/mcpgatewayextension.md` (modify — add audit field documentation)
 
 **Acceptance criteria:**
-- [ ] `AuditConfig` struct with `ParameterLogging` (`ParameterLoggingPolicy` enum: `Enabled`/`Disabled`) and `IdentityHeaders` ([]string)
+- [ ] `AuditConfig` struct with `ParameterLogging` (`ParameterLoggingPolicy` enum: `Enabled`/`Disabled`) and `IdentityHeaders` ([]string, no defaults)
 - [ ] `Audit *AuditConfig` optional pointer field on `MCPGatewayExtensionSpec`
 - [ ] When `spec.audit` is set, operator injects `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` env vars into the router deployment
 - [ ] `ParameterLogging` enum passed through as-is (`Enabled` / `Disabled`), defaulting to `Disabled` when empty
+- [ ] `IdentityHeaders` has no defaults: empty means baggage `user.id` only
 - [ ] When `spec.audit` is nil, no audit env vars are injected
 - [ ] `MCP_AUDIT_PARAMETER_LOGGING` and `MCP_AUDIT_IDENTITY_HEADERS` added to `managedEnvVarNames`
 - [ ] `make generate-all` succeeds (deepcopy, CRDs, Helm sync)
@@ -87,7 +91,7 @@ The implementation builds on:
 - [ ] When `spec.audit` is set, EnvoyFilter includes a second ConfigPatch with `ApplyTo: NETWORK_FILTER`
 - [ ] Patch targets `envoy.filters.network.http_connection_manager` on the same listener port as the ext_proc patch (`listenerConfig.Port`)
 - [ ] Patch operation is `MERGE` (modifying existing HCM, not inserting a new filter)
-- [ ] Access log format contains all `%REQ(...)%` fields from the design doc
+- [ ] Access log format uses `%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:...)%` for audit fields and `%REQ(...)%` for routing headers
 - [ ] When `spec.audit` is nil, no access log patch is added (existing behavior preserved)
 - [ ] EnvoyFilter update propagates when MCPGatewayExtension changes
 

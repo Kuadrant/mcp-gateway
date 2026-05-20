@@ -8,7 +8,7 @@ MCP tool calls don't happen in isolation. They occur within broader agent workfl
 
 ## Summary
 
-Enrich the MCP Router's request headers with audit-relevant fields (caller identity, optional tool call parameters) and configure Envoy access logging via the operator to produce a structured JSON audit trail covering all MCP methods supported by the gateway. Use existing `x-mcp-*` headers as the primary mechanism, with W3C Trace Context and Baggage headers for cross-system correlation. The operator manages a default access log format; users can override it.
+Enrich the MCP Router's `ProcessingResponse` with audit-relevant dynamic metadata (caller identity, optional tool call parameters) and configure Envoy access logging via the operator to produce a structured JSON audit trail covering all MCP methods supported by the gateway. Use ext_proc dynamic metadata (namespace `mcp.audit`) for audit-only fields, keeping existing `x-mcp-*` routing headers unchanged. W3C Trace Context and Baggage headers provide cross-system correlation. The operator manages a default access log format; users can override it.
 
 ## Goals
 
@@ -83,21 +83,21 @@ sequenceDiagram
     Router->>Router: Extract identity from baggage (user.id, agent.id)
     Router->>Router: Optionally extract tool params (if enabled)
 
-    Router->>Gateway: ProcessingResponse with header mutations:<br/>x-mcp-method, x-mcp-toolname, x-mcp-servername,<br/>x-mcp-user-id, x-mcp-agent-id,<br/>x-mcp-tool-params (opt-in)
+    Router->>Gateway: ProcessingResponse with:<br/>header mutations: x-mcp-method, x-mcp-toolname, x-mcp-servername<br/>dynamic metadata (mcp.audit): user_id, agent_id, tool_params
 
-    Gateway->>Backend: Forward request with enriched headers
+    Gateway->>Backend: Forward request with routing headers<br/>(audit metadata NOT forwarded to upstream)
     Backend->>Gateway: Response
 
-    Gateway->>Gateway: Write access log entry (JSON)<br/>includes all x-mcp-* headers, traceparent,<br/>mcp-session-id, timing, status
+    Gateway->>Gateway: Write access log entry (JSON)<br/>includes routing headers via %REQ(...)%,<br/>audit fields via %DYNAMIC_METADATA(...)%,<br/>traceparent, mcp-session-id, timing, status
 ```
 
 ### Component Responsibilities
 
 | Component | Responsibility |
 |-----------|---------------|
-| **MCP Router** | Parse baggage header, extract `user.id` / `agent.id`, set `x-mcp-user-id` / `x-mcp-agent-id` headers. Optionally extract and set `x-mcp-tool-params`. Existing `x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername` headers unchanged. |
-| **Operator** | Add access log `ConfigPatch` to the EnvoyFilter alongside the existing ext_proc patch. Default JSON format references `x-mcp-*` headers via `%REQ(...)%`. |
-| **Envoy** | Write structured JSON access log entries to stdout. Include all `x-mcp-*` headers, `traceparent`, `mcp-session-id`, timing, status, upstream host. |
+| **MCP Router** | Parse baggage header, extract `user.id` / `agent.id`. Optionally extract tool call parameters. Set audit data as dynamic metadata (namespace `mcp.audit`) on `ProcessingResponse`, not as headers. Existing routing headers (`x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`) unchanged. |
+| **Operator** | Add access log `ConfigPatch` to the EnvoyFilter alongside the existing ext_proc patch. Format references routing headers via `%REQ(...)%` and audit fields via `%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:...)%`. |
+| **Envoy** | Write structured JSON access log entries to stdout. Include routing headers, audit dynamic metadata, `traceparent`, `mcp-session-id`, timing, status, upstream host. Dynamic metadata is not forwarded to upstream servers. |
 
 ### API Changes
 
@@ -123,9 +123,11 @@ type AuditConfig struct {
     ParameterLogging ParameterLoggingPolicy `json:"parameterLogging,omitempty"`
 
     // identityHeaders specifies header names to check (in order) for caller
-    // identity when baggage user.id is absent.
+    // identity when baggage user.id is absent. No defaults: operators must
+    // explicitly list the headers their auth layer sets.
+    // When empty, only baggage user.id is used.
     // +optional
-    // +default={"x-forwarded-email","x-auth-user"}
+    // +listType=atomic
     IdentityHeaders []string `json:"identityHeaders,omitempty"`
 }
 ```
@@ -172,15 +174,17 @@ None. Audit data is written to Envoy access logs on stdout — storage and reten
 
 ### Router Changes
 
-**New headers set on requests:**
+**Dynamic metadata set on ProcessingResponse (namespace `mcp.audit`):**
 
-| Header | Source | Description |
-|--------|--------|-------------|
-| `x-mcp-user-id` | `baggage` header, key `user.id` | Authenticated user identity. Falls back to auth-layer headers (configurable via `spec.audit.identityHeaders`). `-` if unavailable. |
-| `x-mcp-agent-id` | `baggage` header, key `agent.id` | Agent identity. `-` if unavailable. |
-| `x-mcp-tool-params` | Request body `params.arguments` | Tool call arguments as JSON. Only set when `spec.audit.parameterLogging` is `Enabled`. Truncated to 1KB. |
+Audit data is set as ext_proc dynamic metadata, not as request headers. Dynamic metadata is consumed by Envoy filters (including access logs) but is not forwarded to upstream servers. This prevents header laundering (client-supplied baggage values re-emitted as authoritative-looking headers) and parameter leakage (tool arguments exposed in headers to proxy logs, CDNs, upstream apps).
 
-**Existing headers (unchanged):**
+| Metadata Key | Source | Description |
+|--------------|--------|-------------|
+| `user_id` | `baggage` header, key `user.id` | Caller identity. Falls back to auth-layer headers (configurable via `spec.audit.identityHeaders`). `-` if unavailable. |
+| `agent_id` | `baggage` header, key `agent.id` | Agent identity. `-` if unavailable. |
+| `tool_params` | Request body `params.arguments` | Tool call arguments as JSON. Only set when `spec.audit.parameterLogging` is `Enabled`. Truncated to 1KB. `-` when disabled or unavailable. |
+
+**Existing routing headers (unchanged):**
 
 | Header | Description |
 |--------|-------------|
@@ -189,11 +193,13 @@ None. Audit data is written to Envoy access logs on stdout — storage and reten
 | `x-mcp-servername` | Backend MCP server name |
 | `mcp-session-id` | MCP session identifier |
 
-**Baggage parsing:** Extract key-value pairs from the `baggage` header per [W3C Baggage specification](https://www.w3.org/TR/baggage/). Look up `user.id` and `agent.id` keys. URL-decode values. After decoding, strip any control characters (CR, LF, null bytes) to prevent header injection — the baggage header is client-controlled and could contain encoded newlines.
+**Baggage handling:** The `baggage` header is W3C-standard propagation context. The router parses it to extract `user.id` and `agent.id` for audit metadata, but does not strip or modify the header. Baggage is propagated as-is to upstream servers (standard behavior). Values are treated as informational, not authoritative: baggage is client-controlled and not a trust mechanism.
 
-**Identity fallback:** When `user.id` is absent from baggage, check headers listed in `spec.audit.identityHeaders` (checked in order). Defaults to `x-forwarded-email,x-auth-user`. First non-empty value is used for `x-mcp-user-id`.
+**Baggage parsing:** Extract key-value pairs from the `baggage` header per [W3C Baggage specification](https://www.w3.org/TR/baggage/). Look up `user.id` and `agent.id` keys. URL-decode values. After decoding, strip any control characters (CR, LF, null bytes) to prevent metadata injection.
 
-**Parameter logging:** Gated by `spec.audit.parameterLogging` (default: `Disabled`). When `Enabled`, extract `params.arguments` from the parsed MCP request body, serialize as JSON, truncate to 1KB, and set as `x-mcp-tool-params`. Sensitive field redaction is deferred to log aggregation pipelines. Note: enabling parameter logging means any secrets passed as tool arguments (API keys, tokens, credentials) will appear in access logs. The auditing guide should warn operators of this and recommend restricting access log storage accordingly.
+**Identity fallback:** When `user.id` is absent from baggage, check headers listed in `spec.audit.identityHeaders` (checked in order). No defaults: when `identityHeaders` is empty, only baggage `user.id` is used. Operators must explicitly list the headers their auth layer sets. First non-empty value is used for the `user_id` metadata field.
+
+**Parameter logging:** Gated by `spec.audit.parameterLogging` (default: `Disabled`). When `Enabled`, extract `params.arguments` from the parsed MCP request body, serialize as JSON, truncate to 1KB, and set as the `tool_params` metadata field. Sensitive field redaction is deferred to log aggregation pipelines. Note: enabling parameter logging means any secrets passed as tool arguments (API keys, tokens, credentials) will appear in access logs. The auditing guide should warn operators of this and recommend restricting access log storage accordingly.
 
 ### Operator Changes
 
@@ -215,9 +221,9 @@ The patch operation is `MERGE` — this differs from the ext_proc patch which us
   "mcp_tool_name": "%REQ(X-MCP-TOOLNAME)%",
   "mcp_server_name": "%REQ(X-MCP-SERVERNAME)%",
   "mcp_session_id": "%REQ(MCP-SESSION-ID)%",
-  "mcp_user_id": "%REQ(X-MCP-USER-ID)%",
-  "mcp_agent_id": "%REQ(X-MCP-AGENT-ID)%",
-  "mcp_tool_params": "%REQ(X-MCP-TOOL-PARAMS)%",
+  "mcp_user_id": "%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:user_id)%",
+  "mcp_agent_id": "%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:agent_id)%",
+  "mcp_tool_params": "%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:tool_params)%",
   "duration_ms": "%DURATION%",
   "upstream_host": "%UPSTREAM_HOST%",
   "bytes_sent": "%BYTES_SENT%",
@@ -281,7 +287,7 @@ Audit is configured via the `spec.audit` field on the MCPGatewayExtension CRD:
 | CRD Field | Default | Description |
 |-----------|---------|-------------|
 | `spec.audit.parameterLogging` | `Disabled` | Enable tool call parameter logging (`Enabled` / `Disabled`) |
-| `spec.audit.identityHeaders` | `["x-forwarded-email", "x-auth-user"]` | Header names to check (in order) for caller identity when baggage `user.id` is absent |
+| `spec.audit.identityHeaders` | `[]` (empty) | Header names to check (in order) for caller identity when baggage `user.id` is absent. No defaults: operators must explicitly list their auth layer headers. |
 
 The operator translates these into env vars on the router deployment:
 
@@ -305,13 +311,14 @@ The auditing guide should document this pattern with examples of AuthPolicy conf
 
 ### Backwards Compatibility
 
-No breaking changes. The new `x-mcp-user-id`, `x-mcp-agent-id`, and `x-mcp-tool-params` headers are additive. Existing `x-mcp-*` headers are unchanged. The access log is a new output that doesn't affect request processing.
+No breaking changes. Audit data is set as dynamic metadata on the `ProcessingResponse`, not as request headers. Dynamic metadata is consumed by Envoy access logs but not forwarded to upstream servers. Existing `x-mcp-*` routing headers are unchanged. The access log is a new output that doesn't affect request processing.
 
 ## Security Considerations
 
+- **Dynamic metadata isolation**: Audit data (user identity, agent identity, tool parameters) is set as ext_proc dynamic metadata, not as request headers. Dynamic metadata is consumed by Envoy filters (access logs) but is not forwarded to upstream servers. This eliminates header laundering (untrusted baggage values re-emitted as authoritative-looking headers) and parameter leakage (tool arguments in headers visible to proxy logs, CDNs, upstream apps).
+- **No default identity headers**: `identityHeaders` has no defaults. Operators must explicitly configure which headers their auth layer sets. This prevents the gateway from silently trusting headers that may not be stripped and re-set by a trusted component (e.g., auth proxy). Without an auth policy, identity headers are client-controllable.
+- **Baggage propagation**: The `baggage` header is W3C-standard propagation context. The router parses it for audit metadata but propagates it as-is to upstreams (standard behavior). Values are treated as informational, not authoritative.
 - **Parameter sensitivity**: Parameter logging is opt-in (default off) and truncated to 1KB; field-level redaction is deferred to log aggregation pipelines.
-- **Identity source**: `x-mcp-user-id` should come from validated auth context (auth-layer headers set after JWT validation), not raw client-provided headers.
-- **Baggage injection**: `user.id` and `agent.id` from the `baggage` header are informational, not authoritative — authoritative identity comes from the auth layer.
 - **Audit log sensitivity**: Access logs containing identity and tool usage data should be shipped securely and access-restricted.
 
 ## Relationship to Existing Observability
@@ -328,7 +335,6 @@ Traces are for debugging, metrics are for patterns, access logs are for accounta
 
 ## Future Considerations
 
-- **Dynamic metadata**: If header-based access logging hits limitations (e.g., headers not available in certain Envoy access log contexts), fall back to ext_proc dynamic metadata with `%DYNAMIC_METADATA(mcp-audit:...)%` format strings.
 - **Custom access log format**: Expose the JSON log format as a CRD field so operators can customize without writing EnvoyFilters.
 - **Field-level parameter redaction**: Allow operators to specify fields to redact from tool call parameters before logging.
 - **Per-server audit configuration**: Configure parameter logging per MCPServerRegistration (some servers may have sensitive params, others not).
@@ -343,6 +349,15 @@ Traces are for debugging, metrics are for patterns, access logs are for accounta
 
 ## Change Log
 
+### 2026-05-20 — Switch audit data from headers to dynamic metadata
+
+- Audit fields (`user_id`, `agent_id`, `tool_params`) use ext_proc dynamic metadata (namespace `mcp.audit`) instead of request headers
+- Dynamic metadata is consumed by Envoy access logs but not forwarded to upstream servers
+- Eliminates header laundering and parameter leakage risks
+- Access log format uses `%DYNAMIC_METADATA(envoy.filters.http.ext_proc:mcp.audit:...)%` for audit fields
+- Removed default identity headers (`x-forwarded-email`, `x-auth-user`): operators must explicitly configure `identityHeaders`
+- Routing headers (`x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`) remain as headers (they serve routing, not just audit)
+
 ### 2026-05-13 — Add CRD API for audit configuration
 
 - Added `spec.audit` field to MCPGatewayExtension CRD (gateway-level configuration)
@@ -353,7 +368,6 @@ Traces are for debugging, metrics are for patterns, access logs are for accounta
 
 ### 2026-05-08 — Initial design
 
-- Header-first approach using existing `x-mcp-*` pattern (dynamic metadata deferred unless limitations found)
 - W3C Baggage for caller identity aligned with kube-agentic-networking proposal
 - Three-level correlation model: agent workflow, MCP session, individual request
 - Opt-in parameter logging
