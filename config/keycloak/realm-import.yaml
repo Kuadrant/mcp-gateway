@@ -29,6 +29,24 @@ data:
           ]
         },
         {
+          "clientId": "mcp-token-browser",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "http://mcp.127-0-0-1.sslip.io:8001/auth/callback"
+          ],
+          "webOrigins": [
+            "http://mcp.127-0-0-1.sslip.io:8001"
+          ],
+          "defaultClientScopes": [
+            "basic",
+            "email",
+            "profile",
+            "roles"
+          ]
+        },
+        {
           "clientId": "mcp-test/test-server1",
           "publicClient": true,
           "standardFlowEnabled": false,

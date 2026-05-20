@@ -2,9 +2,13 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -379,4 +383,150 @@ func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {
 	sessions, err = cache.GetSession(ctx, sessionID)
 	require.NoError(t, err)
 	require.Empty(t, sessions)
+}
+
+// --- User token tests ---
+
+func buildJWT(exp time.Time) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	claims, _ := json.Marshal(map[string]any{
+		"exp": exp.Unix(),
+		"sub": "user1",
+	})
+	payload := base64.RawURLEncoding.EncodeToString(claims)
+	sig := base64.RawURLEncoding.EncodeToString([]byte("fakesig"))
+	return fmt.Sprintf("%s.%s.%s", header, payload, sig)
+}
+
+func TestCache_SetGetDeleteUserToken(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	token, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Empty(t, token)
+
+	err = cache.SetUserToken(ctx, "sess1", "server1", "my-pat-token")
+	require.NoError(t, err)
+
+	token, ok, err = cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "my-pat-token", token)
+
+	// different server is a miss
+	_, ok, err = cache.GetUserToken(ctx, "sess1", "server2")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = cache.DeleteUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+
+	_, ok, err = cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestCache_OpaqueTokenNoExpiryCheck(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	opaque := "ghp_abc123XYZ"
+	err = cache.SetUserToken(ctx, "sess1", "github", opaque)
+	require.NoError(t, err)
+
+	token, ok, err := cache.GetUserToken(ctx, "sess1", "github")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, opaque, token)
+}
+
+func TestCache_ExpiredJWTDeletedOnGet(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	expired := buildJWT(time.Now().Add(-1 * time.Hour))
+	err = cache.SetUserToken(ctx, "sess1", "server1", expired)
+	require.NoError(t, err)
+
+	_, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.False(t, ok, "expired JWT should return miss")
+
+	// verify it was deleted
+	_, ok, err = cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.False(t, ok, "expired JWT should have been deleted")
+}
+
+func TestCache_ValidJWTReturned(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+
+	valid := buildJWT(time.Now().Add(1 * time.Hour))
+	err = cache.SetUserToken(ctx, "sess1", "server1", valid)
+	require.NoError(t, err)
+
+	token, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, valid, token)
+}
+
+func TestDeriveEncryptionKey_ShortKeyRejected(t *testing.T) {
+	_, err := DeriveEncryptionKey([]byte("short"))
+	require.Error(t, err)
+}
+
+func TestEncryptDecryptRoundTrip(t *testing.T) {
+	key, err := DeriveEncryptionKey([]byte("test-signing-key-for-encryption"))
+	require.NoError(t, err)
+
+	plaintext := "ghp_secrettoken123"
+	ciphertext, err := encrypt(key, plaintext)
+	require.NoError(t, err)
+	require.NotEqual(t, plaintext, ciphertext)
+	require.False(t, strings.Contains(ciphertext, plaintext))
+
+	decrypted, err := decrypt(key, ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted)
+}
+
+func TestDecryptWithWrongKey(t *testing.T) {
+	key1, _ := DeriveEncryptionKey([]byte("key-one-long-enough"))
+	key2, _ := DeriveEncryptionKey([]byte("key-two-long-enough"))
+
+	ciphertext, _ := encrypt(key1, "secret")
+	_, err := decrypt(key2, ciphertext)
+	require.Error(t, err)
+}
+
+func TestCheckJWTExpiry(t *testing.T) {
+	tests := []struct {
+		name    string
+		token   string
+		expired bool
+	}{
+		{"opaque PAT", "ghp_abc123", false},
+		{"not base64", "a.b.c", false},
+		{"expired JWT", buildJWT(time.Now().Add(-1 * time.Hour)), true},
+		{"valid JWT", buildJWT(time.Now().Add(1 * time.Hour)), false},
+		{"no exp claim", func() string {
+			h := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256"}`))
+			p := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"user"}`))
+			s := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+			return h + "." + p + "." + s
+		}(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expired, checkUpstreamJWTExpiry(tt.token))
+		})
+	}
 }

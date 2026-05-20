@@ -95,6 +95,49 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 	return nil
 }
 
+// AddDeploymentCommandFlag patches a deployment's first container to add a command-line flag
+// if it isn't already present. Triggers a rollout and waits for it to complete.
+func AddDeploymentCommandFlag(namespace, name, flag string) error {
+	ctx := context.Background()
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", name,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get deployment args: %s: %w", string(output), err)
+	}
+	if strings.Contains(string(output), flag) {
+		return nil
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":"%s","args":["%s"]}]}}}}`, name, flag)
+	// use strategic merge so the args array is merged, not replaced
+	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", name,
+		"-n", namespace, "--type=strategic", "-p", patch)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch deployment %s: %s: %w", name, string(output), err)
+	}
+	return nil
+}
+
+// SetURLElicitation patches the MCPGatewayExtension to enable or disable URL elicitation.
+// The operator reconciles the deployment args and /tokens HTTPRoute automatically.
+func SetURLElicitation(namespace, name string, enabled bool) error {
+	value := "Disabled"
+	if enabled {
+		value = "Enabled"
+	}
+	ctx := context.Background()
+	patch := fmt.Sprintf(`{"spec":{"urlElicitation":"%s"}}`, value)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch mcpgatewayextension %s: %s: %w", name, string(output), err)
+	}
+	return nil
+}
+
 // IsTrustedHeadersEnabled checks if the gateway has trusted headers public key configured
 func IsTrustedHeadersEnabled(ctx context.Context) bool {
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", "-n", SystemNamespace,

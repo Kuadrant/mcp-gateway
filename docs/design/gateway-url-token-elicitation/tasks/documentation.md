@@ -9,33 +9,33 @@ Documentation for URL elicitation, organized by user goals. Each section maps to
 When a platform engineer has an upstream MCP server that requires each user to authenticate with their own token, they want to enable URL elicitation so that the gateway collects tokens at runtime without exposing them to the MCP client or LLM context.
 
 **Cover:**
-- Adding `credentialURLElicitation: {}` to an MCPServerRegistration
-- Enabling the feature with `--enable-elicitation`
+- Adding `tokenURLElicitation: {}` to an MCPServerRegistration
+- Enabling the feature with `--enable-url-elicitation`
 - What the user experience looks like (tool call → prompt → browser → retry)
 - Prerequisites (HTTPS, client capability)
 
 ### When I want to use my own credential UI instead of the built-in page
 
-When a platform operator already has credential infrastructure (e.g., Vault web UI), they want to direct users there instead of the broker's built-in page so that tokens are managed in their existing system.
+When a platform engineer already has credential infrastructure (e.g., Vault web UI), they want to direct users there instead of the broker's built-in page so that tokens are managed in their existing system.
 
 **Cover:**
-- Setting `credentialURLElicitation.url` to an external URL
+- Setting `tokenURLElicitation.url` to an external URL
 - How AuthPolicy on the upstream route handles token injection
 - Differences from the default flow (no cache write, no completion notification)
 
 ### When I want to protect the token page from unauthorized access
 
-When a platform operator deploys URL elicitation, they want to ensure only the authenticated user who triggered the elicitation can submit a token, so that attackers cannot inject credentials into other users' sessions.
+When a platform engineer deploys URL elicitation, they want to ensure only the authenticated user who triggered the elicitation can submit a token, so that attackers cannot inject credentials into other users' sessions.
 
 **Cover:**
-- How session JWT binding prevents cross-session token injection (broker verifies session JWT matches elicitation ID)
-- Why `mcp-session-id` as a custom header prevents browser-based forgery (CORS blocks cross-origin header setting)
+- How `sub` claim comparison prevents cross-session token injection (broker verifies the `sub` from the browser request matches the `sub` stored in the elicitation entry)
+- CSRF protection via cookie-based token (form includes hidden `csrf_token` field, validated against cookie on POST)
 - AuthPolicy as an additional layer restricting access to authenticated and authorized users
 - Link to the MCP spec's phishing warning
 
 ### When I have automated agents that can't use a browser
 
-When a platform operator has both interactive users and automated agents (CI/CD, agent-to-agent) calling the same MCP servers, they want agents to work without being blocked by elicitation prompts.
+When a platform engineer has both interactive users and automated agents (CI/CD, agent-to-agent) calling the same MCP servers, they want agents to work without being blocked by elicitation prompts.
 
 **Cover:**
 - No configuration needed — behavior is automatic based on client capabilities
@@ -61,17 +61,17 @@ When a security reviewer or contributor needs to assess the token handling in UR
 - Token data flow: broker writes → cache stores (encrypted) → router reads → upstream receives
 - Encryption at rest: AES-GCM with HKDF-derived key, only for external cache backends
 - Session scoping: tokens bound to gateway session, lost on session expiry
-- Identity verification: session JWT binding (broker verifies match), custom header prevents browser forgery, AuthPolicy as additional hardening
+- Identity verification: AuthPolicy enforces authentication on the token page, `sub` claim comparison ensures the browser user matches the MCP client session, CSRF cookie token prevents cross-site forgery
 - Known risks: no completion callback for external URL pattern, cache eviction loses tokens
 
 ## API Reference Update (`docs/reference/mcpserverregistration.md`)
 
 ### When I need to know the exact field names and types for URL elicitation
 
-When a platform operator is writing MCPServerRegistration YAML, they want to know the exact API surface for `credentialURLElicitation`.
+When a platform engineer is writing MCPServerRegistration YAML, they want to know the exact API surface for `tokenURLElicitation`.
 
 **Cover:**
-- `credentialURLElicitation` object (optional)
-- `credentialURLElicitation.url` field (optional string, overrides default broker page)
+- `tokenURLElicitation` object (optional)
+- `tokenURLElicitation.url` field (optional string, overrides default broker page)
 - Relationship to `credentialRef` (they serve different purposes)
 - Examples: minimal config, external URL config

@@ -33,6 +33,7 @@ spec:
             - --mcp-broker-public-address=0.0.0.0:8080
             - --mcp-gateway-public-host=mcp.127-0-0-1.sslip.io
             - --mcp-router-address=0.0.0.0:50051
+            - --enable-url-elicitation
             - --log-level=0
           volumeMounts:
             - name: config-volume

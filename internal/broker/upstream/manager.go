@@ -17,8 +17,12 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ToolsAdderDeleter defines the interface for interacting with the gateway directly
@@ -217,13 +221,13 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				man.logger.Debug("manager stopped", "upstream mcp server", man.mcp.ID())
 				return
 			case <-man.ticker.C:
-				man.logger.Debug("health check tick", "upstream mcp server", man.mcp.ID())
+				man.logger.DebugContext(ctx, "health check tick", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypeTimer)
 			case <-man.toolEvents:
-				man.logger.Debug("received tool notification", "upstream mcp server", man.mcp.ID())
+				man.logger.DebugContext(ctx, "received tool notification", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypeToolNotification)
 			case <-man.promptEvents:
-				man.logger.Debug("received prompt notification", "upstream mcp server", man.mcp.ID())
+				man.logger.DebugContext(ctx, "received prompt notification", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypePromptNotification)
 			}
 		}
@@ -282,14 +286,24 @@ func (man *MCPManager) registerCallbacks() func() {
 
 // manage should be the only entry point that triggers changes to tools
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
-	man.logger.Debug("managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
+	man.logger.DebugContext(ctx, "managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
+
+	ctx, span := otel.Tracer(mcpotel.BrokerTracerName).Start(ctx, "mcp-broker.upstream-manage",
+		trace.WithAttributes(
+			attribute.String("component", "mcp-broker"),
+			attribute.String("mcp.server", man.mcp.GetName()),
+		),
+	)
+	defer span.End()
+
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
-	man.logger.Debug("attempting to connect", "upstream mcp server", man.mcp.ID())
+	man.logger.DebugContext(ctx, "attempting to connect", "upstream mcp server", man.mcp.ID())
 	if err := man.mcp.Connect(ctx, man.registerCallbacks()); err != nil {
 		err = fmt.Errorf("failed to connect to upstream mcp %s removing tools : %w", man.mcp.ID(), err)
-		man.logger.Error("connection failed", "upstream mcp server", man.mcp.ID(), "error", err)
+		man.recordBackendError(span, err)
+		man.logger.ErrorContext(ctx, "connection failed", "upstream mcp server", man.mcp.ID(), "error", err)
 		man.removeAllTools()
 		man.removeAllPrompts()
 		// we call disconnect here as we may have connected but failed to initialize
@@ -301,7 +315,8 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	if err := man.mcp.Ping(ctx); err != nil {
 		// if we fail to ping we disconnect to ensure a fresh connection next time around
 		err = fmt.Errorf("upstream mcp failed to ping server %s removing tools : %w", man.mcp.ID(), err)
-		man.logger.Error("ping failed", "upstream mcp server", man.mcp.ID(), "error", err)
+		man.recordBackendError(span, err)
+		man.logger.ErrorContext(ctx, "ping failed", "upstream mcp server", man.mcp.ID(), "error", err)
 		man.removeAllTools()
 		man.removeAllPrompts()
 		_ = man.mcp.Disconnect()
@@ -312,24 +327,26 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	var toolErr error
 	var invalidTools []InvalidToolInfo
 	if !man.shouldFetchTools(event) {
-		man.logger.Debug("not fetching tools", "event", event, "upstream mcp server", man.mcp.ID(), "waiting for notification", notificationToolsListChanged)
+		man.logger.DebugContext(ctx, "not fetching tools", "event", event, "upstream mcp server", man.mcp.ID(), "waiting for notification", notificationToolsListChanged)
 	} else {
-		man.logger.Debug("fetching tools", "upstream mcp server", man.mcp.ID())
+		man.logger.DebugContext(ctx, "fetching tools", "upstream mcp server", man.mcp.ID())
 		current, fetched, err := man.getTools(ctx)
 		if err != nil {
 			toolErr = fmt.Errorf("upstream mcp failed to list tools server %s : %w", man.mcp.ID(), err)
-			man.logger.Error("failed to list tools", "upstream mcp server", man.mcp.ID(), "error", toolErr)
+			man.recordBackendError(span, toolErr)
+			man.logger.ErrorContext(ctx, "failed to list tools", "upstream mcp server", man.mcp.ID(), "error", toolErr)
 		} else {
 			// validate fetched tools
 			validTools, invalids := ValidateTools(fetched)
 			if len(invalids) > 0 {
-				man.logger.Error("invalid tools detected", "upstream mcp server", man.mcp.ID(), "invalid", len(invalids), "valid", len(validTools))
+				man.logger.ErrorContext(ctx, "invalid tools detected", "upstream mcp server", man.mcp.ID(), "invalid", len(invalids), "valid", len(validTools))
 				for _, info := range invalids {
-					man.logger.Error("invalid tool", "upstream mcp server", man.mcp.ID(), "tool", info.Name, "errors", info.Errors)
+					man.logger.ErrorContext(ctx, "invalid tool", "upstream mcp server", man.mcp.ID(), "tool", info.Name, "errors", info.Errors)
 				}
 				invalidTools = invalids
 				if man.invalidToolPolicy == mcpv1alpha1.InvalidToolPolicyRejectServer {
 					toolErr = fmt.Errorf("upstream mcp %s rejected: %d invalid tools found", man.mcp.ID(), len(invalids))
+					man.recordBackendError(span, toolErr)
 					man.removeAllTools()
 				} else {
 					fetched = validTools
@@ -341,7 +358,8 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 				toAdd, toRemove := man.diffTools(current, fetched)
 				if conflictErr := man.findToolConflicts(toAdd); conflictErr != nil {
 					toolErr = fmt.Errorf("upstream mcp failed to add tools to gateway %s : %w", man.mcp.ID(), conflictErr)
-					man.logger.Error("tool conflict detected", "upstream mcp server", man.mcp.ID(), "error", toolErr)
+					man.recordBackendError(span, toolErr)
+					man.logger.ErrorContext(ctx, "tool conflict detected", "upstream mcp server", man.mcp.ID(), "error", toolErr)
 				} else {
 					man.toolsLock.Lock()
 					man.tools = fetched
@@ -359,14 +377,14 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.serverTools = append(man.serverTools, toAdd...)
 					man.toolsLock.Unlock()
 
-					man.logger.Debug("updating gateway tools", "upstream mcp server", man.mcp.ID(), "adding", len(toAdd), "removing", len(toRemove))
+					man.logger.DebugContext(ctx, "updating gateway tools", "upstream mcp server", man.mcp.ID(), "adding", len(toAdd), "removing", len(toRemove))
 					if len(toRemove) > 0 {
 						man.gatewayServer.DeleteTools(toRemove...)
 					}
 					if len(toAdd) > 0 {
 						man.gatewayServer.AddTools(toAdd...)
 					}
-					man.logger.Debug("internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
+					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
 				}
 			}
 		}
@@ -378,13 +396,14 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		currentPrompts, fetchedPrompts, listErr := man.getPrompts(ctx)
 		if listErr != nil {
 			promptErr = fmt.Errorf("upstream mcp failed to list prompts server %s : %w", man.mcp.ID(), listErr)
-			man.logger.Error("failed to list prompts", "upstream mcp server", man.mcp.ID(), "error", promptErr)
+			man.recordBackendError(span, promptErr)
+			man.logger.ErrorContext(ctx, "failed to list prompts", "upstream mcp server", man.mcp.ID(), "error", promptErr)
 		} else {
 			validPrompts, invalids := ValidatePrompts(fetchedPrompts)
 			if len(invalids) > 0 {
-				man.logger.Error("invalid prompts detected", "upstream mcp server", man.mcp.ID(), "invalid", len(invalids), "valid", len(validPrompts))
+				man.logger.ErrorContext(ctx, "invalid prompts detected", "upstream mcp server", man.mcp.ID(), "invalid", len(invalids), "valid", len(validPrompts))
 				for _, info := range invalids {
-					man.logger.Error("invalid prompt", "upstream mcp server", man.mcp.ID(), "prompt", info.Name, "errors", info.Errors)
+					man.logger.ErrorContext(ctx, "invalid prompt", "upstream mcp server", man.mcp.ID(), "prompt", info.Name, "errors", info.Errors)
 				}
 				invalidPrompts = invalids
 				fetchedPrompts = validPrompts
@@ -393,7 +412,8 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 			toAddPrompts, toRemovePrompts := man.diffPrompts(currentPrompts, fetchedPrompts)
 			if conflictErr := man.findPromptConflicts(toAddPrompts); conflictErr != nil {
 				promptErr = fmt.Errorf("upstream mcp failed to add prompts to gateway %s : %w", man.mcp.ID(), conflictErr)
-				man.logger.Error("prompt conflict detected", "upstream mcp server", man.mcp.ID(), "error", promptErr)
+				man.recordBackendError(span, promptErr)
+				man.logger.ErrorContext(ctx, "prompt conflict detected", "upstream mcp server", man.mcp.ID(), "error", promptErr)
 			} else {
 				man.toolsLock.Lock()
 				man.prompts = fetchedPrompts
@@ -411,7 +431,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 				man.serverPrompts = append(man.serverPrompts, toAddPrompts...)
 				man.toolsLock.Unlock()
 
-				man.logger.Debug("updating gateway prompts", "upstream mcp server", man.mcp.ID(), "adding", len(toAddPrompts), "removing", len(toRemovePrompts))
+				man.logger.DebugContext(ctx, "updating gateway prompts", "upstream mcp server", man.mcp.ID(), "adding", len(toAddPrompts), "removing", len(toRemovePrompts))
 				if len(toRemovePrompts) > 0 {
 					man.promptsServer.DeletePrompts(toRemovePrompts...)
 				}
@@ -421,7 +441,13 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 			}
 		}
 	}
-	man.setStatus(errors.Join(toolErr, promptErr), numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
+	jointErr := errors.Join(toolErr, promptErr)
+	man.setStatus(jointErr, numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
+	if jointErr != nil {
+		man.applyBackoff()
+	} else {
+		man.resetBackoff()
+	}
 }
 
 func (man *MCPManager) shouldFetchTools(event eventType) bool {
@@ -462,14 +488,12 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
-		man.applyBackoff()
 		return
 	}
 	man.status.TotalTools = toolCount
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
-	man.resetBackoff()
 }
 
 func (man *MCPManager) resetBackoff() {
@@ -481,6 +505,15 @@ func (man *MCPManager) applyBackoff() {
 	duration := man.backoff.Step()
 	man.logger.Debug("applying backoff", "duration", duration, "upstream mcp server", man.mcp.ID())
 	man.ticker.Reset(duration)
+}
+
+func (man *MCPManager) recordBackendError(span trace.Span, err error) {
+	mcpotel.SpanError(span, err, err.Error())
+	span.SetAttributes(
+		attribute.String("error.type", fmt.Sprintf("%T", err)),
+		attribute.String("error_source", "backend"),
+		attribute.String("mcp.server", man.mcp.GetName()),
+	)
 }
 
 func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {

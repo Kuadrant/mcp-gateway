@@ -13,6 +13,8 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var authorizedCapabilitiesHeader = http.CanonicalHeaderKey("x-mcp-authorized")
@@ -22,8 +24,15 @@ const allowedCapabilitiesClaimKey = "allowed-capabilities"
 
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
-	broker.logger.Debug("FilterTools called", "input_tools_count", len(mcpRes.Tools))
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
+	attrs := []attribute.KeyValue{brokerComponentAttr}
+	if sid := sessionIDFromContext(ctx); sid != "" {
+		attrs = append(attrs, attribute.String("mcp.session.id", sid))
+	}
+	ctx, span := brokerTracer().Start(ctx, "mcp-broker.tools-list", trace.WithAttributes(attrs...))
+	defer span.End()
+
+	broker.logger.DebugContext(ctx, "FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
 	emptyTools := []mcp.Tool{}
 	if len(mcpRes.Tools) == 0 {
@@ -33,13 +42,15 @@ func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.L
 
 	// step 1: apply x-mcp-authorized filtering (JWT-based)
 	tools = broker.applyAuthorizedCapabilitiesFilter(mcpReq.Header, tools)
-	broker.logger.Debug("FilterTools authorized capabilities result", "output_tools_count", len(tools))
+	broker.logger.DebugContext(ctx, "FilterTools authorized capabilities result", "output_tools_count", len(tools))
 
 	// step 2: apply virtual server filtering
 	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
-	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+	broker.logger.DebugContext(ctx, "FilterTools virtual server result", "output_tools_count", len(tools))
+
+	span.SetAttributes(attribute.Int("mcp.tools.count", len(tools)))
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {

@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 
+	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const tracerName = "mcp-router"
+
+var componentAttr = attribute.String("component", "mcp-router")
 
 func tracer() trace.Tracer {
 	return otel.Tracer(tracerName)
@@ -48,6 +50,7 @@ func extractTraceContext(ctx context.Context, headers *corev3.HeaderMap) context
 
 func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
+		componentAttr,
 		attribute.String("mcp.method.name", mcpReq.Method),
 		attribute.String("jsonrpc.protocol.version", mcpReq.JSONRPC),
 	}
@@ -80,8 +83,7 @@ func spanAttributes(mcpReq *MCPRequest) []attribute.KeyValue {
 }
 
 func recordError(span trace.Span, err error, statusCode int32) {
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	mcpotel.SpanError(span, err, err.Error())
 	span.SetAttributes(
 		attribute.String("error.type", fmt.Sprintf("%T", err)),
 		attribute.String("error_source", "ext-proc"),

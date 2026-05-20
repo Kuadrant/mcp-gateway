@@ -44,6 +44,7 @@ go.work.sum
 TODO
 local/
 docs/plans/
+docs/presentations/
 
 # Generated OLM catalog artifacts
 catalog/mcp-gateway-catalog/

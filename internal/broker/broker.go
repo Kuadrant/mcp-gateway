@@ -15,6 +15,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var _ config.Observer = &mcpBrokerImpl{}
@@ -84,6 +85,9 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// elicitationEnabled gates URL elicitation credential collection
+	elicitationEnabled bool
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -120,6 +124,13 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
+// WithElicitationEnabled enables URL elicitation credential collection
+func WithElicitationEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.elicitationEnabled = enabled
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -134,24 +145,42 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	}
 
 	hooks := &server.Hooks{}
+	spanTracker := newRequestSpanTracker()
 
-	// Enhanced session registration to log gateway session assignment
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
-		// Note that AddOnRegisterSession is for GET, not POST, for a session.
-		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
-		mcpBkr.logger.Debug("gateway client session connected", "gatewaySessionID", session.SessionID())
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+		mcpBkr.logger.DebugContext(ctx, "gateway client session connected", "gatewaySessionID", session.SessionID())
 	})
 
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		mcpBkr.logger.Debug("gateway client session unregistered", "gatewaySessionID", session.SessionID())
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+		mcpBkr.logger.DebugContext(ctx, "gateway client session unregistered", "gatewaySessionID", session.SessionID())
 	})
 
-	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
-		mcpBkr.logger.Debug("processing request", "method", method)
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
+		attrs := []attribute.KeyValue{
+			brokerComponentAttr,
+			attribute.String("mcp.method", string(method)),
+		}
+		if sid := sessionIDFromContext(ctx); sid != "" {
+			attrs = append(attrs, attribute.String("mcp.session.id", sid))
+		}
+		spanTracker.start(ctx, id, "mcp-broker.handle-request", attrs...)
+		mcpBkr.logger.DebugContext(ctx, "processing request", "method", method)
 	})
 
-	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
-		mcpBkr.logger.Error("mcp server error", "method", method, "error", err)
+	hooks.AddOnSuccess(func(_ context.Context, id any, _ mcp.MCPMethod, _ any, _ any) {
+		if span, ok := spanTracker.remove(id); ok {
+			span.End()
+		}
+	})
+
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, _ any, err error) {
+		mcpBkr.logger.ErrorContext(ctx, "mcp server error", "method", method, "error", err)
+		span, ok := spanTracker.remove(id)
+		if ok {
+			recordBrokerError(span, err)
+			span.SetAttributes(attribute.String("mcp.method", string(method)))
+			span.End()
+		}
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
@@ -178,7 +207,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	servers := conf.ListServers()
 	virtualServers := conf.ListVirtualServers()
 
-	m.logger.Debug("Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
+	m.logger.DebugContext(ctx, "Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
 	// unregister decommissioned servers
 	m.mcpLock.Lock()
 	defer m.mcpLock.Unlock()
@@ -187,9 +216,9 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		if !slices.ContainsFunc(servers, func(s *config.MCPServer) bool {
 			return serverID == s.ID()
 		}) {
-			m.logger.Info("un-register upstream server", "server id", serverID)
+			m.logger.InfoContext(ctx, "un-register upstream server", "server id", serverID)
 			if man, ok := m.mcpServers[serverID]; ok {
-				m.logger.Info("stopping manager for unregistered server", "server id", serverID)
+				m.logger.InfoContext(ctx, "stopping manager for unregistered server", "server id", serverID)
 				man.Stop()
 				delete(m.mcpServers, serverID)
 			}
@@ -200,24 +229,24 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	for _, mcpServer := range servers {
 		man, ok := m.mcpServers[mcpServer.ID()]
 		if ok {
-			m.logger.Info("Server is registered", "mcpID", mcpServer.ID())
+			m.logger.InfoContext(ctx, "Server is registered", "mcpID", mcpServer.ID())
 			// already have a manger
 			if mcpServer.ConfigChanged(man.Config()) {
 				// todo prob could look at just updating the config
-				m.logger.Info("Server Config Changed removing manager", "mcpID", mcpServer.ID())
+				m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 				man.Stop()
 				delete(m.mcpServers, mcpServer.ID())
 			}
 		}
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
-			m.logger.Info("starting new manager", "server id", mcpServer.ID())
+			m.logger.InfoContext(ctx, "starting new manager", "server id", mcpServer.ID())
 			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			if err != nil {
-				m.logger.Error("failed to create manager", "server id", mcpServer.ID(), "error", err)
+				m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
 				continue
 			}
-			m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
+			m.logger.InfoContext(ctx, "Starting manager for", "mcpID", mcpServer.ID())
 			m.mcpServers[mcpServer.ID()] = manager.Start(ctx)
 		}
 	}
@@ -227,7 +256,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		m.virtualServers[vs.Name] = vs
 	}
 	m.vsLock.Unlock()
-	m.logger.Debug("Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
+	m.logger.DebugContext(ctx, "Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
 }
 
 func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]upstream.ActiveMCPServer {
