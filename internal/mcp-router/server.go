@@ -275,7 +275,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
 				}
 				mcpRequest.clientElicitation = clientElicitation
-				if clientElicitation {
+				if clientElicitation && statusCode == "200" {
 					rewriter = &sseRewriter{
 						idMap:      s.ElicitationMap,
 						req:        mcpRequest,
