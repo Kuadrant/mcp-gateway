@@ -262,7 +262,7 @@ var _ = Describe("URL Elicitation", func() {
 		Expect(body).NotTo(ContainSubstring("-32042"))
 	})
 
-	FIt("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", func() {
+	It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing with elicitation capability")
