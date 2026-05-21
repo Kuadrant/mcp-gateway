@@ -118,6 +118,7 @@ gkampitakis
 goautoneg
 GOBIN
 goccy
+gocyclo
 godebug
 gofmt
 gofuzz

@@ -288,7 +288,7 @@ func (man *MCPManager) registerCallbacks() func() {
 
 // manage should be the only entry point that triggers changes to tools
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
-// 1. New logging and tracing from the 'main' branch goes first
+	// 1. New logging and tracing from the 'main' branch goes first
 	man.logger.DebugContext(ctx, "managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 
 	ctx, span := otel.Tracer(mcpotel.BrokerTracerName).Start(ctx, "mcp-broker.upstream-manage",
@@ -306,11 +306,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.Info("server is no longer enabled, removing tools", "upstream mcp server", man.mcp.ID())
 		man.removeAllTools()
 		man.removeAllPrompts()
-		_ = man.mcp.Disconnect() //nolint:errcheck
+		_ = man.mcp.Disconnect()
 		man.setStatus(fmt.Errorf("server is disabled"), 0, 0, nil, nil)
 		return
 	}
-
 
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)

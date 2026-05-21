@@ -48,12 +48,12 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		copy(cat, up.Category)
 	}
 	return config.MCPServer{
-		Name:       up.Name,
-		URL:        up.URL,
-		Prefix:     up.Prefix,
-		State:      up.State,
-		Hostname:   up.Hostname,
-		Credential: up.Credential,
+		Name:                up.Name,
+		URL:                 up.URL,
+		Prefix:              up.Prefix,
+		State:               up.State,
+		Hostname:            up.Hostname,
+		Credential:          up.Credential,
 		TokenURLElicitation: up.TokenURLElicitation,
 		Category:            cat,
 		Hint:                up.Hint,

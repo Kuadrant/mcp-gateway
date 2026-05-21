@@ -121,6 +121,18 @@ var _ = BeforeSuite(func() {
 	err = k8sClient.DeleteAllOf(ctx, &gatewayapiv1.HTTPRoute{}, client.InNamespace(TestServerNameSpace))
 	Expect(err).ToNot(HaveOccurred(), "all existing HTTPRoutes should be removed before the e2e test suite")
 
+	By("cleaning up all existing mcpgatewayextensions")
+	err = k8sClient.DeleteAllOf(ctx, &mcpv1alpha1.MCPGatewayExtension{}, client.InNamespace(SystemNamespace))
+	Expect(err).ToNot(HaveOccurred(), "all existing MCPGatewayExtensions should be removed before the e2e test suite")
+
+	By("waiting for existing mcpgatewayextensions to be fully deleted")
+	Eventually(func(g Gomega) {
+		extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+		err := k8sClient.List(ctx, extList, client.InNamespace(SystemNamespace))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(extList.Items).To(BeEmpty())
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
 	By("setting up MCPGatewayExtension with ReferenceGrant")
 	defaultMCPGatewayExt = NewMCPGatewayExtensionSetup(k8sClient).
 		WithName(MCPExtensionName).
