@@ -23,14 +23,22 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 		responseHeaderBuilder.WithMCPSession(gatewaySessionID)
 	}
 
-	// on initialize responses, record whether the client declared elicitation support.
-	// only store for direct client inits (no mcp-init-host), not hairpin backend inits.
-	if req != nil && req.Method == "initialize" && req.clientSupportsElicitation() {
+	// on initialize responses, record whether the client declared elicitation or
+	// sampling support. only store for direct client inits (no mcp-init-host), not
+	// hairpin backend inits.
+	if req != nil && req.Method == "initialize" {
 		initHost := getSingleValueHeader(requestHeaders.Headers, "mcp-init-host")
 		if initHost == "" {
 			if sid := getSingleValueHeader(responseHeaders.Headers, sessionHeader); sid != "" {
-				if err := s.SessionCache.SetClientElicitation(ctx, sid); err != nil {
-					s.Logger.ErrorContext(ctx, "failed to store client elicitation flag", "error", err)
+				if req.clientSupportsElicitation() {
+					if err := s.SessionCache.SetClientElicitation(ctx, sid); err != nil {
+						s.Logger.ErrorContext(ctx, "failed to store client elicitation flag", "error", err)
+					}
+				}
+				if req.clientSupportsSampling() {
+					if err := s.SessionCache.SetClientSampling(ctx, sid); err != nil {
+						s.Logger.ErrorContext(ctx, "failed to store client sampling flag", "error", err)
+					}
 				}
 			}
 		}

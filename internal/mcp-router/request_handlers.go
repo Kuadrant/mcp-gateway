@@ -92,6 +92,7 @@ type MCPRequest struct {
 	serverName        string            `json:"-"`
 	backendSessionID  string            `json:"-"`
 	clientElicitation bool              `json:"-"`
+	clientSampling    bool              `json:"-"`
 }
 
 // GetSingleHeaderValue returns a single header value
@@ -155,6 +156,23 @@ func (mr *MCPRequest) clientSupportsElicitation() bool {
 	}
 	_, hasElicitation := capsMap["elicitation"]
 	return hasElicitation
+}
+
+// clientSupportsSampling checks if an initialize request declares sampling support
+func (mr *MCPRequest) clientSupportsSampling() bool {
+	if mr.Method != methodInitialize || mr.Params == nil {
+		return false
+	}
+	caps, ok := mr.Params["capabilities"]
+	if !ok {
+		return false
+	}
+	capsMap, ok := caps.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, hasSampling := capsMap["sampling"]
+	return hasSampling
 }
 
 func (mr *MCPRequest) isSamplingResponse() bool {
@@ -781,6 +799,16 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpReq.clientElicitation = clientElicitation
 		}
 
+		// check if the original client declared sampling support
+		if !mcpReq.clientSampling {
+			clientSampling, sErr := s.SessionCache.GetClientSampling(ctx, mcpReq.GetSessionID())
+			if sErr != nil {
+				s.Logger.ErrorContext(ctx, "failed to get client sampling flag", "error", sErr, "session", mcpReq.GetSessionID())
+				return "", NewRouterErrorf(500, "failed to read client sampling flag: %w", sErr)
+			}
+			mcpReq.clientSampling = clientSampling
+		}
+
 		// mint a short-lived JWT bound to the target hostname; the router validates
 		// this token when the hairpin request re-enters the gateway in
 		// HandleNoneToolCall so we can never be tricked into routing to an
@@ -791,7 +819,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpotel.SpanError(initSpan, err, "failed to generate backend-init token")
 			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
 		}
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, mcpReq.clientSampling)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
