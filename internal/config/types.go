@@ -120,6 +120,8 @@ func normalizeState(state string) string {
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
 // This means having a different name, prefix, hostname, credential, state, category, or hint.
 //
+// cspell:disable-next-line
+//
 //nolint:gocyclo
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	if existingConfig.Name != mcpServer.Name ||
