@@ -2,8 +2,10 @@ package mcprouter
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"k8s.io/utils/ptr"
@@ -13,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -1314,7 +1317,7 @@ func TestHandleRequestHeaders(t *testing.T) {
 				},
 			}
 
-			responses, err := server.HandleRequestHeaders(headers)
+			responses, err := server.HandleRequestHeaders(context.Background(), headers)
 
 			require.NoError(t, err)
 			require.Len(t, responses, 1)
@@ -1490,4 +1493,340 @@ func TestHandlePromptGet(t *testing.T) {
 	body := rb.RequestBody.Response.BodyMutation.GetBody()
 	require.Contains(t, string(body), `"name":"myprompt"`)
 	require.NotContains(t, string(body), `"name":"s_myprompt"`)
+}
+
+func testBearerJWT(sub string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"%s"}`, sub)))
+	sig := base64.RawURLEncoding.EncodeToString([]byte("fakesig"))
+	return fmt.Sprintf("Bearer %s.%s.%s", header, payload, sig)
+}
+
+func testBearerJWTNoSub() string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"aud":"gateway"}`))
+	sig := base64.RawURLEncoding.EncodeToString([]byte("fakesig"))
+	return fmt.Sprintf("Bearer %s.%s.%s", header, payload, sig)
+}
+
+func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, tokenElicitationMap elicitation.Map) (*ExtProcServer, string) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+	validToken := jwtManager.Generate()
+
+	// pre-populate session so we skip InitForClient
+	for _, svr := range serverConfigs {
+		_, err := cache.AddSession(context.Background(), validToken, svr.Name, "mock-upstream-session")
+		require.NoError(t, err)
+	}
+
+	server := &ExtProcServer{
+		RoutingConfig: &config.MCPServersConfig{
+			Servers:                    serverConfigs,
+			MCPGatewayExternalHostname: "gateway.example.com",
+		},
+		JWTManager:   jwtManager,
+		Logger:       logger,
+		SessionCache: cache,
+		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+			return nil, fmt.Errorf("should not be called")
+		},
+		Broker:              newMockBroker(serverConfigs, toolMap),
+		ElicitationMap:      mustNewIDMap(t),
+		TokenElicitationMap: tokenElicitationMap,
+		ElicitationEnabled:  true,
+	}
+	return server, validToken
+}
+
+func findHeaderValue(headers []*corev3.HeaderValueOption, key string) (string, bool) {
+	for _, h := range headers {
+		if h.Header.Key == key {
+			return string(h.Header.RawValue), true
+		}
+	}
+	return "", false
+}
+
+func findLastHeaderValue(headers []*corev3.HeaderValueOption, key string) (string, bool) {
+	var result string
+	found := false
+	for _, h := range headers {
+		if h.Header.Key == key {
+			result = string(h.Header.RawValue)
+			found = true
+		}
+	}
+	return result, found
+}
+
+func TestResolveUpstreamToken_NoElicitationConfig(t *testing.T) {
+	// server without TokenURLElicitation → existing behavior unchanged, no auth header injected
+	serverConfigs := []*config.MCPServer{{
+		Name: "plain-server", URL: "http://localhost:8080/mcp", Prefix: "p_", Enabled: true, Hostname: "localhost",
+	}}
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"p_tool": "plain-server"}, nil)
+
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "p_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+	// no authorization header should be injected
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+		require.NotEqual(t, "authorization", h.Header.Key, "should not inject authorization header")
+	}
+}
+
+func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+
+	// pre-populate the user token in the session cache
+	require.NoError(t, server.SessionCache.SetUserToken(context.Background(), validToken, "github", "ghp_cached_token"))
+
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	// token is injected as-is (no "Bearer " prefix) — upstream servers handle both PATs and Bearer tokens
+	var foundAuth bool
+	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+		if h.Header.Key == "authorization" {
+			require.Equal(t, "ghp_cached_token", string(h.Header.RawValue))
+			foundAuth = true
+		}
+	}
+	require.True(t, foundAuth, "authorization header should be injected with cached token")
+}
+
+func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+
+	// mark client as supporting elicitation
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			{Key: "authorization", RawValue: []byte(testBearerJWT("user456"))},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+
+	// should be a RequestBody response routing to broker with elicitation headers
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	headers := rb.RequestBody.GetResponse().GetHeaderMutation().GetSetHeaders()
+
+	elicitationID, ok := findHeaderValue(headers, "x-mcp-elicitation-id")
+	require.True(t, ok, "x-mcp-elicitation-id header should be present")
+	require.NotEmpty(t, elicitationID)
+
+	requestID, ok := findHeaderValue(headers, "x-mcp-request-id")
+	require.True(t, ok, "x-mcp-request-id header should be present")
+	require.NotEmpty(t, requestID)
+
+	serverName, ok := findLastHeaderValue(headers, "x-mcp-servername")
+	require.True(t, ok, "x-mcp-servername header should be present")
+	require.Equal(t, "mcpBroker", serverName)
+
+	path, ok := findLastHeaderValue(headers, ":path")
+	require.True(t, ok, ":path header should be present")
+	require.Equal(t, "/mcp/elicitation", path)
+}
+
+func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+
+	// client does NOT support elicitation (default)
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+	ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+	require.EqualValues(t, 200, ir.ImmediateResponse.Status.Code)
+	body := string(ir.ImmediateResponse.Body)
+	require.Contains(t, body, "does not support elicitation")
+	require.Contains(t, body, "isError")
+}
+
+func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+
+	// JWT present but no sub claim → misconfigured OIDC → error
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			{Key: "authorization", RawValue: []byte(testBearerJWTNoSub())},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+	ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+	require.EqualValues(t, 200, ir.ImmediateResponse.Status.Code)
+	body := string(ir.ImmediateResponse.Body)
+	require.Contains(t, body, "missing sub claim")
+	require.Contains(t, body, "isError")
+}
+
+func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
+	externalURL := "https://auth.example.com/tokens"
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{URL: externalURL},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	headers := rb.RequestBody.GetResponse().GetHeaderMutation().GetSetHeaders()
+
+	elicitationID, ok := findHeaderValue(headers, "x-mcp-elicitation-id")
+	require.True(t, ok, "x-mcp-elicitation-id header should be present")
+	require.NotEmpty(t, elicitationID)
+}
+
+func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
+	serverConfigs := []*config.MCPServer{{
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		TokenURLElicitation: &config.TokenURLElicitationConfig{},
+	}}
+	tokenMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+
+	req := &MCPRequest{
+		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+		Params: map[string]any{"name": "gh_tool"},
+		Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+			{Key: "mcp-session-id", RawValue: []byte(validToken)},
+			{Key: "authorization", RawValue: []byte(testBearerJWT("user123"))},
+		}},
+	}
+	resp := server.RouteMCPRequest(context.Background(), req)
+	require.Len(t, resp, 1)
+	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+	headers := rb.RequestBody.GetResponse().GetHeaderMutation().GetSetHeaders()
+
+	elicitationID, ok := findHeaderValue(headers, "x-mcp-elicitation-id")
+	require.True(t, ok, "x-mcp-elicitation-id header should be present")
+	require.NotEmpty(t, elicitationID)
+
+	entry, lookupOk, lookupErr := tokenMap.Lookup(context.Background(), elicitationID)
+	require.NoError(t, lookupErr)
+	require.True(t, lookupOk, "elicitation entry should exist")
+	require.Equal(t, "user123", entry.Sub)
+	require.Equal(t, "github", entry.ServerName)
+	require.Equal(t, validToken, entry.SessionID)
+}
+
+func TestBuildSSEToolError(t *testing.T) {
+	result := buildSSEToolError("req-1", "something went wrong")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      string `json:"id"`
+		Result  struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	data := extractSSEData(t, result)
+	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, "req-1", envelope.ID)
+	require.True(t, envelope.Result.IsError)
+	require.Len(t, envelope.Result.Content, 1)
+	require.Equal(t, "text", envelope.Result.Content[0].Type)
+	require.Equal(t, "something went wrong", envelope.Result.Content[0].Text)
+}
+
+func extractSSEData(t *testing.T, sse string) string {
+	t.Helper()
+	const prefix = "data: "
+	idx := strings.Index(sse, prefix)
+	require.Greater(t, idx, -1, "SSE should contain data: prefix")
+	rest := sse[idx+len(prefix):]
+	end := strings.Index(rest, "\n")
+	if end == -1 {
+		return rest
+	}
+	return rest[:end]
 }

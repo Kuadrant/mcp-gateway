@@ -1,0 +1,26 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-oidc-policy
+  namespace: gateway-system
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp
+  when:
+    - predicate: "!request.path.startsWith('/.well-known/')"
+  rules:
+    authentication:
+      'keycloak':
+        jwt:
+          issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
+    response:
+      unauthenticated:
+        headers:
+          'WWW-Authenticate':
+            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8001/.well-known/oauth-protected-resource/mcp
+        body:
+          value: |
+            {"error":"Unauthorized","message":"Authentication required"}

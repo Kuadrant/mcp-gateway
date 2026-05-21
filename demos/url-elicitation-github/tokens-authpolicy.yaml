@@ -1,0 +1,31 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-tokens-oidc
+  namespace: mcp-system
+spec:
+  overrides:
+    strategy: merge
+    rules:
+      authentication:
+        oidc:
+          credentials:
+            cookie:
+              name: jwt
+          jwt:
+            issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
+          priority: 0
+      response:
+        success: {}
+        unauthenticated:
+          code: 302
+          headers:
+            location:
+              value: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/auth?client_id=mcp-token-browser&redirect_uri=http%3A%2F%2Fmcp.127-0-0-1.sslip.io%3A8001%2Fauth%2Fcallback&response_type=code&scope=openid
+            set-cookie:
+              expression: >-
+                "target=" + request.path + "; domain=mcp.127-0-0-1.sslip.io; HttpOnly; SameSite=Lax; Path=/auth/callback; Max-Age=300"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-gateway-tokens-route

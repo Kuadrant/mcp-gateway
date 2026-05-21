@@ -4,16 +4,16 @@ This guide covers configuring virtual MCP servers to create focused, curated too
 
 ## Overview
 
-Virtual MCP servers solve a common problem when using MCP Gateway: while aggregating all your MCP tools centrally provides excellent benefits for authentication, authorization, and configuration management, it can overwhelm LLMs and AI agents with too many tools to choose from.
+Virtual MCP servers solve a common problem when using MCP Gateway: while aggregating all your MCP tools and prompts centrally provides excellent benefits for authentication, authorization, and configuration management, it can overwhelm LLMs and AI agents with too many capabilities to choose from.
 
 **Why use virtual MCP servers:**
-- **Focused Tool Sets**: Create specialized collections of tools for specific use cases
-- **Improved AI Performance**: Reduce cognitive load on LLMs by presenting fewer, more relevant tools
-- **Domain-Specific Interfaces**: Group tools by function (e.g., "development tools", "data analysis tools")
-- **Simplified Discovery**: Make it easier for users and agents to find the right tools
+- **Focused Capability Sets**: Create specialized collections of tools and prompts for specific use cases
+- **Improved AI Performance**: Reduce cognitive load on LLMs by presenting fewer, more relevant capabilities
+- **Domain-Specific Interfaces**: Group tools and prompts by function (e.g., "development", "data analysis")
+- **Simplified Discovery**: Make it easier for users and agents to find the right capabilities
 - **Layered Access Control**: Combine with authorization policies for fine-grained access management
 
-Virtual servers work by filtering the complete tool list based on a curated selection, accessed via HTTP headers.
+Virtual servers work by filtering the complete list of tools and prompts based on a curated selection, accessed via HTTP headers.
 
 ## Prerequisites
 
@@ -26,10 +26,11 @@ Virtual servers work by filtering the complete tool list based on a curated sele
 
 A virtual MCP server is defined by an `MCPVirtualServer` custom resource that specifies:
 - **Tool Selection**: Which tools from the aggregated pool to expose
+- **Prompt Selection**: Which prompts from the aggregated pool to expose (if omitted, all prompts are exposed)
 - **Description**: Human-readable description of the virtual server's purpose
 - **Access Method**: Accessed via `X-Mcp-Virtualserver` header with `namespace/name` format
 
-When a client includes the virtual server header, MCP Gateway filters responses to only include the specified tools.
+When a client includes the virtual server header, MCP Gateway filters responses to only include the specified tools and prompts.
 
 ## Step 1: Discover Available Tools
 
@@ -80,6 +81,8 @@ spec:
   - test2_time             # replace with your actual tool names
   - test3_dozen
   - test3_add
+  prompts:
+  - test2_data_summary     # optional: filter exposed prompts
 EOF
 ```
 
@@ -138,6 +141,19 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
 
 **Expected Response**: Only tools specified in the `data-tools` virtual server (the example tools you configured)
 
+### Test Prompt Filtering
+
+```bash
+# Request prompts from the data-tools virtual server
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -H "X-Mcp-Virtualserver: mcp-system/data-tools" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "prompts/list"}' | jq '.result.prompts[].name'
+```
+
+**Expected Response**: Only prompts specified in the `data-tools` virtual server (e.g. `test2_data_summary`)
+
 ### Test Without Virtual Server Header
 
 ```bash
@@ -160,14 +176,14 @@ You can also test virtual servers using MCP Inspector. Connect to your gateway a
 kubectl delete mcpvirtualserver dev-tools data-tools -n mcp-system
 ```
 
-## Authorization and Tool Filtering
+## Authorization and Capability Filtering
 
-Virtual MCP servers are a `tools/list` concept only. They filter which tools a client discovers, but do not affect `tools/call` routing or authorization.
+Virtual MCP servers are a discovery concept only. They filter which tools and prompts a client discovers, but do not affect routing or authorization.
 
-If you have [authentication](./authentication.md) and [user-based tool filtering](./user-based-tool-filter.md) configured, the broker applies two filters sequentially when handling a `tools/list` request with a virtual server header:
+If you have [authentication](./authentication.md) and [user-based tool filtering](./user-based-tool-filter.md) configured, the broker applies two filters sequentially when handling a tools/list or prompts/list request with a virtual server header:
 
-1. **Identity-based filtering** -- the `x-mcp-authorized` header carries a signed JWT with an `allowed-capabilities` claim that reduces the tool list to only the tools the user is authorized for
-2. **Virtual server filtering** -- the `X-Mcp-Virtualserver` header further reduces the list to only tools defined in the MCPVirtualServer resource
+1. **Identity-based filtering** -- the `x-mcp-authorized` header carries a signed JWT with an `allowed-capabilities` claim that reduces the list to only the capabilities (tools and prompts) the user is authorized for
+2. **Virtual server filtering** -- the `X-Mcp-Virtualserver` header further reduces the list to only those defined in the `MCPVirtualServer` resource
 
 The result is the intersection of both filters. For example, if the `accounting` virtual server lists `test1_greet` and `test3_add`, but the user's `x-mcp-authorized` JWT only grants access to `greet` on `mcp-test/test-server1`, they will only see `test1_greet`.
 

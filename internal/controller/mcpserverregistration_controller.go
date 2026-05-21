@@ -394,6 +394,7 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		return nil, err
 	}
 
+	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
 	serverConfig := config.MCPServer{
 		Name:     serverName,
@@ -401,6 +402,14 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		Hostname: serverInfo.Hostname,
 		Prefix:   mcpsr.Spec.Prefix,
 		State:    string(mcpsr.Spec.State),
+		Category: append([]string(nil), mcpsr.Spec.Category...),
+		Hint:     mcpsr.Spec.Hint,
+	}
+
+	if mcpsr.Spec.TokenURLElicitation != nil {
+		serverConfig.TokenURLElicitation = &config.TokenURLElicitationConfig{
+			URL: mcpsr.Spec.TokenURLElicitation.URL,
+		}
 	}
 
 	// add credential env var if configured

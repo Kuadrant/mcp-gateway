@@ -4,6 +4,7 @@
 - [MCPServerRegistrationSpec](#mcpserverregistrationspec)
 - [TargetReference](#targetreference)
 - [SecretReference](#secretreference)
+- [TokenURLElicitationConfig](#tokenurelicitationconfig)
 - [MCPServerRegistrationStatus](#mcpserverregistrationstatus)
 
 ## MCPServerRegistration
@@ -22,6 +23,10 @@
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
 | `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
 | `state` | String | No | Desired operational state of the server. Enum: `Enabled` (default), `Disabled`. When set to `Disabled`, the broker stops connecting to the server and removes its tools from the gateway. The server can be re-enabled at any time by setting this field back to `Enabled` |
+| `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials used exclusively by the broker for tool discovery and session management. Never injected into client `tools/call` requests. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
+| `tokenURLElicitation` | [TokenURLElicitationConfig](#tokenurlelicitationconfig) | No | Enables per-user token collection via URL elicitation (-32042 flow). When set, the router collects tokens from elicitation-capable clients at tool-call time. See [URL Elicitation guide](../guides/url-elicitation.md) |
+| `category` | []String | No | One or more categories for tool discovery filtering. Used by `discover_tools` to let agents filter servers by category. Default: `["uncategorised"]`. Max 3 items, max 128 chars each |
+| `hint` | String | No | Short description of what this MCP server offers. Returned by `discover_tools` to help agents decide which tools to select. Max 256 chars |
 
 ## TargetReference
 
@@ -38,6 +43,33 @@
 |-----------|----------|:------------:|-----------------|
 | `name` | String | Yes | Name of the Secret resource |
 | `key` | String | No | Key within the Secret that contains the credential value. Default: `token` |
+
+## TokenURLElicitationConfig
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `url` | String | No | Overrides the default broker token page URL. When set, users are directed to this external URL instead of the built-in page. The gateway appends `?elicitation_id=<id>` to the URL |
+
+`tokenURLElicitation` and `credentialRef` serve different purposes: `credentialRef` provides the broker with credentials for tool discovery, while `tokenURLElicitation` collects per-user tokens at tool-call time.
+
+**Examples:**
+
+```yaml
+# Minimal: uses the built-in broker token page
+spec:
+  credentialRef:
+    name: my-server-cred
+  tokenURLElicitation: {}
+```
+
+```yaml
+# External URL: directs users to a custom credential page
+spec:
+  credentialRef:
+    name: my-server-cred
+  tokenURLElicitation:
+    url: "https://vault.example.com/ui/tokens"
+```
 
 ## MCPServerRegistrationStatus
 

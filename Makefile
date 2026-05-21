@@ -26,7 +26,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.gitSHA=$(GIT_SHA) -X main.dirty=$(
 
 # Image tag and bundle version derivation (matches kuadrant-operator pattern)
 DEFAULT_IMAGE_TAG = latest
-is_semantic_version = $(shell [[ $(1) =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$ ]] && echo "true")
+is_semantic_version = $(shell echo "$(1)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' && echo "true")
 version_is_semantic := $(call is_semantic_version,$(VERSION))
 ifeq (0.0.0,$(VERSION))
 BUNDLE_VERSION = $(VERSION)
@@ -761,7 +761,7 @@ otel: ## Deploy OpenTelemetry observability stack. Use ISTIO_TRACING=1, AUTH_TRA
 ifeq ($(ISTIO_TRACING),1)
 	kubectl apply -f examples/otel/istio-telemetry.yaml
 	kubectl patch istio default --type='merge' \
-		-p='{"spec":{"values":{"meshConfig":{"enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"$(OTEL_COLLECTOR_HOST)"}}]}}}}'
+		-p='{"spec":{"values":{"meshConfig":{"accessLogFile":"/dev/stdout","enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"$(OTEL_COLLECTOR_HOST)"}}]}}}}'
 	@sleep 5
 endif
 	kubectl set env deployment/mcp-gateway -n $(MCP_GATEWAY_NAMESPACE) \

@@ -19,6 +19,10 @@ type KeyGenerationPolicy string
 // +kubebuilder:validation:Enum=FilterOut;RejectServer
 type InvalidToolPolicy string
 
+// URLElicitationPolicy controls whether URL-based token elicitation is enabled
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type URLElicitationPolicy string
+
 const (
 	// ConditionTypeReady signals if a resource is ready
 	ConditionTypeReady = "Ready"
@@ -49,6 +53,11 @@ const (
 	InvalidToolPolicyFilterOut InvalidToolPolicy = "FilterOut"
 	// InvalidToolPolicyRejectServer rejects all tools from a server if any are invalid
 	InvalidToolPolicyRejectServer InvalidToolPolicy = "RejectServer"
+
+	// URLElicitationEnabled enables URL-based token elicitation and creates a /tokens HTTPRoute
+	URLElicitationEnabled URLElicitationPolicy = "Enabled"
+	// URLElicitationDisabled disables URL-based token elicitation (default)
+	URLElicitationDisabled URLElicitationPolicy = "Disabled"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -97,6 +106,13 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// urlElicitation controls whether URL-based token elicitation is enabled.
+	// Enabled: creates a separate /tokens HTTPRoute and passes --enable-url-elicitation to the broker.
+	// Disabled: no /tokens route is created (default).
+	// +optional
+	// +default="Disabled"
+	URLElicitation URLElicitationPolicy `json:"urlElicitation,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.

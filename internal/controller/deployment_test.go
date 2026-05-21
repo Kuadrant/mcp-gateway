@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -1570,8 +1571,15 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 	}
 
 	route := reconciler.buildGatewayHTTPRoute(mcpExt, "mcp.example.com")
-	if len(route.Spec.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+	if len(route.Spec.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(route.Spec.Rules))
+	}
+
+	if route.Spec.Rules[0].Name == nil || string(*route.Spec.Rules[0].Name) != "mcp" {
+		t.Errorf("expected first rule name = %q, got %v", "mcp", route.Spec.Rules[0].Name)
+	}
+	if route.Spec.Rules[1].Name == nil || string(*route.Spec.Rules[1].Name) != "well-known" {
+		t.Errorf("expected second rule name = %q, got %v", "well-known", route.Spec.Rules[1].Name)
 	}
 
 	var found bool
@@ -1640,6 +1648,13 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			},
 			wantUpdate: true,
 		},
+		{
+			name: "rule name changed",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Spec.Rules[0].Name = nil
+			},
+			wantUpdate: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1650,6 +1665,95 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			needsUpdate, _ := httpRouteNeedsUpdate(desired, existing)
 			if needsUpdate != tt.wantUpdate {
 				t.Errorf("httpRouteNeedsUpdate() = %v, want %v", needsUpdate, tt.wantUpdate)
+			}
+		})
+	}
+}
+
+func TestBuildTokensHTTPRoute(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:        "my-gateway",
+				Namespace:   "gateway-ns",
+				SectionName: "mcp",
+			},
+		},
+	}
+
+	route := reconciler.buildTokensHTTPRoute(mcpExt, "mcp.example.com")
+	if route.Name != tokensHTTPRouteName {
+		t.Errorf("name = %q, want %q", route.Name, tokensHTTPRouteName)
+	}
+	if len(route.Spec.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+	}
+	if route.Spec.Rules[0].Name == nil || string(*route.Spec.Rules[0].Name) != "tokens" {
+		t.Errorf("expected rule name = %q, got %v", "tokens", route.Spec.Rules[0].Name)
+	}
+	pathVal := route.Spec.Rules[0].Matches[0].Path.Value
+	if pathVal == nil || *pathVal != "/tokens" {
+		t.Errorf("expected path /tokens, got %v", pathVal)
+	}
+	if len(route.Spec.Rules[0].Filters) != 0 {
+		t.Errorf("expected no filters on tokens route, got %d", len(route.Spec.Rules[0].Filters))
+	}
+}
+
+func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+
+	tests := []struct {
+		name     string
+		policy   mcpv1alpha1.URLElicitationPolicy
+		wantFlag bool
+	}{
+		{
+			name:     "enabled",
+			policy:   mcpv1alpha1.URLElicitationEnabled,
+			wantFlag: true,
+		},
+		{
+			name:     "disabled",
+			policy:   mcpv1alpha1.URLElicitationDisabled,
+			wantFlag: false,
+		},
+		{
+			name:     "empty (default)",
+			policy:   "",
+			wantFlag: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "test-ns",
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:        "my-gateway",
+						Namespace:   "gateway-ns",
+						SectionName: "mcp",
+					},
+					URLElicitation: tt.policy,
+				},
+			}
+
+			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+			cmd := dep.Spec.Template.Spec.Containers[0].Command
+			hasFlag := slices.Contains(cmd, "--enable-url-elicitation")
+			if hasFlag != tt.wantFlag {
+				t.Errorf("--enable-url-elicitation present = %v, want %v", hasFlag, tt.wantFlag)
 			}
 		})
 	}

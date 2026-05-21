@@ -19,6 +19,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
@@ -29,6 +30,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	redis "github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -70,6 +73,9 @@ var (
 	enforceCapabilityFilteringFlag bool
 	invalidToolPolicyFlag          string
 	maxRequestBodySize             int
+	enableURLElicitationFlag       bool
+	discoveryToolsEnabledFlag      bool
+	discoveryToolThresholdFlag     int
 )
 
 func main() {
@@ -130,6 +136,9 @@ func main() {
 	flag.BoolVar(&enforceCapabilityFilteringFlag, "enforce-capability-filtering", false, "when enabled an x-mcp-authorized header will be needed to return any capabilities (tools, prompts)")
 	flag.StringVar(&invalidToolPolicyFlag, "invalid-tool-policy", "FilterOut", "policy for upstream tools with invalid schemas: FilterOut (default) or RejectServer")
 	flag.IntVar(&maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
+	flag.BoolVar(&enableURLElicitationFlag, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
+	flag.BoolVar(&discoveryToolsEnabledFlag, "discovery-tools-enabled", true, "enable discover_tools and select_tools meta-tools for progressive tool discovery")
+	flag.IntVar(&discoveryToolThresholdFlag, "discovery-tool-threshold", 0, "tool count above which real tools are hidden and only meta-tools are shown. 0 means never hide.")
 	flag.Parse()
 
 	loggerOpts := &slog.HandlerOptions{}
@@ -173,7 +182,16 @@ func main() {
 		}
 	}
 
-	sessionCache, err := session.NewCache(session.WithRedisClient(redisClient))
+	var sessionCacheOpts []func(*session.Cache)
+	sessionCacheOpts = append(sessionCacheOpts, session.WithRedisClient(redisClient))
+	if redisClient != nil {
+		encKey, encErr := session.DeriveEncryptionKey([]byte(jwtSigningKeyFlag))
+		if encErr != nil {
+			panic("failed to derive encryption key: " + encErr.Error())
+		}
+		sessionCacheOpts = append(sessionCacheOpts, session.WithEncryptionKey(encKey))
+	}
+	sessionCache, err := session.NewCache(sessionCacheOpts...)
 	if err != nil {
 		panic("failed to setup session cache: " + err.Error())
 	}
@@ -197,6 +215,11 @@ func main() {
 		panic("failed to setup elicitation map: " + err.Error())
 	}
 
+	tokenElicitationMap, err := elicitation.New(elicitation.WithRedisClient(redisClient))
+	if err != nil {
+		panic("failed to setup token elicitation map: " + err.Error())
+	}
+
 	invalidToolPolicy := mcpv1alpha1.InvalidToolPolicy(invalidToolPolicyFlag)
 	if invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyFilterOut && invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyRejectServer {
 		panic("--invalid-tool-policy must be FilterOut or RejectServer")
@@ -211,9 +234,17 @@ func main() {
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
+		broker.WithElicitationEnabled(enableURLElicitationFlag),
+		broker.WithDiscoveryToolsEnabled(discoveryToolsEnabledFlag),
+		broker.WithDiscoveryToolThreshold(discoveryToolThresholdFlag),
 	)
-	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs)
-	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap)
+	tokenHandler := broker.NewTokenHandler(sessionCache, tokenElicitationMap, *logger)
+	elicitationHandler := &broker.ElicitationHandler{
+		ElicitationMap: tokenElicitationMap,
+		Config:         mcpConfig,
+	}
+	brokerServer, mcpServer := setUpHTTPServer(mcpBrokerAddrFlag, mcpBroker, jwtSessionMgr, brokerWriteTimeoutSecs, tokenHandler, elicitationHandler)
+	routerGRPCServer, router := setUpRouter(mcpBroker, logger, jwtSessionMgr, sessionCache, elicitationMap, tokenElicitationMap)
 	mcpConfig.RegisterObserver(router)
 	mcpConfig.RegisterObserver(mcpBroker)
 	if mcpRoutePublicHost == "" {
@@ -305,7 +336,7 @@ func main() {
 	}
 }
 
-func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager *session.JWTManager, writeTimeoutSecs int64) (*http.Server, *server.StreamableHTTPServer) {
+func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager *session.JWTManager, writeTimeoutSecs int64, tokenHandler http.Handler, elicitationHandler http.Handler) (*http.Server, *server.StreamableHTTPServer) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -356,23 +387,29 @@ func setUpHTTPServer(address string, mcpBroker broker.MCPBroker, sessionManager 
 
 	mux.HandleFunc("/status", mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", mcpBroker.HandleStatusRequest)
-	mux.Handle("/mcp", streamableHTTPServer)
+	if enableURLElicitationFlag {
+		mux.Handle("/tokens", tokenHandler)
+		mux.Handle("/mcp/elicitation", elicitationHandler)
+	}
+	mux.Handle("/mcp", traceContextMiddleware(streamableHTTPServer))
 
 	return httpSrv, streamableHTTPServer
 }
 
-func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
+func setUpRouter(broker broker.MCPBroker, logger *slog.Logger, jwtManager *session.JWTManager, sessionCache *session.Cache, elicitationMap idmap.Map, tokenElicitationMap elicitation.Map) (*grpc.Server, *mcpRouter.ExtProcServer) {
 
 	grpcSrv := grpc.NewServer()
 	server := &mcpRouter.ExtProcServer{
-		RoutingConfig:      mcpConfig,
-		Logger:             logger.With("component", "router"),
-		JWTManager:         jwtManager,
-		InitForClient:      clients.Initialize,
-		SessionCache:       sessionCache,
-		ElicitationMap:     elicitationMap,
-		Broker:             broker, // TODO we shouldn't need a handle to broker in the router
-		MaxRequestBodySize: maxRequestBodySize,
+		RoutingConfig:       mcpConfig,
+		Logger:              logger.With("component", "router"),
+		JWTManager:          jwtManager,
+		InitForClient:       clients.Initialize,
+		SessionCache:        sessionCache,
+		ElicitationMap:      elicitationMap,
+		TokenElicitationMap: tokenElicitationMap,
+		Broker:              broker, // TODO we shouldn't need a handle to broker in the router
+		MaxRequestBodySize:  maxRequestBodySize,
+		ElicitationEnabled:  enableURLElicitationFlag,
 	}
 
 	extProcV3.RegisterExternalProcessorServer(grpcSrv, server)
@@ -422,4 +459,11 @@ func LoadConfig(path string) {
 			s.Hostname,
 		)
 	}
+}
+
+func traceContextMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
