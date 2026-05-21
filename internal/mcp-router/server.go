@@ -48,8 +48,10 @@ type ExtProcServer struct {
 	Logger             *slog.Logger
 	InitForClient      InitForClient
 	SessionCache       SessionCache
-	ElicitationMap     idmap.Map
-	initFlight         singleflight.Group
+	ElicitationMap      idmap.Map
+	ElicitationEnabled  bool
+	TokenElicitationMap elicitation.Map
+	initFlight          singleflight.Group
 	MaxRequestBodySize int
 	//TODO this should not be needed
 	Broker broker.MCPBroker
