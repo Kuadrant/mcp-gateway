@@ -1567,7 +1567,7 @@ func findLastHeaderValue(headers []*corev3.HeaderValueOption, key string) (strin
 func TestResolveUpstreamToken_NoElicitationConfig(t *testing.T) {
 	// server without TokenURLElicitation → existing behavior unchanged, no auth header injected
 	serverConfigs := []*config.MCPServer{{
-		Name: "plain-server", URL: "http://localhost:8080/mcp", Prefix: "p_", Enabled: true, Hostname: "localhost",
+		Name: "plain-server", URL: "http://localhost:8080/mcp", Prefix: "p_", State: "Enabled", Hostname: "localhost",
 	}}
 	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"p_tool": "plain-server"}, nil)
 
@@ -1591,7 +1591,7 @@ func TestResolveUpstreamToken_NoElicitationConfig(t *testing.T) {
 
 func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
 	tokenMap, err := elicitation.New()
@@ -1627,7 +1627,7 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 
 func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
 	tokenMap, err := elicitation.New()
@@ -1673,7 +1673,7 @@ func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
 
 func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
 	tokenMap, err := elicitation.New()
@@ -1701,7 +1701,7 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 
 func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
 	tokenMap, err := elicitation.New()
@@ -1731,7 +1731,7 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
 	externalURL := "https://auth.example.com/tokens"
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{URL: externalURL},
 	}}
 	tokenMap, err := elicitation.New()
@@ -1760,7 +1760,7 @@ func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
 
 func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	serverConfigs := []*config.MCPServer{{
-		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", Enabled: true, Hostname: "github.mcp",
+		Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
 		TokenURLElicitation: &config.TokenURLElicitationConfig{},
 	}}
 	tokenMap, err := elicitation.New()
