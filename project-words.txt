@@ -427,3 +427,8 @@ deadbeefcafebabe
 myprompt
 promptname
 rescope
+forcetypeassert
+benchmarkaction
+customSmallerIsBetter
+ttlSecondsAfterFinished
+k6mcp
