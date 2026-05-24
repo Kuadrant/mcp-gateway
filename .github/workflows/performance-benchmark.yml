@@ -63,37 +63,9 @@ jobs:
       - name: Setup performance test environment
         run: make perf-ci-setup
 
-      # Apply the in-cluster k6 Job and wait for it to complete
-      - name: Run benchmark Job
-        run: |
-          kubectl apply -f tests/perf/manifests/k6-benchmark-job.yaml
-          echo "Waiting for benchmark Job to complete..."
-          kubectl wait \
-            --for=condition=complete \
-            job/mcp-gateway-benchmark \
-            -n mcp-test \
-            --timeout=180s
-
-      # Copy the summary JSON out of the completed pod's results volume
-      - name: Extract benchmark results
-        run: |
-          POD=$(kubectl get pod \
-            -n mcp-test \
-            -l app=mcp-gateway-benchmark \
-            -o jsonpath='{.items[0].metadata.name}')
-          echo "Extracting results from pod: $POD"
-          kubectl cp "mcp-test/${POD}:/results/summary.json" ./k6-summary.json
-          echo "=== k6 summary ==="
-          cat ./k6-summary.json
-
-      # Convert k6 summary → customSmallerIsBetter JSON for benchmark-action
-      - name: Convert results to benchmark format
-        run: |
-          chmod +x tests/perf/scripts/convert-k6-to-benchmark.sh
-          tests/perf/scripts/convert-k6-to-benchmark.sh k6-summary.json \
-            > benchmark-results.json
-          echo "=== benchmark results ==="
-          cat benchmark-results.json
+      # Run the in-cluster k6 Job, extract the JSON via pod logs, and convert to benchmark format
+      - name: Run and extract benchmark
+        run: make perf-ci-run
 
       # Track results over time and gate on regression
       # Note: auto-push requires a gh-pages branch and GitHub Pages to be enabled.
@@ -103,7 +75,7 @@ jobs:
         with:
           name: MCP Gateway Performance
           tool: customSmallerIsBetter
-          output-file-path: benchmark-results.json
+          output-file-path: out/perf/benchmark-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           # Fail the workflow if any metric degrades by more than 30 %
