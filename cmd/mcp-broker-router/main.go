@@ -195,7 +195,7 @@ func main() {
 	var sessionCacheOpts []func(*session.Cache)
 	sessionCacheOpts = append(sessionCacheOpts, session.WithRedisClient(redisClient))
 	if redisClient != nil {
-		encKey, encErr := session.DeriveEncryptionKey([]byte(jwtSigningKeyFlag))
+		encKey, encErr := session.DeriveEncryptionKey([]byte(gatewaySigningKeyFlag))
 		if encErr != nil {
 			panic("failed to derive encryption key: " + encErr.Error())
 		}

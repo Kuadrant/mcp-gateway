@@ -2,6 +2,7 @@ package mcprouter
 
 import (
 	"context"
+	"time"
 
 	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -29,7 +30,15 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 		initHost := getSingleValueHeader(requestHeaders.Headers, "mcp-init-host")
 		if initHost == "" {
 			if sid := getSingleValueHeader(responseHeaders.Headers, sessionHeader); sid != "" {
-				if err := s.SessionCache.SetClientElicitation(ctx, sid); err != nil {
+				ttl := time.Duration(0)
+				if s.JWTManager != nil {
+					if expiresAt, jwtErr := s.JWTManager.GetExpiresIn(sid); jwtErr == nil {
+						ttl = time.Until(expiresAt)
+					}
+				}
+				if ttl <= 0 {
+					s.Logger.ErrorContext(ctx, "skipping client elicitation flag: session TTL not positive", "sid", sid)
+				} else if err := s.SessionCache.SetClientElicitation(ctx, sid, ttl); err != nil {
 					s.Logger.ErrorContext(ctx, "failed to store client elicitation flag", "error", err)
 				}
 			}

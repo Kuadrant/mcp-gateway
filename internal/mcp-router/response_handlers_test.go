@@ -141,7 +141,7 @@ func TestHandleResponseHeaders_404RemovesServerSession(t *testing.T) {
 	serverName := "test-server"
 
 	// add a session to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456", 0)
 	require.NoError(t, err)
 
 	// verify session exists
@@ -253,9 +253,9 @@ func TestHandleResponseHeaders_404WithMultipleServerSessions(t *testing.T) {
 	serverName2 := "server2"
 
 	// add multiple server sessions to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName1, "upstream-session-1")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName1, "upstream-session-1", 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName2, "upstream-session-2")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName2, "upstream-session-2", 0)
 	require.NoError(t, err)
 
 	// verify both sessions exist
@@ -323,7 +323,7 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotRemoveSession(t *testing.T) {
 	serverName := "test-server"
 
 	// add a session to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456", 0)
 	require.NoError(t, err)
 
 	// request headers with gateway session ID
@@ -379,13 +379,16 @@ func TestHandleResponseHeaders_StoresElicitationForDirectInit(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
+	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	require.NoError(t, err)
+	brokerSessionID := jwtManager.Generate()
+
 	srv := &ExtProcServer{
 		Logger:       logger,
 		SessionCache: cache,
 		Broker:       newMockBroker(nil, map[string]string{}),
+		JWTManager:   jwtManager,
 	}
-
-	brokerSessionID := "broker-session-jwt-123"
 
 	// no mcp-session-id (first init), no mcp-init-host (direct client request)
 	requestHeaders := &eppb.HttpHeaders{

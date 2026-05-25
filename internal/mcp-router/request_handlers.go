@@ -777,6 +777,15 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			sessionCloser()
 			return "", NewRouterError(404, fmt.Errorf("invalid session"))
 		}
+		// compute once: reuse for both the Redis TTL and the cleanup timer so they
+		// are always in sync, and guard against a near-zero/negative value which
+		// would make the Redis write non-expiring.
+		ttl := time.Until(expiresAt)
+		if ttl <= 0 {
+			s.Logger.ErrorContext(ctx, "session already expired, forcing reset", "session", mcpReq.GetSessionID())
+			sessionCloser()
+			return "", NewRouterError(404, fmt.Errorf("invalid session"))
+		}
 		remoteSessionID := clientHandle.GetSessionId()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
 		{
@@ -786,7 +795,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 					attribute.String("mcp.server", mcpServerConfig.Name),
 				),
 			)
-			_, storeErr := s.SessionCache.AddSession(ctx, mcpReq.GetSessionID(), mcpServerConfig.Name, remoteSessionID)
+			_, storeErr := s.SessionCache.AddSession(ctx, mcpReq.GetSessionID(), mcpServerConfig.Name, remoteSessionID, ttl)
 			if storeErr != nil {
 				mcpotel.SpanError(storeSpan, storeErr, "session cache store failed")
 			}
@@ -801,7 +810,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			}
 		}
 		// arm the cleanup timer only after the session is safely recorded in the cache
-		time.AfterFunc(time.Until(expiresAt), sessionCloser)
+		time.AfterFunc(ttl, sessionCloser)
 		return remoteSessionID, nil
 	})
 	if err != nil {

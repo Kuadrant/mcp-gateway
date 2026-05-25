@@ -176,7 +176,7 @@ func TestHandleRequestBody(t *testing.T) {
 
 	// Pre-populate the session cache so InitForClient won't be called
 	// This simulates the case where the session already exists
-	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id", 0)
 	require.NoError(t, err)
 	require.True(t, sessionAdded)
 
@@ -1425,7 +1425,7 @@ func TestHandlePromptGet(t *testing.T) {
 
 	validToken := jwtManager.Generate()
 
-	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id")
+	sessionAdded, err := cache.AddSession(context.Background(), validToken, "dummy", "mock-upstream-session-id", 0)
 	require.NoError(t, err)
 	require.True(t, sessionAdded)
 
@@ -1520,7 +1520,7 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 
 	// pre-populate session so we skip InitForClient
 	for _, svr := range serverConfigs {
-		_, err := cache.AddSession(context.Background(), validToken, svr.Name, "mock-upstream-session")
+		_, err := cache.AddSession(context.Background(), validToken, svr.Name, "mock-upstream-session", 0)
 		require.NoError(t, err)
 	}
 
@@ -1636,7 +1636,7 @@ func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
 	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
 	// mark client as supporting elicitation
-	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken, 0))
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
@@ -1738,7 +1738,7 @@ func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
 	require.NoError(t, err)
 
 	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
-	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken, 0))
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
@@ -1767,7 +1767,7 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	require.NoError(t, err)
 
 	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
-	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken))
+	require.NoError(t, server.SessionCache.SetClientElicitation(context.Background(), validToken, 0))
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",

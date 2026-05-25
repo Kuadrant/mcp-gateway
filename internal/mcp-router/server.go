@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -25,11 +26,11 @@ var _ config.Observer = &ExtProcServer{}
 // SessionCache defines how the router interacts with a store to store and retrieves sessions
 type SessionCache interface {
 	GetSession(ctx context.Context, key string) (map[string]string, error)
-	AddSession(ctx context.Context, key, mcpID, mcpSession string) (bool, error)
+	AddSession(ctx context.Context, key, mcpID, mcpSession string, ttl time.Duration) (bool, error)
 	DeleteSessions(ctx context.Context, key ...string) error
 	RemoveServerSession(ctx context.Context, key, mcpServerID string) error
 	KeyExists(ctx context.Context, key string) (bool, error)
-	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
+	SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
 	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
