@@ -403,7 +403,8 @@ func LoadConfig(path string) {
 	} else {
 		logger.Debug("No virtualServers section found in configuration")
 	}
-	mcpConfig.SetServers(newServers, newVirtualServers)
+	caCertBundle := viper.GetString("caCertBundle")
+	mcpConfig.SetServers(newServers, newVirtualServers, caCertBundle)
 
 	logger.Debug("config successfully loaded", "# servers", len(newServers))
 

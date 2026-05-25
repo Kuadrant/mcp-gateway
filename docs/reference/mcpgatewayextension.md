@@ -27,6 +27,7 @@
 | `httpRouteManagement` | String | No | Controls whether the operator manages the gateway HTTPRoute. `Enabled` (default): creates and manages the HTTPRoute. `Disabled`: does not create an HTTPRoute. Disabling does not delete a previously created route |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
 | `audit` | [AuditConfig](#auditconfig) | No | Configures the MCP audit trail via Envoy access logs. When set, the operator adds an access log to the gateway and injects audit env vars into the router deployment. When not set, no audit access log is added |
+| `caCertBundleRef` | [SecretReference](#secretreference) | No | References a Secret containing a shared CA bundle used to validate the TLS certificates of all upstream MCP servers. These certificates are added to the broker's base trust pool |
 
 ## MCPGatewayExtensionTargetReference
 
@@ -80,3 +81,10 @@
 | `DeploymentNotReady` | The broker-router deployment is not ready |
 | `SecretNotFound` | A referenced secret is missing (trusted headers or session store) |
 | `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store) |
+
+## SecretReference
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `name` | String | Yes | Name of the Secret resource |
+| `key` | String | No | Key within the Secret that contains the data. For CA certificates, defaults to `ca.crt` |

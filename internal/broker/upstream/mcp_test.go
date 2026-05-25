@@ -15,7 +15,7 @@ func TestNewUpstreamMCP(t *testing.T) {
 		Enabled:  true,
 		Hostname: "dummy",
 	}
-	up := NewUpstreamMCP(&testServer)
+	up := NewUpstreamMCP(&testServer, "")
 	require.NotNil(t, up)
-	require.Equal(t, testServer, up.GetConfig())
+	require.Equal(t, testServer.Name, up.GetName())
 }

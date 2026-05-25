@@ -50,7 +50,7 @@ func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context
 }
 
 // enqueueMCPGatewayExtForSecret maps a secret change to MCPGatewayExtension reconcile requests.
-// It enqueues extensions that reference the secret via trustedHeadersKey or sessionStore.
+// It enqueues extensions that reference the secret via trustedHeadersKey, sessionStore, or caCertBundleRef.
 func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
 
@@ -68,6 +68,12 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForSecret(ctx contex
 			continue
 		}
 		if ext.Spec.TrustedHeadersKey != nil && ext.Spec.TrustedHeadersKey.SecretName == secret.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: ext.Name, Namespace: ext.Namespace},
+			})
+			continue
+		}
+		if ext.Spec.CaCertBundleRef != nil && ext.Spec.CaCertBundleRef.Name == secret.Name {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: ext.Name, Namespace: ext.Namespace},
 			})

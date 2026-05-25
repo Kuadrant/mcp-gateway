@@ -413,6 +413,33 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		serverConfig.Credential = string(val)
 
 	}
+
+	// add CA cert if configured
+	if mcpsr.Spec.CaCertSecretRef != nil {
+		secret := &corev1.Secret{}
+		err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
+			Name:      mcpsr.Spec.CaCertSecretRef.Name,
+			Namespace: mcpsr.Namespace,
+		}, secret)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("CA cert secret %s not found", mcpsr.Spec.CaCertSecretRef.Name)
+			}
+			return nil, fmt.Errorf("failed to get CA cert secret: %w", err)
+		}
+
+		key := mcpsr.Spec.CaCertSecretRef.Key
+		if key == "" {
+			key = "ca.crt" // default for CA certs
+		}
+
+		val, ok := secret.Data[key]
+		if !ok {
+			return nil, fmt.Errorf("CA cert secret %s missing key %s", mcpsr.Spec.CaCertSecretRef.Name, key)
+		}
+		serverConfig.CACert = string(val)
+	}
+
 	return &serverConfig, nil
 }
 

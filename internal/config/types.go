@@ -21,6 +21,8 @@ type MCPServersConfig struct {
 	//MCPGatewayExternalHostname is the accessible host of the gateway listener
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
+	// CACertBundle is the shared trust pool for all upstreams
+	CACertBundle string
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -31,12 +33,13 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 	config.observers = append(config.observers, obs)
 }
 
-// SetServers atomically replaces the server and virtual-server lists.
-func (config *MCPServersConfig) SetServers(servers []*MCPServer, virtualServers []*VirtualServer) {
+// SetServers atomically replaces the server and virtual-server lists and CA bundle.
+func (config *MCPServersConfig) SetServers(servers []*MCPServer, virtualServers []*VirtualServer, caCertBundle string) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.Servers = servers
 	config.VirtualServers = virtualServers
+	config.CACertBundle = caCertBundle
 }
 
 // ListServers returns a consistent snapshot of the current server list.
@@ -88,6 +91,7 @@ type MCPServer struct {
 	Prefix     string      `json:"prefix,omitempty"     yaml:"prefix,omitempty"`
 	Auth       *AuthConfig `json:"auth,omitempty"       yaml:"auth,omitempty"`
 	Credential string      `json:"credential,omitempty" yaml:"credential,omitempty"`
+	CACert     string      `json:"caCert,omitempty"     yaml:"caCert,omitempty"`
 	Enabled    bool        `json:"enabled"              yaml:"enabled"`
 }
 
@@ -97,12 +101,13 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, hostname, or credential variable.
+// This means having a different name, prefix, hostname, credential variable, or CA cert.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
-		existingConfig.Credential != mcpServer.Credential
+		existingConfig.Credential != mcpServer.Credential ||
+		existingConfig.CACert != mcpServer.CACert
 }
 
 // Path returns the path part of the mcp url
@@ -130,6 +135,7 @@ type Observer interface {
 type BrokerConfig struct {
 	Servers        []MCPServer           `json:"servers" yaml:"servers"`
 	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
+	CACertBundle   string                `json:"caCertBundle,omitempty"    yaml:"caCertBundle,omitempty"`
 }
 
 // AuthConfig holds auth configuration

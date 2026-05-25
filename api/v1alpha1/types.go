@@ -62,6 +62,11 @@ type MCPServerRegistrationSpec struct {
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// caCertSecretRef references a Secret containing a custom CA certificate for validating the MCP server's TLS certificate.
+	// The Secret must contain a PEM-encoded CA certificate. If not specified, the system's default trust pool is used.
+	// +optional
+	CaCertSecretRef *SecretReference `json:"caCertSecretRef,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

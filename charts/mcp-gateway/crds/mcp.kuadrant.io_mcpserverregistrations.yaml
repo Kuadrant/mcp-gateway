@@ -71,6 +71,24 @@ spec:
           spec:
             description: spec defines the desired state of MCPServerRegistration.
             properties:
+              caCertSecretRef:
+                description: |-
+                  caCertSecretRef references a Secret containing a custom CA certificate for validating the MCP server's TLS certificate.
+                  The Secret must contain a PEM-encoded CA certificate. If not specified, the system's default trust pool is used.
+                properties:
+                  key:
+                    default: token
+                    description: |-
+                      key is the key within the Secret that contains the credential value.
+                      If not specified, defaults to "token".
+                    type: string
+                  name:
+                    description: name is the name of the Secret resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               credentialRef:
                 description: |-
                   credentialRef references a Secret containing authentication credentials for the MCP server.

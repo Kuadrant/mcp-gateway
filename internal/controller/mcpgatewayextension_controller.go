@@ -98,6 +98,7 @@ type ConfigWriterDeleter interface {
 	DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error
 	EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error
 	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
+	WriteCACertBundle(ctx context.Context, bundle string, namespaceName types.NamespacedName) error
 }
 
 // MCPGatewayExtensionReconciler reconciles a MCPGatewayExtension object
@@ -226,6 +227,14 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if err := r.validateSessionStore(ctx, mcpExt); err != nil {
+		var valErr *validationError
+		if errors.As(err, &valErr) {
+			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileCACertBundle(ctx, mcpExt); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
@@ -924,4 +933,36 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForSecret)).
 		Named("mcpgatewayextension").
 		Complete(r)
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileCACertBundle(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+	if mcpExt.Spec.CaCertBundleRef == nil {
+		return r.ConfigWriterDeleter.WriteCACertBundle(ctx, "", config.NamespaceName(mcpExt.Namespace))
+	}
+
+	secret := &corev1.Secret{}
+	err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
+		Name:      mcpExt.Spec.CaCertBundleRef.Name,
+		Namespace: mcpExt.Namespace,
+	}, secret)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+				fmt.Sprintf("CA cert bundle secret %s not found", mcpExt.Spec.CaCertBundleRef.Name))
+		}
+		return fmt.Errorf("failed to get CA cert bundle secret: %w", err)
+	}
+
+	key := mcpExt.Spec.CaCertBundleRef.Key
+	if key == "" {
+		key = "ca.crt" // default for CA bundles
+	}
+
+	val, ok := secret.Data[key]
+	if !ok {
+		return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+			fmt.Sprintf("CA cert bundle secret %s missing key %s", mcpExt.Spec.CaCertBundleRef.Name, key))
+	}
+
+	return r.ConfigWriterDeleter.WriteCACertBundle(ctx, string(val), config.NamespaceName(mcpExt.Namespace))
 }

@@ -97,6 +97,11 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// caCertBundleRef references a Secret containing a shared CA bundle used to validate the TLS certificates of all upstream MCP servers.
+	// The Secret must contain one or more PEM-encoded CA certificates. These are added to the broker's base trust pool.
+	// +optional
+	CaCertBundleRef *SecretReference `json:"caCertBundleRef,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.

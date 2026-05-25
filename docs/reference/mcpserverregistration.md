@@ -21,6 +21,7 @@
 | `prefix` | String | No | Prefix added to all federated tools from referenced servers. Avoids naming conflicts when aggregating tools from multiple sources (e.g. `server1_search` and `server2_search`). Immutable once set |
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
 | `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials. The secret must have the label `mcp.kuadrant.io/secret=true`. Credentials are made available to the broker via `KAGENTI_{NAME}_CRED` env vars |
+| `caCertSecretRef` | [SecretReference](#secretreference) | No | References a Secret containing a custom CA certificate used to validate the TLS certificate of this specific upstream MCP server |
 
 ## TargetReference
 
@@ -36,7 +37,7 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `name` | String | Yes | Name of the Secret resource |
-| `key` | String | No | Key within the Secret that contains the credential value. Default: `token` |
+| `key` | String | No | Key within the Secret that contains the value. Default: `token` for credentials, `ca.crt` for CA certificates |
 
 ## MCPServerRegistrationStatus
 

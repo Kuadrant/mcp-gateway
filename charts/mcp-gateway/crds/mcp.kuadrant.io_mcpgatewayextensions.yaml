@@ -65,6 +65,24 @@ spec:
                 maximum: 7200
                 minimum: 10
                 type: integer
+              caCertBundleRef:
+                description: |-
+                  caCertBundleRef references a Secret containing a shared CA bundle used to validate the TLS certificates of all upstream MCP servers.
+                  The Secret must contain one or more PEM-encoded CA certificates. These are added to the broker's base trust pool.
+                properties:
+                  key:
+                    default: token
+                    description: |-
+                      key is the key within the Secret that contains the credential value.
+                      If not specified, defaults to "token".
+                    type: string
+                  name:
+                    description: name is the name of the Secret resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               httpRouteManagement:
                 default: Enabled
                 description: |-

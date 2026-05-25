@@ -2,7 +2,10 @@ package upstream
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -16,18 +19,20 @@ import (
 // initialization state from the MCP handshake.
 type MCPServer struct {
 	*config.MCPServer
-	client   *client.Client
-	clientMu sync.RWMutex
-	headers  map[string]string
-	init     *mcp.InitializeResult
+	SharedCACertBundle string
+	client             *client.Client
+	clientMu           sync.RWMutex
+	headers            map[string]string
+	init               *mcp.InitializeResult
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided configuration.
 // It sets up default headers including user-agent and gateway-server-id, and adds
 // an Authorization header if credentials are configured.
-func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
+func NewUpstreamMCP(config *config.MCPServer, sharedCACertBundle string) *MCPServer {
 	up := &MCPServer{
-		MCPServer: config,
+		MCPServer:          config,
+		SharedCACertBundle: sharedCACertBundle,
 	}
 	up.headers = map[string]string{
 		"user-agent":        "mcp-broker",
@@ -49,6 +54,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Enabled:    up.Enabled,
 		Hostname:   up.Hostname,
 		Credential: up.Credential,
+		CACert:     up.CACert,
 	}
 }
 
@@ -92,6 +98,34 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	options := []transport.StreamableHTTPCOption{
 		transport.WithContinuousListening(),
 		transport.WithHTTPHeaders(up.headers),
+	}
+
+	if up.SharedCACertBundle != "" || up.CACert != "" {
+		certPool, err := x509.SystemCertPool()
+		if err != nil {
+			certPool = x509.NewCertPool()
+		}
+
+		if up.SharedCACertBundle != "" {
+			if !certPool.AppendCertsFromPEM([]byte(up.SharedCACertBundle)) {
+				return fmt.Errorf("failed to append shared CA bundle")
+			}
+		}
+
+		if up.CACert != "" {
+			if !certPool.AppendCertsFromPEM([]byte(up.CACert)) {
+				return fmt.Errorf("failed to append per-server CA cert")
+			}
+		}
+
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    certPool,
+				MinVersion: tls.VersionTLS12,
+			},
+		}
+		httpClient := &http.Client{Transport: tr}
+		options = append(options, transport.WithHTTPBasicClient(httpClient))
 	}
 
 	httpClient, err := client.NewStreamableHttpClient(up.URL, options...)

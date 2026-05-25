@@ -87,6 +87,26 @@ func (srw *SecretReaderWriter) WriteVirtualServerConfig(ctx context.Context, vir
 	})
 }
 
+// WriteCACertBundle updates the caCertBundle section of the config secret.
+// It uses a read-modify-write pattern to preserve other sections.
+func (srw *SecretReaderWriter) WriteCACertBundle(ctx context.Context, bundle string, namespaceName types.NamespacedName) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
+		if err != nil {
+			return fmt.Errorf("failed to read config secret for CA bundle: %w", err)
+		}
+
+		existingConfig.CACertBundle = bundle
+		updated, err := yaml.Marshal(existingConfig)
+		if err != nil {
+			return fmt.Errorf("failed to marshal config for CA bundle: %w", err)
+		}
+
+		backingSecret.StringData[configFileName] = string(updated)
+		return srw.Client.Update(ctx, backingSecret)
+	})
+}
+
 // readOrCreateConfigSecret reads the config secret or creates it if it doesn't exist.
 // It returns the parsed BrokerConfig and the Secret object (for subsequent updates).
 //
