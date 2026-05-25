@@ -302,7 +302,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	// If disabled, remove all tools and prompts, set status to not ready, and return.
 	// The manager stays alive and will check again on the next ticker tick.
 	if !man.mcp.IsEnabled() {
-		man.logger.Info("server is no longer enabled, removing tools", "upstream mcp server", man.mcp.ID())
+		man.logger.Debug("server is not enabled, removing tools and prompts", "upstream mcp server", man.mcp.ID())
 		man.removeAllTools()
 		man.removeAllPrompts()
 		_ = man.mcp.Disconnect()
