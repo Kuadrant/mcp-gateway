@@ -288,7 +288,6 @@ func (man *MCPManager) registerCallbacks() func() {
 
 // manage should be the only entry point that triggers changes to tools
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
-	// 1. New logging and tracing from the 'main' branch goes first
 	man.logger.DebugContext(ctx, "managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 
 	ctx, span := otel.Tracer(mcpotel.BrokerTracerName).Start(ctx, "mcp-broker.upstream-manage",
