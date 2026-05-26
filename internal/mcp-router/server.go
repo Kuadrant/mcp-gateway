@@ -63,11 +63,11 @@ type ExtProcServer struct {
 	// pair, preventing concurrent tool calls from creating duplicate backend sessions.
 	initGroup singleflight.Group
 
-	streamsActive    metric.Int64UpDownCounter
-	sessionLookups   metric.Int64Counter
-	backendInits     metric.Int64Counter
-	sessionHitOpt    metric.AddOption
-	sessionMissOpt   metric.AddOption
+	streamsActive  metric.Int64UpDownCounter
+	sessionLookups metric.Int64Counter
+	backendInits   metric.Int64Counter
+	sessionHitOpt  metric.AddOption
+	sessionMissOpt metric.AddOption
 }
 
 // InitMetrics initialises metric instruments from the global MeterProvider.
