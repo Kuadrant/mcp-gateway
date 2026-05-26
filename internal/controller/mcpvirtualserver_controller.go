@@ -55,7 +55,19 @@ func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		logger.Info("mcpvirtualserver is being deleted", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
 		if controllerutil.ContainsFinalizer(mcpVS, mcpGatewayFinalizer) {
 			logger.Info("deleting mcpvirtualserver", "name", mcpVS.Name, "namespace", mcpVS.Namespace)
-			// TODO remove from config
+			logger.V(1).Info("mcpvirtualserver generating config for deletion")
+			vsConfig, err := r.generateVirtualServerConfig(ctx)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("mcpvirtualserver failed to generate virtual server config during deletion %w", err)
+			}
+			logger.V(1).Info("mcpvirtualserver writing config for deletion")
+			if err := r.ConfigReaderWriter.WriteVirtualServerConfig(ctx, vsConfig, config.DefaultNamespaceName); err != nil {
+				if errors.IsConflict(err) {
+					logger.Info("mcpvirtualserver conflict on updating the config during deletion will retry")
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("mcpvirtualserver failed to write virtual server config during deletion %w", err)
+			}
 			controllerutil.RemoveFinalizer(mcpVS, mcpGatewayFinalizer)
 			if err := r.Update(ctx, mcpVS); err != nil {
 				return ctrl.Result{}, err
