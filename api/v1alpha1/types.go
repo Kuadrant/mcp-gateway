@@ -16,6 +16,17 @@ const (
 	ServerStateDisabled ServerState = "Disabled"
 )
 
+// UserSpecificListPolicy controls whether the broker fetches tools per-user from this server
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type UserSpecificListPolicy string
+
+const (
+	// UserSpecificListEnabled enables per-user tool fetching
+	UserSpecificListEnabled UserSpecificListPolicy = "Enabled"
+	// UserSpecificListDisabled uses the shared cached tool list
+	UserSpecificListDisabled UserSpecificListPolicy = "Disabled"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
@@ -47,6 +58,7 @@ type MCPServerRegistration struct {
 
 // MCPServerRegistrationSpec defines the desired state of MCPServerRegistration.
 // It specifies which HTTPRoutes point to MCP servers and how their tools should be federated.
+// +kubebuilder:validation:XValidation:rule="self.userSpecificList != \"Enabled\" || self.prefix != \"\" ",message="prefix is required when userSpecificList is Enabled"
 type MCPServerRegistrationSpec struct {
 	// targetRef specifies an HTTPRoute that points to a backend MCP server.
 	// The referenced HTTPRoute should have a backend service that implements the MCP protocol.
@@ -96,6 +108,14 @@ type MCPServerRegistrationSpec struct {
 	// to collect tokens from capable clients at tool-call time.
 	// +optional
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
+
+	// userSpecificList indicates that this MCP server returns different tools
+	// per user based on their credentials. When Enabled, the broker fetches tools
+	// from this server on each tools/list request using the user's session
+	// headers, rather than caching the service account's tool list.
+	// +optional
+	// +default="Disabled"
+	UserSpecificList UserSpecificListPolicy `json:"userSpecificList,omitempty"`
 
 	// category assigns one or more categories to this MCP server for tool discovery.
 	// Used by the discover_tools meta-tool to allow agents to filter servers by category.

@@ -430,6 +430,8 @@ hrpp
 deadbeefcafebabe
 myprompt
 promptname
+errgroup
+frontloads
 rescope
 benchmarkaction
 customSmallerIsBetter
@@ -437,4 +439,7 @@ forcetypeassert
 k6mcp
 selfsigned
 ttlSecondsAfterFinished
+startable
+uspec
+userspecificserver
 weatherserver

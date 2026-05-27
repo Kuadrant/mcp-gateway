@@ -97,6 +97,7 @@ type MCPServer struct {
 	CACert              string                     `json:"caCert,omitempty"              yaml:"caCert,omitempty"`
 	State               string                     `json:"state"                         yaml:"state"`
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
+	UserSpecificList    bool                       `json:"userSpecificList,omitempty"    yaml:"userSpecificList,omitempty"`
 	Category            []string                   `json:"category,omitempty"            yaml:"category,omitempty"`
 	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`

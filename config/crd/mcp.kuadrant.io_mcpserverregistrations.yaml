@@ -215,9 +215,23 @@ spec:
                     pattern: ^https?://
                     type: string
                 type: object
+              userSpecificList:
+                default: Disabled
+                description: |-
+                  userSpecificList indicates that this MCP server returns different tools
+                  per user based on their credentials. When Enabled, the broker fetches tools
+                  from this server on each tools/list request using the user's session
+                  headers, rather than caching the service account's tool list.
+                enum:
+                - Enabled
+                - Disabled
+                type: string
             required:
             - targetRef
             type: object
+            x-kubernetes-validations:
+            - message: prefix is required when userSpecificList is Enabled
+              rule: 'self.userSpecificList != "Enabled" || self.prefix != "" '
           status:
             description: status defines the observed state of MCPServerRegistration.
             properties:
