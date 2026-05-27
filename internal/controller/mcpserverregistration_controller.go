@@ -199,7 +199,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 		}
 		if len(mcpGatewayExtensions) == 0 {
-			// this is not an error so we are going to exit
+			// no extension ready yet — requeue so we retry when it becomes ready
 			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured", 0); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
@@ -207,7 +207,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				}
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{}, nil
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
 		for _, vext := range mcpGatewayExtensions {
 			// only include extensions whose listener matches the HTTPRoute
@@ -477,6 +477,10 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 			return nil, fmt.Errorf("CA certificate in secret %s is invalid: %w", mcpsr.Spec.CACertSecretRef.Name, err)
 		}
 		serverConfig.CACert = string(val)
+		// ensure the URL uses https when a CA cert is configured
+		if strings.HasPrefix(serverConfig.URL, "http://") {
+			serverConfig.URL = "https://" + serverConfig.URL[len("http://"):]
+		}
 	}
 
 	return &serverConfig, nil

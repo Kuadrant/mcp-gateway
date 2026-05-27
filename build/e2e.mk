@@ -53,3 +53,8 @@ enable-debug-logging: ## Enable debug logging on controller and wait for restart
 		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/command", "value": ["./mcp_controller", "--log-level=-4"]}]'
 	@echo "Waiting for controller rollout..."
 	kubectl rollout status deployment/mcp-gateway-controller -n mcp-system --timeout=120s
+
+.PHONY: test-e2e-https
+test-e2e-https: test-e2e-deps enable-debug-logging ## Run HTTPS backend E2E tests (requires cert-manager + GITHUB_MCP_PAT)
+	@echo "Running HTTPS MCP backend E2E tests..."
+	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[HTTPS\]" ./tests/e2e

@@ -1,0 +1,46 @@
+name: E2E Tests — HTTPS MCP Backends
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Run every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+
+jobs:
+  e2e-https:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Create Kind cluster
+        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+
+      - name: Install cert-manager
+        run: |
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.3/cert-manager.yaml
+          # Wait for the cert-manager webhook to be ready before proceeding
+          kubectl wait --for=condition=Available deployment/cert-manager-webhook \
+            -n cert-manager --timeout=120s
+
+      - name: Setup CI environment
+        run: make ci-setup
+
+      - name: Run HTTPS E2E tests
+        env:
+          GITHUB_MCP_PAT: ${{ secrets.GITHUB_MCP_PAT }}
+        run: make test-e2e-https
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          make ci-debug-logs || true
+          make ci-debug-test-servers-logs || true
+          kubectl logs -n cert-manager -l app=cert-manager --tail=100 || true

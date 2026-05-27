@@ -411,7 +411,7 @@ func (b *TestResourcesBuilder) buildExternalResources(routeName string) {
 // Register creates all resources in the cluster and returns the MCPServerRegistration.
 // Build() must be called before Register().
 func (b *TestResourcesBuilder) Register(ctx context.Context) *mcpv1alpha1.MCPServerRegistration {
-	if b.credential != nil {
+	if b.credential != nil && b.credential.ResourceVersion == "" {
 		GinkgoWriter.Println("creating credential", b.credential.Name)
 		Expect(b.k8sClient.Create(ctx, b.credential)).To(Succeed())
 	}
