@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,7 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel/attribute"
@@ -99,6 +101,12 @@ type mcpBrokerImpl struct {
 	// scopeStore manages per-session tool scoping
 	scopeStore *scopeStore
 
+	// sessionCache stores upstream MCP session IDs per gateway session
+	sessionCache *session.Cache
+
+	// userSpecificFetchTimeout is the per-server timeout for user-specific tool fetches
+	userSpecificFetchTimeout time.Duration
+
 	// tagsToolsRegistered tracks whether list_tags/filter_tools_by_tags are currently registered
 	tagsToolsRegistered atomic.Bool
 }
@@ -158,14 +166,29 @@ func WithDiscoveryToolThreshold(threshold int) Option {
 	}
 }
 
+// WithSessionCache sets the session cache used for user-specific tool fetches
+func WithSessionCache(cache *session.Cache) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.sessionCache = cache
+	}
+}
+
+// WithUserSpecificFetchTimeout sets the per-server timeout for user-specific tool fetches
+func WithUserSpecificFetchTimeout(timeout time.Duration) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.userSpecificFetchTimeout = timeout
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
-		mcpServers:            map[config.UpstreamMCPID]upstream.ActiveMCPServer{},
-		logger:                logger,
-		virtualServers:        map[string]*config.VirtualServer{},
-		managerTickerInterval: time.Second * 60,
-		discovery:             discoveryConfig{enabled: true},
+		mcpServers:               map[config.UpstreamMCPID]upstream.ActiveMCPServer{},
+		logger:                   logger,
+		virtualServers:           map[string]*config.VirtualServer{},
+		managerTickerInterval:    time.Second * 60,
+		discovery:                discoveryConfig{enabled: true},
+		userSpecificFetchTimeout: 30 * time.Second,
 	}
 
 	for _, option := range opts {
@@ -219,6 +242,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		mcpBkr.FetchUserSpecificTools(ctx, id, message, result)
 		mcpBkr.FilterTools(ctx, id, message, result)
 	})
 
@@ -356,6 +380,18 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 				"serverName", upstream.MCPName())
 			retval := upstream.Config()
 			return &retval, nil
+		}
+	}
+
+	// userSpecificList servers don't cache tools, so match by prefix
+	for _, upstream := range m.mcpServers {
+		cfg := upstream.Config()
+		if cfg.UserSpecificList && cfg.Prefix != "" && strings.HasPrefix(tool, cfg.Prefix) {
+			m.logger.Debug("matched user-specific server by prefix",
+				"toolName", tool,
+				"serverPrefix", cfg.Prefix,
+				"serverName", cfg.Name)
+			return &cfg, nil
 		}
 	}
 

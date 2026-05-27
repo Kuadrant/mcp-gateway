@@ -247,6 +247,7 @@ func main() {
 		broker.WithElicitationEnabled(enableURLElicitationFlag),
 		broker.WithDiscoveryToolsEnabled(discoveryToolsEnabledFlag),
 		broker.WithDiscoveryToolThreshold(discoveryToolThresholdFlag),
+		broker.WithSessionCache(sessionCache),
 	)
 	tokenHandler := broker.NewTokenHandler(sessionCache, tokenElicitationMap, *logger)
 	elicitationHandler := &broker.ElicitationHandler{
