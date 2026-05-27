@@ -147,7 +147,12 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 	})
 	client, err := up.buildHTTPClient()
 	require.NoError(t, err)
-	require.Nil(t, client, "should return nil when no CACert configured")
+	require.NotNil(t, client, "should always return a client with timeouts set")
+
+	tr, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "transport should be *http.Transport")
+	require.Equal(t, defaultTLSHandshakeTimeout, tr.TLSHandshakeTimeout)
+	require.Equal(t, defaultResponseHeaderTimeout, tr.ResponseHeaderTimeout)
 }
 
 func TestBuildHTTPClient_WithValidCACert(t *testing.T) {
@@ -217,14 +222,14 @@ func TestBuildHTTPClient_TLSConnectionFailsWithoutCA(t *testing.T) {
 		Name: "no-ca-test",
 		URL:  srv.URL + "/mcp",
 	})
-	client, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
-	require.Nil(t, client, "no CACert means nil client")
+	require.NotNil(t, httpClient, "client is always returned, only TLS pool varies")
 
 	req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
 	require.NoError(t, reqErr)
-	_, err = http.DefaultClient.Do(req) //nolint:bodyclose // expected to fail, no body to close
-	require.Error(t, err, "default client should not trust self-signed cert")
+	_, err = httpClient.Do(req) //nolint:bodyclose // expected to fail, no body to close
+	require.Error(t, err, "upstream client without CACert should not trust self-signed cert")
 }
 
 func TestBuildHTTPClient_WrongCACertFailsTLS(t *testing.T) {
@@ -284,4 +289,37 @@ func TestBuildHTTPClient_MultiCertBundle(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestBuildHTTPClient_ResponseHeaderTimeout verifies the upstream client does
+// not block indefinitely when an upstream server accepts the connection but
+// never sends response headers. Without ResponseHeaderTimeout the broker would
+// hang on this request forever.
+func TestBuildHTTPClient_ResponseHeaderTimeout(t *testing.T) {
+	prev := defaultResponseHeaderTimeout
+	defaultResponseHeaderTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { defaultResponseHeaderTimeout = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "hang", URL: srv.URL + "/mcp"})
+	httpClient, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.NotNil(t, httpClient)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	elapsed := time.Since(start)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err, "expected timeout error from hanging server")
+	require.Less(t, elapsed, 2*time.Second, "client should give up well before 2s")
+	require.Contains(t, err.Error(), "timeout")
 }
