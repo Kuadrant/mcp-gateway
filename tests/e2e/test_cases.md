@@ -331,11 +331,11 @@ All HTTPS tests are tagged `[HTTPS]` and can be run together:
 make test-e2e-https
 ```
 
-| Test | PR CI | Nightly | Manual only |
-|------|-------|---------|-------------|
-| Private CA (happy + negative) | Yes | Yes | — |
-| GitHub external | Yes (needs `MCP_PAT` secret) | Yes | — |
-| Real public certs | — | — | Yes (needs real TLS cluster) |
+| Test | PR CI | Manual only |
+|------|-------|-------------|
+| Private CA (happy + negative) | Yes | — |
+| GitHub external | Yes (needs `MCP_PAT` secret) | — |
+| Real public certs | — | Yes (needs real TLS cluster) |
 
 ### [Happy] OAuth protected resource metadata served from CRD config
 

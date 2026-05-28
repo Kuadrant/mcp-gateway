@@ -47,7 +47,7 @@ test-e2e-auth-ci: test-e2e-deps enable-debug-logging ## Run auth e2e tests only 
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast --focus="AuthPolicy" ./tests/e2e
 
 .PHONY: test-e2e-https
-test-e2e-https: test-e2e-deps enable-debug-logging ## Run HTTPS backend E2E tests (requires cert-manager + GITHUB_MCP_PAT)
+test-e2e-https: test-e2e-deps enable-debug-logging ## Run HTTPS-focused E2E tests (requires cert-manager + MCP_PAT)
 	@echo "Running HTTPS MCP backend E2E tests..."
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[HTTPS\]" ./tests/e2e
 
