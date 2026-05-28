@@ -22,7 +22,7 @@ perf-build-mock-server: ## Build perf mock server image
 perf-build-k6: ## Build k6 binary with xk6-mcp extension
 	@if [ ! -f bin/k6 ]; then \
 		echo "Building k6 with xk6-mcp..."; \
-		go install go.k6.io/xk6/cmd/xk6@latest && \
+		go install go.k6.io/xk6/cmd/xk6@v1.4.3 && \
 		xk6 build --with github.com/infobip/xk6-infobip-mcp --output ./bin/k6; \
 	else \
 		echo "[OK] bin/k6 already exists"; \
