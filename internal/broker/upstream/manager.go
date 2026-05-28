@@ -148,7 +148,9 @@ type MCPManager struct {
 	toolEvents   chan struct{}
 	promptEvents chan struct{}
 	done         chan struct{} // closed when the event loop exits
-	status       ServerValidationStatus
+
+	statusLock sync.RWMutex
+	status     ServerValidationStatus
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
@@ -486,12 +488,17 @@ func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
 }
 
 // GetStatus returns the current status of the MCP Server
-// no locking is done here as it is expected to be called multiple times
+// This is called concurrently by external controllers and tests, so it uses RLock.
 func (man *MCPManager) GetStatus() ServerValidationStatus {
+	man.statusLock.RLock()
+	defer man.statusLock.RUnlock()
 	return man.status
 }
 
 func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, invalidTools []InvalidToolInfo, invalidPrompts []InvalidPromptInfo) {
+	man.statusLock.Lock()
+	defer man.statusLock.Unlock()
+
 	man.status.ID = string(man.mcp.ID())
 	man.status.LastValidated = time.Now()
 	man.status.Name = man.MCPName()

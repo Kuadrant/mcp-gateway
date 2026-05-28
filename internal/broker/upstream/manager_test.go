@@ -35,6 +35,7 @@ type MockMCP struct {
 	hasToolsCap         bool
 	hasPromptsCap       bool
 	connected           atomic.Bool
+	mu                  sync.RWMutex
 	notificationHandler func(mcp.JSONRPCNotification)
 }
 
@@ -104,7 +105,15 @@ func (m *MockMCP) ListPrompts(_ context.Context, _ mcp.ListPromptsRequest) (*mcp
 }
 
 func (m *MockMCP) OnNotification(handler func(notification mcp.JSONRPCNotification)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.notificationHandler = handler
+}
+
+func (m *MockMCP) GetNotificationHandler() func(mcp.JSONRPCNotification) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.notificationHandler
 }
 
 func (m *MockMCP) OnConnectionLost(_ func(err error)) {}
