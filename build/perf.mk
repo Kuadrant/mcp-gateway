@@ -1,5 +1,8 @@
 ##@ Performance Testing
 
+# CI benchmark image (k6 + xk6-infobip-mcp extension)
+PERF_K6_IMG ?= ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest
+
 PERF_MOCK_IMG ?= ghcr.io/kuadrant/mcp-gateway/perf-mock-server:latest
 PERF_USERS ?= 64
 PERF_MAX_USERS ?= 4096
@@ -135,3 +138,62 @@ perf-profile: ## Capture a one-off pprof snapshot from broker-router
 	@go tool pprof -proto -output out/profiles/mutex.pb.gz $(PERF_PPROF_URL)/debug/pprof/mutex
 	@echo "Profiles saved to out/profiles/"
 	@-pkill -f 'port-forward.*6060' 2>/dev/null || true
+
+##@ CI Performance Benchmarking
+
+.PHONY: perf-build-k6-image
+perf-build-k6-image: ## Build the k6-mcp Docker image (k6 + xk6-infobip-mcp)
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) \
+		-f Dockerfile.k6 \
+		-t $(PERF_K6_IMG) .
+
+.PHONY: perf-push-k6-image
+perf-push-k6-image: ## Push the k6-mcp image to the registry
+	$(CONTAINER_ENGINE) push $(PERF_K6_IMG)
+
+.PHONY: perf-ci-setup
+perf-ci-setup: kind perf-build-mock-server perf-build-k6-image ## Setup in-cluster CI benchmark environment (mock server + k6 ConfigMap)
+	@echo "Loading perf mock server image..."
+	$(call load-image,$(PERF_MOCK_IMG))
+	@echo "Loading k6-mcp image..."
+	$(call load-image,$(PERF_K6_IMG))
+	@echo "Applying default MCPGatewayExtension..."
+	kubectl apply -f config/mcp-gateway/base/mcpgatewayextension.yaml -n $(MCP_GATEWAY_NAMESPACE)
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=60s
+	kubectl apply -f config/test-servers/namespace.yaml
+	kubectl apply -f tests/perf/manifests/mock-server.yaml -n mcp-test
+	kubectl apply -f tests/perf/manifests/registration.yaml
+	@echo "Waiting for perf mock server..."
+	@kubectl wait --for=condition=Available deployment/perf-mock-server -n mcp-test --timeout=60s
+	@echo "Waiting for MCPServerRegistration..."
+	@kubectl wait --for=condition=Ready mcpsr/perf-mock-server -n mcp-test --timeout=120s
+	@echo "Creating k6 scenarios ConfigMap..."
+	kubectl create configmap k6-ci-scenarios \
+		--from-file=ci-benchmark.js=tests/perf/k6/ci-benchmark.js \
+		-n mcp-test \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "CI benchmark environment ready"
+
+.PHONY: perf-ci-run
+perf-ci-run: ## Run the in-cluster benchmark Job and extract results
+	@mkdir -p out/perf
+	@echo "Applying benchmark Job..."
+	kubectl apply -f tests/perf/manifests/k6-benchmark-job.yaml
+	@echo "Waiting for Job to complete (timeout 180 s)..."
+	kubectl wait --for=condition=complete job/mcp-gateway-benchmark -n mcp-test --timeout=180s
+	@POD=$$(kubectl get pod -n mcp-test -l app=mcp-gateway-benchmark \
+		-o jsonpath='{.items[0].metadata.name}'); \
+	echo "Extracting results from pod logs: $$POD"; \
+	kubectl logs "$$POD" -n mcp-test | sed -n '/___K6_JSON_SUMMARY___/,/___K6_JSON_SUMMARY_END___/p' | grep -v '___K6_JSON_SUMMARY' > out/perf/k6-ci-summary.json
+	@chmod +x tests/perf/scripts/convert-k6-to-benchmark.sh
+	@tests/perf/scripts/convert-k6-to-benchmark.sh out/perf/k6-ci-summary.json \
+		> out/perf/benchmark-results.json
+	@echo "Results written to out/perf/benchmark-results.json"
+	@cat out/perf/benchmark-results.json
+
+.PHONY: perf-ci-clean
+perf-ci-clean: ## Remove in-cluster CI benchmark resources (Job + ConfigMap)
+	kubectl delete job/mcp-gateway-benchmark -n mcp-test --ignore-not-found
+	kubectl delete configmap/k6-ci-scenarios -n mcp-test --ignore-not-found
+	kubectl delete mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --ignore-not-found
+	kubectl delete mcpserverregistration/perf-mock-server --ignore-not-found

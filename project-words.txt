@@ -429,5 +429,10 @@ deadbeefcafebabe
 myprompt
 promptname
 rescope
+benchmarkaction
+customSmallerIsBetter
+forcetypeassert
+k6mcp
 selfsigned
+ttlSecondsAfterFinished
 weatherserver

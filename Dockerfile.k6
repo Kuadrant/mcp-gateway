@@ -1,0 +1,33 @@
+# Build k6 with the xk6-infobip-mcp extension.
+# The resulting image is published to ghcr.io/kuadrant/mcp-gateway/k6-mcp
+# and used by the in-cluster performance benchmark Job.
+#
+# Build:  docker build -f Dockerfile.k6 -t ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest .
+# Push:   docker push ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest
+
+FROM golang:1.24-alpine AS builder
+
+# Allow the Go toolchain to auto-download a newer version if a dependency
+# requires one (e.g. xk6 >= v1.4 requires Go 1.25+).
+# cspell:ignore GOTOOLCHAIN
+ENV GOTOOLCHAIN=auto
+
+RUN apk add --no-cache git
+
+# Install xk6 – the k6 extension builder
+RUN go install go.k6.io/xk6/cmd/xk6@latest
+
+
+# Build k6 with the MCP extension
+RUN xk6 build \
+    --with github.com/infobip/xk6-infobip-mcp \
+    --output /k6
+
+# ─────────────────────────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /k6 /usr/local/bin/k6
+
+ENTRYPOINT ["k6"]

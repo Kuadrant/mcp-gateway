@@ -19,6 +19,9 @@
         "realm-import.yaml",
         "docs/plans/**",
         "docs/superpowers/**",
-        "catalog/mcp-gateway-catalog/**"
+        "catalog/mcp-gateway-catalog/**",
+        "out/**",
+        "GOTOOLCHAIN",  
+    "reqs"
     ]
 }
