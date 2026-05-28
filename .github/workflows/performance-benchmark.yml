@@ -73,6 +73,14 @@ jobs:
             git switch -
           fi
 
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: performance-report
+          path: out/perf/mcp-report.html
+          retention-days: 30
+
       - name: Store and compare benchmark results
         uses: benchmark-action/github-action-benchmark@5bbce78ef18edf5b96cb2d23e8d240b485f9dc4a  # v1.16.2
         with:
@@ -87,6 +95,21 @@ jobs:
           comment-on-alert: true
           # Post a summary comment on every PR (not just regressions)
           summary-always: true
+
+      - name: Publish HTML report to gh-pages
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git fetch origin gh-pages
+          git worktree add /tmp/gh-pages gh-pages
+          mkdir -p /tmp/gh-pages/perf
+          cp out/perf/mcp-report.html /tmp/gh-pages/perf/index.html
+          cd /tmp/gh-pages
+          git add perf/index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "update performance report"
+          git push origin gh-pages
+          cd -
+          git worktree remove /tmp/gh-pages
 
       # Collect debug information on failure for easier diagnosis
       - name: Collect logs on failure

@@ -37,17 +37,17 @@ cat > "$TMPDIR_TEST/summary.json" <<'EOF'
     "mcp_tool_call_duration": {
       "type": "trend",
       "contains": "time",
-      "values": { "avg": 18.4, "p(95)": 42.1, "p(99)": 95.0 }
+      "avg": 18.4, "p(95)": 42.1, "p(99)": 95.0
     },
     "mcp_tool_call_fail_rate": {
       "type": "rate",
       "contains": "default",
-      "values": { "rate": 0.001, "passes": 999, "fails": 1 }
+      "rate": 0.001, "passes": 999, "fails": 1
     },
     "mcp_session_open_fail": {
       "type": "rate",
       "contains": "default",
-      "values": { "rate": 0.0, "passes": 100, "fails": 0 }
+      "rate": 0.0, "passes": 100, "fails": 0
     }
   }
 }
@@ -105,17 +105,17 @@ cat > "$TMPDIR_TEST/zeros.json" <<'EOF'
     "mcp_tool_call_duration": {
       "type": "trend",
       "contains": "time",
-      "values": { "avg": 0, "p(95)": 0, "p(99)": 0 }
+      "avg": 0, "p(95)": 0, "p(99)": 0
     },
     "mcp_tool_call_fail_rate": {
       "type": "rate",
       "contains": "default",
-      "values": { "rate": 0 }
+      "rate": 0
     },
     "mcp_session_open_fail": {
       "type": "rate",
       "contains": "default",
-      "values": { "rate": 0 }
+      "rate": 0
     }
   }
 }

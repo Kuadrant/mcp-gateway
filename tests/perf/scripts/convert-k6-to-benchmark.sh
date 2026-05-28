@@ -10,10 +10,10 @@
 # Input format (k6 --summary-export):
 #   {
 #     "metrics": {
-#       "http_req_duration": { "values": { "avg": 20.1, "p(95)": 45.2, "p(99)": 98.3 } },
-#       "mcp_tool_call_duration": { "values": { "avg": 18.4, "p(95)": 42.1, "p(99)": 95.0 } },
-#       "mcp_tool_call_fail_rate": { "values": { "rate": 0.001 } },
-#       "mcp_session_open_fail":   { "values": { "rate": 0.000 } },
+#       "http_req_duration": { "avg": 20.1, "p(95)": 45.2, "p(99)": 98.3 },
+#       "mcp_tool_call_duration": { "avg": 18.4, "p(95)": 42.1, "p(99)": 95.0 },
+#       "mcp_tool_call_fail_rate": { "rate": 0.001 },
+#       "mcp_session_open_fail":   { "rate": 0.000 },
 #       ...
 #     }
 #   }
@@ -52,31 +52,31 @@ jq '
   {
     name:  "p95_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration.values["p(95)"] // 0)
+    value: (.metrics.mcp_tool_call_duration["p(95)"] // 0)
   },
   # MCP tool call p99 latency
   {
     name:  "p99_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration.values["p(99)"] // 0)
+    value: (.metrics.mcp_tool_call_duration["p(99)"] // 0)
   },
   # MCP tool call average latency
   {
     name:  "avg_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration.values.avg // 0)
+    value: (.metrics.mcp_tool_call_duration.avg // 0)
   },
   # MCP tool call error rate (as a percentage)
   {
     name:  "tool_error_rate",
     unit:  "percent",
-    value: ((.metrics.mcp_tool_call_fail_rate.values.rate // 0) * 100)
+    value: ((.metrics.mcp_tool_call_fail_rate.rate // 0) * 100)
   },
   # MCP session open failure rate (as a percentage)
   {
     name:  "session_fail_rate",
     unit:  "percent",
-    value: ((.metrics.mcp_session_open_fail.values.rate // 0) * 100)
+    value: ((.metrics.mcp_session_open_fail.rate // 0) * 100)
   }
 ]
 ' "$SUMMARY_FILE"

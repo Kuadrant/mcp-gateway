@@ -49,11 +49,18 @@ spec:
             - sh
             - -c
             - |
-              k6 run /scenarios/ci-benchmark.js --summary-export /results/summary.json && \
-              echo "___K6_JSON_SUMMARY___" && \
-              cat /results/summary.json && \
-              echo "" && \
-              echo "___K6_JSON_SUMMARY_END___"
+              k6 run /scenarios/ci-benchmark.js \
+                --summary-export /results/summary.json \
+                --out csv=/results/k6.csv; \
+              K6_EXIT=$?; \
+              echo "___K6_JSON_SUMMARY___"; \
+              cat /results/summary.json; \
+              echo ""; \
+              echo "___K6_JSON_SUMMARY_END___"; \
+              echo "___K6_CSV_DATA___"; \
+              cat /results/k6.csv; \
+              echo "___K6_CSV_DATA_END___"; \
+              exit $K6_EXIT
           env:
             # In-cluster DNS for the Istio gateway service.
             # Override when running in a different topology.

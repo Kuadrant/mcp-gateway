@@ -25,7 +25,7 @@ import { Counter, Trend, Rate } from 'k6/metrics';
 // Default URL targets the Istio gateway service via in-cluster DNS.
 // Override with TARGET_URL env var when running locally.
 const TARGET_URL = __ENV.TARGET_URL
-    || 'http://mcp-gateway-istio.gateway-system.svc.cluster.local/mcp';
+    || 'http://mcp-gateway-istio.gateway-system.svc.cluster.local:8080/mcp';
 const PREFIX     = __ENV.PREFIX   || 'mock_';
 const VUS        = parseInt(__ENV.VUS      || '10');
 const DURATION   = __ENV.DURATION || '30s';

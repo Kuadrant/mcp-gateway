@@ -180,16 +180,28 @@ perf-ci-run: ## Run the in-cluster benchmark Job and extract results
 	@echo "Applying benchmark Job..."
 	kubectl delete -f tests/perf/manifests/k6-benchmark-job.yaml --ignore-not-found
 	kubectl create -f tests/perf/manifests/k6-benchmark-job.yaml
-	@echo "Waiting for Job to complete (timeout 180 s)..."
-	kubectl wait --for=condition=complete job/mcp-gateway-benchmark -n mcp-test --timeout=180s
+	@echo "Waiting for Job to finish (timeout 180 s)..."
+	@for i in $$(seq 1 180); do \
+		STATUS=$$(kubectl get job/mcp-gateway-benchmark -n mcp-test -o jsonpath='{.status.conditions[0].type}' 2>/dev/null); \
+		if [ "$$STATUS" = "Complete" ] || [ "$$STATUS" = "Failed" ]; then break; fi; \
+		sleep 1; \
+	done
 	@POD=$$(kubectl get pod -n mcp-test -l app=mcp-gateway-benchmark \
 		-o jsonpath='{.items[0].metadata.name}'); \
-	echo "Extracting results from pod logs: $$POD"; \
-	kubectl logs "$$POD" -n mcp-test | sed -n '/___K6_JSON_SUMMARY___/,/___K6_JSON_SUMMARY_END___/p' | grep -v '___K6_JSON_SUMMARY' > out/perf/k6-ci-summary.json
+	echo "Extracting results from pod $$POD"; \
+	kubectl logs "$$POD" -n mcp-test > out/perf/k6-ci-full.log; \
+	sed -n '/___K6_JSON_SUMMARY___/,/___K6_JSON_SUMMARY_END___/p' out/perf/k6-ci-full.log | grep -v '___K6_JSON_SUMMARY' > out/perf/k6-ci-summary.json; \
+	echo "Extracting CSV from pod $$POD"; \
+	sed -n '/___K6_CSV_DATA___/,/___K6_CSV_DATA_END___/p' out/perf/k6-ci-full.log | grep -v '___K6_CSV_DATA' > out/perf/k6-ci.csv
 	@chmod +x tests/perf/scripts/convert-k6-to-benchmark.sh
 	@tests/perf/scripts/convert-k6-to-benchmark.sh out/perf/k6-ci-summary.json \
 		> out/perf/benchmark-results.json
-	@echo "Results written to out/perf/benchmark-results.json"
+	@echo "Generating HTML performance report..."
+	@go run ./tests/perf/cmd/report \
+		-csv out/perf/k6-ci.csv \
+		-title "MCP Gateway CI Benchmark" \
+		-out out/perf/mcp-report.html
+	@echo "Results written to out/perf/"
 	@cat out/perf/benchmark-results.json
 
 .PHONY: perf-ci-clean
