@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MCP Gateway CI Benchmark</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; }
+  .card h3 { font-size: 13px; color: #8b949e; font-weight: 500; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 14px; }
+  .stat .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .stat .delta { font-size: 12px; margin-top: 2px; }
+  .stat .value.good, .stat .delta.good { color: #3fb950; }
+  .stat .value.warn, .stat .delta.warn { color: #d29922; }
+  .stat .value.bad, .stat .delta.bad { color: #f85149; }
+  .stat .delta.neutral { color: #8b949e; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #21262d; }
+  th { color: #8b949e; font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+  td:first-child, th:first-child { text-align: left; }
+  td.better { color: #3fb950; }
+  td.worse { color: #f85149; }
+  canvas { width: 100% !important; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<h1>MCP Gateway CI Benchmark</h1>
+<p class="subtitle">2026-05-28 17:14:08</p>
+
+<div class="stats" id="stats"></div>
+<div id="comparison" style="display:none"></div>
+<div class="grid">
+  <div class="card"><h3>Tool Call Latency (ms)</h3><canvas id="latency"></canvas></div>
+  <div class="card"><h3>Throughput</h3><canvas id="throughput"></canvas></div>
+  <div class="card"><h3>Failure Rates</h3><canvas id="failures"></canvas></div>
+  <div class="card"><h3>MCP vs HTTP Latency (ms)</h3><canvas id="httpLatency"></canvas></div>
+</div>
+<div class="grid" id="resourceGrid" style="display:none">
+  <div class="card"><h3>CPU and Memory</h3><canvas id="cpumem"></canvas></div>
+  <div class="card"><h3>Goroutines</h3><canvas id="goroutines"></canvas></div>
+</div>
+
+<script>
+const latencyData = {"labels":["0s","1s","2s","3s","4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s","16s","17s","18s","19s","20s","21s","22s","23s","24s","25s","26s","27s","28s","29s","30s","31s"],"series":[[9.69767441860465,2.9361702127659575,3.022222222222222,2.7142857142857144,2.977777777777778,2.803921568627451,2.6862745098039214,3.215686274509804,2.8333333333333335,2.4444444444444446,2.6808510638297873,2.6153846153846154,2.5652173913043477,2.717391304347826,2.84,3.0208333333333335,2.58,2.5833333333333335,2.5384615384615383,2.74,2.857142857142857,2.6956521739130435,2.5660377358490565,2.979591836734694,2.519230769230769,2.978723404255319,2.69811320754717,2.88,2.5098039215686274,2.547169811320755,2.4482758620689653,2],[34,5,7,5,6,5,5,6,5,5,5,5,5,6,5,6,5,5,5,5,5,5,5,9,5,7,5,5,5,6,5,2]],"names":["avg","p95"]};
+const throughputData = {"labels":["0s","1s","2s","3s","4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s","16s","17s","18s","19s","20s","21s","22s","23s","24s","25s","26s","27s","28s","29s","30s","31s"],"series":[[43,47,45,49,45,51,51,51,42,54,47,52,46,46,50,48,50,48,52,50,49,46,53,49,52,47,53,50,51,53,29,1],[0,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,2]],"names":["Tool calls/s","VUs"]};
+const failData = {"labels":["0s","1s","2s","3s","4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s","16s","17s","18s","19s","20s","21s","22s","23s","24s","25s","26s","27s","28s","29s","30s","31s"],"series":[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],"names":["Tool call fail rate","HTTP fail rate"]};
+const httpLatencyData = {"labels":["0s","1s","2s","3s","4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s","16s","17s","18s","19s","20s","21s","22s","23s","24s","25s","26s","27s","28s","29s","30s","31s"],"series":[[10.274318311688317,2.1967005057471267,2.2783642941176465,2.0792661348314607,2.4287947283950615,2.0976260707070704,2.1920639879518076,2.5022416483516494,2.093672621951219,2.020269074468085,2.064289180722891,2.142755902173913,2.044755353658537,2.1220441279069764,2.2842230555555556,2.187580678571429,1.9732909770114937,1.9882767032967028,2.0634832499999995,2.076270444444444,2.1359641647058827,2.129922679487179,1.9222680000000008,2.2182431058823533,2.0280065543478263,2.2895563563218393,1.9755817524752468,2.1076382659574473,1.9706972758620696,1.988826731182796,1.9783626458333334,1.67703625],[32.755822,4.653341,5.680175,4.488199,5.551672,4.896616,4.743707,5.648037,4.583412,4.459295,4.65604,5.165944,4.437928,4.786715,5.028408,4.674497,4.333276,4.669435,4.739746,4.241262,4.507272,4.779175,4.458218,6.05063,4.687191,5.571066,4.546605,4.708237,4.410832,4.778784,4.277708,2.196738]],"names":["HTTP avg","HTTP p95"]};
+const summary = {"total":1500,"successes":1500,"fails":0,"rate":0,"avgMs":2.938,"p50Ms":2,"p95Ms":6,"p99Ms":9,"maxMs":38,"succAvgMs":2.938,"succP95Ms":6,"succP99Ms":9,"rps":48.38709677419355,"successRps":48.38709677419355,"elapsed":31};
+const baseline = {"total":0,"successes":0,"fails":0,"rate":0,"avgMs":0,"p50Ms":0,"p95Ms":0,"p99Ms":0,"maxMs":0,"succAvgMs":0,"succP95Ms":0,"succP99Ms":0,"rps":0,"successRps":0,"elapsed":0};
+const cpumemData = {"labels":null,"series":null,"names":null};
+const goroutineData = {"labels":null,"series":null,"names":null};
+const hasResources = false;
+const hasBaseline = false;
+
+const colors = ['#58a6ff','#f0883e','#f85149','#3fb950','#bc8cff','#d29922'];
+const baselineColor = '#484f58';
+
+function cls(v, lo, hi) { return v <= lo ? 'good' : v <= hi ? 'warn' : 'bad'; }
+
+function delta(curr, base, lowerBetter) {
+  if (!base) return { text: '', cls: 'neutral' };
+  const pct = ((curr - base) / base * 100);
+  const sign = pct > 0 ? '+' : '';
+  const c = lowerBetter ? (pct < -5 ? 'good' : pct > 5 ? 'bad' : 'neutral') : (pct > 5 ? 'good' : pct < -5 ? 'bad' : 'neutral');
+  return { text: sign + pct.toFixed(1) + '%', cls: c };
+}
+
+function renderStats() {
+  const el = document.getElementById('stats');
+  const b = hasBaseline ? baseline : null;
+  const items = [
+    { label: 'Successful Calls', value: summary.successes.toLocaleString(), c: '', d: delta(summary.successes, b?.successes, false) },
+    { label: 'Fail Rate', value: summary.rate.toFixed(2) + '%', c: cls(summary.rate, 0, 1), d: delta(summary.rate, b?.rate, true) },
+    { label: 'Success Avg', value: summary.succAvgMs.toFixed(1) + 'ms', c: cls(summary.succAvgMs, 10, 50), d: delta(summary.succAvgMs, b?.succAvgMs, true) },
+    { label: 'Success p95', value: summary.succP95Ms.toFixed(1) + 'ms', c: cls(summary.succP95Ms, 20, 100), d: delta(summary.succP95Ms, b?.succP95Ms, true) },
+    { label: 'Success p99', value: summary.succP99Ms.toFixed(1) + 'ms', c: cls(summary.succP99Ms, 50, 200), d: delta(summary.succP99Ms, b?.succP99Ms, true) },
+    { label: 'Max Latency', value: summary.maxMs.toFixed(1) + 'ms', c: cls(summary.maxMs, 100, 500), d: delta(summary.maxMs, b?.maxMs, true) },
+    { label: 'Success Rate', value: summary.successRps.toFixed(1) + '/s', c: '', d: delta(summary.successRps, b?.successRps, false) },
+    { label: 'Duration', value: summary.elapsed.toFixed(0) + 's', c: '', d: { text: '', cls: 'neutral' } },
+  ];
+  el.innerHTML = items.map(i => {
+    const deltaHtml = i.d.text ? '<div class="delta ' + i.d.cls + '">vs baseline: ' + i.d.text + '</div>' : '';
+    return '<div class="stat"><div class="label">' + i.label + '</div><div class="value ' + i.c + '">' + i.value + '</div>' + deltaHtml + '</div>';
+  }).join('');
+}
+
+function renderComparison() {
+  if (!hasBaseline) return;
+  const el = document.getElementById('comparison');
+  el.style.display = 'block';
+  const rows = [
+    ['Fail Rate', summary.rate.toFixed(2) + '%', baseline.rate.toFixed(2) + '%', true],
+    ['Successful Calls', summary.successes.toLocaleString(), baseline.successes.toLocaleString(), false],
+    ['Success Avg Latency', summary.succAvgMs.toFixed(1) + 'ms', baseline.succAvgMs.toFixed(1) + 'ms', true],
+    ['Success p95 Latency', summary.succP95Ms.toFixed(1) + 'ms', baseline.succP95Ms.toFixed(1) + 'ms', true],
+    ['Success p99 Latency', summary.succP99Ms.toFixed(1) + 'ms', baseline.succP99Ms.toFixed(1) + 'ms', true],
+    ['Success Throughput', summary.successRps.toFixed(1) + '/s', baseline.successRps.toFixed(1) + '/s', false],
+    ['Total Throughput', summary.rps.toFixed(1) + '/s', baseline.rps.toFixed(1) + '/s', false],
+  ];
+  let html = '<div class="card"><h3>COMPARISON: CURRENT vs BASELINE</h3><table><tr><th>Metric</th><th>Current</th><th>Baseline</th><th>Change</th></tr>';
+  rows.forEach(([name, curr, base, lowerBetter]) => {
+    const cv = parseFloat(curr.replace(/,/g, '')), bv = parseFloat(base.replace(/,/g, ''));
+    const pct = bv ? ((cv - bv) / bv * 100) : 0;
+    const sign = pct > 0 ? '+' : '';
+    const cls = lowerBetter ? (pct < -5 ? 'better' : pct > 5 ? 'worse' : '') : (pct > 5 ? 'better' : pct < -5 ? 'worse' : '');
+    html += '<tr><td>' + name + '</td><td>' + curr + '</td><td>' + base + '</td><td class="' + cls + '">' + sign + pct.toFixed(1) + '%</td></tr>';
+  });
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+
+function makeChart(id, data, opts) {
+  const ctx = document.getElementById(id);
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.labels,
+      datasets: data.series.map((s, i) => {
+        const isBaseline = hasBaseline && data.names[i].startsWith('baseline');
+        return {
+          label: data.names[i],
+          data: s,
+          borderColor: isBaseline ? baselineColor : colors[i % colors.length],
+          backgroundColor: 'transparent',
+          borderWidth: isBaseline ? 1 : (i === 0 ? 2 : 1.5),
+          borderDash: isBaseline ? [6, 3] : [],
+          pointRadius: 0,
+          tension: 0.3,
+          yAxisID: opts && opts.dualAxis && i === data.series.length - 1 ? 'y1' : 'y',
+        };
+      }),
+    },
+    options: {
+      responsive: true,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#484f58', maxRotation: 0, autoSkip: true, maxTicksLimit: 15 }, grid: { color: '#21262d' }, title: { display: true, text: 'elapsed', color: '#484f58' } },
+        y: { ticks: { color: '#484f58' }, grid: { color: '#21262d' }, title: { display: !!opts?.yLabel, text: opts?.yLabel || '', color: '#8b949e' } },
+        ...(opts && opts.dualAxis ? { y1: { position: 'right', ticks: { color: '#484f58' }, grid: { drawOnChartArea: false }, title: { display: true, text: opts.y1Label || '', color: '#8b949e' } } } : {}),
+      },
+    },
+  });
+}
+
+renderStats();
+renderComparison();
+makeChart('latency', latencyData, { yLabel: 'ms' });
+makeChart('throughput', throughputData, { yLabel: 'req/s', dualAxis: true, y1Label: 'VUs' });
+makeChart('failures', failData, { yLabel: 'rate' });
+makeChart('httpLatency', httpLatencyData, { yLabel: 'ms' });
+
+if (hasResources && cpumemData.labels && cpumemData.labels.length > 0) {
+  document.getElementById('resourceGrid').style.display = 'grid';
+  makeChart('cpumem', cpumemData, { yLabel: 'millicores', dualAxis: true, y1Label: 'MB' });
+  makeChart('goroutines', goroutineData, { yLabel: 'count' });
+}
+</script>
+</body>
+</html>
