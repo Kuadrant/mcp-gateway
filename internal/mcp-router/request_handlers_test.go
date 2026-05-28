@@ -1624,15 +1624,92 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
 
 	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
-	// token is injected as-is (no "Bearer " prefix) — upstream servers handle both PATs and Bearer tokens
+	// token is injected as-is by default when no format is specified (to preserve backward compat for existing setups)
 	var foundAuth bool
 	for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
-		if h.Header.Key == "authorization" {
-			require.Equal(t, "ghp_cached_token", string(h.Header.RawValue))
+		if strings.ToLower(h.Header.Key) == "authorization" {
+			require.Equal(t, "Bearer ghp_cached_token", string(h.Header.RawValue))
 			foundAuth = true
 		}
 	}
 	require.True(t, foundAuth, "authorization header should be injected with cached token")
+}
+
+func TestResolveUpstreamToken_CustomHeaders(t *testing.T) {
+	tests := []struct {
+		name               string
+		config             *config.TokenURLElicitationConfig
+		expectedHeaderName string
+		expectedValue      string
+	}{
+		{
+			name:               "empty fields use defaults",
+			config:             &config.TokenURLElicitationConfig{},
+			expectedHeaderName: "Authorization",
+			expectedValue:      "Bearer my-token",
+		},
+		{
+			name: "custom header name and bare format",
+			config: &config.TokenURLElicitationConfig{
+				HeaderName:        "X-API-Key",
+				HeaderValueFormat: "{token}",
+			},
+			expectedHeaderName: "X-API-Key",
+			expectedValue:      "my-token",
+		},
+		{
+			name: "multiple placeholders replaced",
+			config: &config.TokenURLElicitationConfig{
+				HeaderName:        "Custom-Auth",
+				HeaderValueFormat: "Token {token}; Backup {token}",
+			},
+			expectedHeaderName: "Custom-Auth",
+			expectedValue:      "Token my-token; Backup my-token",
+		},
+		{
+			name: "missing placeholder returns static string safely",
+			config: &config.TokenURLElicitationConfig{
+				HeaderName:        "X-Static",
+				HeaderValueFormat: "abc",
+			},
+			expectedHeaderName: "X-Static",
+			expectedValue:      "abc", // logger warns but proceeds safely
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serverConfigs := []*config.MCPServer{{
+				Name: "github", URL: "http://github.mcp:8080/mcp", Prefix: "gh_", State: "Enabled", Hostname: "github.mcp",
+				TokenURLElicitation: tt.config,
+			}}
+			tokenMap, err := elicitation.New()
+			require.NoError(t, err)
+
+			server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
+			require.NoError(t, server.SessionCache.SetUserToken(context.Background(), validToken, "github", "my-token"))
+
+			req := &MCPRequest{
+				ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
+				Params: map[string]any{"name": "gh_tool"},
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(validToken)},
+				}},
+			}
+			resp := server.RouteMCPRequest(context.Background(), req)
+			require.Len(t, resp, 1)
+
+			rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+			var found bool
+			for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+				if strings.ToLower(h.Header.Key) == strings.ToLower(tt.expectedHeaderName) {
+					require.Equal(t, tt.expectedValue, string(h.Header.RawValue))
+					found = true
+				}
+			}
+			require.True(t, found, "expected header %s not found", tt.expectedHeaderName)
+		})
+	}
 }
 
 func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {

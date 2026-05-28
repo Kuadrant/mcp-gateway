@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,34 @@ type MCPRequest struct {
 // GetSingleHeaderValue returns a single header value
 func (mr *MCPRequest) GetSingleHeaderValue(key string) string {
 	return getSingleValueHeader(mr.Headers, key)
+}
+
+func buildRouterConfigKey(mcpID string) string {
+	return "router_config_" + mcpID
+}
+
+func resolveTokenHeaderConfig(cfg *config.TokenURLElicitationConfig) (string, string) {
+	headerName := "Authorization"
+	headerFormat := "Bearer {token}"
+	if cfg != nil {
+		if cfg.HeaderName != "" {
+			headerName = cfg.HeaderName
+		}
+		if cfg.HeaderValueFormat != "" {
+			headerFormat = cfg.HeaderValueFormat
+		}
+	}
+	return headerName, headerFormat
+}
+
+func formatTokenHeaderValue(ctx context.Context, logger *slog.Logger, format, token string) string {
+	formattedValue := format
+	if strings.Contains(format, "{token}") {
+		formattedValue = strings.ReplaceAll(format, "{token}", token)
+	} else {
+		logger.WarnContext(ctx, "TokenURLElicitationConfig HeaderValueFormat is missing '{token}' placeholder", "format", format)
+	}
+	return formattedValue
 }
 
 // GetSessionID returns the mcp session id
@@ -728,7 +757,18 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		// inject cached user token so the hairpin initialize reaches the backend
 		if s.ElicitationEnabled && mcpServerConfig.TokenURLElicitation != nil {
 			if userToken, ok, _ := s.SessionCache.GetUserToken(ctx, mcpReq.GetSessionID(), mcpServerConfig.Name); ok {
-				passThroughHeaders["authorization"] = userToken
+				headerName, headerFormat := resolveTokenHeaderConfig(mcpServerConfig.TokenURLElicitation)
+
+				// If the target header is Authorization and it is already present in the request,
+				// do not overwrite it to preserve AuthPolicy validation behavior.
+				if strings.EqualFold(headerName, authorizationHeader) && mcpReq.GetSingleHeaderValue(authorizationHeader) != "" {
+					s.Logger.DebugContext(ctx, "Authorization header already present, skipping injection for pass-through", "server", mcpServerConfig.Name)
+				} else {
+					formattedValue := formatTokenHeaderValue(ctx, s.Logger, headerFormat, userToken)
+
+					// Keep lowercase for passThroughHeaders map to match existing behavior
+					passThroughHeaders[strings.ToLower(headerName)] = formattedValue
+				}
 			}
 		}
 
@@ -889,7 +929,18 @@ func (s *ExtProcServer) resolveUpstreamToken(ctx context.Context, mcpReq *MCPReq
 	}
 	if ok {
 		s.Logger.DebugContext(ctx, "found cached user token", "server", serverInfo.Name)
-		headers.WithAuth(token)
+
+		headerName, headerFormat := resolveTokenHeaderConfig(serverInfo.TokenURLElicitation)
+
+		// If the target header is Authorization and it is already present in the request,
+		// do not overwrite it to preserve AuthPolicy validation behavior.
+		if strings.EqualFold(headerName, authorizationHeader) && mcpReq.GetSingleHeaderValue(authorizationHeader) != "" {
+			s.Logger.DebugContext(ctx, "Authorization header already present, skipping injection", "server", serverInfo.Name)
+		} else {
+			formattedValue := formatTokenHeaderValue(ctx, s.Logger, headerFormat, token)
+			headers.WithCustomHeader(headerName, formattedValue)
+		}
+
 		return nil, nil //nolint:nilnil // nil info = token injected, nil error = success
 	}
 

@@ -150,6 +150,19 @@ type TokenURLElicitationConfig struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://`
 	URL string `json:"url,omitempty"`
+
+	// headerName specifies the name of the header to inject the token into.
+	// Defaults to "Authorization".
+	// +optional
+	// +default="Authorization"
+	HeaderName string `json:"headerName,omitempty"`
+
+	// headerValueFormat specifies the format string for the header value.
+	// The token is substituted into the {token} placeholder.
+	// Defaults to "Bearer {token}".
+	// +optional
+	// +default="Bearer {token}"
+	HeaderValueFormat string `json:"headerValueFormat,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

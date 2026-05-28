@@ -105,7 +105,9 @@ type MCPServer struct {
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
 type TokenURLElicitationConfig struct {
-	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	URL               string `json:"url,omitempty" yaml:"url,omitempty"`
+	HeaderName        string `json:"headerName,omitempty" yaml:"headerName,omitempty"`
+	HeaderValueFormat string `json:"headerValueFormat,omitempty" yaml:"headerValueFormat,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -161,13 +163,13 @@ func tagsEqual(a, b []string) bool {
 }
 
 func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {
-	if (a == nil) != (b == nil) {
-		return true
-	}
-	if a == nil {
+	if a == nil && b == nil {
 		return false
 	}
-	return a.URL != b.URL
+	if a == nil || b == nil {
+		return true
+	}
+	return a.URL != b.URL || a.HeaderName != b.HeaderName || a.HeaderValueFormat != b.HeaderValueFormat
 }
 
 // Path returns the path part of the mcp url

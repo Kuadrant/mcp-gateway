@@ -414,7 +414,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	if mcpsr.Spec.TokenURLElicitation != nil {
 		serverConfig.TokenURLElicitation = &config.TokenURLElicitationConfig{
-			URL: mcpsr.Spec.TokenURLElicitation.URL,
+			URL:               mcpsr.Spec.TokenURLElicitation.URL,
+			HeaderName:        mcpsr.Spec.TokenURLElicitation.HeaderName,
+			HeaderValueFormat: mcpsr.Spec.TokenURLElicitation.HeaderValueFormat,
 		}
 	}
 

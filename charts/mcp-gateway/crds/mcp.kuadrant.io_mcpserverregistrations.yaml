@@ -208,6 +208,19 @@ spec:
                   When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
                   to collect tokens from capable clients at tool-call time.
                 properties:
+                  headerName:
+                    default: Authorization
+                    description: |-
+                      headerName specifies the name of the header to inject the token into.
+                      Defaults to "Authorization".
+                    type: string
+                  headerValueFormat:
+                    default: Bearer {token}
+                    description: |-
+                      headerValueFormat specifies the format string for the header value.
+                      The token is substituted into the {token} placeholder.
+                      Defaults to "Bearer {token}".
+                    type: string
                   url:
                     description: |-
                       url overrides the default broker token page URL.
