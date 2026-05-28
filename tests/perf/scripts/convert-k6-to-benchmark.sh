@@ -79,5 +79,4 @@ jq '
     value: ((.metrics.mcp_session_open_fail.values.rate // 0) * 100)
   }
 ]
-| map(select(.value != null))
 ' "$SUMMARY_FILE"
