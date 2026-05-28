@@ -106,7 +106,7 @@ GitHub Actions
   └─ make perf-ci-setup    # loads k6-mcp image + deploys mock server + ConfigMap
   └─ kubectl apply k6-benchmark-job.yaml
   └─ kubectl wait --for=condition=complete job/mcp-gateway-benchmark
-  └─ kubectl cp <pod>:/results/summary.json
+  └─ kubectl logs <pod> (extract JSON between sentinel markers)
   └─ convert-k6-to-benchmark.sh → benchmark-results.json
   └─ benchmark-action       # stores history + comments on PR + blocks on regression
 ```
@@ -118,8 +118,8 @@ GitHub Actions
 2. Click **Run workflow** and select the branch.
 3. The workflow provisions a fresh Kind cluster and posts results as a PR comment.
 
-**Automatically**: the workflow runs on every PR that touches `internal/`,
-`cmd/`, or `tests/perf/`.
+The workflow is manual-only (`workflow_dispatch`). There is no automatic
+PR trigger.
 
 ### Regression gating
 

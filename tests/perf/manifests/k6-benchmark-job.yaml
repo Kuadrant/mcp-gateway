@@ -4,12 +4,12 @@
 # The scenario script is mounted from the k6-ci-scenarios ConfigMap
 # (created by `make perf-ci-setup` or `kubectl create configmap`).
 #
-# Results are written to an emptyDir volume and extracted with
-# `kubectl cp` before the pod is garbage-collected.
+# Results are printed to stdout between sentinel markers and extracted
+# via `kubectl logs` by the CI Makefile target (`perf-ci-run`).
 #
 # Apply:   kubectl apply -f tests/perf/manifests/k6-benchmark-job.yaml
 # Wait:    kubectl wait --for=condition=complete job/mcp-gateway-benchmark --timeout=180s
-# Extract: kubectl cp <pod>:/results/summary.json ./k6-summary.json
+# Extract: kubectl logs <pod> | sed -n '/___K6_JSON_SUMMARY___/,/___K6_JSON_SUMMARY_END___/p'
 # Clean:   kubectl delete job/mcp-gateway-benchmark
 apiVersion: batch/v1
 kind: Job

@@ -21,7 +21,7 @@
         "docs/superpowers/**",
         "catalog/mcp-gateway-catalog/**",
         "out/**",
-        "GOTOOLCHAIN",  
-    "reqs"
+        "GOTOOLCHAIN",
+        "reqs"
     ]
 }
