@@ -27,7 +27,7 @@ RUN xk6 build \
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates
-RUN addgroup -S k6 && adduser -S -G k6 k6
+RUN addgroup -S -g 101 k6 && adduser -S -u 100 -G k6 k6
 
 COPY --from=builder /k6 /usr/local/bin/k6
 
