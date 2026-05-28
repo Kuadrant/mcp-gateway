@@ -15,7 +15,7 @@ ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache git
 
 # Install xk6 – the k6 extension builder
-RUN go install go.k6.io/xk6/cmd/xk6@latest
+RUN go install go.k6.io/xk6/cmd/xk6@v1.4.3
 
 
 # Build k6 with the MCP extension
@@ -27,7 +27,9 @@ RUN xk6 build \
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates
+RUN addgroup -S k6 && adduser -S -G k6 k6
 
 COPY --from=builder /k6 /usr/local/bin/k6
 
+USER k6
 ENTRYPOINT ["k6"]

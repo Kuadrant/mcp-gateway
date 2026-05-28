@@ -52,31 +52,31 @@ jq '
   {
     name:  "p95_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration["p(95)"] // 0)
+    value: (.metrics.mcp_tool_call_duration.values["p(95)"] // 0)
   },
   # MCP tool call p99 latency
   {
     name:  "p99_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration["p(99)"] // 0)
+    value: (.metrics.mcp_tool_call_duration.values["p(99)"] // 0)
   },
   # MCP tool call average latency
   {
     name:  "avg_tool_call_ms",
     unit:  "ms",
-    value: (.metrics.mcp_tool_call_duration.avg // 0)
+    value: (.metrics.mcp_tool_call_duration.values.avg // 0)
   },
   # MCP tool call error rate (as a percentage)
   {
     name:  "tool_error_rate",
     unit:  "percent",
-    value: ((.metrics.mcp_tool_call_fail_rate.rate // 0) * 100)
+    value: ((.metrics.mcp_tool_call_fail_rate.values.rate // 0) * 100)
   },
   # MCP session open failure rate (as a percentage)
   {
     name:  "session_fail_rate",
     unit:  "percent",
-    value: ((.metrics.mcp_session_open_fail.rate // 0) * 100)
+    value: ((.metrics.mcp_session_open_fail.values.rate // 0) * 100)
   }
 ]
 | map(select(.value != null))

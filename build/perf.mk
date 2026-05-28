@@ -178,7 +178,8 @@ perf-ci-setup: kind perf-build-mock-server perf-build-k6-image ## Setup in-clust
 perf-ci-run: ## Run the in-cluster benchmark Job and extract results
 	@mkdir -p out/perf
 	@echo "Applying benchmark Job..."
-	kubectl apply -f tests/perf/manifests/k6-benchmark-job.yaml
+	kubectl delete -f tests/perf/manifests/k6-benchmark-job.yaml --ignore-not-found
+	kubectl create -f tests/perf/manifests/k6-benchmark-job.yaml
 	@echo "Waiting for Job to complete (timeout 180 s)..."
 	kubectl wait --for=condition=complete job/mcp-gateway-benchmark -n mcp-test --timeout=180s
 	@POD=$$(kubectl get pod -n mcp-test -l app=mcp-gateway-benchmark \
@@ -196,4 +197,4 @@ perf-ci-clean: ## Remove in-cluster CI benchmark resources (Job + ConfigMap)
 	kubectl delete job/mcp-gateway-benchmark -n mcp-test --ignore-not-found
 	kubectl delete configmap/k6-ci-scenarios -n mcp-test --ignore-not-found
 	kubectl delete mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --ignore-not-found
-	kubectl delete mcpserverregistration/perf-mock-server --ignore-not-found
+	kubectl delete mcpserverregistration/perf-mock-server -n mcp-test --ignore-not-found

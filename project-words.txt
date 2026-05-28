@@ -1,5 +1,7 @@
 
 # New Words
+addgroup
+adduser
 afero
 Agentic
 ALPN

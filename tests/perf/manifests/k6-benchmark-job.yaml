@@ -29,11 +29,20 @@ spec:
         app: mcp-gateway-benchmark
         component: performance
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       restartPolicy: Never
       containers:
         - name: k6
           image: ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command:
             - sh
             - -c
@@ -67,9 +76,13 @@ spec:
               readOnly: true
             - name: results
               mountPath: /results
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: scenarios
           configMap:
             name: k6-ci-scenarios
         - name: results
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}

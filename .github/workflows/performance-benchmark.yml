@@ -2,9 +2,7 @@ name: Performance Benchmark
 
 # Fulfills sub-issue #807: manually triggered CI job for benchmarking.
 #
-# Triggers:
-#   - workflow_dispatch: manually triggered from the Actions tab
-#   - pull_request: automatically on PRs that touch gateway internals or perf tests
+# Trigger: workflow_dispatch only (manual from Actions tab).
 #
 # The workflow:
 #   1. Provisions a Kind cluster identical to the e2e CI cluster
@@ -18,15 +16,11 @@ name: Performance Benchmark
 # Regression gate: the workflow fails (blocking merge/release) if any metric
 # exceeds 130 % of the stored baseline (i.e. a > 30 % performance degradation).
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'internal/**'
-      - 'cmd/**'
-      - 'tests/perf/**'
-      - 'Dockerfile.k6'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -44,10 +38,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           go-version: '1.24'
 
@@ -70,8 +64,17 @@ jobs:
       # Track results over time and gate on regression
       # Note: auto-push requires a gh-pages branch and GitHub Pages to be enabled.
       # See: https://github.com/benchmark-action/github-action-benchmark#readme
+      - name: ensure gh-pages branch exists
+        run: |
+          if ! git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then
+            git switch --orphan gh-pages
+            git commit --allow-empty -m "initialise gh-pages for benchmark data"
+            git push origin gh-pages
+            git switch -
+          fi
+
       - name: Store and compare benchmark results
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@5bbce78ef18edf5b96cb2d23e8d240b485f9dc4a  # v1.16.2
         with:
           name: MCP Gateway Performance
           tool: customSmallerIsBetter
