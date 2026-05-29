@@ -232,9 +232,7 @@ var _ = Describe("Tool Discovery", func() {
 		})
 
 		It("respects auth filtering in discover_tools", func() {
-			if !IsTrustedHeadersEnabled(ctx) {
-				Skip("trusted headers not configured")
-			}
+			SetupTrustedHeadersAuth(ctx, k8sClient)
 
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("disc-auth", k8sClient).
@@ -247,8 +245,6 @@ var _ = Describe("Tool Discovery", func() {
 				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "discauth_")
-
 			By("creating a JWT that allows only one tool")
 			allowedTools := map[string][]string{
 				fmt.Sprintf("%s/%s", server.Namespace, server.Name): {"hello_world"},
@@ -257,9 +253,13 @@ var _ = Describe("Tool Discovery", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("calling discover_tools with auth header")
-			sessionID, err := mcpInitialize(ctx, gatewayURL, map[string]string{"X-Mcp-Authorized": jwtToken})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, map[string]string{"X-Mcp-Authorized": jwtToken})).To(Succeed())
+			var sessionID string
+			Eventually(func(g Gomega) {
+				var initErr error
+				sessionID, initErr = mcpInitialize(ctx, gatewayURL, map[string]string{"X-Mcp-Authorized": jwtToken})
+				g.Expect(initErr).NotTo(HaveOccurred())
+				g.Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, map[string]string{"X-Mcp-Authorized": jwtToken})).To(Succeed())
+			}, TestTimeoutMedium, TestRetryFast).Should(Succeed())
 
 			Eventually(func(g Gomega) {
 				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, nil, map[string]string{"X-Mcp-Authorized": jwtToken})

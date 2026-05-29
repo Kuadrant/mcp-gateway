@@ -737,74 +737,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	})
 
 	It("[Happy] should filter tools based on x-mcp-authorized JWT header", func() {
-		By("Ensuring trusted headers key is configured")
-
-		// create the secret if it doesn't exist
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "trusted-headers-public-key",
-				Namespace: SystemNamespace,
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{
-				"key": []byte(GetTestHeaderPublicKey()),
-			},
-		}
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
-
-		DeferCleanup(func() {
-			Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
-		})
-
-		// Patch MCPGatewayExtension
-		// Get current deployment generation before patching
-		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
-		Expect(err).NotTo(HaveOccurred())
-
-		ext := &mcpv1alpha1.MCPGatewayExtension{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{
-			Name: MCPExtensionName, Namespace: SystemNamespace,
-		}, ext)).To(Succeed())
-
-		patch := client.MergeFrom(ext.DeepCopy())
-		ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
-			SecretName: "trusted-headers-public-key",
-		}
-		Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
-
-		DeferCleanup(func() {
-			By("Cleaning up: removing trustedHeadersKey from MCPGatewayExtension")
-
-			// Get current deployment generation before cleanup
-			gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
-			Expect(err).NotTo(HaveOccurred())
-
-			ext := &mcpv1alpha1.MCPGatewayExtension{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name: MCPExtensionName, Namespace: SystemNamespace,
-			}, ext)
-			if err == nil {
-				patch := client.MergeFrom(ext.DeepCopy())
-				ext.Spec.TrustedHeadersKey = nil
-				Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
-
-				// Wait for deployment spec to be updated
-				Eventually(func(g Gomega) {
-					g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeFalse())
-				}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-				// Wait for deployment to roll out
-				Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
-			}
-		})
-
-		// Wait for deployment to be updated with the env var
-		Eventually(func(g Gomega) {
-			g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeTrue())
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-		// Wait for deployment to roll out with new pods
-		Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+		SetupTrustedHeadersAuth(ctx, k8sClient)
 
 		By("Creating an MCPServerRegistration with tools")
 		registration := NewMCPServerResourcesWithDefaults("authorized-capabilities-test", k8sClient).Build()

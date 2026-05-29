@@ -64,10 +64,9 @@ func NewRouterErrorf(code int32, format string, args ...any) *RouterError {
 }
 
 const (
-	methodToolCall    = "tools/call"
-	methodPromptGet   = "prompts/get"
-	methodInitialize  = "initialize"
-	methodInitialized = "notification/initialized"
+	methodToolCall   = "tools/call"
+	methodPromptGet  = "prompts/get"
+	methodInitialize = "initialize"
 
 	elicitationResultAction  = "action"
 	elicitationActionAccept  = "accept"
