@@ -55,11 +55,11 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Integration & Delivery
-    containerImage: ghcr.io/kuadrant/mcp-controller:latest
+    containerImage: ghcr.io/kuadrant/mcp-controller:v0.7.0-rc1
     description: An Envoy-based gateway for Model Context Protocol (MCP) servers
     repository: https://github.com/Kuadrant/mcp-gateway
     support: kuadrant
-  name: mcp-gateway.v0.0.0
+  name: mcp-gateway.v0.7.0-rc1
   namespace: placeholder
 spec:
   customresourcedefinitions:
@@ -119,4 +119,4 @@ spec:
   provider:
     name: Kuadrant
     url: https://kuadrant.io
-  version: 0.0.0
+  version: 0.7.0-rc1
