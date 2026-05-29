@@ -122,7 +122,7 @@ jobs:
 
       - name: Run E2E tests (full)
         if: needs.check-permission.outputs.suite == 'full'
-        run: make test-e2e-ci
+        run: make test-e2e-ci-full
 
       - name: Collect logs on failure
         if: failure()
