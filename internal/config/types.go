@@ -22,6 +22,8 @@ type MCPServersConfig struct {
 	//MCPGatewayExternalHostname is the accessible host of the gateway listener
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
+	// GatewayCACertPEM is the gateway-level CA certificate bundle PEM data
+	GatewayCACertPEM string
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -32,12 +34,20 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 	config.observers = append(config.observers, obs)
 }
 
-// SetServers atomically replaces the server and virtual-server lists.
-func (config *MCPServersConfig) SetServers(servers []*MCPServer, virtualServers []*VirtualServer) {
+// SetSnapshot atomically replaces the server lists and the gateway CA bundle.
+func (config *MCPServersConfig) SetSnapshot(servers []*MCPServer, virtualServers []*VirtualServer, gatewayCACertPEM string) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.Servers = servers
 	config.VirtualServers = virtualServers
+	config.GatewayCACertPEM = gatewayCACertPEM
+}
+
+// GetGatewayCACertPEM returns the gateway-level CA certificate bundle PEM.
+func (config *MCPServersConfig) GetGatewayCACertPEM() string {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	return config.GatewayCACertPEM
 }
 
 // ListServers returns a consistent snapshot of the current server list.
@@ -193,8 +203,9 @@ type Observer interface {
 
 // BrokerConfig holds broker configuration
 type BrokerConfig struct {
-	Servers        []MCPServer           `json:"servers" yaml:"servers"`
-	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
+	Servers          []MCPServer           `json:"servers"                    yaml:"servers"`
+	VirtualServers   []VirtualServerConfig `json:"virtualServers,omitempty"   yaml:"virtualServers,omitempty"`
+	GatewayCACertPEM string                `json:"gatewayCACertPEM,omitempty" yaml:"gatewayCACertPEM,omitempty"`
 }
 
 // AuthConfig holds auth configuration

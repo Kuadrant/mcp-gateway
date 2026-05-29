@@ -37,7 +37,7 @@ func buildHairpinURL(gatewayHost, mcpPath string) string {
 // Initialize will create a new initialize and initialized request and return the associated http client for connection management
 // This method makes a request back to the gateway setting the target mcp server to initialize. We hairpin through the gateway to ensure any Auth applied to that host is triggered for the call.
 // The initToken is a short-lived JWT bound to conf.Hostname that the router will validate when the hairpin request re-enters the gateway.
-func Initialize(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client) (*client.Client, error) {
+func Initialize(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client, gatewayCACertPEM string) (*client.Client, error) {
 	// force the initialize to hairpin back through envoy with a token that
 	// proves the request originated from the gateway's own router.
 	passThroughHeaders[mcprouter.RoutingKey] = initToken
@@ -49,6 +49,29 @@ func Initialize(ctx context.Context, gatewayHost, initToken string, conf *config
 	}
 
 	url := buildHairpinURL(gatewayHost, mcpPath)
+
+	if gatewayCACertPEM != "" && hairpinHTTPClient != nil {
+		if tr, ok := hairpinHTTPClient.Transport.(*http.Transport); ok {
+			trClone := tr.Clone()
+			pool := trClone.TLSClientConfig.RootCAs
+			if pool == nil {
+				pool, err = x509.SystemCertPool()
+				if err != nil || pool == nil {
+					pool = x509.NewCertPool()
+				}
+			} else {
+				pool = pool.Clone()
+			}
+			if !pool.AppendCertsFromPEM([]byte(gatewayCACertPEM)) {
+				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+			}
+			trClone.TLSClientConfig.RootCAs = pool
+
+			hairpinCopy := *hairpinHTTPClient
+			hairpinCopy.Transport = trClone
+			hairpinHTTPClient = &hairpinCopy
+		}
+	}
 
 	httpClient, err := client.NewStreamableHttpClient(url,
 		transport.WithHTTPHeaders(passThroughHeaders),

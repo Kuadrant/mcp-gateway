@@ -31,18 +31,20 @@ var (
 // initialization state from the MCP handshake.
 type MCPServer struct {
 	*config.MCPServer
-	client   *client.Client
-	clientMu sync.RWMutex
-	headers  map[string]string
-	init     *mcp.InitializeResult
+	client           *client.Client
+	clientMu         sync.RWMutex
+	headers          map[string]string
+	init             *mcp.InitializeResult
+	GatewayCACertPEM string
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided configuration.
 // It sets up default headers including user-agent and gateway-server-id, and adds
 // an Authorization header if credentials are configured.
-func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
+func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string) *MCPServer {
 	up := &MCPServer{
-		MCPServer: config,
+		MCPServer:        config,
+		GatewayCACertPEM: gatewayCACertPEM,
 	}
 	up.headers = map[string]string{
 		"user-agent":        "mcp-broker",
@@ -57,7 +59,7 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 // buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
 // server. The transport always has handshake and response-header timeouts so a
 // hung or unresponsive upstream cannot block the broker indefinitely. When a
-// CACert is configured, that CA is appended to the system root pool and used
+// CACert or GatewayCACertPEM is configured, that CA is appended to the system root pool and used
 // for TLS verification.
 func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -65,14 +67,24 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	transport.ResponseHeaderTimeout = defaultResponseHeaderTimeout
 	transport.ExpectContinueTimeout = defaultExpectContinueTimeout
 
-	if up.CACert != "" {
+	if up.CACert != "" || up.GatewayCACertPEM != "" {
 		rootCAs, err := x509.SystemCertPool()
 		if err != nil {
 			rootCAs = x509.NewCertPool()
 		}
-		if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-			return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+
+		if up.GatewayCACertPEM != "" {
+			if !rootCAs.AppendCertsFromPEM([]byte(up.GatewayCACertPEM)) {
+				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM for upstream %s", up.Name)
+			}
 		}
+
+		if up.CACert != "" {
+			if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
+				return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+			}
+		}
+
 		transport.TLSClientConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			RootCAs:    rootCAs,
@@ -108,6 +120,11 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Hint:                up.Hint,
 		Tags:                tags,
 	}
+}
+
+// GetGatewayCACertPEM returns the gateway CA certificate bundle PEM for this server
+func (up *MCPServer) GetGatewayCACertPEM() string {
+	return up.GatewayCACertPEM
 }
 
 // IsEnabled returns true if the server should be connected to and have its tools registered.

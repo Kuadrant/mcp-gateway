@@ -98,6 +98,7 @@ type ConfigWriterDeleter interface {
 	DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error
 	EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error
 	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
+	WriteGatewayCACertPEM(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error
 }
 
 // MCPGatewayExtensionReconciler reconciles a MCPGatewayExtension object
@@ -209,6 +210,14 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if err := r.ConfigWriterDeleter.EnsureConfigExists(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileCACertBundle(ctx, mcpExt); err != nil {
+		var valErr *validationError
+		if errors.As(err, &valErr) {
+			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -927,4 +936,71 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForSecret)).
 		Named("mcpgatewayextension").
 		Complete(r)
+}
+
+// reconcileCACertBundle validates the CA bundle secret and writes its PEM data into the config secret.
+func (r *MCPGatewayExtensionReconciler) reconcileCACertBundle(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+	if mcpExt.Spec.CACertBundleRef == nil {
+		// clear config if it was previously set
+		if err := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); err != nil {
+			return fmt.Errorf("failed to clear CA certificate bundle from config: %w", err)
+		}
+		return nil
+	}
+
+	secret := &corev1.Secret{}
+	err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
+		Name:      mcpExt.Spec.CACertBundleRef.Name,
+		Namespace: mcpExt.Namespace,
+	}, secret)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			if clearErr := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); clearErr != nil {
+				return fmt.Errorf("failed to clear CA certificate bundle from config: %w", clearErr)
+			}
+			return newValidationError(mcpv1alpha1.ConditionReasonInvalid, fmt.Sprintf("CA bundle secret %s not found", mcpExt.Spec.CACertBundleRef.Name))
+		}
+		return fmt.Errorf("failed to get CA bundle secret: %w", err)
+	}
+
+	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
+		if clearErr := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); clearErr != nil {
+			return fmt.Errorf("failed to clear CA certificate bundle from config: %w", clearErr)
+		}
+		return newValidationError(mcpv1alpha1.ConditionReasonInvalid, fmt.Sprintf("CA bundle secret %s missing required label", mcpExt.Spec.CACertBundleRef.Name))
+	}
+
+	key := mcpExt.Spec.CACertBundleRef.Key
+	if key == "" {
+		key = "ca.crt"
+	}
+	val, ok := secret.Data[key]
+	if !ok {
+		if clearErr := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); clearErr != nil {
+			return fmt.Errorf("failed to clear CA certificate bundle from config: %w", clearErr)
+		}
+		return newValidationError(mcpv1alpha1.ConditionReasonInvalid, fmt.Sprintf("CA bundle secret %s missing key %s", mcpExt.Spec.CACertBundleRef.Name, key))
+	}
+
+	// Gateway CA bundle limit is 256 KiB
+	const maxGatewayCACertSize = 256 * 1024
+	if len(val) > maxGatewayCACertSize {
+		if clearErr := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); clearErr != nil {
+			return fmt.Errorf("failed to clear CA certificate bundle from config: %w", clearErr)
+		}
+		return newValidationError(mcpv1alpha1.ConditionReasonInvalid, "CA bundle data exceeds maximum size")
+	}
+
+	if err := validateCACertPEM(val); err != nil {
+		if clearErr := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, "", config.NamespaceName(mcpExt.Namespace)); clearErr != nil {
+			return fmt.Errorf("failed to clear CA certificate bundle from config: %w", clearErr)
+		}
+		return newValidationError(mcpv1alpha1.ConditionReasonInvalid, fmt.Sprintf("CA bundle in secret %s is invalid: %v", mcpExt.Spec.CACertBundleRef.Name, err))
+	}
+
+	if err := r.ConfigWriterDeleter.WriteGatewayCACertPEM(ctx, string(val), config.NamespaceName(mcpExt.Namespace)); err != nil {
+		return fmt.Errorf("failed to write CA certificate bundle to config: %w", err)
+	}
+
+	return nil
 }

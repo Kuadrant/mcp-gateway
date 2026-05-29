@@ -377,7 +377,11 @@ func (a *app) loadConfig(path string) error {
 	} else {
 		a.logger.Debug("No virtualServers section found in configuration")
 	}
-	a.mcpConfig.SetServers(newServers, newVirtualServers)
+	var gatewayCACertPEM string
+	if viper.IsSet("gatewayCACertPEM") {
+		gatewayCACertPEM = viper.GetString("gatewayCACertPEM")
+	}
+	a.mcpConfig.SetSnapshot(newServers, newVirtualServers, gatewayCACertPEM)
 
 	a.logger.Debug("config successfully loaded", "# servers", len(newServers))
 

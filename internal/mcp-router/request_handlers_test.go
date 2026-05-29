@@ -182,7 +182,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.True(t, sessionAdded)
 
 	// Mock InitForClient - should not be called since session exists
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client, _ string) (*client.Client, error) {
 		// This should not be called in this test since session exists in cache
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
@@ -1216,7 +1216,7 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NoError(t, err)
 
 	var captured map[string]string
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *http.Client, _ string) (*client.Client, error) {
 		captured = make(map[string]string, len(headers))
 		for k, v := range headers {
 			captured[k] = v
@@ -1440,7 +1440,7 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, sessionAdded)
 
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client, _ string) (*client.Client, error) {
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
 
@@ -1543,7 +1543,7 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 		JWTManager:   jwtManager,
 		Logger:       logger,
 		SessionCache: cache,
-		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client, _ string) (*client.Client, error) {
 			return nil, fmt.Errorf("should not be called")
 		},
 		Broker:              newMockBroker(serverConfigs, toolMap),

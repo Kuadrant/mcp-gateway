@@ -295,7 +295,7 @@ func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
 
 func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
-	mcpServer := upstream.NewUpstreamMCP(&cfg)
+	mcpServer := upstream.NewUpstreamMCP(&cfg, "")
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	return manager

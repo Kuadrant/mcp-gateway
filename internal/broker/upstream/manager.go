@@ -78,6 +78,7 @@ type MCP interface {
 	GetName() string
 	SupportsToolsListChanged() bool
 	GetConfig() config.MCPServer
+	GetGatewayCACertPEM() string
 	ID() config.UpstreamMCPID
 	GetPrefix() string
 	Connect(context.Context, func()) error
@@ -104,6 +105,7 @@ type ActiveMCPServer interface {
 	GetManagedPrompts() []mcp.Prompt
 	GetServedManagedPrompt(promptName string) *mcp.Prompt
 	Config() config.MCPServer
+	GatewayCACertPEM() string
 }
 
 // MCPManager manages a single backend MCPServer for the broker. It does not act on behalf of clients. It is the only thing that should be connecting to the MCP Server for the broker. It handles tools updates, disconnection, notifications, liveness checks and updating the status for the MCP server. It is responsible for adding and removing tools to the broker. It is intended to be long lived and have 1:1 relationship with a backend MCP server.
@@ -258,6 +260,7 @@ func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
 }
 func (a *activeMCP) Config() config.MCPServer { return a.manager.mcp.GetConfig() }
+func (a *activeMCP) GatewayCACertPEM() string { return a.manager.mcp.GetGatewayCACertPEM() }
 
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())
