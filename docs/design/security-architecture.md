@@ -31,6 +31,7 @@ MCP Client
 │                                              │
 │  ┌────────────────────────────────────────┐  │
 │  │  MCP Router (ext_proc)                 │  │
+│  │  (internal/mcp-router/)                │  │
 │  │  - Parses JSON-RPC method/tool name    │  │
 │  │  - Routes to broker or upstream server │  │
 │  │  - Manages session-to-backend mapping  │  │
@@ -42,8 +43,8 @@ MCP Client
            ▼                      ▼
    ┌──────────────┐     ┌──────────────────┐
    │  MCP Broker  │     │  Upstream MCP    │
-   │  (tools/list,│     │  Servers         │
-   │  initialize) │     │  (tools/call)    │
+   │  (internal/  │     │  Servers         │
+   │  broker/)    │     │  (tools/call)    │
    └──────────────┘     └──────────────────┘
 ```
 
@@ -83,6 +84,14 @@ The gateway is NOT responsible for:
 - **Content filtering**: responses from upstream servers are streamed back as-is
 - **Upstream server security**: backend MCP servers must implement their own input validation or leverage prompt guard tooling integrated independently at the gateway
 
+### Security properties
+
+- The router (`internal/mcp-router/`) never accesses `credentialRef` values; it only reads routing headers and the JSON-RPC method/tool name from the request body
+- The broker (`internal/broker/`) never writes `credentialRef` values to client-facing responses, logs, or headers forwarded through Envoy
+- The controller (`internal/controller/`) scopes generated Secrets to the operator namespace and sets owner references for garbage collection. The controller's ClusterRole grants cluster-wide secrets access, but the informer cache is filtered by label (`mcp.kuadrant.io/aggregated=true`) to limit the working set
+- Routing headers set by the router (tool name, session ID, server name) are derived from parsed JSON-RPC bodies or gateway-issued JWTs, not from raw client input. Client-supplied headers are proxied through to upstream backends as-is — header filtering is the responsibility of the gateway HTTPRoute configuration and AuthPolicy
+- The router strips or rewrites gateway-internal headers (`mcp-session-id`, `mcp-init-host`, `router-key`) before traffic reaches upstream backends
+
 ## Authentication and Authorization
 
 Authentication and authorization are enforced via [Kuadrant AuthPolicy](https://docs.kuadrant.io/1.2.x/kuadrant-operator/doc/reference/authpolicy/) backed by Authorino, applied at the Gateway HTTPRoute level. See [auth-phase-1.md](auth-phase-1.md) and [auth-phase-2.md](auth-phase-2.md) for detailed design.
@@ -99,6 +108,12 @@ The client's Authorization header is always forwarded to upstream servers, allow
 
 AuthPolicy can enforce per-tool access control using the `x-mcp-toolname` and `x-mcp-servername` headers set by the router. JWT claims (e.g., `resource_access`) are matched against the requested tool to produce an `x-mcp-authorized` JWT signed header via Authorino. The broker verifies this signature and filters tool lists accordingly.
 
+### Security properties
+
+- Client identity validation (JWT/OIDC) and token exchange (RFC 8693) are delegated to Authorino via AuthPolicy — the gateway contains no custom logic for these flows. URL token elicitation (`internal/broker/`, `internal/elicitation/`) is a separate path where the gateway stores and injects per-user tokens for upstream requests (see [URL Token Elicitation](#url-token-elicitation))
+- The `x-mcp-authorized` header is a signed JWT produced by Authorino, verified by the broker (`internal/broker/`) using an ECDSA public key; unsigned or tampered values are rejected
+- The router sets `x-mcp-toolname` and `x-mcp-servername` from the parsed JSON-RPC body before AuthPolicy evaluation — these values drive authorization decisions and must not be settable by the client
+
 ## Session Isolation
 
 The MCP protocol is stateful. The gateway manages three session types to prevent cross-user data leakage. See [session-mgmt.md](session-mgmt.md) for the full design.
@@ -109,9 +124,16 @@ The MCP protocol is stateful. The gateway manages three session types to prevent
 
 Gateway sessions expire (default 24 hours), and all associated backend sessions are closed on expiry. Session IDs from backends are never exposed to clients — the router rewrites them to the gateway session ID.
 
+### Security properties
+
+- Gateway session JWTs (`internal/jwt/`) are signed with the `GATEWAY_SIGNING_KEY` HMAC key; the broker and router refuse to start if the key is absent
+- Backend session IDs are never exposed to clients — the router (`internal/mcp-router/response_handlers.go`) rewrites `mcp-session-id` headers in responses to the gateway session ID
+- Session-to-backend mappings (`internal/session/`) are keyed by gateway session ID + server name; one client cannot address another client's backend session
+- All backend sessions associated with a gateway session are closed on session expiry
+
 ## URL Token Elicitation
 
-URL elicitation (`tokenURLElicitation`) enables per-user token collection at tool-call time. An AuthPolicy on the gateway route is required to ensure per-user token binding — without one, the token page has no identity check. The router triggers the MCP spec's `-32042 URLElicitationRequired` flow for elicitation-capable clients.
+URL elicitation (`tokenURLElicitation`) enables per-user token collection at tool-call time (see `internal/broker/elicitation_handler.go`, `internal/elicitation/`). An AuthPolicy on the gateway route is required to ensure per-user token binding — without one, the token page has no identity check. The router (`internal/mcp-router/elicitation.go`) triggers the MCP spec's `-32042 URLElicitationRequired` flow for elicitation-capable clients.
 
 ### Token data boundaries
 
@@ -159,6 +181,12 @@ The router parses MCP JSON-RPC bodies to extract the method and tool name for ro
 ### Context pollution
 
 Context pollution — where untrusted data from one tool call influences subsequent LLM reasoning — is similarly outside the gateway's scope. The gateway ensures session isolation (one user's sessions are not shared with another), but it does not control how an LLM client aggregates tool responses into its context window.
+
+### Security properties
+
+- The router (`internal/mcp-router/`) parses JSON-RPC request bodies to extract `method`, `params.name`, and elicitation `result.action` for routing decisions, and rewrites the body to strip tool/prompt prefixes. It also inspects response headers (`:status`, `mcp-session-id`) to manage session lifecycle (404 invalidation, 401 token eviction, session ID rewriting). The SSE rewriter (`internal/mcp-router/elicitation.go`) additionally parses response bodies to rewrite backend elicitation IDs to gateway-scoped IDs. Beyond these specific transforms, the router does not inspect or transform tool arguments, tool response content, or prompt payloads
+- No component in the gateway inspects MCP tool arguments for injection patterns; this is an explicit non-goal documented above
+- Session isolation prevents cross-user context pollution at the transport layer, but the gateway does not control how clients aggregate tool responses
 
 ### Recommendations
 
