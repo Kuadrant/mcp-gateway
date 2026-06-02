@@ -20,22 +20,26 @@ import (
 
 // MockMCP implements the MCP interface for testing
 type MockMCP struct {
-	name                string
-	prefix              string
-	id                  config.UpstreamMCPID
-	cfg                 *config.MCPServer
-	connectErr          error
-	pingErr             error
-	tools               []mcp.Tool
-	listToolsErr        error
-	listToolsDelay      time.Duration
-	prompts             []mcp.Prompt
-	listPromptsErr      error
-	protocolVersion     string
-	hasToolsCap         bool
-	hasPromptsCap       bool
-	connected           atomic.Bool
-	notificationHandler func(mcp.JSONRPCNotification)
+	name                       string
+	prefix                     string
+	id                         config.UpstreamMCPID
+	cfg                        *config.MCPServer
+	connectErr                 error
+	pingErr                    error
+	tools                      []mcp.Tool
+	listToolsErr               error
+	listToolsDelay             time.Duration
+	prompts                    []mcp.Prompt
+	listPromptsErr             error
+	resources                  []mcp.Resource
+	listResourcesErr           error
+	protocolVersion            string
+	hasToolsCap                bool
+	hasPromptsCap              bool
+	hasResourcesCap            bool
+	hasResourcesListChangedCap bool
+	connected                  atomic.Bool
+	notificationHandler        func(mcp.JSONRPCNotification)
 }
 
 func (m *MockMCP) GetName() string {
@@ -101,6 +105,21 @@ func (m *MockMCP) ListPrompts(_ context.Context, _ mcp.ListPromptsRequest) (*mcp
 		return nil, m.listPromptsErr
 	}
 	return &mcp.ListPromptsResult{Prompts: m.prompts}, nil
+}
+
+func (m *MockMCP) SupportsResources() bool {
+	return m.hasResourcesCap
+}
+
+func (m *MockMCP) SupportsResourcesListChanged() bool {
+	return m.hasResourcesListChangedCap
+}
+
+func (m *MockMCP) ListResources(_ context.Context, _ mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
+	if m.listResourcesErr != nil {
+		return nil, m.listResourcesErr
+	}
+	return &mcp.ListResourcesResult{Resources: m.resources}, nil
 }
 
 func (m *MockMCP) OnNotification(handler func(notification mcp.JSONRPCNotification)) {
@@ -211,7 +230,7 @@ func TestNewUpstreamMCPManager(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := newMockMCP(tc.name, "")
 			gateway := newMockToolsAdderDeleter()
-			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, tc.interval, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, tc.interval, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectedInterval, manager.tickerInterval)
 		})
@@ -221,7 +240,7 @@ func TestNewUpstreamMCPManager(t *testing.T) {
 func TestMCPManager_MCPName(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("my-test-server", "prefix_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	assert.Equal(t, "my-test-server", manager.MCPName())
@@ -230,7 +249,7 @@ func TestMCPManager_MCPName(t *testing.T) {
 func TestMCPManager_GetStatus(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	expectedStatus := ServerValidationStatus{
@@ -254,7 +273,7 @@ func TestMCPManager_GetManagedTools(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	tools := []mcp.Tool{
@@ -274,7 +293,7 @@ func TestMCPManager_GetManagedTools_ReturnsCopy(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	tools := []mcp.Tool{validTool("tool1")}
@@ -329,7 +348,7 @@ func TestMCPManager_GetServedManagedTool(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := newMockMCP("test-server", tc.prefix)
 			gateway := newMockToolsAdderDeleter()
-			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 			manager.SetToolsForTesting(tc.tools)
 
@@ -376,7 +395,7 @@ func TestMCPManager_setStatus(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
-			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 			manager.serverTools = make([]server.ServerTool, tc.numServerTools)
 
@@ -431,7 +450,7 @@ func TestPrefixedName(t *testing.T) {
 func TestMCPManager_toolToServerTool(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "prefix_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	tool := mcp.Tool{
@@ -460,7 +479,7 @@ func TestMCPManager_Stop_Idempotent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test", "")
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	active := manager.Start(context.Background())
@@ -479,10 +498,10 @@ func TestMCPManager_manage_ConnectError(t *testing.T) {
 	mock := newMockMCP("test-server", "test_")
 	mock.connectErr = fmt.Errorf("connection refused")
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.False(t, status.Ready)
@@ -494,10 +513,10 @@ func TestMCPManager_manage_PingError(t *testing.T) {
 	mock := newMockMCP("test-server", "test_")
 	mock.pingErr = fmt.Errorf("ping timeout")
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.False(t, status.Ready)
@@ -510,10 +529,10 @@ func TestMCPManager_manage_ListToolsError(t *testing.T) {
 	mock.listToolsErr = fmt.Errorf("list tools failed")
 	mock.hasToolsCap = false // ensure we try to list tools
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.False(t, status.Ready)
@@ -526,10 +545,10 @@ func TestMCPManager_manage_Success(t *testing.T) {
 	mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
 	mock.hasToolsCap = false // ensure we list tools every time
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -548,10 +567,10 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready, "server should be healthy")
@@ -568,7 +587,7 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 func TestDiffTools(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -750,7 +769,7 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
 			mock.hasToolsCap = tt.supportsToolsListChange
 			gateway := newMockToolsAdderDeleter()
-			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
 			if tt.hasExistingTools {
@@ -770,11 +789,11 @@ func TestMCPManager_manage_SkipsFetchOnTimerWhenToolsListChangeSupported(t *test
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasToolsCap = true // supports tools list change notifications
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	// First call with notification - should fetch and add tools
-	manager.manage(context.Background(), eventTypeToolNotification)
+	manager.manage(t.Context(), eventTypeToolNotification)
 	assert.Equal(t, 1, gateway.addCalls, "should add tools on notification")
 	assert.Len(t, gateway.tools, 1)
 
@@ -782,12 +801,12 @@ func TestMCPManager_manage_SkipsFetchOnTimerWhenToolsListChangeSupported(t *test
 	mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
 
 	// Timer event - should skip fetching since we support notifications and have tools
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 	assert.Equal(t, 1, gateway.addCalls, "should not fetch tools on timer when notifications supported")
 	assert.Len(t, gateway.tools, 1, "tools should remain unchanged")
 
 	// Notification event - should fetch and update tools
-	manager.manage(context.Background(), eventTypeToolNotification)
+	manager.manage(t.Context(), eventTypeToolNotification)
 	assert.Equal(t, 2, gateway.addCalls, "should fetch tools on notification")
 	assert.Len(t, gateway.tools, 2, "tools should be updated")
 }
@@ -852,7 +871,7 @@ func TestMCPManager_manage_OnlyCallsAddDeleteWhenNeeded(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
 			mock.hasToolsCap = false // ensure we fetch tools on every manage call
 			gateway := newMockToolsAdderDeleter()
-			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
 			// first manage call - establish initial tools
@@ -946,7 +965,7 @@ func TestServerToolsManagement(t *testing.T) {
 			mockMCP := newMockMCP("test-server", tt.prefix)
 			mockMCP.hasToolsCap = false // ensure we fetch tools on every manage call
 			mockGateway := NewMockGatewayServer()
-			manager, err := NewUpstreamMCPManager(mockMCP, mockGateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mockMCP, mockGateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
 			// First manage call - establish initial tools
@@ -997,10 +1016,10 @@ func TestMCPManager_manage_FilterOutPolicy(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -1021,10 +1040,10 @@ func TestMCPManager_manage_FilterOutPolicy_AllInvalid(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -1042,10 +1061,10 @@ func TestMCPManager_manage_RejectServerPolicy(t *testing.T) {
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyRejectServer)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyRejectServer)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.False(t, status.Ready)
@@ -1060,10 +1079,10 @@ func TestMCPManager_manage_AllValidTools(t *testing.T) {
 	mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -1076,7 +1095,7 @@ func TestMCPManager_manage_AllValidTools(t *testing.T) {
 func TestMCPManager_NewUpstreamMCPManager_nilGateway(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
-	_, err := NewUpstreamMCPManager(mock, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	_, err := NewUpstreamMCPManager(mock, nil, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gateway server is required")
 }
@@ -1087,7 +1106,7 @@ func TestMCPManager_EventChannel_NotificationRoutesThrough(t *testing.T) {
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasToolsCap = true
 	gateway := NewMockGatewayServer()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1121,7 +1140,7 @@ func TestMCPManager_ConcurrentReadsDuringManage(t *testing.T) {
 	mock := newMockMCP("test-server", "test_")
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1167,7 +1186,7 @@ func TestMCPManager_StopDuringManage(t *testing.T) {
 	// slow down ListTools so manage() is mid-flight when Stop() fires
 	mock.listToolsDelay = 100 * time.Millisecond
 	gateway := NewMockGatewayServer()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, time.Hour, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	active := manager.Start(context.Background())
@@ -1229,6 +1248,48 @@ func (m *MockPromptsAdderDeleter) ListPrompts() map[string]*server.ServerPrompt 
 	return result
 }
 
+// MockResourcesAdderDeleter implements ResourcesAdderDeleter for testing
+type MockResourcesAdderDeleter struct {
+	resources map[string]*server.ServerResource
+	addCalls  int
+	delCalls  int
+	mu        sync.Mutex
+}
+
+func newMockResourcesAdderDeleter() *MockResourcesAdderDeleter {
+	return &MockResourcesAdderDeleter{
+		resources: make(map[string]*server.ServerResource),
+	}
+}
+
+func (m *MockResourcesAdderDeleter) AddResources(resources ...server.ServerResource) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addCalls++
+	for i := range resources {
+		m.resources[resources[i].Resource.URI] = &resources[i]
+	}
+}
+
+func (m *MockResourcesAdderDeleter) DeleteResources(uris ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.delCalls++
+	for _, uri := range uris {
+		delete(m.resources, uri)
+	}
+}
+
+func (m *MockResourcesAdderDeleter) ListResources() map[string]*server.ServerResource {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make(map[string]*server.ServerResource, len(m.resources))
+	for k, v := range m.resources {
+		result[k] = v
+	}
+	return result
+}
+
 func TestMCPManager_promptToServerPrompt(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -1246,7 +1307,7 @@ func TestMCPManager_promptToServerPrompt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := newMockMCP("test-server", tt.prefix)
-			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
 			serverPrompt := manager.promptToServerPrompt(mcp.Prompt{Name: tt.promptName, Description: tt.promptDesc})
@@ -1269,7 +1330,7 @@ func TestMCPManager_promptToServerPrompt(t *testing.T) {
 func TestMCPManager_diffPrompts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -1321,7 +1382,7 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 func TestMCPManager_GetManagedPrompts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "test_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	prompts := []mcp.Prompt{
@@ -1339,7 +1400,7 @@ func TestMCPManager_GetManagedPrompts(t *testing.T) {
 func TestMCPManager_GetServedManagedPrompt(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mock := newMockMCP("test-server", "prefix_")
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetPromptsForTesting([]mcp.Prompt{{Name: "myprompt", Description: "My Prompt"}})
 
@@ -1360,10 +1421,10 @@ func TestMCPManager_manage_PromptsSuccess(t *testing.T) {
 	mock.hasPromptsCap = true
 	gateway := newMockToolsAdderDeleter()
 	promptsGateway := newMockPromptsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, promptsGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, promptsGateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -1383,10 +1444,10 @@ func TestMCPManager_manage_PromptsNilServer(t *testing.T) {
 	mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	manager.manage(context.Background(), eventTypeTimer)
+	manager.manage(t.Context(), eventTypeTimer)
 
 	status := manager.GetStatus()
 	assert.True(t, status.Ready)
@@ -1402,7 +1463,7 @@ func TestMCPManager_Backoff(t *testing.T) {
 
 	// Set a long ticker interval
 	tickerInterval := time.Minute
-	manager, err := NewUpstreamMCPManager(mock, gateway, nil, slog.Default(), tickerInterval, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, slog.Default(), tickerInterval, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	// 1. Simulate failure (Connect)
@@ -1446,4 +1507,112 @@ func TestMCPManager_Backoff(t *testing.T) {
 	mock.listToolsErr = nil
 	manager.manage(ctx, eventTypeTimer)
 	assert.True(t, manager.GetStatus().Ready)
+}
+
+func TestMCPManager_shouldFetchResources(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	t.Run("returns true when server has no list_changed support", func(t *testing.T) {
+		mock := newMockMCP("test", "")
+		mock.hasResourcesListChangedCap = false
+		manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		// no list_changed support → always fetch
+		assert.True(t, manager.shouldFetchResources(eventTypeTimer))
+	})
+
+	t.Run("returns true on resource notification event", func(t *testing.T) {
+		mock := newMockMCP("test", "")
+		mock.hasResourcesListChangedCap = true
+		manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		assert.True(t, manager.shouldFetchResources(eventTypeResourceNotification))
+	})
+
+	t.Run("returns true on timer when no resources cached", func(t *testing.T) {
+		mock := newMockMCP("test", "")
+		mock.hasResourcesListChangedCap = true
+		manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		assert.True(t, manager.shouldFetchResources(eventTypeTimer))
+	})
+
+	t.Run("returns false on timer when resources already cached", func(t *testing.T) {
+		mock := newMockMCP("test", "")
+		mock.hasResourcesListChangedCap = true
+		manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		manager.SetResourcesForTesting([]mcp.Resource{{URI: "test://r1", Name: "r1"}})
+		assert.False(t, manager.shouldFetchResources(eventTypeTimer))
+	})
+}
+
+func TestMCPManager_manage_ResourcesSuccess(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "")
+	mock.hasToolsCap = false
+	mock.hasResourcesCap = true
+	mock.hasResourcesListChangedCap = false
+	mock.resources = []mcp.Resource{
+		{URI: "test://res1", Name: "Resource 1"},
+		{URI: "test://res2", Name: "Resource 2"},
+	}
+	gateway := newMockToolsAdderDeleter()
+	resourcesGateway := newMockResourcesAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, resourcesGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(t.Context(), eventTypeTimer)
+
+	assert.Len(t, resourcesGateway.resources, 2)
+	_, ok1 := resourcesGateway.resources["test://res1"]
+	_, ok2 := resourcesGateway.resources["test://res2"]
+	assert.True(t, ok1)
+	assert.True(t, ok2)
+}
+
+func TestMCPManager_manage_ResourcesDiff(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "")
+	mock.hasToolsCap = false
+	mock.hasResourcesCap = true
+	mock.hasResourcesListChangedCap = false // no list_changed support → always fetch on timer
+	mock.resources = []mcp.Resource{{URI: "test://res1", Name: "r1"}, {URI: "test://res2", Name: "r2"}}
+
+	gateway := newMockToolsAdderDeleter()
+	resourcesGateway := newMockResourcesAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, resourcesGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(t.Context(), eventTypeTimer)
+	assert.Len(t, resourcesGateway.resources, 2)
+
+	// remove res1, add res3
+	mock.resources = []mcp.Resource{{URI: "test://res2", Name: "r2"}, {URI: "test://res3", Name: "r3"}}
+	manager.manage(t.Context(), eventTypeTimer)
+
+	assert.Len(t, resourcesGateway.resources, 2)
+	_, hasRes1 := resourcesGateway.resources["test://res1"]
+	_, hasRes2 := resourcesGateway.resources["test://res2"]
+	_, hasRes3 := resourcesGateway.resources["test://res3"]
+	assert.False(t, hasRes1, "res1 should be removed")
+	assert.True(t, hasRes2)
+	assert.True(t, hasRes3)
+}
+
+func TestMCPManager_manage_ResourcesNilServer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "")
+	mock.hasToolsCap = false
+	mock.hasResourcesCap = true
+	mock.hasResourcesListChangedCap = false
+	mock.resources = []mcp.Resource{{URI: "test://res1", Name: "r1"}}
+	gateway := newMockToolsAdderDeleter()
+	// resourcesServer = nil: no resources fetched
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(t.Context(), eventTypeTimer)
+
+	assert.Len(t, manager.GetManagedResources(), 0)
 }

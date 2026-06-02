@@ -387,3 +387,26 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.
+
+## Resources federation
+
+### [Happy] resources/list and resources/read
+
+Precondition: Everything Server is running (it serves resources)
+
+1. Connect MCP client to gateway
+2. Call `resources/list` — verify resources from Everything Server appear in the aggregated list
+3. Call `resources/read` with a known URI from the list — verify content is returned correctly
+4. Stop Everything Server, call `resources/list` — verify its resources are removed from the list
+
+### [Auth] JWT-filtered resources/list
+
+- When a client authenticates via Keycloak and sends a `resources/list` request, only resources the user has `resources:*` roles for should be returned.
+
+### [Auth] VirtualServer-filtered resources/list
+
+- When a client sends a `resources/list` request with an `X-Mcp-Virtualserver` header and the VirtualServer's `resources` field is set, only the listed URIs should be returned.
+
+### [Happy] resources/read for nonexistent URI returns error
+
+- When a client sends a `resources/read` request with a URI that does not match any registered server, the gateway should return a JSON-RPC error with code -32602.

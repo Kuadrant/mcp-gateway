@@ -716,6 +716,10 @@ func (m *mockBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer
 	return nil, fmt.Errorf("failed to get server %q for prompt %q", svrName, prompt)
 }
 
+func (m *mockBrokerImpl) GetServerInfoByResource(uri string) (*config.MCPServer, error) {
+	return nil, fmt.Errorf("resource URI %q not found", uri)
+}
+
 // GetServerInfo implements broker.MCPBroker.
 func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	svrName, ok := m.tool2svr[tool]

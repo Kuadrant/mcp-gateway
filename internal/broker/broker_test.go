@@ -34,16 +34,19 @@ const (
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-// mockGateway is a no-op ToolsAdderDeleter/PromptsAdderDeleter for tests that don't need real gateway behaviour.
+// mockGateway is a no-op ToolsAdderDeleter/PromptsAdderDeleter/ResourcesAdderDeleter for tests that don't need real gateway behaviour.
 type mockGateway struct{}
 
-func newMockGateway() *mockGateway                                  { return &mockGateway{} }
-func (m *mockGateway) AddTools(_ ...server.ServerTool)              {}
-func (m *mockGateway) DeleteTools(_ ...string)                      {}
-func (m *mockGateway) ListTools() map[string]*server.ServerTool     { return nil }
-func (m *mockGateway) AddPrompts(_ ...server.ServerPrompt)          {}
-func (m *mockGateway) DeletePrompts(_ ...string)                    {}
-func (m *mockGateway) ListPrompts() map[string]*server.ServerPrompt { return nil }
+func newMockGateway() *mockGateway                                      { return &mockGateway{} }
+func (m *mockGateway) AddTools(_ ...server.ServerTool)                  {}
+func (m *mockGateway) DeleteTools(_ ...string)                          {}
+func (m *mockGateway) ListTools() map[string]*server.ServerTool         { return nil }
+func (m *mockGateway) AddPrompts(_ ...server.ServerPrompt)              {}
+func (m *mockGateway) DeletePrompts(_ ...string)                        {}
+func (m *mockGateway) ListPrompts() map[string]*server.ServerPrompt     { return nil }
+func (m *mockGateway) AddResources(_ ...server.ServerResource)          {}
+func (m *mockGateway) DeleteResources(_ ...string)                      {}
+func (m *mockGateway) ListResources() map[string]*server.ServerResource { return nil }
 
 // TestMain starts an MCP server that we will run actual tests against
 func TestMain(m *testing.M) {
@@ -261,7 +264,7 @@ func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
 func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
 	mcpServer := upstream.NewUpstreamMCP(&cfg)
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	return manager
 }
@@ -390,4 +393,48 @@ func TestIsReady(t *testing.T) {
 			require.Equal(t, tt.expected, b.IsReady())
 		})
 	}
+}
+
+func createResourceTestManager(t *testing.T, serverName, prefix string, resources []mcp.Resource) *upstream.MCPManager {
+	t.Helper()
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:   serverName,
+		Prefix: prefix,
+		URL:    "http://test.local/mcp",
+	})
+	manager, _ := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager.SetResourcesForTesting(resources)
+	return manager
+}
+
+func TestGetServerInfoByResource(t *testing.T) {
+	b := NewBroker(logger)
+	bImpl := b.(*mcpBrokerImpl)
+
+	bImpl.mcpServers["srv1"] = upstream.NewActiveForTesting(createResourceTestManager(t, "srv1", "", []mcp.Resource{
+		{URI: "test://docs/overview", Name: "Overview"},
+	}))
+	bImpl.mcpServers["srv2"] = upstream.NewActiveForTesting(createResourceTestManager(t, "srv2", "", []mcp.Resource{
+		{URI: "test://docs/api", Name: "API Reference"},
+	}))
+
+	t.Run("returns correct server for known URI", func(t *testing.T) {
+		svr, err := b.GetServerInfoByResource("test://docs/overview")
+		require.NoError(t, err)
+		require.NotNil(t, svr)
+		require.Equal(t, "srv1", svr.Name)
+	})
+
+	t.Run("returns correct server for second URI", func(t *testing.T) {
+		svr, err := b.GetServerInfoByResource("test://docs/api")
+		require.NoError(t, err)
+		require.NotNil(t, svr)
+		require.Equal(t, "srv2", svr.Name)
+	})
+
+	t.Run("returns error for unknown URI", func(t *testing.T) {
+		svr, err := b.GetServerInfoByResource("test://unknown")
+		require.Error(t, err)
+		require.Nil(t, svr)
+	})
 }

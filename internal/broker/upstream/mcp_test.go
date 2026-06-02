@@ -17,8 +17,73 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMCPServer_SupportsResources(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "test"})
+
+	t.Run("returns false when init is nil", func(t *testing.T) {
+		up.init = nil
+		require.False(t, up.SupportsResources())
+	})
+
+	t.Run("returns false when Resources capability is nil", func(t *testing.T) {
+		up.init = &mcp.InitializeResult{Capabilities: mcp.ServerCapabilities{}}
+		require.False(t, up.SupportsResources())
+	})
+
+	t.Run("returns true when Resources capability is set", func(t *testing.T) {
+		up.init = &mcp.InitializeResult{
+			Capabilities: mcp.ServerCapabilities{
+				Resources: &struct {
+					Subscribe   bool `json:"subscribe,omitempty"`
+					ListChanged bool `json:"listChanged,omitempty"`
+				}{},
+			},
+		}
+		require.True(t, up.SupportsResources())
+	})
+}
+
+func TestMCPServer_SupportsResourcesListChanged(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "test"})
+
+	t.Run("returns false when init is nil", func(t *testing.T) {
+		up.init = nil
+		require.False(t, up.SupportsResourcesListChanged())
+	})
+
+	t.Run("returns false when Resources capability is nil", func(t *testing.T) {
+		up.init = &mcp.InitializeResult{Capabilities: mcp.ServerCapabilities{}}
+		require.False(t, up.SupportsResourcesListChanged())
+	})
+
+	t.Run("returns false when ListChanged is false", func(t *testing.T) {
+		up.init = &mcp.InitializeResult{
+			Capabilities: mcp.ServerCapabilities{
+				Resources: &struct {
+					Subscribe   bool `json:"subscribe,omitempty"`
+					ListChanged bool `json:"listChanged,omitempty"`
+				}{ListChanged: false},
+			},
+		}
+		require.False(t, up.SupportsResourcesListChanged())
+	})
+
+	t.Run("returns true when ListChanged is true", func(t *testing.T) {
+		up.init = &mcp.InitializeResult{
+			Capabilities: mcp.ServerCapabilities{
+				Resources: &struct {
+					Subscribe   bool `json:"subscribe,omitempty"`
+					ListChanged bool `json:"listChanged,omitempty"`
+				}{ListChanged: true},
+			},
+		}
+		require.True(t, up.SupportsResourcesListChanged())
+	})
+}
 
 func TestNewUpstreamMCP(t *testing.T) {
 	testServer := config.MCPServer{

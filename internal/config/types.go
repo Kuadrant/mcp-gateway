@@ -181,9 +181,10 @@ func (mcpServer *MCPServer) Path() (string, error) {
 
 // VirtualServer represents a virtual server configuration
 type VirtualServer struct {
-	Name    string
-	Tools   []string
-	Prompts []string
+	Name      string
+	Tools     []string
+	Prompts   []string
+	Resources []string
 }
 
 // Observer provides an interface to implement in order to register as an Observer of config changes
@@ -207,7 +208,8 @@ type AuthConfig struct {
 
 // VirtualServerConfig represents virtual server config
 type VirtualServerConfig struct {
-	Name    string   `json:"name"    yaml:"name"`
-	Tools   []string `json:"tools"   yaml:"tools"`
-	Prompts []string `json:"prompts,omitempty" yaml:"prompts,omitempty"`
+	Name      string   `json:"name"               yaml:"name"`
+	Tools     []string `json:"tools"              yaml:"tools"`
+	Prompts   []string `json:"prompts,omitempty"  yaml:"prompts,omitempty"`
+	Resources []string `json:"resources,omitempty" yaml:"resources,omitempty"`
 }

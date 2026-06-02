@@ -25,7 +25,7 @@ func createTestManagerWithMeta(t *testing.T, serverName, prefix string, tools []
 		Category: category,
 		Hint:     hint,
 	})
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)
 	return upstream.NewActiveForTesting(manager)
