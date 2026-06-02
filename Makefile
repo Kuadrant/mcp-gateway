@@ -243,8 +243,13 @@ deploy-redis: ## deploy redis to mcp-system namespace
 	kubectl rollout status deployment/redis -n $(MCP_GATEWAY_NAMESPACE) --timeout=60s
 
 .PHONY: configure-redis
-configure-redis: deploy-redis ## deploy redis and patch deployment with redis connection
-	kubectl patch deployment $(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
+configure-redis: deploy-redis ## deploy redis and configure MCPGatewayExtension session store
+	kubectl create secret generic redis-session-store \
+		--from-literal=CACHE_CONNECTION_STRING=redis://redis.$(MCP_GATEWAY_NAMESPACE).svc.cluster.local:6379 \
+		-n $(MCP_GATEWAY_NAMESPACE) --dry-run=client -o json | \
+		jq '.metadata.labels = {"mcp.kuadrant.io/secret": "true"}' | kubectl apply -f -
+	kubectl patch mcpgatewayextension mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --type=merge \
+		-p '{"spec":{"sessionStore":{"secretName":"redis-session-store"}}}'
 
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
