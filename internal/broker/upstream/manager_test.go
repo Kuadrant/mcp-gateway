@@ -1509,6 +1509,165 @@ func TestMCPManager_Backoff(t *testing.T) {
 	assert.True(t, manager.GetStatus().Ready)
 }
 
+func TestDiffResources(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mock := newMockMCP("test-server", "")
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name            string
+		oldResources    []mcp.Resource
+		newResources    []mcp.Resource
+		expectedAdded   int
+		expectedRemoved int
+		addedURIs       []string
+		removedURIs     []string
+	}{
+		{
+			name:            "no changes",
+			oldResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			newResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			name:          "add new resource",
+			oldResources:  []mcp.Resource{{URI: "test://r1"}},
+			newResources:  []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			expectedAdded: 1,
+			addedURIs:     []string{"test://r2"},
+		},
+		{
+			name:            "remove resource",
+			oldResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			newResources:    []mcp.Resource{{URI: "test://r1"}},
+			expectedRemoved: 1,
+			removedURIs:     []string{"test://r2"},
+		},
+		{
+			name:            "add and remove",
+			oldResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			newResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r3"}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedURIs:       []string{"test://r3"},
+			removedURIs:     []string{"test://r2"},
+		},
+		{
+			name:          "empty old",
+			oldResources:  []mcp.Resource{},
+			newResources:  []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			expectedAdded: 2,
+		},
+		{
+			name:            "empty new",
+			oldResources:    []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}},
+			newResources:    []mcp.Resource{},
+			expectedRemoved: 2,
+		},
+		{
+			name:         "both empty",
+			oldResources: []mcp.Resource{},
+			newResources: []mcp.Resource{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			added, removed := manager.diffResources(tt.oldResources, tt.newResources)
+			assert.Len(t, added, tt.expectedAdded, "unexpected number of added resources")
+			assert.Len(t, removed, tt.expectedRemoved, "unexpected number of removed resources")
+			for _, uri := range tt.addedURIs {
+				uris := make([]string, len(added))
+				for i, r := range added {
+					uris[i] = r.Resource.URI
+				}
+				assert.Contains(t, uris, uri)
+			}
+			for _, uri := range tt.removedURIs {
+				assert.Contains(t, removed, uri)
+			}
+		})
+	}
+}
+
+func TestMCPManager_removeAllResources(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	t.Run("DeleteResources called on connect failure", func(t *testing.T) {
+		mock := newMockMCP("test-server", "")
+		mock.hasResourcesCap = true
+		mock.hasResourcesListChangedCap = false
+		mock.resources = []mcp.Resource{{URI: "test://r1"}}
+		gateway := newMockToolsAdderDeleter()
+		resourcesGateway := newMockResourcesAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, resourcesGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		// establish resources
+		manager.manage(t.Context(), eventTypeTimer)
+		assert.Len(t, resourcesGateway.resources, 1)
+
+		// simulate connection failure on next tick
+		mock.connectErr = fmt.Errorf("connection refused")
+		manager.manage(t.Context(), eventTypeTimer)
+
+		assert.Len(t, resourcesGateway.resources, 0, "resources should be removed on connect failure")
+		assert.Equal(t, 1, resourcesGateway.delCalls)
+	})
+
+	t.Run("DeleteResources called on ping failure", func(t *testing.T) {
+		mock := newMockMCP("test-server", "")
+		mock.hasResourcesCap = true
+		mock.hasResourcesListChangedCap = false
+		mock.resources = []mcp.Resource{{URI: "test://r1"}, {URI: "test://r2"}}
+		gateway := newMockToolsAdderDeleter()
+		resourcesGateway := newMockResourcesAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, resourcesGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		manager.manage(t.Context(), eventTypeTimer)
+		assert.Len(t, resourcesGateway.resources, 2)
+
+		mock.pingErr = fmt.Errorf("ping timeout")
+		manager.manage(t.Context(), eventTypeTimer)
+
+		assert.Len(t, resourcesGateway.resources, 0, "resources should be removed on ping failure")
+		assert.Equal(t, 1, resourcesGateway.delCalls)
+	})
+
+	t.Run("DeleteResources called when server disabled", func(t *testing.T) {
+		mock := newMockMCP("test-server", "")
+		mock.hasResourcesCap = true
+		mock.hasResourcesListChangedCap = false
+		mock.resources = []mcp.Resource{{URI: "test://r1"}}
+		gateway := newMockToolsAdderDeleter()
+		resourcesGateway := newMockResourcesAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, resourcesGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+
+		manager.manage(t.Context(), eventTypeTimer)
+		assert.Len(t, resourcesGateway.resources, 1)
+
+		mock.cfg.State = string(mcpv1alpha1.ServerStateDisabled)
+		manager.manage(t.Context(), eventTypeTimer)
+
+		assert.Len(t, resourcesGateway.resources, 0, "resources should be removed when server is disabled")
+		assert.Equal(t, 1, resourcesGateway.delCalls)
+	})
+
+	t.Run("no-op when resourcesServer is nil", func(t *testing.T) {
+		mock := newMockMCP("test-server", "")
+		mock.connectErr = fmt.Errorf("fail")
+		gateway := newMockToolsAdderDeleter()
+		manager, err := NewUpstreamMCPManager(mock, gateway, nil, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		// should not panic
+		manager.manage(t.Context(), eventTypeTimer)
+	})
+}
+
 func TestMCPManager_shouldFetchResources(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 

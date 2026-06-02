@@ -1329,4 +1329,48 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
+
+	It("[Happy] should list resources, read one, and remove them on unregistration", func() {
+		By("Registering the everything-server which serves resources")
+		registration := NewMCPServerResources("resource-happy", "resource-happy.mcp.local", "everything-server", 9090, k8sClient).
+			WithPrefix("").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying resources/list returns at least one resource")
+		var knownURI string
+		Eventually(func(g Gomega) {
+			resourcesList, err := mcpGatewayClient.ListResources(ctx, mcp.ListResourcesRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(resourcesList).NotTo(BeNil())
+			g.Expect(len(resourcesList.Resources)).To(BeNumerically(">", 0), "expected at least one resource")
+			knownURI = resourcesList.Resources[0].URI
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Reading the resource via resources/read using the raw HTTP helper")
+		sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
+
+		status, body, err := mcpReadResource(ctx, gatewayURL, sessionID, knownURI, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK))
+		Expect(body).NotTo(BeEmpty())
+		Expect(body).NotTo(ContainSubstring(`"code":`), "resources/read should not return a JSON-RPC error")
+
+		By("Unregistering the MCPServerRegistration")
+		Expect(k8sClient.Delete(ctx, registeredServer)).To(Succeed())
+
+		By("Verifying resources are removed after unregistration")
+		Eventually(func(g Gomega) {
+			resourcesList, err := mcpGatewayClient.ListResources(ctx, mcp.ListResourcesRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ResourcesListHasURI(resourcesList, knownURI)).To(BeFalseBecause("resource %q should be removed after unregistration", knownURI))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
 })

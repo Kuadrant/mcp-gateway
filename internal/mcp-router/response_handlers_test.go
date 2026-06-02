@@ -20,9 +20,10 @@ import (
 )
 
 type mockBrokerImpl struct {
-	svrConfigs []*config.MCPServer
-	tool2svr   map[string]string
-	prompt2svr map[string]string
+	svrConfigs   []*config.MCPServer
+	tool2svr     map[string]string
+	prompt2svr   map[string]string
+	resource2svr map[string]string
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -697,9 +698,10 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotDeleteUserToken(t *testing.T)
 
 func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) broker.MCPBroker {
 	return &mockBrokerImpl{
-		svrConfigs: svrConfigs,
-		tool2svr:   tool2svr,
-		prompt2svr: map[string]string{},
+		svrConfigs:   svrConfigs,
+		tool2svr:     tool2svr,
+		prompt2svr:   map[string]string{},
+		resource2svr: map[string]string{},
 	}
 }
 
@@ -717,7 +719,16 @@ func (m *mockBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer
 }
 
 func (m *mockBrokerImpl) GetServerInfoByResource(uri string) (*config.MCPServer, error) {
-	return nil, fmt.Errorf("resource URI %q not found", uri)
+	svrName, ok := m.resource2svr[uri]
+	if !ok {
+		return nil, fmt.Errorf("resource URI %q not found", uri)
+	}
+	for _, svrInfo := range m.svrConfigs {
+		if svrName == svrInfo.Name {
+			return svrInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get server %q for resource URI %q", svrName, uri)
 }
 
 // GetServerInfo implements broker.MCPBroker.

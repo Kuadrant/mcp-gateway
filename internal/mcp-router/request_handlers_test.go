@@ -1505,6 +1505,107 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NotContains(t, string(body), `"name":"s_myprompt"`)
 }
 
+func TestHandleResourceRead(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "upstream",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	setupSrv := func(t *testing.T, resource2svr map[string]string) (*ExtProcServer, string) {
+		t.Helper()
+		cache, err := session.NewCache()
+		require.NoError(t, err)
+		jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+		require.NoError(t, err)
+		validToken := jwtManager.Generate()
+		added, err := cache.AddSession(t.Context(), validToken, "upstream", "mock-upstream-session-id", 0)
+		require.NoError(t, err)
+		require.True(t, added)
+
+		testBroker := newMockBroker(serverConfigs, map[string]string{})
+		testBroker.(*mockBrokerImpl).resource2svr = resource2svr
+
+		srv := &ExtProcServer{
+			RoutingConfig: &config.MCPServersConfig{Servers: serverConfigs},
+			JWTManager:    jwtManager,
+			Logger:        logger,
+			SessionCache:  cache,
+			InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool) (*client.Client, error) {
+				return nil, fmt.Errorf("InitForClient should not be called when session exists")
+			},
+			Broker: testBroker,
+		}
+		return srv, validToken
+	}
+
+	makeReq := func(uri, sessionToken string) *MCPRequest {
+		req := &MCPRequest{
+			ID:      ptr.To(1),
+			JSONRPC: "2.0",
+			Method:  "resources/read",
+			Params:  map[string]any{},
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "mcp-session-id", RawValue: []byte(sessionToken)},
+				},
+			},
+		}
+		if uri != "" {
+			req.Params["uri"] = uri
+		}
+		return req
+	}
+
+	t.Run("happy path routes to upstream", func(t *testing.T) {
+		srv, token := setupSrv(t, map[string]string{"test://docs/api": "upstream"})
+		resp := srv.RouteMCPRequest(t.Context(), makeReq("test://docs/api", token))
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
+		rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		headers := rb.RequestBody.Response.HeaderMutation.SetHeaders
+		require.Equal(t, "x-mcp-method", headers[0].Header.Key)
+		require.Equal(t, []uint8("resources/read"), headers[0].Header.RawValue)
+		require.Equal(t, "x-mcp-servername", headers[1].Header.Key)
+		require.Equal(t, []uint8("upstream"), headers[1].Header.RawValue)
+	})
+
+	t.Run("empty URI returns 400", func(t *testing.T) {
+		srv, token := setupSrv(t, map[string]string{})
+		resp := srv.RouteMCPRequest(t.Context(), makeReq("", token))
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.Equal(t, int32(400), int32(ir.ImmediateResponse.Status.Code))
+	})
+
+	t.Run("unknown URI returns JSON-RPC error", func(t *testing.T) {
+		srv, token := setupSrv(t, map[string]string{})
+		resp := srv.RouteMCPRequest(t.Context(), makeReq("test://unknown", token))
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		body := string(ir.ImmediateResponse.Body)
+		require.Contains(t, body, "-32602")
+		require.Contains(t, body, "Resource not found")
+	})
+
+	t.Run("invalid session returns error", func(t *testing.T) {
+		srv, _ := setupSrv(t, map[string]string{"test://docs/api": "upstream"})
+		resp := srv.RouteMCPRequest(t.Context(), makeReq("test://docs/api", "bad-token"))
+		require.Len(t, resp, 1)
+		require.IsType(t, &eppb.ProcessingResponse_ImmediateResponse{}, resp[0].Response)
+		ir := resp[0].Response.(*eppb.ProcessingResponse_ImmediateResponse)
+		require.NotNil(t, ir.ImmediateResponse)
+	})
+}
+
 func testBearerJWT(sub string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"%s"}`, sub)))

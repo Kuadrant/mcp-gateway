@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"net/http"
-	"slices"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -92,8 +91,13 @@ func (broker *mcpBrokerImpl) filterResourcesByServerMap(allowedResources map[str
 			continue
 		}
 
+		allowedSet := make(map[string]struct{}, len(uris))
+		for _, uri := range uris {
+			allowedSet[uri] = struct{}{}
+		}
+
 		for _, resource := range resources {
-			if slices.Contains(uris, resource.URI) {
+			if _, ok := allowedSet[resource.URI]; ok {
 				filtered = append(filtered, resource)
 			}
 		}

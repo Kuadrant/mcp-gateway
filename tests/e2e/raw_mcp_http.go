@@ -210,6 +210,29 @@ func mcpGetPrompt(ctx context.Context, url, sessionID, promptName string, args m
 	return resp.StatusCode, string(respBody), nil
 }
 
+func mcpReadResource(ctx context.Context, url, sessionID, uri string, headers map[string]string) (int, string, error) {
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "resources/read",
+		"params":  map[string]any{"uri": uri},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to marshal resources/read: %w", err)
+	}
+	resp, err := mcpPost(ctx, url, sessionID, body, headers)
+	if err != nil {
+		return 0, "", fmt.Errorf("resources/read failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", fmt.Errorf("reading resources/read response: %w", err)
+	}
+	return resp.StatusCode, string(respBody), nil
+}
+
 func mcpRawPost(ctx context.Context, url, sessionID string, body []byte, headers map[string]string) (int, string, http.Header, error) {
 	resp, err := mcpPost(ctx, url, sessionID, body, headers)
 	if err != nil {
