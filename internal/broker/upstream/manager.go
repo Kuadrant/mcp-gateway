@@ -1054,6 +1054,6 @@ func (man *MCPManager) SetResourcesForTesting(resources []mcp.Resource) {
 	for i := range resources {
 		man.resourcesMap[resources[i].URI] = &resources[i]
 		man.servedResourcesMap[resources[i].URI] = &resources[i]
-		man.serverResources = append(man.serverResources, server.ServerResource{Resource: resources[i]})
+		man.serverResources = append(man.serverResources, man.resourceToServerResource(resources[i]))
 	}
 }
