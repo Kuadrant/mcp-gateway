@@ -63,6 +63,14 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              resources:
+                description: |-
+                  resources specifies the list of resource URIs to expose through this virtual server.
+                  When omitted, all resources are exposed.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               tools:
                 description: |-
                   tools specifies the list of tool names to expose through this virtual server.

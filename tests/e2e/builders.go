@@ -564,6 +564,7 @@ type MCPVirtualServerBuilder struct {
 	description string
 	tools       []string
 	prompts     []string
+	resources   []string
 }
 
 // NewMCPVirtualServerBuilder creates a new MCPVirtualServerBuilder
@@ -592,6 +593,12 @@ func (b *MCPVirtualServerBuilder) WithPrompts(prompts []string) *MCPVirtualServe
 	return b
 }
 
+// WithResources sets the resources URI list
+func (b *MCPVirtualServerBuilder) WithResources(resources []string) *MCPVirtualServerBuilder {
+	b.resources = resources
+	return b
+}
+
 // Build creates the MCPVirtualServer resource
 func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 	return &mcpv1alpha1.MCPVirtualServer{
@@ -603,6 +610,7 @@ func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
 			Description: b.description,
 			Tools:       b.tools,
 			Prompts:     b.prompts,
+			Resources:   b.resources,
 		},
 	}
 }

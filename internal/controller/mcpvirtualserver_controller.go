@@ -111,9 +111,10 @@ func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Con
 		}
 		virtualServerName := fmt.Sprintf("%s/%s", mcpVirtualServer.Namespace, mcpVirtualServer.Name)
 		virtualServers = append(virtualServers, config.VirtualServerConfig{
-			Name:    virtualServerName,
-			Tools:   mcpVirtualServer.Spec.Tools,
-			Prompts: mcpVirtualServer.Spec.Prompts,
+			Name:      virtualServerName,
+			Tools:     mcpVirtualServer.Spec.Tools,
+			Prompts:   mcpVirtualServer.Spec.Prompts,
+			Resources: mcpVirtualServer.Spec.Resources,
 		})
 	}
 	return virtualServers, nil

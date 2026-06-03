@@ -270,6 +270,12 @@ type MCPVirtualServerSpec struct {
 	// +optional
 	// +listType=atomic
 	Prompts []string `json:"prompts,omitempty"`
+
+	// resources specifies the list of resource URIs to expose through this virtual server.
+	// When omitted, all resources are exposed.
+	// +optional
+	// +listType=atomic
+	Resources []string `json:"resources,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -16,3 +16,4 @@
 | `description` | String | No | Human-readable description of this virtual server's purpose |
 | `tools` | []String | Yes | List of tool names to expose through this virtual server. Must contain at least one tool. Tools must be available from the underlying MCP servers configured in the system |
 | `prompts` | []String | No | List of prompt names to expose through this virtual server. When omitted, all prompts are exposed. Prompts must be available from the underlying MCP servers configured in the system |
+| `resources` | []String | No | List of resource URIs to expose through this virtual server. When omitted, all resources are exposed. Resources must be available from the underlying MCP servers configured in the system |
