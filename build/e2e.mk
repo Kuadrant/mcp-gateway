@@ -46,8 +46,8 @@ test-e2e-ci: test-e2e-deps enable-debug-logging ## Run PR-gate e2e tests in CI (
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast $(E2E_GINKGO_SKIP_TIER2) ./tests/e2e
 
 .PHONY: test-e2e-ci-full
-test-e2e-ci-full: test-e2e-deps enable-debug-logging ## Run all e2e tests in CI (tier 1 + 2, fail fast)
-	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast ./tests/e2e
+test-e2e-ci-full: test-e2e-deps enable-debug-logging ## Run all e2e tests in CI (tier 1 + 2, full run reports every failure)
+	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) ./tests/e2e
 
 # run only auth-focused tests (CI runs this after ci-auth-setup)
 .PHONY: test-e2e-auth-ci
