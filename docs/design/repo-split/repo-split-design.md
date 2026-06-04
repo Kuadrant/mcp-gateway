@@ -212,9 +212,9 @@ Independent release cadences. The operator pins to a known-good operand version.
 
 ### OLM and Release Pipeline
 
-CI is GitHub Actions-based — no Tekton pipelines to split. The OLM packaging artifacts (`bundle/`, `catalog/`, `bundle.Dockerfile`, `build/olm.mk`, `utils/generate-catalog.sh`) and AppStudio ReleasePlan resources all move to the operator repo. The operand repo has no OLM footprint.
+CI is GitHub Actions-based — no Tekton pipelines to split. The OLM packaging artifacts (`bundle/`, `catalog/`, `bundle.Dockerfile`, `build/olm.mk`, `utils/generate-catalog.sh`) and Konflux ReleasePlan resources all move to the operator repo. The operand repo has no OLM footprint.
 
-Post-split, AppStudio ReleasePlan resources need updating to reference the new operator repo. The FBC catalog generation (`utils/generate-catalog.sh`) continues to run from the operator repo since the CSV and CRDs live there.
+Post-split, a new Konflux component and product build repository are needed for the operator (similar to `rh-api-management/mcp-gateway-product-build`). The existing product build repo is reworked to be operand-specific. Each repo gets its own Konflux component, ReleasePlan, and release pipeline. The FBC catalog generation (`utils/generate-catalog.sh`) continues to run from the operator repo since the CSV and CRDs live there.
 
 ## Migration Plan
 
