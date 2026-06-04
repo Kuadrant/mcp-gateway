@@ -38,7 +38,7 @@ The `mcp-gateway` repo keeps its current name. The operator moves to a new `mcp-
 
 #### `mcp-gateway` (operand)
 
-```
+```text
 mcp-gateway/
 ├── cmd/mcp-broker-router/main.go
 ├── internal/
@@ -60,7 +60,7 @@ mcp-gateway/
 
 #### `mcp-gateway-operator` (new repo)
 
-```
+```text
 mcp-gateway-operator/
 ├── cmd/main.go
 ├── api/v1alpha1/        # CRD types
@@ -198,7 +198,7 @@ The operator repo's e2e tests pull the operand image by tag:
 
 #### Release Flow
 
-```
+```text
 Operand release:
   1. Tag mcp-gateway → CI builds + pushes image
   2. Operator repo bumps RELATED_IMAGE_ROUTER_BROKER default
