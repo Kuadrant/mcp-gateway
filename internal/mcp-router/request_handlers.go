@@ -229,7 +229,7 @@ func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, _ *eppb.HttpHe
 	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
 	requestHeaders := NewHeaders()
 	response := NewResponse()
-	requestHeaders.WithAuthority(s.RoutingConfig.MCPGatewayExternalHostname)
+	requestHeaders.WithAuthority(s.RoutingConfig.Load().MCPGatewayExternalHostname)
 	return response.WithRequestHeadersResponse(requestHeaders.Build(), internalOnlyHeaders...).Build(), nil
 }
 
@@ -621,7 +621,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	// restore the id for the request
 	mcpReq.ID = entry.BackendID
 
-	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(entry.ServerName)
+	mcpServerConfig, err := s.RoutingConfig.Load().GetServerConfigByName(entry.ServerName)
 	if err != nil {
 		s.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
 		mcpotel.SpanError(span, err, "server not found")
@@ -672,7 +672,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 	)
 	defer initSpan.End()
 
-	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(mcpReq.serverName)
+	mcpServerConfig, err := s.RoutingConfig.Load().GetServerConfigByName(mcpReq.serverName)
 	if err != nil {
 		return "", NewRouterErrorf(500, "failed check for server: %w", err)
 	}
@@ -753,7 +753,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpotel.SpanError(initSpan, err, "failed to generate backend-init token")
 			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
 		}
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.Load().MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")

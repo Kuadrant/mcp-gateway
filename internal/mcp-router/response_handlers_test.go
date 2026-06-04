@@ -492,9 +492,9 @@ func TestHandleResponseHeaders_401DeletesUserToken(t *testing.T) {
 		Logger:             logger,
 		SessionCache:       cache,
 		Broker:             newMockBroker(nil, map[string]string{}),
-		RoutingConfig:      routingConfig,
 		ElicitationEnabled: true,
 	}
+	srv.RoutingConfig.Store(routingConfig)
 
 	// store a user token in the cache
 	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "expired-token"))
@@ -571,9 +571,9 @@ func TestHandleResponseHeaders_401SkipsTokenDeleteWhenNotApplicable(t *testing.T
 				Logger:             logger,
 				SessionCache:       cache,
 				Broker:             newMockBroker(nil, map[string]string{}),
-				RoutingConfig:      routingConfig,
 				ElicitationEnabled: tt.elicitationEnabled,
 			}
+			srv.RoutingConfig.Store(routingConfig)
 
 			require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, tt.serverName, "my-token"))
 
@@ -660,9 +660,9 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotDeleteUserToken(t *testing.T)
 		Logger:             logger,
 		SessionCache:       cache,
 		Broker:             newMockBroker(nil, map[string]string{}),
-		RoutingConfig:      routingConfig,
 		ElicitationEnabled: true,
 	}
+	srv.RoutingConfig.Store(routingConfig)
 
 	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "valid-token"))
 

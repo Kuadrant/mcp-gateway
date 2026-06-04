@@ -528,22 +528,23 @@ func newTestServer(t *testing.T) *ExtProcServer {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cache, err := session.NewCache()
 	require.NoError(t, err)
-	return &ExtProcServer{
+	s := &ExtProcServer{
 		Logger:       logger,
 		SessionCache: cache,
 		Broker:       newMockBroker(nil, map[string]string{}),
-		RoutingConfig: &config.MCPServersConfig{
-			Servers: []*config.MCPServer{
-				{
-					Name:     "dummy",
-					URL:      "http://localhost:9090",
-					Prefix:   "",
-					State:    "Enabled",
-					Hostname: "dummy",
-				},
+	}
+	s.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers: []*config.MCPServer{
+			{
+				Name:     "dummy",
+				URL:      "http://localhost:9090",
+				Prefix:   "",
+				State:    "Enabled",
+				Hostname: "dummy",
 			},
 		},
-	}
+	})
+	return s
 }
 
 // requestHeadersStep returns a standard request headers step
