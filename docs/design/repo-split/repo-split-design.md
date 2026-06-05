@@ -164,11 +164,22 @@ The operator does not need to know which MCP spec version clients or backends us
 
 ### CI/CD Pipeline Split
 
+#### Testing Strategy
+
+Most feature work lands in the operand repo (broker/router), not the operator. The testing strategy reflects this — each repo tests its own component independently, and a cross-repo job catches version skew.
+
+**Operand repo — tests the gateway as a gateway.** Deploys the gateway directly via Helm (no operator in the loop), creates config secrets with the expected config, sets the needed env vars and flags, and runs e2e tests against the gateway's MCP functionality. This is where most e2e coverage lives since most features land here. The operand repo also runs unit tests, conformance tests, and lint.
+
+**Operator repo — tests the controller as a controller.** envtest integration tests prove the controller produces correct Deployments, Secrets, and RBAC from CRs. Unit tests cover reconciliation logic. No real gateway needed. The operator repo also runs Helm install smoke tests and CRD sync verification.
+
+**Cross-repo compatibility job — the integration point.** A manually triggered (and nightly) workflow that deploys version X of the operator with version Y of the operand together. Catches version skew between the two components. Required gate before any release.
+
 #### `mcp-gateway` (operand) CI
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `tests.yaml` | PR, push to main | Unit tests for broker, router, session, config |
+| `e2e.yaml` | PR, push to main | Gateway e2e via Helm (no operator), config secret + flags |
 | `code-style.yaml` | PR | Lint, vet, formatting |
 | `images.yaml` | Push to main, tags | Build + push `ghcr.io/kuadrant/mcp-gateway` |
 | `test-images.yaml` | Push to main | Build + push test server images |
@@ -181,20 +192,19 @@ The operator does not need to know which MCP spec version clients or backends us
 |---|---|---|
 | `tests.yaml` | PR, push to main | Unit tests for controllers |
 | `controller-integration-tests.yaml` | PR, push to main | envtest integration tests |
-| `e2e.yaml` | Push to main, manual | Full e2e (pulls released operand image) |
-| `e2e-auth.yaml` | Push to main, manual | Auth-specific e2e |
 | `code-style.yaml` | PR | Lint, vet, formatting |
 | `images.yaml` | Push to main, tags | Build + push `ghcr.io/kuadrant/mcp-controller` |
 | `helm-release.yaml` | Tags | Publish Helm chart |
 | `helm-install-test.yaml` | PR | Helm install smoke test |
 | `verify-crd-sync.yaml` | PR | Ensure generated CRDs match chart CRDs |
 
-#### Cross-Repo E2E
+#### Cross-Repo Compatibility
 
-The operator repo's e2e tests pull the operand image by tag:
+A workflow in the operator repo that deploys both components together and runs full integration tests:
 
-- **Default:** Uses the latest released `mcp-gateway` image. Steady-state for operator PRs.
-- **Dev override:** A workflow input allows specifying a custom operand image (e.g., `ghcr.io/kuadrant/mcp-gateway:pr-456`) for coordinated changes.
+- **Nightly:** Latest released operator + latest released operand. Catches drift.
+- **Manual:** Accepts image overrides for both components (e.g., operand PR image + operator PR image). Used for coordinated changes that touch both repos.
+- **Pre-release gate:** Must pass before tagging either component.
 
 #### Release Flow
 
