@@ -267,7 +267,7 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 	}
 	isInvalid, err := s.JWTManager.Validate(sessionID)
 	if err != nil || isInvalid {
-		return NewRouterError(404, fmt.Errorf("session no longer valid"))
+		return NewRouterError(401, fmt.Errorf("session no longer valid"))
 	}
 	return nil
 }
@@ -777,7 +777,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			// this err would be caused by an invalid token so force a re-initialize
 			s.Logger.ErrorContext(ctx, "failed to get expires in value. Forcing session reset", "err", err)
 			sessionCloser()
-			return "", NewRouterError(404, fmt.Errorf("invalid session"))
+			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
 		// compute once: reuse for both the Redis TTL and the cleanup timer so they
 		// are always in sync, and guard against a near-zero/negative value which
@@ -786,7 +786,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		if ttl <= 0 {
 			s.Logger.ErrorContext(ctx, "session already expired, forcing reset", "session", mcpReq.GetSessionID())
 			sessionCloser()
-			return "", NewRouterError(404, fmt.Errorf("invalid session"))
+			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
 		remoteSessionID := clientHandle.GetSessionId()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)

@@ -493,7 +493,7 @@ func TestValidateSession(t *testing.T) {
 	t.Run("invalid JWT", func(t *testing.T) {
 		routerErr := server.validateSession("invalid-jwt-token")
 		require.NotNil(t, routerErr)
-		require.Equal(t, int32(404), routerErr.Code())
+		require.Equal(t, int32(401), routerErr.Code())
 	})
 }
 
