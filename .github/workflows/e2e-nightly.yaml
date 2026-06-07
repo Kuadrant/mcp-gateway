@@ -1,34 +1,18 @@
-name: E2E Tests
+name: E2E Tests (nightly)
 
 on:
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'examples/**'
-      - 'LICENSE'
-      - 'charts/**'
-      - '.coderabbit.yaml'
-      - '.gitignore'
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'examples/**'
-      - 'LICENSE'
-      - 'charts/**'
+  schedule:
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  e2e-tests:
+  e2e-tests-full:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -45,8 +29,8 @@ jobs:
       - name: Setup CI environment
         run: make ci-setup
 
-      - name: Run E2E tests
-        run: make test-e2e-ci
+      - name: Run full E2E suite
+        run: make test-e2e-ci-full
 
       - name: Collect logs on failure
         if: failure()

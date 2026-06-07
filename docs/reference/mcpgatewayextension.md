@@ -5,7 +5,6 @@
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [TrustedHeadersKey](#trustedheaderskey)
 - [SessionStore](#sessionstore)
-- [AuditConfig](#auditconfig)
 - [OAuthProtectedResource](#oauthprotectedresource)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
 
@@ -29,14 +28,13 @@
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
 | `urlElicitation` | String | No | Controls URL-based token elicitation. `Enabled`: creates a separate `/tokens` HTTPRoute and passes `--enable-url-elicitation` to the broker. `Disabled` (default): no `/tokens` route is created |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
-| `audit` | [AuditConfig](#auditconfig) | No | Configures the MCP audit trail via Envoy access logs. When set, the operator adds an access log to the gateway and injects audit env vars into the router deployment. When not set, no audit access log is added |
 
 ## MCPGatewayExtensionTargetReference
 
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
-| `group` | String | Yes | Group of the target resource. Default: `gateway.networking.k8s.io` |
-| `kind` | String | Yes | Kind of the target resource. Default: `Gateway` |
+| `group` | String | No | Group of the target resource. Default: `gateway.networking.k8s.io` |
+| `kind` | String | No | Kind of the target resource. Default: `Gateway` |
 | `name` | String | Yes | Name of the target Gateway |
 | `namespace` | String | No | Namespace of the target Gateway. Defaults to the MCPGatewayExtension namespace. Cross-namespace references require a ReferenceGrant |
 | `sectionName` | String | Yes | Name of a listener on the target Gateway. The controller reads the listener's port and hostname to configure the MCP Gateway instance |
@@ -53,13 +51,6 @@
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
 | `secretName` | String | Yes | Name of the secret containing a `CACHE_CONNECTION_STRING` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
-
-## AuditConfig
-
-| **Field** | **Type** | **Required** | **Description** |
-|-----------|----------|:------------:|-----------------|
-| `parameterLogging` | String | No | Controls whether tool call parameters are included in the audit trail. `Enabled`: `params.arguments` from `tools/call` requests are logged, truncated to 1KB. `Disabled` (default): parameters are not logged |
-| `identityHeaders` | []String | No | Header names to check (in order) for caller identity when W3C Baggage `user.id` is absent. Default: `["x-forwarded-email", "x-auth-user"]` |
 
 ## OAuthProtectedResource
 

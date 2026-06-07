@@ -164,8 +164,7 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 		return nil, fmt.Errorf("create client: %w", err)
 	}
 	// don't call mcpClient.Close() — it sends HTTP DELETE which terminates
-	// the upstream session. the session is cleaned up when the gateway
-	// session expires via terminateUserSpecificSessions in the router.
+	// the upstream session. We don't explicitly close these sessions.
 
 	if err := mcpClient.Start(fetchCtx); err != nil {
 		return nil, fmt.Errorf("start client: %w", err)

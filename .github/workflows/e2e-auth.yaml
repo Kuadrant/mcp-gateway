@@ -19,7 +19,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Create Kind cluster
         run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml

@@ -23,6 +23,75 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 )
 
+// SetupTrustedHeadersAuth configures trusted headers for JWT validation on the MCPGateway.
+// creates the required secret and patches MCPGatewayExtension, then registers cleanup
+// to restore the original state.
+func SetupTrustedHeadersAuth(ctx context.Context, k8sClient client.Client) {
+	// create the secret if it doesn't exist
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "trusted-headers-public-key",
+			Namespace: SystemNamespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"key": []byte(GetTestHeaderPublicKey()),
+		},
+	}
+	Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
+
+	DeferCleanup(func() {
+		Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+	})
+
+	// get current deployment generation before patching
+	gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+	Expect(err).NotTo(HaveOccurred())
+
+	ext := &mcpv1alpha1.MCPGatewayExtension{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{
+		Name: MCPExtensionName, Namespace: SystemNamespace,
+	}, ext)).To(Succeed())
+
+	patch := client.MergeFrom(ext.DeepCopy())
+	ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+		SecretName: "trusted-headers-public-key",
+	}
+	Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
+
+	DeferCleanup(func() {
+		// get current deployment generation before cleanup
+		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+		Expect(err).NotTo(HaveOccurred())
+
+		ext := &mcpv1alpha1.MCPGatewayExtension{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name: MCPExtensionName, Namespace: SystemNamespace,
+		}, ext)
+		if err == nil {
+			patch := client.MergeFrom(ext.DeepCopy())
+			ext.Spec.TrustedHeadersKey = nil
+			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
+
+			// wait for deployment spec to be updated
+			Eventually(func(g Gomega) {
+				g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeFalse())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+			// wait for deployment to roll out
+			Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+		}
+	})
+
+	// wait for deployment to be updated with the env var
+	Eventually(func(g Gomega) {
+		g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeTrue())
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+	// wait for deployment to roll out with new pods
+	Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+}
+
 // TestResourcesBuilder is a unified builder for creating test resources
 type TestResourcesBuilder struct {
 	k8sClient           client.Client

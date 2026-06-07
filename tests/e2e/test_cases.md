@@ -299,13 +299,50 @@
 
 - When the `category` or `hint` fields on a live MCPServerRegistration are updated, the controller should re-reconcile and the broker should reflect the new metadata in subsequent `discover_tools` calls. The old category should no longer match.
 
-### [Happy] Test broker connects to TLS upstream with custom CA certificate
+### [HTTPS] [Happy] Test broker connects to TLS upstream with custom CA certificate
 
 - When an MCPServerRegistration has a `caCertSecretRef` pointing to a valid CA certificate Secret and the upstream MCP server terminates TLS with a certificate signed by that CA, the broker should successfully connect via HTTPS, discover tools, and make them available through the gateway. The test deploys an nginx TLS proxy in front of mcp-test-server2 using a cert-manager private CA, creates a labeled Secret containing the CA certificate, and verifies that tools are listed and can be invoked through the gateway.
+- **Runs on PR CI** — cert-manager and TLS test server are deployed by `make ci-setup`. Skips if either is absent.
 
-### [Negative] Test broker rejects TLS upstream with wrong CA certificate
+### [HTTPS] [Negative] Test broker rejects TLS upstream with wrong CA certificate
 
 - When an MCPServerRegistration has a `caCertSecretRef` pointing to a CA certificate that did NOT sign the upstream server's certificate, the broker should fail the TLS handshake and the MCPServerRegistration should be in a not-ready state. No tools with the server's prefix should appear in the tools list.
+- **Runs on PR CI** — same dependencies as the happy path test above.
+
+### [HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS
+
+- Registers the GitHub MCP server (`api.githubcopilot.com`) as an external hostname backend with a PAT credential. Verifies the broker connects over HTTPS, discovers at least one tool, and the config contains an `https://` URL.
+- **Skips unless** `GITHUB_MCP_PAT` env var is set. Not run on PR CI to avoid depending on an external service we don't own.
+
+### [HTTPS] [HTTPS_EXTERNAL] In-cluster MCP server accessible over public TLS via real certs
+
+- Registers an internal MCP server and verifies tools/list works end-to-end when the gateway is fronted by a real publicly-trusted TLS certificate. Connects via the HTTPS gateway URL and confirms tools with the expected prefix are discoverable.
+- **Cannot run on Kind.** Requires a cluster with a TLS-terminating load balancer and a publicly trusted wildcard certificate (e.g. OpenShift with Let's Encrypt). Previously manually verified on OpenShift 4.20 (see #450).
+- **Skips unless** `E2E_HTTPS_REAL_CERTS=true` and `E2E_SCHEME=https`.
+
+Both external tests are tagged `[HTTPS_EXTERNAL]` and skip on PR CI. Run them manually for sanity checks (e.g. before releases):
+
+```bash
+# GitHub MCP test (Kind)
+GITHUB_MCP_PAT=ghp_your_token make test-e2e-https
+
+# RealCerts test (cluster with real TLS)
+E2E_HTTPS_REAL_CERTS=true E2E_SCHEME=https E2E_DOMAIN=your-cluster.example.com make test-e2e-https
+```
+
+## Running HTTPS tests
+
+All HTTPS tests are tagged `[HTTPS]` and can be run together:
+
+```bash
+make test-e2e-https
+```
+
+| Test | PR CI | Manual / release sanity |
+|------|-------|-------------------------|
+| Private CA (happy + negative) | Yes | Yes |
+| GitHub external | Skipped | Yes (needs `GITHUB_MCP_PAT`) |
+| Real public certs | Skipped | Yes (needs real TLS cluster) |
 
 ### [Happy] OAuth protected resource metadata served from CRD config
 

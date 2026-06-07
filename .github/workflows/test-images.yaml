@@ -73,6 +73,14 @@ jobs:
             context: tests/servers/conformance-server
             dockerfile: Dockerfile
             image-name: test-conformance-server
+          - server: tls-server
+            context: tests/servers/tls-server
+            dockerfile: Dockerfile
+            image-name: test-tls-server
+          - server: user-specific-server
+            context: .
+            dockerfile: tests/servers/user-specific-server/Dockerfile
+            image-name: test-user-specific-server
 
     steps:
       - name: Check out code
