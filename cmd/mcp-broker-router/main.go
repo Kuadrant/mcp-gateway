@@ -64,6 +64,7 @@ type brokerConfig struct {
 	invalidToolPolicy          string
 	discoveryToolsEnabled      bool
 	discoveryToolThreshold     int
+	enablePprof                bool
 }
 
 type app struct {
@@ -145,6 +146,7 @@ func parseFlags() *app {
 		"enable discover_tools and select_tools meta-tools for progressive tool discovery")
 	flag.IntVar(&bc.discoveryToolThreshold, "discovery-tool-threshold", 0,
 		"tool count above which real tools are hidden and only meta-tools are shown. 0 means never hide.")
+	flag.BoolVar(&bc.enablePprof, "enable-pprof", false, "enable pprof profiling server on localhost:6060")
 
 	// router-specific flags
 	flag.StringVar(&rc.addr, "mcp-router-address", "0.0.0.0:50051", "The address for MCP router")
@@ -281,19 +283,19 @@ func (a *app) run(ctx context.Context) {
 		a.logger.Error("grpc listen error", "error", err)
 		stop <- os.Interrupt
 	}
-
-	go func() {
-		pprofAddr := "0.0.0.0:6060"
-		a.logger.Info("[pprof] starting profiling server", "listening", pprofAddr)
-		pprofSrv := &http.Server{
-			Addr:              pprofAddr,
-			Handler:           nil,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
-		if err := pprofSrv.ListenAndServe(); err != nil {
-			a.logger.Error("pprof server error", "error", err)
-		}
-	}()
+	if a.brokerCfg.enablePprof {
+		go func() {
+			pprofAddr := "localhost:6060"
+			a.logger.Info("[pprof] starting profiling server", "listening", pprofAddr)
+			pprofSrv := &http.Server{
+				Addr:              pprofAddr,
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			if err := pprofSrv.ListenAndServe(); err != nil {
+				a.logger.Error("pprof server error", "error", err)
+			}
+		}()
+	}
 
 	go func() {
 		a.logger.Info("[grpc] starting MCP Router", "listening", a.routerCfg.addr)
