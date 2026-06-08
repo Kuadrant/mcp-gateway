@@ -26,7 +26,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.gitSHA=$(GIT_SHA) -X main.dirty=$(
 
 # Image tag and bundle version derivation (matches kuadrant-operator pattern)
 DEFAULT_IMAGE_TAG = latest
-is_semantic_version = $(shell [[ $(1) =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$ ]] && echo "true")
+is_semantic_version = $(shell echo "$(1)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' && echo "true")
 version_is_semantic := $(call is_semantic_version,$(VERSION))
 ifeq (0.0.0,$(VERSION))
 BUNDLE_VERSION = $(VERSION)
@@ -73,6 +73,11 @@ detect-kuadrant-ns = if kubectl get namespace kuadrant-system >/dev/null 2>&1; t
 MCP_GATEWAY_SUBDOMAIN ?= mcp
 MCP_GATEWAY_HOST ?= $(MCP_GATEWAY_SUBDOMAIN).127-0-0-1.sslip.io
 MCP_GATEWAY_NAME ?= mcp-gateway
+
+# E2E configuration variables
+E2E_DOMAIN ?= 127-0-0-1.sslip.io
+GATEWAY_CLASS_NAME ?= istio
+E2E_PLATFORM ?= kind
 
 .PHONY: help
 help: ## Display this help
@@ -238,8 +243,14 @@ deploy-redis: ## deploy redis to mcp-system namespace
 	kubectl rollout status deployment/redis -n $(MCP_GATEWAY_NAMESPACE) --timeout=60s
 
 .PHONY: configure-redis
-configure-redis: deploy-redis ## deploy redis and patch deployment with redis connection
-	kubectl patch deployment $(BROKER_ROUTER_NAME) -n $(MCP_GATEWAY_NAMESPACE) --patch-file config/mcp-gateway/overlays/mcp-system/deployment-controller-redis-patch.yaml
+configure-redis: deploy-redis ## deploy redis and configure MCPGatewayExtension session store
+	kubectl create secret generic redis-session-store \
+		--from-literal=CACHE_CONNECTION_STRING=redis://redis.$(MCP_GATEWAY_NAMESPACE).svc.cluster.local:6379 \
+		-n $(MCP_GATEWAY_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl label secret redis-session-store mcp.kuadrant.io/secret=true -n $(MCP_GATEWAY_NAMESPACE) --overwrite
+	kubectl patch mcpgatewayextension mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --type=merge \
+		-p '{"spec":{"sessionStore":{"secretName":"redis-session-store"}}}'
+	kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
 
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
@@ -320,7 +331,8 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/custom-path-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-path-server:latest .
 	cd tests/servers/oidc-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-oidc-server:latest .
 	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest .
-	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .	
+	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/user-specific-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest .
 
 # Build conformance server Docker image
 .PHONY: build-conformance-server
@@ -340,6 +352,7 @@ kind-load-test-servers: kind build-test-servers ## Load test server images into 
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-oidc-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
 
 # Load everything server image into Kind cluster
 kind-load-everything-server: kind build-everything-server ## Load everything server image into Kind cluster
@@ -351,6 +364,31 @@ kind-load-everything-server: kind build-everything-server ## Load everything ser
 kind-load-conformance-server: kind build-conformance-server ## Load conformance server image into Kind cluster
 	@echo "Loading conformance server image into Kind cluster..."
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-conformance-server:latest)
+
+# Build TLS test server Docker image
+.PHONY: build-tls-server
+build-tls-server: ## Build TLS test server Docker image locally
+	@echo "Building TLS test server image..."
+	cd tests/servers/tls-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-tls-server:latest .
+
+# Load TLS test server image into Kind cluster
+.PHONY: kind-load-tls-server
+kind-load-tls-server: kind build-tls-server ## Load TLS test server image into Kind cluster
+	@echo "Loading TLS test server image into Kind cluster..."
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-tls-server:latest)
+
+# Deploy TLS test server with cert-manager CA chain
+.PHONY: deploy-tls-test-server
+deploy-tls-test-server: kind-load-tls-server cert-manager-install ## Deploy TLS test server with cert-manager certificates
+	@echo "Setting up cert-manager CA and issuing TLS certificate..."
+	$(KUBECTL) apply -f config/test-servers/namespace.yaml
+	$(KUBECTL) apply -f config/test-servers/tls-server-cert-manager.yaml
+	@$(KUBECTL) wait --for=condition=Ready certificate/private-ca -n cert-manager --timeout=60s
+	@$(KUBECTL) wait --for=condition=Ready certificate/tls-test-server-cert -n mcp-test --timeout=60s
+	@echo "Deploying TLS test server..."
+	$(KUBECTL) apply -f config/test-servers/tls-server-deployment.yaml
+	@$(KUBECTL) wait --for=condition=available --timeout=120s deployment/mcp-tls-server -n mcp-test
+	@echo "TLS test server ready"
 
 # Deploy everything server only (for local dev)
 deploy-everything-server: kind-load-everything-server ## Deploy only the everything server for local dev
@@ -385,16 +423,39 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 	@echo "Waiting for MCPServerRegistration to be Ready..."
 	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=120s
 
+# Generate e2e gateway configs from templates
+.PHONY: generate-e2e-config
+generate-e2e-config: ## Generate e2e gateway configs from templates (E2E_DOMAIN=..., GATEWAY_CLASS_NAME=..., E2E_PLATFORM=kind|openshift)
+	@echo "Generating e2e config with E2E_DOMAIN=$(E2E_DOMAIN), GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME), E2E_PLATFORM=$(E2E_PLATFORM)"
+	@export E2E_DOMAIN=$(E2E_DOMAIN) GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME) && \
+	  envsubst < config/e2e/gateway-1.yaml.template > config/e2e/gateway-1.yaml && \
+	  envsubst < config/e2e/gateway-2.yaml.template > config/e2e/gateway-2.yaml && \
+	  envsubst < config/e2e/gateway-shared.yaml.template > config/e2e/gateway-shared.yaml
+	@cp config/e2e/kustomization-$(E2E_PLATFORM).yaml config/e2e/kustomization.yaml
+	@echo "E2E config generated successfully"
+
 # Deploy e2e test gateways (two separate gateways for multi-gateway testing)
 .PHONY: deploy-e2e-gateways
-deploy-e2e-gateways: ## Deploy two gateways for e2e multi-gateway tests
+deploy-e2e-gateways: generate-e2e-config ## Deploy two gateways for e2e multi-gateway tests
 	@echo "Deploying e2e test gateways..."
 	kubectl apply -k config/e2e/
 	@echo "Waiting for e2e-1 to be programmed..."
 	@kubectl wait --for=condition=Programmed gateway/e2e-1 -n gateway-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for e2e-2 to be programmed..."
 	@kubectl wait --for=condition=Programmed gateway/e2e-2 -n gateway-system --timeout=$(WAIT_TIME)
-	@echo "E2E gateways ready: e2e-1 (port 8004), e2e-2 (port 8003)"
+	@echo "Waiting for shared gateway to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/shared-gateway -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "E2E gateways ready: e2e-1, e2e-2, and shared-gateway"
+
+# Deploy e2e gateways for OpenShift
+.PHONY: deploy-e2e-gateways-openshift
+deploy-e2e-gateways-openshift: ## Deploy e2e gateways for OpenShift (requires E2E_DOMAIN env var)
+	@if [ -z "$(E2E_DOMAIN)" ] || [ "$(E2E_DOMAIN)" = "127-0-0-1.sslip.io" ]; then \
+		echo "Error: E2E_DOMAIN must be set to your OpenShift cluster domain"; \
+		echo "Example: make deploy-e2e-gateways-openshift E2E_DOMAIN=apps.my-cluster.example.com"; \
+		exit 1; \
+	fi
+	$(MAKE) deploy-e2e-gateways E2E_DOMAIN=$(E2E_DOMAIN) GATEWAY_CLASS_NAME=openshift-default E2E_PLATFORM=openshift
 
 # Build and push container image TODO we have this and build-image lets just use one
 docker-build: ## Build container image locally
@@ -761,7 +822,7 @@ otel: ## Deploy OpenTelemetry observability stack. Use ISTIO_TRACING=1, AUTH_TRA
 ifeq ($(ISTIO_TRACING),1)
 	kubectl apply -f examples/otel/istio-telemetry.yaml
 	kubectl patch istio default --type='merge' \
-		-p='{"spec":{"values":{"meshConfig":{"enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"$(OTEL_COLLECTOR_HOST)"}}]}}}}'
+		-p='{"spec":{"values":{"meshConfig":{"accessLogFile":"/dev/stdout","enableTracing":true,"defaultConfig":{"tracing":{}},"extensionProviders":[{"name":"tempo-otlp","opentelemetry":{"port":4317,"service":"$(OTEL_COLLECTOR_HOST)"}}]}}}}'
 	@sleep 5
 endif
 	kubectl set env deployment/mcp-gateway -n $(MCP_GATEWAY_NAMESPACE) \

@@ -62,6 +62,7 @@ type StatusResponse struct {
 	UnHealthyServers int                               `json:"unHealthyServers"`
 	ToolConflicts    int                               `json:"toolConflicts"`
 	Timestamp        time.Time                         `json:"timestamp"`
+	ScopedSessions   int                               `json:"scopedSessions"`
 }
 
 // StatusHandler handles HTTP requests to the status endpoint

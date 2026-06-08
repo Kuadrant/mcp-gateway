@@ -10,11 +10,11 @@ metadata:
   name: shared-gateway
   namespace: gateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: ${GATEWAY_CLASS_NAME}
   listeners:
     # Team A listeners
     - name: team-a-mcp
-      hostname: 'team-a.127-0-0-1.sslip.io'
+      hostname: 'team-a.${E2E_DOMAIN}'
       port: 8080
       protocol: HTTP
       allowedRoutes:
@@ -35,7 +35,7 @@ spec:
               mcp-team: team-a
     # Team B listeners
     - name: team-b-mcp
-      hostname: 'team-b.127-0-0-1.sslip.io'
+      hostname: 'team-b.${E2E_DOMAIN}'
       port: 8081
       protocol: HTTP
       allowedRoutes:

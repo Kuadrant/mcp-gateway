@@ -253,6 +253,7 @@ func TestProcess_EndOfStream(t *testing.T) {
 									SetHeaders: []*corev3.HeaderValueOption{
 										{Header: &corev3.HeaderValue{Key: ":authority"}},
 									},
+									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver"},
 								},
 							},
 						},
@@ -537,7 +538,7 @@ func newTestServer(t *testing.T) *ExtProcServer {
 					Name:     "dummy",
 					URL:      "http://localhost:9090",
 					Prefix:   "",
-					Enabled:  true,
+					State:    "Enabled",
 					Hostname: "dummy",
 				},
 			},
@@ -552,7 +553,9 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 			Request: &extProcV3.ProcessingRequest_RequestHeaders{
 				RequestHeaders: &extProcV3.HttpHeaders{
 					Headers: &corev3.HeaderMap{
-						Headers: []*corev3.HeaderValue{},
+						Headers: []*corev3.HeaderValue{
+							{Key: "content-type", RawValue: []byte("application/json")},
+						},
 					},
 				},
 			},
@@ -566,6 +569,7 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 								SetHeaders: []*corev3.HeaderValueOption{
 									{Header: &corev3.HeaderValue{Key: ":authority"}},
 								},
+								RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver"},
 							},
 						},
 					},

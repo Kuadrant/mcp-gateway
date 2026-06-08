@@ -12,6 +12,11 @@ spec:
     kind: Gateway
     name: mcp-gateway
     sectionName: mcps
+  # Skip this policy for the gateway's own internal hairpin initialize requests.
+  # The router sets `router-key` on these requests and validates them independently
+  # via a short-lived JWT; Authorino should not also demand a Keycloak token.
+  when:
+    - predicate: "!request.headers.exists(h, h == 'router-key')"
   rules:
     authentication:
       'keycloak':
@@ -19,10 +24,19 @@ spec:
           issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
     authorization:
       'tool-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-toolname')"
         patternMatching:
           patterns:
             - predicate: |
-                request.headers['x-mcp-toolname'] in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+                ('tool:' + request.headers['x-mcp-toolname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+      'prompt-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-promptname')"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('prompt:' + request.headers['x-mcp-promptname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
     response:
       unauthenticated:
         headers:

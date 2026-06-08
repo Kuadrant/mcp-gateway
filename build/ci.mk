@@ -16,6 +16,8 @@ ci-setup: setup-cluster-base ## Setup environment for CI e2e tests
 	"$(MAKE)" deploy-redis
 	# Deploy and wait for test servers
 	"$(MAKE)" deploy-test-servers-ci
+	# Deploy TLS test server (installs cert-manager, creates CA, issues cert)
+	"$(MAKE)" deploy-tls-test-server
 	@echo "CI setup complete (3 gateways: mcp-gateway, e2e-1, e2e-2)"
 
 # Deploy test servers for CI

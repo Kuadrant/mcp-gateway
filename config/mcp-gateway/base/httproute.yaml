@@ -33,6 +33,13 @@ spec:
     - matches:
         - path:
             type: PathPrefix
+            value: /tokens
+      backendRefs:
+        - name: mcp-gateway
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
             value: /.well-known/oauth-protected-resource
       backendRefs:
         - name: mcp-gateway

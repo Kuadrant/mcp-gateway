@@ -88,7 +88,12 @@ if [ "$INSTALL_PRODUCTIZED_VERSION" != "true" ]; then
   done
 fi
 
-oc apply -f "$SCRIPT_BASE_DIR/../deploy/olm/operatorgroup.yaml" -n "$MCP_GATEWAY_NAMESPACE"
+# Check if OperatorGroup already exists in namespace (only one allowed per namespace)
+if oc get operatorgroup -n "$MCP_GATEWAY_NAMESPACE" -o name 2>/dev/null | grep -q .; then
+  echo "OperatorGroup already exists in $MCP_GATEWAY_NAMESPACE, skipping creation..."
+else
+  oc apply -f "$SCRIPT_BASE_DIR/../deploy/olm/operatorgroup.yaml" -n "$MCP_GATEWAY_NAMESPACE"
+fi
 
 # patch subscription sourceNamespace for OpenShift
 sed "s|sourceNamespace: .*|sourceNamespace: openshift-marketplace|" \

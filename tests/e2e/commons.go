@@ -16,21 +16,20 @@ import (
 
 // Test timeouts and intervals
 const (
-	TestTimeoutMedium     = time.Second * 60
-	TestTimeoutLong       = time.Minute * 3
+	TestTimeoutMedium     = time.Second * 90
+	TestTimeoutShort      = time.Second * 45
+	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6
 	TestRetryInterval     = time.Second * 5
+	TestRetryFast         = time.Second * 2
 )
 
-// Namespace constants
+// Namespace and resource name constants
 const (
-	SystemNamespace     = "mcp-system"
 	ConfigMapName       = "mcp-gateway-config"
-	GatewayNamespace    = "gateway-system"
 	GatewayName         = "mcp-gateway"
 	GatewayListenerName = "mcp" // listener name on mcp-gateway
-	MCPExtensionName    = "mcp-gateway"
-	TestServerNameSpace = "mcp-test"
+	MCPExtensionName    = "mcp-gateway-extension"
 	ReferenceGrantName  = "allow-mcp-gateway"
 )
 
@@ -60,8 +59,16 @@ const defaultE2EDomain = "127-0-0-1.sslip.io"
 
 // e2e environment configuration
 var (
-	e2eDomain = goenv.GetDefault("E2E_DOMAIN", defaultE2EDomain)
-	e2eScheme = goenv.GetDefault("E2E_SCHEME", "http")
+	e2eDomain        = goenv.GetDefault("E2E_DOMAIN", defaultE2EDomain)
+	e2eScheme        = goenv.GetDefault("E2E_SCHEME", "http")
+	gatewayClassName = goenv.GetDefault("GATEWAY_CLASS_NAME", "istio")
+)
+
+// namespace configuration - configurable via environment variables
+var (
+	SystemNamespace     = goenv.GetDefault("MCP_GATEWAY_NAMESPACE", "mcp-system")
+	GatewayNamespace    = goenv.GetDefault("GATEWAY_NAMESPACE", "gateway-system")
+	TestServerNameSpace = goenv.GetDefault("TEST_SERVER_NAMESPACE", "mcp-test")
 )
 
 // public hosts - derived from E2E_DOMAIN

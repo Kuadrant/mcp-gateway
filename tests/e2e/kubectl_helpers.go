@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -95,6 +96,68 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 	return nil
 }
 
+// AddDeploymentCommandFlag appends a flag to a deployment's container command array.
+func AddDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"%s"}]`, flag)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to add command flag on deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return nil
+}
+
+// RemoveDeploymentCommandFlag removes a flag from a deployment's container command array by value.
+func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].command}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get command array: %s: %w", string(output), err)
+	}
+	var command []string
+	if err := json.Unmarshal(output, &command); err != nil {
+		return fmt.Errorf("failed to parse command array: %w: %s", err, string(output))
+	}
+	idx := -1
+	for i, c := range command {
+		if c == flag {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/command/%d"}]`, idx)
+	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to remove command flag on deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return nil
+}
+
+// SetURLElicitation patches the MCPGatewayExtension to enable or disable URL elicitation.
+// The operator reconciles the deployment args and /tokens HTTPRoute automatically.
+func SetURLElicitation(namespace, name string, enabled bool) error {
+	value := "Disabled"
+	if enabled {
+		value = "Enabled"
+	}
+	ctx := context.Background()
+	patch := fmt.Sprintf(`{"spec":{"urlElicitation":"%s"}}`, value)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch mcpgatewayextension %s: %s: %w", name, string(output), err)
+	}
+	return nil
+}
+
 // IsTrustedHeadersEnabled checks if the gateway has trusted headers public key configured
 func IsTrustedHeadersEnabled(ctx context.Context) bool {
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", "-n", SystemNamespace,
@@ -104,6 +167,34 @@ func IsTrustedHeadersEnabled(ctx context.Context) bool {
 		return false
 	}
 	return strings.TrimSpace(string(output)) != ""
+}
+
+// SetOAuthProtectedResource patches the MCPGatewayExtension to set the oauthProtectedResource field.
+func SetOAuthProtectedResource(ctx context.Context, namespace, name string, authServers []string) error {
+	servers, err := json.Marshal(authServers)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authServers: %w", err)
+	}
+	patch := fmt.Sprintf(`{"spec":{"oauthProtectedResource":{"authorizationServers":%s}}}`, servers)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch mcpgatewayextension %s: %s: %w", name, string(output), err)
+	}
+	return nil
+}
+
+// ClearOAuthProtectedResource removes the oauthProtectedResource field from the MCPGatewayExtension.
+func ClearOAuthProtectedResource(ctx context.Context, namespace, name string) error {
+	patch := `{"spec":{"oauthProtectedResource":null}}`
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to clear oauthProtectedResource on %s: %s: %w", name, string(output), err)
+	}
+	return nil
 }
 
 // IsAuthPolicyConfigured checks if AuthPolicy resources exist in the gateway namespace

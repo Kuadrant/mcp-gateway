@@ -1,0 +1,12 @@
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: test-user-specific-server
+  namespace: mcp-test
+spec:
+  prefix: uspec_
+  userSpecificList: Enabled
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-user-specific-server-route

@@ -39,3 +39,7 @@ resources:
   - broken-server-service.yaml
   - broken-server-httproute.yaml
   - broken-server-deployment.yaml
+  - user-specific-server-deployment.yaml
+  - user-specific-server-httproute.yaml
+  - user-specific-server-httproute-ext.yaml
+  - user-specific-server-mcpserverregistration.yaml

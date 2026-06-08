@@ -1,0 +1,55 @@
+# cert-manager resources for the TLS test server.
+# Creates a private CA and issues a server certificate.
+# Applied by: make deploy-tls-test-server
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: private-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "MCP Gateway Test CA"
+  secretName: private-ca-keypair
+  duration: 8760h
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: private-ca-issuer
+spec:
+  ca:
+    secretName: private-ca-keypair
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tls-test-server-cert
+  namespace: mcp-test
+spec:
+  secretName: tls-test-server-tls
+  duration: 8760h
+  dnsNames:
+    - mcp-tls-server.mcp-test.svc.cluster.local
+    - tls-server.mcp-tls.local
+  issuerRef:
+    name: private-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256

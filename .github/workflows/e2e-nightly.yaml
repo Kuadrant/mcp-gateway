@@ -1,0 +1,39 @@
+name: E2E Tests (nightly)
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-tests-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Create Kind cluster
+        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+
+      - name: Setup CI environment
+        run: make ci-setup
+
+      - name: Run full E2E suite
+        run: make test-e2e-ci-full
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          make ci-debug-logs
+          make ci-debug-test-servers-logs

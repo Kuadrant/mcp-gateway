@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/tests/server2"
@@ -33,13 +34,16 @@ const (
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-// mockGateway is a no-op ToolsAdderDeleter for tests that don't need real gateway behaviour.
+// mockGateway is a no-op ToolsAdderDeleter/PromptsAdderDeleter for tests that don't need real gateway behaviour.
 type mockGateway struct{}
 
-func newMockGateway() *mockGateway                              { return &mockGateway{} }
-func (m *mockGateway) AddTools(_ ...server.ServerTool)          {}
-func (m *mockGateway) DeleteTools(_ ...string)                  {}
-func (m *mockGateway) ListTools() map[string]*server.ServerTool { return nil }
+func newMockGateway() *mockGateway                                  { return &mockGateway{} }
+func (m *mockGateway) AddTools(_ ...server.ServerTool)              {}
+func (m *mockGateway) DeleteTools(_ ...string)                      {}
+func (m *mockGateway) ListTools() map[string]*server.ServerTool     { return nil }
+func (m *mockGateway) AddPrompts(_ ...server.ServerPrompt)          {}
+func (m *mockGateway) DeletePrompts(_ ...string)                    {}
+func (m *mockGateway) ListPrompts() map[string]*server.ServerPrompt { return nil }
 
 // TestMain starts an MCP server that we will run actual tests against
 func TestMain(m *testing.M) {
@@ -77,7 +81,7 @@ func TestOnConfigChange(t *testing.T) {
 	server1 := &config.MCPServer{
 		Name:   "test1",
 		URL:    MCPAddr,
-		Prefix: "_test1",
+		Prefix: "test1_",
 	}
 	virtualServer1 := &config.VirtualServer{
 		Name:  "test/test",
@@ -260,6 +264,41 @@ func TestGetServerInfo(t *testing.T) {
 	svr, err = b.GetServerInfo("tt_orbit_mars")
 	require.Error(t, err)
 	require.Nil(t, svr)
+}
+
+func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
+	b := NewBroker(logger)
+	bImpl, ok := b.(*mcpBrokerImpl)
+	require.True(t, ok)
+
+	// two user-specific servers with overlapping prefixes
+	bImpl.mcpServers["short"] = upstream.NewActiveForTesting(createTestManager(t, "short", "gh_", []mcp.Tool{}))
+	bImpl.mcpServers["long"] = upstream.NewActiveForTesting(createTestManager(t, "long", "gh_repos_", []mcp.Tool{}))
+
+	// mark both as user-specific so prefix fallback is used
+	for id, srv := range bImpl.mcpServers {
+		cfg := srv.Config()
+		cfg.UserSpecificList = true
+		bImpl.mcpServers[id] = upstream.NewActiveForTesting(createTestManagerUserSpecific(t, cfg))
+	}
+
+	svr, err := b.GetServerInfo("gh_repos_search")
+	require.NoError(t, err)
+	require.NotNil(t, svr)
+	require.Equal(t, "long", svr.Name, "should match longest prefix gh_repos_ not gh_")
+
+	svr, err = b.GetServerInfo("gh_stars")
+	require.NoError(t, err)
+	require.NotNil(t, svr)
+	require.Equal(t, "short", svr.Name, "should match gh_ when gh_repos_ doesn't match")
+}
+
+func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
+	t.Helper()
+	mcpServer := upstream.NewUpstreamMCP(&cfg)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+	return manager
 }
 
 func TestToolAnnotations(t *testing.T) {

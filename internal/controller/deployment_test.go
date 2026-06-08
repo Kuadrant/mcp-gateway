@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -647,7 +648,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			var trustedEnv *corev1.EnvVar
 			for i := range container.Env {
 				switch container.Env[i].Name {
-				case "JWT_SESSION_SIGNING_KEY":
+				case "GATEWAY_SIGNING_KEY":
 					jwtEnv = &container.Env[i]
 				case "TRUSTED_HEADER_PUBLIC_KEY":
 					trustedEnv = &container.Env[i]
@@ -655,16 +656,16 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			}
 
 			if jwtEnv == nil {
-				t.Fatal("expected JWT_SESSION_SIGNING_KEY env var to always be present")
+				t.Fatal("expected GATEWAY_SIGNING_KEY env var to always be present")
 			}
 			if jwtEnv.ValueFrom == nil || jwtEnv.ValueFrom.SecretKeyRef == nil {
-				t.Fatal("expected JWT_SESSION_SIGNING_KEY to have secretKeyRef")
+				t.Fatal("expected GATEWAY_SIGNING_KEY to have secretKeyRef")
 			}
 			if jwtEnv.ValueFrom.SecretKeyRef.Name != sessionSigningKeySecretName {
-				t.Errorf("expected JWT secret name %q, got %q", sessionSigningKeySecretName, jwtEnv.ValueFrom.SecretKeyRef.Name)
+				t.Errorf("expected gateway signing key secret name %q, got %q", sessionSigningKeySecretName, jwtEnv.ValueFrom.SecretKeyRef.Name)
 			}
 			if jwtEnv.ValueFrom.SecretKeyRef.Key != sessionSigningKeyDataKey {
-				t.Errorf("expected JWT secret key %q, got %q", sessionSigningKeyDataKey, jwtEnv.ValueFrom.SecretKeyRef.Key)
+				t.Errorf("expected gateway signing key secret key %q, got %q", sessionSigningKeyDataKey, jwtEnv.ValueFrom.SecretKeyRef.Key)
 			}
 
 			if !tt.wantTrustedEnv {
@@ -1440,7 +1441,7 @@ func TestFilterManagedEnvVars(t *testing.T) {
 			name: "only managed vars returned",
 			env: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 				{Name: "CACHE_CONNECTION_STRING", Value: "redis://localhost"},
 			},
 			want: []corev1.EnvVar{
@@ -1449,9 +1450,20 @@ func TestFilterManagedEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "no managed vars",
+			name: "oauth vars are managed",
 			env: []corev1.EnvVar{
 				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://keycloak/realms/mcp"},
+			},
+			want: []corev1.EnvVar{
+				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://keycloak/realms/mcp"},
+			},
+		},
+		{
+			name: "no managed vars",
+			env: []corev1.EnvVar{
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 			want: nil,
 		},
@@ -1489,23 +1501,74 @@ func TestMergeEnvVars(t *testing.T) {
 			desired: []corev1.EnvVar{{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"}},
 			existing: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "old-key"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+				{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 			},
 			want: []corev1.EnvVar{
 				{Name: "TRUSTED_HEADER_PUBLIC_KEY", Value: "key1"},
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+				{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 			},
 		},
 		{
 			name:    "no desired managed vars still preserves user vars",
 			desired: nil,
 			existing: []corev1.EnvVar{
-				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 			want: []corev1.EnvVar{
+				{Name: "LOG_LEVEL", Value: "debug"},
+			},
+		},
+		{
+			name: "removing oauth config strips managed oauth vars",
+			desired: []corev1.EnvVar{
+				{Name: "GATEWAY_SIGNING_KEY", ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "signing-key"},
+						Key:                  "key",
+					},
+				}},
+			},
+			existing: []corev1.EnvVar{
+				{Name: "GATEWAY_SIGNING_KEY", ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "signing-key"},
+						Key:                  "key",
+					},
+				}},
 				{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
+				{Name: "OAUTH_RESOURCE", Value: "https://mcp.example.com/mcp"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://keycloak/realms/mcp"},
+				{Name: "OAUTH_BEARER_METHODS_SUPPORTED", Value: "header"},
+				{Name: "OAUTH_SCOPES_SUPPORTED", Value: "basic"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+			},
+			want: []corev1.EnvVar{
+				{Name: "GATEWAY_SIGNING_KEY", ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "signing-key"},
+						Key:                  "key",
+					},
+				}},
+				{Name: "LOG_LEVEL", Value: "debug"},
+			},
+		},
+		{
+			name: "managed oauth var in desired replaces existing value",
+			desired: []corev1.EnvVar{
+				{Name: "OAUTH_RESOURCE_NAME", Value: "new-name"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://new-server"},
+			},
+			existing: []corev1.EnvVar{
+				{Name: "OAUTH_RESOURCE_NAME", Value: "old-name"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://old-server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
+			},
+			want: []corev1.EnvVar{
+				{Name: "OAUTH_RESOURCE_NAME", Value: "new-name"},
+				{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "https://new-server"},
+				{Name: "LOG_LEVEL", Value: "debug"},
 			},
 		},
 	}
@@ -1538,8 +1601,8 @@ func TestDeploymentNeedsUpdate_UserEnvVarsIgnored(t *testing.T) {
 	desired := base()
 	existing := base()
 	existing.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{
-		{Name: "OAUTH_RESOURCE_NAME", Value: "MCP Server"},
-		{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: "http://keycloak/realms/mcp"},
+		{Name: "LOG_LEVEL", Value: "debug"},
+		{Name: "MY_CUSTOM_VAR", Value: "custom-value"},
 	}
 
 	needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
@@ -1570,8 +1633,15 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 	}
 
 	route := reconciler.buildGatewayHTTPRoute(mcpExt, "mcp.example.com")
-	if len(route.Spec.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+	if len(route.Spec.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(route.Spec.Rules))
+	}
+
+	if route.Spec.Rules[0].Name == nil || string(*route.Spec.Rules[0].Name) != "mcp" {
+		t.Errorf("expected first rule name = %q, got %v", "mcp", route.Spec.Rules[0].Name)
+	}
+	if route.Spec.Rules[1].Name == nil || string(*route.Spec.Rules[1].Name) != "well-known" {
+		t.Errorf("expected second rule name = %q, got %v", "well-known", route.Spec.Rules[1].Name)
 	}
 
 	var found bool
@@ -1640,6 +1710,13 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			},
 			wantUpdate: true,
 		},
+		{
+			name: "rule name changed",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Spec.Rules[0].Name = nil
+			},
+			wantUpdate: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1650,6 +1727,95 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			needsUpdate, _ := httpRouteNeedsUpdate(desired, existing)
 			if needsUpdate != tt.wantUpdate {
 				t.Errorf("httpRouteNeedsUpdate() = %v, want %v", needsUpdate, tt.wantUpdate)
+			}
+		})
+	}
+}
+
+func TestBuildTokensHTTPRoute(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{}
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Name:        "my-gateway",
+				Namespace:   "gateway-ns",
+				SectionName: "mcp",
+			},
+		},
+	}
+
+	route := reconciler.buildTokensHTTPRoute(mcpExt, "mcp.example.com")
+	if route.Name != tokensHTTPRouteName {
+		t.Errorf("name = %q, want %q", route.Name, tokensHTTPRouteName)
+	}
+	if len(route.Spec.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+	}
+	if route.Spec.Rules[0].Name == nil || string(*route.Spec.Rules[0].Name) != "tokens" {
+		t.Errorf("expected rule name = %q, got %v", "tokens", route.Spec.Rules[0].Name)
+	}
+	pathVal := route.Spec.Rules[0].Matches[0].Path.Value
+	if pathVal == nil || *pathVal != "/tokens" {
+		t.Errorf("expected path /tokens, got %v", pathVal)
+	}
+	if len(route.Spec.Rules[0].Filters) != 0 {
+		t.Errorf("expected no filters on tokens route, got %d", len(route.Spec.Rules[0].Filters))
+	}
+}
+
+func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+
+	tests := []struct {
+		name     string
+		policy   mcpv1alpha1.URLElicitationPolicy
+		wantFlag bool
+	}{
+		{
+			name:     "enabled",
+			policy:   mcpv1alpha1.URLElicitationEnabled,
+			wantFlag: true,
+		},
+		{
+			name:     "disabled",
+			policy:   mcpv1alpha1.URLElicitationDisabled,
+			wantFlag: false,
+		},
+		{
+			name:     "empty (default)",
+			policy:   "",
+			wantFlag: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "test-ns",
+				},
+				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+						Name:        "my-gateway",
+						Namespace:   "gateway-ns",
+						SectionName: "mcp",
+					},
+					URLElicitation: tt.policy,
+				},
+			}
+
+			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+			cmd := dep.Spec.Template.Spec.Containers[0].Command
+			hasFlag := slices.Contains(cmd, "--enable-url-elicitation")
+			if hasFlag != tt.wantFlag {
+				t.Errorf("--enable-url-elicitation present = %v, want %v", hasFlag, tt.wantFlag)
 			}
 		})
 	}
@@ -1775,4 +1941,120 @@ func TestDeploymentNeedsUpdate_Probe(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{BrokerRouterImage: "test-image:latest"}
+
+	base := func() *mcpv1alpha1.MCPGatewayExtension {
+		return &mcpv1alpha1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "mcp-system", UID: "test-uid"},
+			Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					Name: "mcp-gateway", Namespace: "gateway-system", SectionName: "mcp",
+				},
+			},
+		}
+	}
+
+	t.Run("no oauth config sets no oauth env vars", func(t *testing.T) {
+		dep := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
+		env := dep.Spec.Template.Spec.Containers[0].Env
+		for _, e := range env {
+			if strings.HasPrefix(e.Name, "OAUTH_") {
+				t.Errorf("unexpected env var %q when oauthProtectedResource is nil", e.Name)
+			}
+		}
+	})
+
+	t.Run("all defaults applied when only authorizationServers set", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		envMap := make(map[string]string)
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		if envMap["OAUTH_RESOURCE_NAME"] != "MCP Server" {
+			t.Errorf("OAUTH_RESOURCE_NAME = %q, want %q", envMap["OAUTH_RESOURCE_NAME"], "MCP Server")
+		}
+		if envMap["OAUTH_RESOURCE"] != "https://mcp.example.com/mcp" {
+			t.Errorf("OAUTH_RESOURCE = %q, want %q", envMap["OAUTH_RESOURCE"], "https://mcp.example.com/mcp")
+		}
+		if envMap["OAUTH_AUTHORIZATION_SERVERS"] != "https://keycloak.example.com/realms/mcp" {
+			t.Errorf("OAUTH_AUTHORIZATION_SERVERS = %q", envMap["OAUTH_AUTHORIZATION_SERVERS"])
+		}
+		if envMap["OAUTH_BEARER_METHODS_SUPPORTED"] != "header" {
+			t.Errorf("OAUTH_BEARER_METHODS_SUPPORTED = %q, want %q", envMap["OAUTH_BEARER_METHODS_SUPPORTED"], "header")
+		}
+		if envMap["OAUTH_SCOPES_SUPPORTED"] != "basic" {
+			t.Errorf("OAUTH_SCOPES_SUPPORTED = %q, want %q", envMap["OAUTH_SCOPES_SUPPORTED"], "basic")
+		}
+	})
+
+	t.Run("explicit values override defaults", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			ResourceName:           "My MCP",
+			Resource:               "http://mcp.127-0-0-1.sslip.io:8001/mcp",
+			AuthorizationServers:   []string{"https://auth1.example.com", "https://auth2.example.com"},
+			BearerMethodsSupported: []string{"header", "body"},
+			ScopesSupported:        []string{"basic", "groups", "roles"},
+		}
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		envMap := make(map[string]string)
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		if envMap["OAUTH_RESOURCE_NAME"] != "My MCP" {
+			t.Errorf("OAUTH_RESOURCE_NAME = %q, want %q", envMap["OAUTH_RESOURCE_NAME"], "My MCP")
+		}
+		if envMap["OAUTH_RESOURCE"] != "http://mcp.127-0-0-1.sslip.io:8001/mcp" {
+			t.Errorf("OAUTH_RESOURCE = %q", envMap["OAUTH_RESOURCE"])
+		}
+		if envMap["OAUTH_AUTHORIZATION_SERVERS"] != "https://auth1.example.com,https://auth2.example.com" {
+			t.Errorf("OAUTH_AUTHORIZATION_SERVERS = %q", envMap["OAUTH_AUTHORIZATION_SERVERS"])
+		}
+		if envMap["OAUTH_BEARER_METHODS_SUPPORTED"] != "header,body" {
+			t.Errorf("OAUTH_BEARER_METHODS_SUPPORTED = %q", envMap["OAUTH_BEARER_METHODS_SUPPORTED"])
+		}
+		if envMap["OAUTH_SCOPES_SUPPORTED"] != "basic,groups,roles" {
+			t.Errorf("OAUTH_SCOPES_SUPPORTED = %q", envMap["OAUTH_SCOPES_SUPPORTED"])
+		}
+	})
+
+	t.Run("oauth env change triggers deployment update", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		desired := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+
+		mcpExt2 := base()
+		mcpExt2.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://other-auth.example.com/realms/mcp"},
+		}
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", "internal:8080")
+
+		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
+		if !needsUpdate {
+			t.Error("deploymentNeedsUpdate() should trigger when oauth authorization servers change")
+		}
+	})
+
+	t.Run("removing oauth config triggers deployment update", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
+		}
+		desired := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+
+		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
+		if !needsUpdate {
+			t.Error("deploymentNeedsUpdate() should trigger when oauthProtectedResource is removed")
+		}
+	})
 }

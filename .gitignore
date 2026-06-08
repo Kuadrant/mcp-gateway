@@ -44,8 +44,15 @@ go.work.sum
 TODO
 local/
 docs/plans/
+docs/presentations/
 
 # Generated OLM catalog artifacts
 catalog/mcp-gateway-catalog/
 catalog/mcp-gateway-catalog.Dockerfile
 tests/perf/mock-server/mock-server
+
+# Generated e2e config files (generated from *.template files)
+config/e2e/gateway-1.yaml
+config/e2e/gateway-2.yaml
+config/e2e/gateway-shared.yaml
+config/e2e/kustomization.yaml

@@ -60,7 +60,23 @@ jobs:
         run: make deploy-conformance-server
 
       - name: Wait for conformance server to get ready
-        run: sleep 10
+        run: |
+          echo "Waiting for Gateway to wire up the MCP routes and broker to fetch tools..."
+          for i in {1..30}; do
+            HTTP_STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" ${{ env.MCP_URL }} || echo "000")
+            if [[ "$HTTP_STATUS" != "000" && "$HTTP_STATUS" != "0" && "$HTTP_STATUS" != "502" && "$HTTP_STATUS" != "503" ]]; then
+              echo "Gateway route is active! HTTP Status: $HTTP_STATUS"
+              # Extra wait for broker to connect and fetch tools from the conformance server
+              sleep 10
+              break
+            fi
+            echo "Attempt $i/30: Gateway route not ready yet (Status: $HTTP_STATUS). Retrying in 2 seconds..."
+            sleep 2
+            if [ $i -eq 30 ]; then
+              echo "ERROR: Gateway routes failed to propagate after 60 seconds."
+              exit 1
+            fi
+          done
 
       - name: Run MCP conformance tests
         run: |

@@ -6,15 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/mark3labs/mcp-go/client"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 var _ config.Observer = &ExtProcServer{}
@@ -22,12 +26,15 @@ var _ config.Observer = &ExtProcServer{}
 // SessionCache defines how the router interacts with a store to store and retrieves sessions
 type SessionCache interface {
 	GetSession(ctx context.Context, key string) (map[string]string, error)
-	AddSession(ctx context.Context, key, mcpID, mcpSession string) (bool, error)
+	AddSession(ctx context.Context, key, mcpID, mcpSession string, ttl time.Duration) (bool, error)
 	DeleteSessions(ctx context.Context, key ...string) error
 	RemoveServerSession(ctx context.Context, key, mcpServerID string) error
 	KeyExists(ctx context.Context, key string) (bool, error)
-	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
+	SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
+	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
+	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
 }
 
 // InitForClient defines a function for initializing an MCP server for a client.
@@ -37,15 +44,20 @@ type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig      *config.MCPServersConfig
-	JWTManager         *session.JWTManager
-	Logger             *slog.Logger
-	InitForClient      InitForClient
-	SessionCache       SessionCache
-	ElicitationMap     idmap.Map
-	MaxRequestBodySize int
+	RoutingConfig       *config.MCPServersConfig
+	JWTManager          *session.JWTManager
+	Logger              *slog.Logger
+	InitForClient       InitForClient
+	SessionCache        SessionCache
+	ElicitationMap      idmap.Map
+	TokenElicitationMap elicitation.Map
+	MaxRequestBodySize  int
+	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker
+	// initGroup serializes backend session initialization per (gatewaySessionID, serverName)
+	// pair, preventing concurrent tool calls from creating duplicate backend sessions.
+	initGroup singleflight.Group
 }
 
 // OnConfigChange is used to register the router for config changes
@@ -58,6 +70,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	var (
 		localRequestHeaders *extProcV3.HttpHeaders
 		requestID           string
+		requestPath         string
 		endOfStream         = false
 		mcpRequest          *MCPRequest
 		ctx                 = stream.Context()
@@ -93,20 +106,21 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 
 			ctx = extractTraceContext(ctx, localRequestHeaders.Headers)
 			requestID = getSingleValueHeader(localRequestHeaders.Headers, "x-request-id")
-			path := getSingleValueHeader(localRequestHeaders.Headers, ":path")
+			requestPath = getSingleValueHeader(localRequestHeaders.Headers, ":path")
 			method := getSingleValueHeader(localRequestHeaders.Headers, ":method")
 
 			span.End()
 			ctx, span = tracer().Start(ctx, "mcp-router.process", //nolint:spancheck // ended via defer closure
 				trace.WithAttributes(
+					componentAttr,
 					attribute.String("http.method", method),
-					attribute.String("http.path", path),
+					attribute.String("http.path", requestPath),
 					attribute.String("http.request_id", requestID),
 				),
 			)
 
-			responses, _ := s.HandleRequestHeaders(r.RequestHeaders)
-			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", path, "method", method)
+			responses, _ := s.HandleRequestHeaders(ctx, r.RequestHeaders)
+			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", requestPath, "method", method)
 			for _, response := range responses {
 				s.Logger.DebugContext(ctx, "sending header processing instructions to envoy", "response", response)
 				if err := stream.Send(response); err != nil {
@@ -165,6 +179,20 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			if !r.RequestBody.EndOfStream {
 				// intermediate chunk: acknowledge and wait for more data
 				s.Logger.DebugContext(ctx, "received body chunk, waiting for more", "request id", requestID, "buffer_size", len(bodyBuffer))
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
+						return err
+					}
+				}
+				continue
+			}
+
+			// non-JSON requests (e.g. form submissions to /tokens) pass through without JSON-RPC parsing
+			contentType := getSingleValueHeader(localRequestHeaders.Headers, "content-type")
+			if !strings.Contains(strings.ToLower(contentType), "application/json") {
+				s.Logger.DebugContext(ctx, "non-JSON content-type, passing through", "content-type", contentType)
 				resp := responseBuilder.WithDoNothingResponse(false).Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
@@ -249,7 +277,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
 				}
 				mcpRequest.clientElicitation = clientElicitation
-				if clientElicitation {
+				if clientElicitation && statusCode == "200" {
 					rewriter = &sseRewriter{
 						idMap:      s.ElicitationMap,
 						req:        mcpRequest,

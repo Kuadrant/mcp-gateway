@@ -2,9 +2,13 @@ package upstream
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"sync"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -39,17 +43,63 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 	return up
 }
 
+// buildHTTPClient creates a custom HTTP client with the configured CA certificate
+// appended to the system root pool. Returns nil if no CACert is configured.
+func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
+	if up.CACert == "" {
+		return nil, nil //nolint:nilnil // nil client signals caller to use default transport
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		rootCAs = x509.NewCertPool()
+	}
+
+	if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
+		return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+
+	return &http.Client{Transport: transport}, nil
+}
+
 // GetConfig return the config for the backend mcp server
 func (up *MCPServer) GetConfig() config.MCPServer {
-	// return a copy rather than the original
-	return config.MCPServer{
-		Name:       up.Name,
-		URL:        up.URL,
-		Prefix:     up.Prefix,
-		Enabled:    up.Enabled,
-		Hostname:   up.Hostname,
-		Credential: up.Credential,
+	var cat []string
+	if len(up.Category) > 0 {
+		cat = make([]string, len(up.Category))
+		copy(cat, up.Category)
 	}
+	var tags []string
+	if len(up.Tags) > 0 {
+		tags = make([]string, len(up.Tags))
+		copy(tags, up.Tags)
+	}
+	return config.MCPServer{
+		Name:                up.Name,
+		URL:                 up.URL,
+		Prefix:              up.Prefix,
+		State:               up.State,
+		Hostname:            up.Hostname,
+		Credential:          up.Credential,
+		CACert:              up.CACert,
+		TokenURLElicitation: up.TokenURLElicitation,
+		UserSpecificList:    up.UserSpecificList,
+		Category:            cat,
+		Hint:                up.Hint,
+		Tags:                tags,
+	}
+}
+
+// IsEnabled returns true if the server should be connected to and have its tools registered.
+// An empty state defaults to enabled for backwards compatibility.
+func (up *MCPServer) IsEnabled() bool {
+	return up.State == "" || up.State == string(mcpv1alpha1.ServerStateEnabled)
 }
 
 // ProtocolInfo returns the initialize result with the protocol information stored in it
@@ -92,6 +142,14 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	options := []transport.StreamableHTTPCOption{
 		transport.WithContinuousListening(),
 		transport.WithHTTPHeaders(up.headers),
+	}
+
+	customClient, err := up.buildHTTPClient()
+	if err != nil {
+		return fmt.Errorf("failed to build HTTP client: %w", err)
+	}
+	if customClient != nil {
+		options = append(options, transport.WithHTTPBasicClient(customClient))
 	}
 
 	httpClient, err := client.NewStreamableHttpClient(up.URL, options...)
