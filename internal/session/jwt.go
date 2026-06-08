@@ -63,8 +63,8 @@ type JWTManager struct {
 
 // NewJWTManager creates a new JWT manager with the provided signing key
 func NewJWTManager(signingKey string, sessionLength int64, logger *slog.Logger, sessionHandler Deleter) (*JWTManager, error) {
-	if signingKey == "" {
-		return nil, fmt.Errorf("no signing key provided")
+	if len(signingKey) < 32 {
+		return nil, fmt.Errorf("signing key must be at least 32 bytes for HS256")
 	}
 	var sessionDuration = DefaultSessionDuration
 	if sessionLength != 0 {
