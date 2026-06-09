@@ -320,12 +320,22 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
+		By("Creating a virtual server to pass validation")
+		virtualServer := BuildTestMCPVirtualServer("uspec-sec-vs", TestServerNameSpace, []string{"uspec_headers"}).Build()
+		testResources = append(testResources, virtualServer)
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+
 		By("Creating a client with auth and a virtual server header")
-		userClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"Authorization":       "Bearer user-a-token",
-			"X-Mcp-Virtualserver": "test/vs",
-		})
-		Expect(err).NotTo(HaveOccurred())
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		var userClient *mcpclient.Client
+		Eventually(func(g Gomega) {
+			var err error
+			userClient, err = NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+				"Authorization":       "Bearer user-a-token",
+				"X-Mcp-Virtualserver": virtualServerHeader,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		defer func() { _ = userClient.Close() }()
 
 		By("Waiting for tools to appear")
