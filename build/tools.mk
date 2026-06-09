@@ -1,7 +1,7 @@
 # Tools
 
 KIND = bin/kind
-KIND_VERSION = v0.29.0
+KIND_VERSION = v0.32.0
 # default node image for KIND_VERSION above, used for CI cluster creation
 # (kind-create-cluster-ci) and as the base of the baked CI node image
 # (build/ci-node/Dockerfile); keep in lockstep when bumping kind, digest
