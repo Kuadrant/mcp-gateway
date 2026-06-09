@@ -870,6 +870,10 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
+	// re-inject x-mcp-authorized so the broker can apply auth-based tool filtering
+	if v := mcpReq.GetSingleHeaderValue(mcpAuthorizedHeader); v != "" {
+		headers.WithCustomHeader(mcpAuthorizedHeader, v)
+	}
 	virtualServerID, ok, err := s.validVirtualServerHeader(mcpReq)
 	if err != nil {
 		s.Logger.WarnContext(ctx, "rejecting broker request: invalid virtual server header", "error", err)
