@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -376,11 +377,15 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Creating a client with user-a auth and virtual server header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		vsClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"Authorization":       "Bearer user-a-token",
-			"X-Mcp-Virtualserver": virtualServerHeader,
-		})
-		Expect(err).NotTo(HaveOccurred())
+		var vsClient *mcpclient.Client
+		Eventually(func(g Gomega) {
+			var err error
+			vsClient, err = NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+				"Authorization":       "Bearer user-a-token",
+				"X-Mcp-Virtualserver": virtualServerHeader,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		defer func() { _ = vsClient.Close() }()
 
 		By("Verifying only the allowed tool is returned")
