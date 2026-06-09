@@ -206,26 +206,26 @@ func (a *app) setupSessionInfra(ctx context.Context) {
 		}
 	}
 
-	var sessionCacheOpts []func(*session.Cache)
-	sessionCacheOpts = append(sessionCacheOpts, session.WithRedisClient(a.redisClient))
-	if a.redisClient != nil {
-		encKey, err := session.DeriveEncryptionKey([]byte(a.brokerCfg.gatewaySigningKey))
-		if err != nil {
-			panic("failed to derive encryption key: " + err.Error())
-		}
-		sessionCacheOpts = append(sessionCacheOpts, session.WithEncryptionKey(encKey))
-	}
-	var err error
-	a.sessionCache, err = session.NewCache(sessionCacheOpts...)
-	if err != nil {
-		panic("failed to setup session cache: " + err.Error())
-	}
-
 	if a.brokerCfg.gatewaySigningKey == "" {
 		panic("GATEWAY_SIGNING_KEY (or JWT_SESSION_SIGNING_KEY) is required but not set. " +
 			"When running via the controller, this is managed automatically. " +
 			"For standalone use, set the GATEWAY_SIGNING_KEY environment variable.")
 	}
+
+	var sessionCacheOpts []func(*session.Cache)
+	sessionCacheOpts = append(sessionCacheOpts, session.WithRedisClient(a.redisClient))
+	
+	encKey, err := session.DeriveEncryptionKey([]byte(a.brokerCfg.gatewaySigningKey))
+	if err != nil {
+		panic("failed to derive encryption key: " + err.Error())
+	}
+	sessionCacheOpts = append(sessionCacheOpts, session.WithEncryptionKey(encKey))
+
+	a.sessionCache, err = session.NewCache(sessionCacheOpts...)
+	if err != nil {
+		panic("failed to setup session cache: " + err.Error())
+	}
+
 	a.jwtMgr, err = session.NewJWTManager(a.brokerCfg.gatewaySigningKey, a.brokerCfg.sessionDurationMins, a.logger, a.sessionCache)
 	if err != nil {
 		panic("failed to setup jwt manager " + err.Error())
