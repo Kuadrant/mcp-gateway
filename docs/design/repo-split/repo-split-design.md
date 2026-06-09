@@ -69,12 +69,15 @@ mcp-gateway-operator/
 │   └── config/          # config secret writer + serialization types
 ├── charts/mcp-gateway/  # Helm chart (CRDs, RBAC, controller, MCPGatewayExtension)
 ├── bundle/              # OLM manifests
+├── catalog/             # FBC catalog
 ├── config/
 │   ├── crd/             # generated CRD YAMLs
 │   ├── mcp-system/      # K8s deployment manifests
-│   ├── test-servers/    # K8s manifests for test servers
+│   ├── rbac/            # RBAC manifests
+│   ├── test-servers/    # K8s manifest for a minimal test server
 │   └── samples/         # example manifests
-├── tests/e2e/           # full e2e tests (pulls released operand image)
+├── tests/
+│   └── e2e/             # controller-focused e2e (envtest + minimal server)
 ├── Dockerfile
 └── go.mod               # github.com/Kuadrant/mcp-gateway-operator
 ```
@@ -121,7 +124,7 @@ Both repos define their own Go structs for this schema. The operator serializes 
 - The operator must not remove a field without a deprecation period spanning at least one operand release, preventing older operands from receiving a config missing a field they expect.
 - New required fields must have sensible defaults so older operators that don't set them still produce valid config.
 - Breaking changes require a coordinated release with both repos tagged.
-- The config includes a top-level `configVersion: 1` field. The operand checks this on load — known versions are processed normally; unknown versions log a warning with the expected and actual values. This enables detection of operator/operand version mismatches without hard failures.
+- The config includes a top-level `configVersion: 1` field. This is a schema version, not tied to the operator or operand release version — it is bumped only when the config secret format has a breaking structural change (field renames, type changes, removed fields). Additive changes (new optional fields) do not bump the version. The operand checks this on load — known versions are processed normally; unknown versions log a warning with the expected and actual values.
 
 #### Status Endpoint (`GET /status`)
 
@@ -155,12 +158,6 @@ The operator controls the operand's deployment specification:
 | Ports | Fixed | 8080 (HTTP), 50051 (gRPC), 8181 (config) |
 | Health | HTTP | `GET /readyz` on port 8080 |
 | Config mount | Volume | `/config/config.yaml` |
-
-### MCP Spec Considerations
-
-A future MCP specification revision will introduce a stateless protocol model (no `initialize`/`Mcp-Session-Id`). The operand will need to support both old and new spec versions simultaneously during the transition period. This dual-spec support is entirely operand-internal — the operator-operand contracts above are spec-version-agnostic.
-
-The operator does not need to know which MCP spec version clients or backends use. If a `protocolVersion` CRD field is needed in the future, it would be a post-split change managed in the operator repo.
 
 ### CI/CD Pipeline Split
 
@@ -202,8 +199,8 @@ Most feature work lands in the operand repo (broker/router), not the operator. T
 
 A workflow in the operator repo that deploys both components together and runs full integration tests:
 
-- **Nightly:** Latest released operator + latest released operand. Catches drift.
-- **Manual:** Accepts image overrides for both components (e.g., operand PR image + operator PR image). Used for coordinated changes that touch both repos.
+- **Nightly:** Builds `:nightly` tagged images from main of both repos and tests them together. Catches drift between the two codebases.
+- **Manual:** Accepts image overrides for both components. Used for custom combinations — e.g., running `rc1` of the operand with `v1.5` of the operator when there were no operator changes.
 - **Pre-release gate:** Must pass before tagging either component.
 
 #### Release Flow
@@ -284,7 +281,7 @@ Add a CI check that builds each binary (`cmd/main.go` and `cmd/mcp-broker-router
 | `charts/`, `bundle/`, `catalog/` | mcp-gateway-operator |
 | `bundle.Dockerfile`, `build/olm.mk`, `utils/generate-catalog.sh` | mcp-gateway-operator |
 | `config/crd/`, `config/mcp-system/` | mcp-gateway-operator |
-| `config/test-servers/` | mcp-gateway-operator |
+| `config/test-servers/` | mcp-gateway-operator (minimal — one server for MCPServerRegistration testing) |
 | `tests/e2e/` | mcp-gateway-operator |
 | `tests/servers/` (source code) | stays in mcp-gateway |
 | `Dockerfile` (operand) | stays in mcp-gateway |
@@ -302,7 +299,7 @@ Add a CI check that builds each binary (`cmd/main.go` and `cmd/mcp-broker-router
 
 The current `Makefile` has targets for both components (`build`, `docker-build`, `docker-build-controller`, `generate`, `manifests`, etc.). Post-split:
 
-- **Operator repo** gets a new `Makefile` with controller-specific targets: `generate`, `manifests`, `docker-build`, `test-unit`, `test-controller-integration`, `lint`, `helm-*`, and CRD generation (`controller-gen`).
+- **Operator repo** gets a new `Makefile` with controller-specific targets: `generate`, `manifests`, `docker-build`, `test-unit`, `test-controller-integration`, `lint`, `helm-*`, and CRD generation (`controller-gen`). Includes `make deploy-operator OPERAND_IMAGE=<image>:<tag>` to deploy the operator with a specific operand version — used for local development and cross-repo testing.
 - **Operand repo** retains the existing `Makefile` but removes controller-specific targets (`docker-build-controller`, `generate`, `manifests`, CRD generation). Keeps `build`, `docker-build`, `test-unit`, `lint`, and performance test targets.
 
 ### CLAUDE.md
@@ -318,7 +315,7 @@ User-facing guides are published at docs.kuadrant.io from the `Kuadrant/docs.kua
 
 ### Test Server Images
 
-Test server source code (`tests/servers/`) stays in the operand repo and produces test server container images. The operator repo's e2e tests reference these images. The operator repo contains the Kubernetes manifests (`config/test-servers/`) that deploy them but does not build them — it pulls pre-built images from the operand repo's CI.
+Test server source code (`tests/servers/`) stays in the operand repo and produces test server container images. The operator repo only needs a single minimal test server and its K8s manifest to test MCPServerRegistration reconciliation — it does not need the full suite of test servers. The operand repo's e2e tests use the full set of test servers directly.
 
 ## Current Coupling Analysis
 
