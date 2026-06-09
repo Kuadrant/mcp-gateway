@@ -1195,7 +1195,6 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 			Headers: &corev3.HeaderMap{
 				Headers: []*corev3.HeaderValue{
 					{Key: "x-mcp-authorized", RawValue: []byte("signed-jwt-value")},
-					{Key: "x-mcp-virtualserver", RawValue: []byte("test/vs")},
 				},
 			},
 		}
@@ -1208,6 +1207,52 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 			require.NotEqual(t, "x-mcp-authorized", h.Header.Key)
 			require.NotEqual(t, "x-mcp-virtualserver", h.Header.Key)
 		}
+	})
+
+	t.Run("reinjects configured virtual server header for broker filtering", func(t *testing.T) {
+		srv := newServer(t)
+		srv.RoutingConfig.SetServers(nil, []*config.VirtualServer{{Name: "test/vs"}})
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "x-mcp-authorized", RawValue: []byte("signed-jwt-value")},
+					{Key: "x-mcp-virtualserver", RawValue: []byte("test/vs")},
+				},
+			},
+		}
+		resp := srv.HandleNoneToolCall(context.Background(), req)
+		require.Len(t, resp, 1)
+		rb, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		require.True(t, ok, "expected RequestBody response (broker passthrough), got %T", resp[0].Response)
+		require.NotNil(t, rb.RequestBody.Response)
+
+		var foundVirtualServer bool
+		for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+			require.NotEqual(t, "x-mcp-authorized", h.Header.Key)
+			if h.Header.Key == "x-mcp-virtualserver" {
+				require.Equal(t, "test/vs", string(h.Header.RawValue))
+				foundVirtualServer = true
+			}
+		}
+		require.True(t, foundVirtualServer, "expected configured virtual server header")
+	})
+
+	t.Run("rejects unknown virtual server header", func(t *testing.T) {
+		srv := newServer(t)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "x-mcp-virtualserver", RawValue: []byte("test/missing-vs")},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
 	})
 }
 

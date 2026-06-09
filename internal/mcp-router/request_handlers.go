@@ -870,8 +870,32 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
+	virtualServerID, ok, err := s.validVirtualServerHeader(mcpReq)
+	if err != nil {
+		s.Logger.WarnContext(ctx, "rejecting broker request: invalid virtual server header", "error", err)
+		return response.WithImmediateResponse(400, "bad request").Build()
+	}
+	if ok {
+		headers.WithCustomHeader(mcpVirtualServerHeader, virtualServerID)
+	}
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
+}
+
+func (s *ExtProcServer) validVirtualServerHeader(mcpReq *MCPRequest) (string, bool, error) {
+	virtualServerID := mcpReq.GetSingleHeaderValue(mcpVirtualServerHeader)
+	if virtualServerID == "" {
+		return "", false, nil
+	}
+	if s.RoutingConfig == nil {
+		return "", false, fmt.Errorf("virtual server %s not found", virtualServerID)
+	}
+	for _, vs := range s.RoutingConfig.ListVirtualServers() {
+		if vs != nil && vs.Name == virtualServerID {
+			return virtualServerID, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("virtual server %s not found", virtualServerID)
 }
 
 // elicitationInfo holds the data needed to route an elicitation request to the broker.
