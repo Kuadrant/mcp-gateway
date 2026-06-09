@@ -91,7 +91,7 @@ The two repos communicate through runtime contracts only — no shared Go module
 The operator writes a Kubernetes Secret containing `config.yaml`. The operand reads it via volume mount at `/config/config.yaml`.
 
 ```yaml
-configVersion: 1
+schemaVersion: 1
 servers:
   - name: string
     url: string
@@ -124,7 +124,7 @@ Both repos define their own Go structs for this schema. The operator serializes 
 - The operator must not remove a field without a deprecation period spanning at least one operand release, preventing older operands from receiving a config missing a field they expect.
 - New required fields must have sensible defaults so older operators that don't set them still produce valid config.
 - Breaking changes require a coordinated release with both repos tagged.
-- The config includes a top-level `configVersion: 1` field. This is a schema version, not tied to the operator or operand release version — it is bumped only when the config secret format has a breaking structural change (field renames, type changes, removed fields). Additive changes (new optional fields) do not bump the version. The operand checks this on load — known versions are processed normally; unknown versions log a warning with the expected and actual values.
+- The config includes a top-level `schemaVersion: 1` field. This is a schema version, not tied to the operator or operand release version — it is bumped only when the config secret format has a breaking structural change (field renames, type changes, removed fields). Additive changes (new optional fields) do not bump the version. The operand checks this on load — known versions are processed normally; unknown versions log a warning with the expected and actual values.
 
 #### Status Endpoint (`GET /status`)
 
