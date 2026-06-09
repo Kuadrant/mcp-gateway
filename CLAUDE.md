@@ -83,6 +83,10 @@ make test-controller-integration  # controller integration tests (envtest)
 
 Use codebase-memory-mcp to index and explore the project when available.
 
+## Contributing
+
+Read `CONTRIBUTING.md` before creating PRs or issues. Every PR must reference an existing issue.
+
 ## Reference
 
 - CRD docs: `docs/reference/`
