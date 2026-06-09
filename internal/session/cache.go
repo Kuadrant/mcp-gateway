@@ -148,6 +148,15 @@ func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID strin
 // SetUserToken stores a per-user upstream token in the session hash.
 func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token string) error {
 	field := userTokenFieldPrefix + serverName
+	value := token
+	if c.encryptionKey != nil {
+		encrypted, err := encrypt(c.encryptionKey, token)
+		if err != nil {
+			return fmt.Errorf("encrypting user token: %w", err)
+		}
+		value = encrypted
+	}
+
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
@@ -159,17 +168,9 @@ func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token s
 		if next == nil {
 			next = map[string]string{}
 		}
-		next[field] = token
+		next[field] = value
 		c.inmemory.Store(sessionID, next)
 		return nil
-	}
-	value := token
-	if c.encryptionKey != nil {
-		encrypted, err := encrypt(c.encryptionKey, token)
-		if err != nil {
-			return fmt.Errorf("encrypting user token: %w", err)
-		}
-		value = encrypted
 	}
 	return c.extClient.HSet(ctx, sessionID, field, value).Err()
 }
@@ -189,6 +190,13 @@ func (c *Cache) GetUserToken(ctx context.Context, sessionID, serverName string) 
 		token, ok := m[field]
 		if !ok {
 			return "", false, nil
+		}
+		if c.encryptionKey != nil {
+			decrypted, err := decrypt(c.encryptionKey, token)
+			if err != nil {
+				return "", false, fmt.Errorf("decrypting user token: %w", err)
+			}
+			token = decrypted
 		}
 		if checkUpstreamJWTExpiry(token) {
 			next := maps.Clone(m)
