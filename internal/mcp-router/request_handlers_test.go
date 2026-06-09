@@ -1185,13 +1185,21 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 			Method:  methodInitialize,
 			ID:      "1",
 			Headers: &corev3.HeaderMap{
-				Headers: []*corev3.HeaderValue{},
+				Headers: []*corev3.HeaderValue{
+					{Key: "x-mcp-authorized", RawValue: []byte("signed-jwt-value")},
+					{Key: "x-mcp-virtualserver", RawValue: []byte("test/vs")},
+				},
 			},
 		}
 		resp := srv.HandleNoneToolCall(context.Background(), req)
 		require.Len(t, resp, 1)
-		_, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
+		rb, ok := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
 		require.True(t, ok, "expected RequestBody response (broker passthrough), got %T", resp[0].Response)
+		require.NotNil(t, rb.RequestBody.Response)
+		for _, h := range rb.RequestBody.Response.HeaderMutation.SetHeaders {
+			require.NotEqual(t, "x-mcp-authorized", h.Header.Key)
+			require.NotEqual(t, "x-mcp-virtualserver", h.Header.Key)
+		}
 	})
 }
 
