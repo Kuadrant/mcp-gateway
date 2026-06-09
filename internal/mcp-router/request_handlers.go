@@ -870,12 +870,6 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
-	// re-inject internal headers stripped in the headers phase so the broker can use them for filtering
-	for _, name := range internalOnlyHeaders {
-		if v := mcpReq.GetSingleHeaderValue(name); v != "" {
-			headers.WithCustomHeader(name, v)
-		}
-	}
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
 }
