@@ -20,7 +20,7 @@ const (
 	TestTimeoutShort      = time.Second * 45
 	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6
-	TestRetryInterval     = time.Second * 5
+	TestRetryInterval     = time.Second * 1
 	TestRetryFast         = time.Second * 2
 )
 
