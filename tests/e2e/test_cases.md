@@ -109,6 +109,10 @@
 
 - When a namespace already has one MCPGatewayExtension that is Ready, and a second MCPGatewayExtension is created in the same namespace, the second extension should be marked as Invalid with a status message indicating a conflict. Only one MCPGatewayExtension is allowed per namespace, and the oldest by creation timestamp wins.
 
+### [Full] MCPGatewayExtension targeting non-existent Gateway is rejected
+
+- When an MCPGatewayExtension is created with a `targetRef` pointing to a Gateway that does not exist, the extension should be marked as Invalid with a status message indicating the invalid configuration.
+
 ### [multi-gateway] Shared Gateway with team isolation via sectionName
 
 - Given a Gateway with two listeners configured for different teams:
