@@ -1046,6 +1046,64 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 	})
 
+	It("[Happy] should filter prompts based on x-mcp-authorized JWT header", func() {
+		SetupTrustedHeadersAuth(ctx, k8sClient)
+
+		// server1 exposes a single prompt (greet), so register it twice with
+		// different prefixes; allowing only one registration's prompt in the
+		// JWT proves the other is filtered out rather than the filter being a no-op
+		By("Creating two MCPServerRegistrations for server1 with different prefixes")
+		registrationA := NewMCPServerResourcesWithDefaults("authz-prompt-a", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("pauthza_").Build()
+		testResources = append(testResources, registrationA.GetObjects()...)
+		registeredServerA := registrationA.Register(ctx)
+
+		registrationB := NewMCPServerResourcesWithDefaults("authz-prompt-b", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("pauthzb_").Build()
+		testResources = append(testResources, registrationB.GetObjects()...)
+		registeredServerB := registrationB.Register(ctx)
+
+		By("Ensuring the gateway has registered both servers")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServerA.Name, registeredServerA.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServerB.Name, registeredServerB.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying both prompts are present without filtering")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServerA.Spec.Prefix)
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServerB.Spec.Prefix)
+
+		By("Creating a JWT allowing only the greet prompt from the first server")
+		allowedPrompts := map[string][]string{
+			fmt.Sprintf("%s/%s", registeredServerA.Namespace, registeredServerA.Name): {"greet"},
+		}
+		jwtToken, err := CreateAuthorizedPromptsJWT(allowedPrompts)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Creating a client with x-mcp-authorized header")
+		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"X-Mcp-Authorized": jwtToken,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = authorizedClient.Close() }()
+
+		By("Verifying only the allowed prompt is returned")
+		expectedPrompt := fmt.Sprintf("%s%s", registeredServerA.Spec.Prefix, "greet")
+		Eventually(func(g Gomega) {
+			filteredPrompts, err := authorizedClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredPrompts).NotTo(BeNil())
+			g.Expect(len(filteredPrompts.Prompts)).To(Equal(1), "expected exactly 1 prompt from authorized capabilities header")
+			g.Expect(filteredPrompts.Prompts[0].Name).To(Equal(expectedPrompt))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying a client without the header still sees both prompts")
+		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
+		Expect(PromptsListHasPrompt(promptsAll, fmt.Sprintf("%s%s", registeredServerB.Spec.Prefix, "greet"))).To(BeTrue())
+	})
+
 	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", func() {
 		By("Creating MCPServerRegistration for server1 with prompts")
 		registration := NewMCPServerResourcesWithDefaults("prompt-vs-nofilter", k8sClient).

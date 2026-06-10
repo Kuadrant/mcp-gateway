@@ -167,6 +167,10 @@
 
 - When an MCPVirtualServer resource omits the `prompts` field, all federated prompts should be returned in a prompts/list response. Tools should still be filtered by the `tools` field. This matches the behavior where omitting a field means "no filtering" rather than "deny all".
 
+### [Happy] Test prompts are filtered down based on x-mcp-authorized header
+
+- When the value of the `x-mcp-authorized` header is set as a JWT signed by a trusted key with a `prompts` capabilities payload, the MCP Gateway should respond to prompts/list with only the prompts in that list. Prompts from servers not named in the JWT should be excluded, and a client without the header should still see all prompts.
+
 ### [Happy] prompts/get for nonexistent prompt returns error
 
 - When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return a JSON-RPC error with code -32602 (Invalid params).
