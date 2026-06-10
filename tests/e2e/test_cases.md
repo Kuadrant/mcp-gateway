@@ -67,15 +67,18 @@
 
 - When a backend MCP Server becomes unavailable, the gateway should no longer show its tools in the tools/list response and a notification should be sent to the client within one minute. When the MCP Server becomes available again, the tools/list should be updated to include the tools again. While unavailable any tools/call should result in a 503 response
 
-### [Happy] MCP Server status
+### [Full] MCP Server status
 
 - When a backend MCPServerRegistration is added but the backend MCP is invalid because it doesn't meet the protocol version the status of the MCPServerRegistration resource should report the reason for the MCPSever being invalid
 
 - When a backend MCPServerRegistration is added but the backend MCP is invalid because the broker cannot connect to the the backend MCP server, the MCPServerRegistration resource should report the reason for the MCPSever being invalid
 
-### [Happy] Multiple MCP Servers without prefix
+### [Full] Multiple MCP Servers without prefix
 
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
+
+### [Happy] Prefix conflict resolved by adding a prefix
+
 - When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked
 
 ### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
@@ -90,7 +93,7 @@
 
 - When an MCPGatewayExtension is deleted, the MCPGatewayExtension condition should be removed from the Gateway's listener status. The Gateway should no longer show the MCPGatewayExtension condition for that listener.
 
-### [Happy] MCPGatewayExtension with invalid sectionName is rejected
+### [Full] MCPGatewayExtension with invalid sectionName is rejected
 
 - When an MCPGatewayExtension is created with a `targetRef.sectionName` that does not match any listener on the Gateway, the extension should be marked as Invalid with a status message containing "listener not found". No EnvoyFilter or broker-router deployment should be created.
 
@@ -102,7 +105,7 @@
 
 - When an MCPGatewayExtension targets a listener that has `allowedRoutes.namespaces.from: Same` and the MCPGatewayExtension is in a different namespace than the Gateway, the extension should be marked as Invalid with a status message indicating the namespace is not allowed.
 
-### [Happy] Second MCPGatewayExtension in same namespace is rejected
+### [Full] Second MCPGatewayExtension in same namespace is rejected
 
 - When a namespace already has one MCPGatewayExtension that is Ready, and a second MCPGatewayExtension is created in the same namespace, the second extension should be marked as Invalid with a status message indicating a conflict. Only one MCPGatewayExtension is allowed per namespace, and the oldest by creation timestamp wins.
 
@@ -193,7 +196,7 @@
 
 - When a client connects to the gateway with an elicitation handler that declines requests, and calls a tool that triggers an elicitation request, the gateway should broker the elicitation between the upstream server and the client. The tool response should indicate that the user declined.
 
-### [Happy] Elicitation without handler errors
+### [Full] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
 
@@ -205,7 +208,7 @@
 
 - When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response.
 
-### [URLElicitation] Cached token reused across multiple tool calls
+### [Full][URLElicitation] Cached token reused across multiple tool calls
 
 - After a token has been submitted via the token page, subsequent tool calls to the same server from the same session should reuse the cached token without triggering a new -32042 error. The upstream server should receive the token on each call.
 
@@ -225,7 +228,7 @@
 
 - One spec registers a multi-category server (e.g. `["Dining", "reservations"]`) and a single-category messaging server once, then exercises three filters: a lowercase `dining` filter should return the multi-category server (case-insensitive match) and exclude the messaging server; a `reservations` filter should also return the multi-category server (matched by either category value); a category value no registered server has should match neither server.
 
-### [Happy] discover_tools respects auth filtering
+### [Full] discover_tools respects auth filtering
 
 - When a client sends requests with an `X-Mcp-Authorized` JWT that restricts visible tools, `discover_tools` should only return tools that the JWT authorises. Servers with no authorised tools should be excluded entirely.
 
@@ -249,15 +252,15 @@
 
 - When a client with SSE notification support calls `select_tools`, a `notifications/tools/list_changed` notification should be delivered to that client over the SSE channel.
 
-### [Happy] discovery-tools-enabled=false hides meta-tools
+### [Full] discovery-tools-enabled=false hides meta-tools
 
 - When the broker is started with `--discovery-tools-enabled=false`, `tools/list` should not include `discover_tools` or `select_tools`. Calling these tools should return an error.
 
-### [Happy] discovery-tool-threshold=0 means never hide
+### [Full] discovery-tool-threshold=0 means never hide
 
 - When the threshold is 0 (default), all real tools should be visible alongside the meta-tools regardless of how many tools are registered.
 
-### [Happy] threshold above: only meta-tools shown
+### [Full] threshold above: only meta-tools shown
 
 - When the `--discovery-tool-threshold` is set to a value lower than the number of registered tools, `tools/list` should return only the meta-tools. After using `select_tools` to scope down, the selected tools should become visible.
 
@@ -269,7 +272,7 @@
 
 - When two concurrent `select_tools` calls are made on the same session, the result should be a consistent single scope (one of the two wins), not a corrupted mixed state.
 
-### [Happy] controller re-reconciles when category/hint updated
+### [Full] controller re-reconciles when category/hint updated
 
 - When the `category` or `hint` fields on a live MCPServerRegistration are updated, the controller should re-reconcile and the broker should reflect the new metadata in subsequent `discover_tools` calls. The old category should no longer match.
 

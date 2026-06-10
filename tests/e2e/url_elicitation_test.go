@@ -193,7 +193,9 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		Expect(retryContent[0].Text).To(ContainSubstring("Hello"))
 	})
 
-	It("[URLElicitation] Cached token reused across multiple tool calls", func() {
+	// nightly-only: the 401-invalidation spec covers cached-token reuse
+	// transitively (its setup call succeeds with the cached token)
+	It("[Full][URLElicitation] Cached token reused across multiple tool calls", func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing, triggering -32042, and submitting token")

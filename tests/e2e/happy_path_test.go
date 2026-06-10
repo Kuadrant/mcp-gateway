@@ -808,7 +808,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should report invalid protocol version in MCPServerRegistration status", func() {
+	It("[Full] should report invalid protocol version in MCPServerRegistration status", func() {
 		By("Creating an MCPServerRegistration pointing to the broken server with wrong protocol version")
 		// The broken server is already deployed with --failure-mode=protocol
 		registration := NewMCPServerResourcesWithDefaults("protocol-status-test", k8sClient).
@@ -872,7 +872,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should allow multiple MCP Servers without prefixes", func() {
+	It("[Full] should allow multiple MCP Servers without prefixes", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
 		registration := NewMCPServerResources("same-prefix", "everything-server.mcp.local", "everything-server", 9090, k8sClient).

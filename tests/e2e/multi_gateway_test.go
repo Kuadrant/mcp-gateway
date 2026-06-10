@@ -33,7 +33,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}
 	})
 
-	It("[Happy] MCPGatewayExtension with invalid sectionName is rejected", func() {
+	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", func() {
 		// Use TestServerNameSpace (mcp-test) which doesn't have an existing MCPGatewayExtension
 		// We need to create a ReferenceGrant first to allow cross-namespace reference
 		By("Creating a ReferenceGrant to allow cross-namespace reference")
@@ -64,7 +64,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("listener"))
 	})
 
-	It("[Happy] Second MCPGatewayExtension in same namespace is rejected", func() {
+	It("[Full] Second MCPGatewayExtension in same namespace is rejected", func() {
 		// The default MCPGatewayExtension in SystemNamespace (mcp-system) is already running
 		// Creating a second one in the same namespace should fail
 
@@ -89,7 +89,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("already has MCPGatewayExtension"))
 	})
 
-	It("[Happy] MCPGatewayExtension targeting non-existent Gateway should report invalid status", func() {
+	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", func() {
 		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", TestServerNameSpace).
 			WithTarget("non-existent-gateway", GatewayNamespace).

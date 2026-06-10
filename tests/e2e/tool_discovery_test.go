@@ -168,7 +168,9 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
 		})
 
-		It("respects auth filtering in discover_tools", func() {
+		// nightly-only: discover_tools shares applyAuthorizedCapabilitiesFilter
+		// with tools/list, which the PR-gate JWT filtering spec exercises
+		It("[Full] respects auth filtering in discover_tools", func() {
 			SetupTrustedHeadersAuth(ctx, k8sClient)
 
 			By("registering a server")
@@ -438,7 +440,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("flags", func() {
-		It("hides meta-tools when discovery-tools-enabled=false", func() {
+		It("[Full] hides meta-tools when discovery-tools-enabled=false", func() {
 			deploymentName := "mcp-gateway"
 
 			By("adding --discovery-tools-enabled=false flag to deployment")
@@ -479,7 +481,7 @@ var _ = Describe("Tool Discovery", func() {
 			_ = rawBody // the tool should not exist, so the response will be an error
 		})
 
-		It("threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
+		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
 			// threshold defaults to 0, so all real tools plus meta-tools should be visible
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("thresh-zero", k8sClient).
@@ -515,7 +517,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("threshold", func() {
-		It("above threshold: only meta-tools shown; below threshold: all tools visible", func() {
+		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", func() {
 			deploymentName := "mcp-gateway"
 
 			By("registering a server so we have tools to count")
@@ -712,7 +714,7 @@ var _ = Describe("Tool Discovery", func() {
 			newGatewayClient()
 		})
 
-		It("controller re-reconciles when category and hint are updated", func() {
+		It("[Full] controller re-reconciles when category and hint are updated", func() {
 			By("registering a server with initial category and hint")
 			reg := NewMCPServerResourcesWithDefaults("reconfig-test", k8sClient).
 				WithPrefix("reconf_").
