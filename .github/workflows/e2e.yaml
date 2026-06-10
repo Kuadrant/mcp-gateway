@@ -39,11 +39,75 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # test-images.yaml publishes test-server images to ghcr.io on merges to
+      # main but not from PRs, so runs with modified test-server sources must
+      # build the images locally instead of pulling stale ones
+      - name: Determine test-server image source
+        id: test-server-images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source=pull
+          case "${{ github.event_name }}" in
+            pull_request)
+              if ! files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+                echo "could not list PR files, building test servers locally"
+                source=build
+              elif echo "$files" | grep -qE '^(tests/servers/|internal/tests/)'; then
+                source=build
+              fi
+              ;;
+            push)
+              if ! git fetch --quiet --depth=1 origin "${{ github.event.before }}"; then
+                echo "could not fetch pre-push commit, building test servers locally"
+                source=build
+              elif ! git diff --quiet "${{ github.event.before }}" HEAD -- tests/servers internal/tests; then
+                source=build
+              fi
+              ;;
+            *)
+              git fetch --quiet --depth=1 origin main
+              if ! git diff --quiet FETCH_HEAD HEAD -- tests/servers internal/tests; then
+                source=build
+              fi
+              ;;
+          esac
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "test-server image source: $source"
+
+      - name: Compute image build LDFLAGS
+        id: ldflags
+        run: echo "ldflags=$(make -s print-ldflags)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/kuadrant/mcp-gateway:latest
+          build-args: |
+            LDFLAGS=${{ steps.ldflags.outputs.ldflags }}
+          cache-from: type=gha,scope=gateway-image
+          cache-to: type=gha,mode=max,scope=gateway-image
+
+      - name: Build controller image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.controller
+          load: true
+          tags: ghcr.io/kuadrant/mcp-controller:latest
+          cache-from: type=gha,scope=controller-image
+          cache-to: type=gha,mode=max,scope=controller-image
+
       - name: Create Kind cluster
         run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
 
       - name: Setup CI environment
-        run: make ci-setup
+        run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.test-server-images.outputs.source }}
 
       - name: Run E2E tests
         run: make test-e2e-ci

@@ -24,6 +24,10 @@ GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY := $(shell git diff --quiet 2>/dev/null && echo "" || echo "-dirty")
 LDFLAGS := -X main.version=$(VERSION) -X main.gitSHA=$(GIT_SHA) -X main.dirty=$(GIT_DIRTY)
 
+.PHONY: print-ldflags
+print-ldflags: # print Go LDFLAGS so CI image build steps use the same values as build-image
+	@echo $(LDFLAGS)
+
 # Image tag and bundle version derivation (matches kuadrant-operator pattern)
 DEFAULT_IMAGE_TAG = latest
 is_semantic_version = $(shell echo "$(1)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' && echo "true")
