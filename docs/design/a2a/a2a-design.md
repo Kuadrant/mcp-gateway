@@ -61,7 +61,7 @@ RateLimitPolicy as MCP traffic.
 
 ### When an MCP client application wants to discover available agents
 
-When an MCP client application initialises with the gateway, it wants to query
+When an MCP client application initializes with the gateway, it wants to query
 `/.well-known/agent.json` and receive a single merged Agent Card listing all skills available
 across all registered upstream agents with namespaced skill prefixes, so that it does not need
 to know the addresses of individual upstream agents.
