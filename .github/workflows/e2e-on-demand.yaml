@@ -110,8 +110,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # create with the pinned bin/kind and node image so the make load
+      # targets (same bin/kind) can always load into the node's containerd
       - name: Create Kind cluster
-        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+        run: make kind-create-cluster-ci
 
       - name: Setup CI environment
         run: make ci-setup

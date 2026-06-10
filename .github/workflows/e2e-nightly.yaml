@@ -106,12 +106,16 @@ jobs:
           cache-from: type=gha,scope=controller-image
           cache-to: type=gha,mode=max,scope=controller-image
 
+      # create with the pinned bin/kind and node image so the make load
+      # targets (same bin/kind) can always load into the node's containerd;
+      # the runner-preinstalled kind's default node moved to a containerd
+      # config version the pinned bin/kind cannot load into
       - name: Create Kind cluster
         run: |
           if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
-            kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml --image "${{ steps.ci-node.outputs.image }}"
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
           else
-            kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+            make kind-create-cluster-ci
           fi
 
       - name: Setup CI environment
