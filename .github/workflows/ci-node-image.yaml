@@ -71,29 +71,31 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # test-images.yaml republishes the test-server :latest tags on pushes
-      # that touch their sources; pulling mid-publish would bake a stale mix,
-      # so wait for any run on this commit to finish first. failing here is
-      # safe: e2e just falls back to the standard pull path
+      # test-images.yaml republishes the test-server :latest tags from main;
+      # pulling mid-publish would permanently bake a stale mix under a valid
+      # hash, and an in-flight run may belong to an earlier push than the one
+      # that triggered this bake, so wait until no run on main is active at
+      # all (test-images only pushes :latest from main, so this stays cheap).
+      # failing here is safe: e2e just falls back to the standard pull path
       - name: Wait for test-server image publish
         if: steps.exists.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for _ in $(seq 1 60); do
-            status="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test-images.yaml --commit "$GITHUB_SHA" --json status --jq '[.[].status] | join(",")' || echo unknown)"
+            status="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test-images.yaml --branch main --json status --jq '[.[].status] | join(",")' || echo unknown)"
             case "$status" in
               *queued*|*in_progress*|*waiting*|*pending*|*requested*|unknown)
-                echo "test-images run(s) for $GITHUB_SHA: ${status:-none}; waiting..."
+                echo "active test-images run(s) on main: ${status:-unknown}; waiting..."
                 sleep 20
                 ;;
               *)
-                echo "no in-flight test-images run for $GITHUB_SHA"
+                echo "no in-flight test-images run on main"
                 exit 0
                 ;;
             esac
           done
-          echo "ERROR: timed out waiting for test-images.yaml on $GITHUB_SHA; refusing to bake a possibly stale image"
+          echo "ERROR: timed out waiting for test-images.yaml on main; refusing to bake a possibly stale image"
           exit 1
 
       # the bake unpacks ~15 images on top of a multi-GB base; reclaim the

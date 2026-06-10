@@ -29,6 +29,13 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # packages: read lets the baked CI node image probe see GITHUB_TOKEN-
+    # published ghcr packages, which default to private; pull-requests: read
+    # keeps the PR changed-files lookup in the detection step working
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
 
     steps:
       - name: Checkout
@@ -90,11 +97,17 @@ jobs:
           DETECTED_TEST_SERVER_SOURCE: ${{ steps.test-server-images.outputs.source }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
-          image="$(make -s print-ci-node-image)"
+          # any probe failure (including the hash computation) must fall back
+          # to stock kindest/node rather than fail the run
           hit=false
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
-          if docker manifest inspect "$image" >/dev/null 2>&1; then
-            hit=true
+          if image="$(make -s print-ci-node-image 2>/dev/null)"; then
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              hit=true
+            fi
+          else
+            image=""
+            echo "could not compute baked CI node image ref, using stock kindest/node"
           fi
           source="$DETECTED_TEST_SERVER_SOURCE"
           if [ "$hit" = "true" ] && [ "$source" = "pull" ]; then

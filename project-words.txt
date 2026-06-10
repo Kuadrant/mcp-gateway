@@ -43,6 +43,7 @@ clientelicitation
 clientgoscheme
 clientregistration
 clusterserviceversion
+coderabbit
 configmap
 CONNLINK
 controllerutil
