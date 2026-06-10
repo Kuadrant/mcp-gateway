@@ -13,17 +13,27 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var _ = Describe("URL Elicitation", func() {
+var _ = Describe("URL Elicitation", Ordered, func() {
 	var (
 		testResources []client.Object
 		prefix        string
 	)
 
-	BeforeEach(func() {
+	// toggling elicitation on the MCPGatewayExtension rolls out the gateway
+	// deployment, so do it once for the whole container rather than per spec
+	BeforeAll(func() {
 		By("Enabling URL elicitation on the MCPGatewayExtension")
 		Expect(SetURLElicitation(SystemNamespace, MCPExtensionName, true)).To(Succeed())
 		Expect(WaitForDeploymentReady(context.Background(), SystemNamespace, "mcp-gateway")).To(Succeed())
+	})
 
+	AfterAll(func() {
+		By("Disabling URL elicitation on the MCPGatewayExtension")
+		Expect(SetURLElicitation(SystemNamespace, MCPExtensionName, false)).To(Succeed())
+		Expect(WaitForDeploymentReady(context.Background(), SystemNamespace, "mcp-gateway")).To(Succeed())
+	})
+
+	BeforeEach(func() {
 		By("Pre-cleaning credential secret from prior runs")
 		cred := BuildCredentialSecret("url-elicit-cred", "test-api-key-secret-token")
 		CleanupResource(ctx, k8sClient, cred)
@@ -51,10 +61,6 @@ var _ = Describe("URL Elicitation", func() {
 			CleanupResource(ctx, k8sClient, to)
 		}
 		testResources = nil
-
-		By("Disabling URL elicitation on the MCPGatewayExtension")
-		Expect(SetURLElicitation(SystemNamespace, MCPExtensionName, false)).To(Succeed())
-		Expect(WaitForDeploymentReady(context.Background(), SystemNamespace, "mcp-gateway")).To(Succeed())
 	})
 
 	It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client", func() {
