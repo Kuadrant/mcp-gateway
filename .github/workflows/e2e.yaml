@@ -78,6 +78,35 @@ jobs:
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "test-server image source: $source"
 
+      # ci-node-image.yaml bakes the e2e infra and test-server images into a
+      # kindest/node image tagged with a content hash of the version pins
+      # (utils/ci-node-image-hash.sh). on a hit the cluster boots from it and
+      # the test-server pulls are skipped; on a miss or probe failure this run
+      # uses stock kindest/node and the standard pull path. a locally-built
+      # test-server source always wins so PR changes are never masked.
+      - name: Probe baked CI node image
+        id: ci-node
+        env:
+          DETECTED_TEST_SERVER_SOURCE: ${{ steps.test-server-images.outputs.source }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          image="$(make -s print-ci-node-image)"
+          hit=false
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            hit=true
+          fi
+          source="$DETECTED_TEST_SERVER_SOURCE"
+          if [ "$hit" = "true" ] && [ "$source" = "pull" ]; then
+            source=baked
+          fi
+          {
+            echo "hit=$hit"
+            echo "image=$image"
+            echo "test-server-source=$source"
+          } >> "$GITHUB_OUTPUT"
+          echo "baked CI node image: $image (hit=$hit), test-server image source: $source"
+
       - name: Compute image build LDFLAGS
         id: ldflags
         run: echo "ldflags=$(make -s print-ldflags)" >> "$GITHUB_OUTPUT"
@@ -107,10 +136,15 @@ jobs:
           cache-to: type=gha,mode=max,scope=controller-image
 
       - name: Create Kind cluster
-        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+        run: |
+          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
+            kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml --image "${{ steps.ci-node.outputs.image }}"
+          else
+            kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+          fi
 
       - name: Setup CI environment
-        run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.test-server-images.outputs.source }}
+        run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.ci-node.outputs.test-server-source }}
 
       - name: Run E2E tests
         run: make test-e2e-ci

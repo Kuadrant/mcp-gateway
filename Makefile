@@ -419,7 +419,9 @@ kind-load-tls-server: kind build-tls-server ## Build TLS test server image local
 
 # How test server images reach the Kind cluster: "build" (default) builds them
 # locally and loads via kind load, "pull" fetches the pre-built images published
-# to ghcr.io on merges to main. CI uses pull unless the change touches
+# to ghcr.io on merges to main, "baked" skips loading entirely because the
+# cluster was created from the baked CI node image (build/ci-node/Dockerfile)
+# that already carries them. CI uses pull or baked unless the change touches
 # tests/servers/** or internal/tests/**, which are not published from PRs.
 TEST_SERVER_IMAGE_SOURCE ?= build
 
@@ -430,8 +432,13 @@ load-tls-server: kind-pull-tls-server
 else ifeq ($(TEST_SERVER_IMAGE_SOURCE),build)
 load-test-servers: kind-load-test-servers
 load-tls-server: kind-load-tls-server
+else ifeq ($(TEST_SERVER_IMAGE_SOURCE),baked)
+load-test-servers:
+	@echo "Test server images pre-seeded in the baked CI node image, skipping load"
+load-tls-server:
+	@echo "TLS test server image pre-seeded in the baked CI node image, skipping load"
 else
-$(error TEST_SERVER_IMAGE_SOURCE must be "build" or "pull", got "$(TEST_SERVER_IMAGE_SOURCE)")
+$(error TEST_SERVER_IMAGE_SOURCE must be "build", "pull" or "baked", got "$(TEST_SERVER_IMAGE_SOURCE)")
 endif
 
 # Deploy TLS test server with cert-manager CA chain
