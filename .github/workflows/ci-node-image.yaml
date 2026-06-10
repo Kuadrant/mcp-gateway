@@ -1,0 +1,112 @@
+name: Bake CI Node Image
+
+# bakes the e2e infra and test-server images into a kindest/node image
+# (build/ci-node/Dockerfile) tagged with the content hash printed by
+# utils/ci-node-image-hash.sh. the e2e workflows compute the same hash and
+# use the image when the tag exists, falling back to stock kindest/node and
+# the standard pull path on a miss, so a missing or failed bake can only make
+# e2e slower, never wrong.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'build/istio.mk'
+      - 'build/cert-manager.mk'
+      - 'build/metallb.mk'
+      - 'build/gateway-api.mk'
+      - 'build/tools.mk'
+      - 'build/ci-node.mk'
+      - 'build/ci-node/Dockerfile'
+      - 'config/istio/istio.yaml'
+      - 'config/mcp-gateway/overlays/mcp-system/redis-deployment.yaml'
+      - 'tests/servers/**'
+      - 'internal/tests/**'
+      - 'utils/ci-node-image-hash.sh'
+      - '.github/workflows/ci-node-image.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  bake-ci-node-image:
+    name: Bake CI Node Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Compute image ref
+        id: image
+        run: |
+          image="$(make -s print-ci-node-image CI_NODE_IMAGE="${REGISTRY}/${IMAGE_PREFIX,,}/ci-node")"
+          echo "ref=$image" >> "$GITHUB_OUTPUT"
+          echo "baked image ref: $image"
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for existing image
+        id: exists
+        run: |
+          if docker manifest inspect "${{ steps.image.outputs.ref }}" >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.image.outputs.ref }} already published, nothing to do"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # test-images.yaml republishes the test-server :latest tags on pushes
+      # that touch their sources; pulling mid-publish would bake a stale mix,
+      # so wait for any run on this commit to finish first. failing here is
+      # safe: e2e just falls back to the standard pull path
+      - name: Wait for test-server image publish
+        if: steps.exists.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 1 60); do
+            status="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test-images.yaml --commit "$GITHUB_SHA" --json status --jq '[.[].status] | join(",")' || echo unknown)"
+            case "$status" in
+              *queued*|*in_progress*|*waiting*|*pending*|*requested*|unknown)
+                echo "test-images run(s) for $GITHUB_SHA: ${status:-none}; waiting..."
+                sleep 20
+                ;;
+              *)
+                echo "no in-flight test-images run for $GITHUB_SHA"
+                exit 0
+                ;;
+            esac
+          done
+          echo "ERROR: timed out waiting for test-images.yaml on $GITHUB_SHA; refusing to bake a possibly stale image"
+          exit 1
+
+      # the bake unpacks ~15 images on top of a multi-GB base; reclaim the
+      # preinstalled toolchains so the build cannot exhaust the runner disk
+      - name: Free runner disk space
+        if: steps.exists.outputs.published != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af >/dev/null
+          df -h /
+
+      # the target creates its own buildx builder with the security.insecure
+      # entitlement and pushes straight from it
+      - name: Bake and push CI node image
+        if: steps.exists.outputs.published != 'true'
+        run: make ci-node-image-build CI_NODE_IMAGE="${REGISTRY}/${IMAGE_PREFIX,,}/ci-node" CI_NODE_IMAGE_PUSH=true
