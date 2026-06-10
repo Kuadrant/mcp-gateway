@@ -63,8 +63,21 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		testResources = nil
 	})
 
-	It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client", func() {
+	It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client; server without tokenURLElicitation is unaffected", func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
+
+		By("Registering a second server WITHOUT tokenURLElicitation or credentialRef")
+		registration2 := NewMCPServerResourcesWithDefaults("urlelicit-nocfg", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).
+			WithPrefix("uenone_").
+			Build()
+		testResources = append(testResources, registration2.GetObjects()...)
+		registeredServer2 := registration2.Register(ctx)
+		toolName2 := fmt.Sprintf("%sgreet", registeredServer2.Spec.Prefix)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer2.Name, registeredServer2.Namespace)).To(BeNil())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 
 		By("Initializing with elicitation capability")
 		var sessionID string
@@ -77,14 +90,15 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 
 		Expect(mcpNotifyInitialized(context.Background(), gatewayURL, sessionID, nil)).To(Succeed())
 
-		By("Waiting for tools to be available")
+		By("Waiting for tools from both servers to be available")
 		Eventually(func(g Gomega) {
 			_, tools, err := mcpListTools(context.Background(), gatewayURL, sessionID, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(tools).To(ContainElement(toolName))
+			g.Expect(tools).To(ContainElement(toolName2))
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-		By("Calling tool — should get -32042 with elicitation URL")
+		By("Calling tool on the elicitation server — should get -32042 with elicitation URL")
 		status, body, _, err := mcpCallToolRaw(gatewayURL, sessionID, toolName, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(200))
@@ -97,6 +111,13 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		elicitURL, err := extractElicitationURL(sseErr)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(elicitURL).To(ContainSubstring("elicitation_id="))
+
+		By("Calling tool on the server without tokenURLElicitation — should succeed without elicitation, no -32042")
+		directStatus, directContent, err := mcpCallTool(context.Background(), gatewayURL, sessionID, toolName2, map[string]any{"name": "direct"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(directStatus).To(Equal(200))
+		Expect(directContent).NotTo(BeEmpty())
+		Expect(directContent[0].Text).To(ContainSubstring("Hi direct"))
 	})
 
 	It("[Happy,URLElicitation] Full round-trip: token page submit then retry succeeds", func() {
@@ -380,44 +401,4 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		Expect(finalContent[0].Text).To(ContainSubstring("Hello"))
 	})
 
-	It("[Happy,URLElicitation] Server without tokenURLElicitation is unaffected", func() {
-		By("Registering a server WITHOUT tokenURLElicitation or credentialRef")
-		registration2 := NewMCPServerResourcesWithDefaults("urlelicit-nocfg", k8sClient).
-			WithBackendTarget(sharedMCPTestServer1, 9090).
-			WithPrefix("uenone_").
-			Build()
-		testResources = append(testResources, registration2.GetObjects()...)
-		registeredServer2 := registration2.Register(ctx)
-		prefix2 := registeredServer2.Spec.Prefix
-
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer2.Name, registeredServer2.Namespace)).To(BeNil())
-		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
-
-		toolName2 := fmt.Sprintf("%sgreet", prefix2)
-
-		By("Initializing with elicitation capability")
-		var sessionID string
-		Eventually(func(g Gomega) {
-			var err error
-			sessionID, err = mcpInitializeWithElicitation(gatewayURL, nil)
-			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-		Expect(mcpNotifyInitialized(context.Background(), gatewayURL, sessionID, nil)).To(Succeed())
-
-		By("Waiting for tools")
-		Eventually(func(g Gomega) {
-			_, tools, err := mcpListTools(context.Background(), gatewayURL, sessionID, nil)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(tools).To(ContainElement(toolName2))
-		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-		By("Calling tool — should succeed without elicitation, no -32042")
-		status, content, err := mcpCallTool(context.Background(), gatewayURL, sessionID, toolName2, map[string]any{"name": "direct"}, nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(200))
-		Expect(content).NotTo(BeEmpty())
-		Expect(content[0].Text).To(ContainSubstring("Hi direct"))
-	})
 })
