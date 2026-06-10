@@ -85,8 +85,13 @@ func (h *ElicitationHandler) buildElicitationURL(serverName, elicitationID strin
 	if err == nil && serverConfig.TokenURLElicitation != nil && serverConfig.TokenURLElicitation.URL != "" {
 		return serverConfig.TokenURLElicitation.URL + "?elicitation_id=" + escapedID
 	}
-	scheme := r.Header.Get("X-Forwarded-Proto")
-	if scheme == "" {
+	// only "http" is honored; everything else (including invalid/injected
+	// schemes like javascript: or data:) falls back to "https".
+	// normalize: lowercase + take the first comma-separated value so
+	// proxies that produce "http,https" or "HTTP" don't force https.
+	raw := r.Header.Get("X-Forwarded-Proto")
+	scheme := strings.ToLower(strings.TrimSpace(strings.SplitN(raw, ",", 2)[0]))
+	if scheme != "http" {
 		scheme = "https"
 	}
 	return scheme + "://" + h.Config.GetExternalHostname() + "/tokens?elicitation_id=" + escapedID

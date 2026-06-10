@@ -181,6 +181,72 @@ func TestElicitationHandler_XForwardedProto(t *testing.T) {
 	assertSSEContains(t, body, "http://gateway.example.com/tokens?elicitation_id="+eid)
 }
 
+func TestElicitationHandler_XForwardedProtoInjection(t *testing.T) {
+	eid := "eid-inj"
+	// any scheme other than http must fall back to https, so a spoofed header
+	// can't inject a javascript:/data: URL or downgrade to cleartext.
+	for _, proto := range []string{"javascript", "data", "ftp", "HTTPS"} {
+		t.Run(proto, func(t *testing.T) {
+			handler := setupElicitationHandler(
+				elicitation.Entry{SessionID: "sess1", ServerName: "github"},
+				eid,
+				&config.MCPServer{Name: "github"},
+				"gateway.example.com",
+			)
+
+			req := httptest.NewRequest(http.MethodPost, "http://gateway.example.com/mcp/elicitation", nil)
+			req.Header.Set(sharedheaders.ElicitationRequestID, "7")
+			req.Header.Set(sharedheaders.ElicitationID, eid)
+			req.Header.Set("X-Forwarded-Proto", proto)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			assertSSEContains(t, w.Body.String(), "https://gateway.example.com/tokens?elicitation_id="+eid)
+		})
+	}
+}
+
+func TestElicitationHandler_XForwardedProtoNormalization(t *testing.T) {
+	// proxies may produce uppercase or comma-separated values; normalization
+	// must still resolve to the correct scheme.
+	eid := "eid-norm"
+	for _, tc := range []struct {
+		header   string
+		wantScheme string
+	}{
+		{"HTTP", "http"},
+		{"http,https", "http"},
+		{"HTTP, https", "http"},
+		{"HTTPS", "https"},
+		{" https ", "https"},
+	} {
+		t.Run(tc.header, func(t *testing.T) {
+			handler := setupElicitationHandler(
+				elicitation.Entry{SessionID: "sess1", ServerName: "github"},
+				eid,
+				&config.MCPServer{Name: "github"},
+				"gateway.example.com",
+			)
+
+			req := httptest.NewRequest(http.MethodPost, "http://gateway.example.com/mcp/elicitation", nil)
+			req.Header.Set(sharedheaders.ElicitationRequestID, "7")
+			req.Header.Set(sharedheaders.ElicitationID, eid)
+			req.Header.Set("X-Forwarded-Proto", tc.header)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			want := tc.wantScheme + "://gateway.example.com/tokens?elicitation_id=" + eid
+			assertSSEContains(t, w.Body.String(), want)
+		})
+	}
+}
+
 func TestElicitationHandler_FallbackHostname(t *testing.T) {
 	eid := "eid-ghi"
 	handler := setupElicitationHandler(
