@@ -6,7 +6,7 @@ Fixes #
 
 ## Pre-review checklist
 
-Before requesting review from a maintainer, confirm:
+Before requesting review from a maintainer, confirm you have read [CONTRIBUTING.md](../CONTRIBUTING.md) and:
 
 - [ ] Checked the CodeRabbit walkthrough for "Possibly related issues" and confirmed the PR uses `Fixes` or `Closes` syntax for any it addresses
 - [ ] Checked the CodeRabbit walkthrough for "Possibly related PRs" and confirmed this PR is not a duplicate
