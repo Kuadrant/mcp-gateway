@@ -6,6 +6,17 @@
 
 CI_NODE_IMAGE ?= ghcr.io/kuadrant/mcp-gateway/ci-node
 CI_NODE_DOCKERFILE = build/ci-node/Dockerfile
+
+# Pre-built test server images published to ghcr.io by
+# .github/workflows/test-images.yaml. defined here rather than in the root
+# Makefile (whose kind-pull targets reference them) so retagging or renaming
+# a published image changes the baked image hash and forces a rebake.
+TEST_SERVER_IMAGE_REPO ?= ghcr.io/kuadrant/mcp-gateway
+TEST_SERVER_IMAGE_TAG ?= latest
+TEST_SERVER_IMAGES = test-server1 test-server2 test-server3 test-api-key-server \
+	test-broken-server test-custom-path-server test-oidc-server \
+	test-everything-server test-custom-response-server test-user-specific-server
+
 # buildx builder with the security.insecure entitlement: containerd's layer
 # extraction in the bake RUN step needs mount(2), which plain builds deny
 CI_NODE_BUILDER = mcp-ci-node-baker
@@ -48,8 +59,9 @@ ci-node-image-build: ## Bake e2e infra and test server images into a kind node i
 	done; \
 	tag="$$(./utils/ci-node-image-hash.sh)"; \
 	if [ "$(CI_NODE_IMAGE_PUSH)" = "true" ]; then output_flag="--push"; else output_flag="--load"; fi; \
-	$(CONTAINER_ENGINE) buildx create --name $(CI_NODE_BUILDER) --driver docker-container \
-		--buildkitd-flags '--allow-insecure-entitlement security.insecure' >/dev/null 2>&1 || true; \
+	$(CONTAINER_ENGINE) buildx inspect $(CI_NODE_BUILDER) >/dev/null 2>&1 \
+		|| $(CONTAINER_ENGINE) buildx create --name $(CI_NODE_BUILDER) --driver docker-container \
+			--buildkitd-flags '--allow-insecure-entitlement security.insecure'; \
 	echo "Baking $(CI_NODE_IMAGE):$$tag ($$output_flag)"; \
 	$(CONTAINER_ENGINE) buildx build --builder $(CI_NODE_BUILDER) --allow security.insecure $$output_flag \
 		-f $(CI_NODE_DOCKERFILE) \

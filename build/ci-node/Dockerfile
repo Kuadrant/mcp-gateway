@@ -29,7 +29,8 @@ RUN --security=insecure \
         ctr --namespace k8s.io images ls >/dev/null 2>&1 && break; \
         sleep 1; \
     done; \
-    ctr --namespace k8s.io images ls >/dev/null; \
+    ctr --namespace k8s.io images ls >/dev/null 2>&1 \
+        || { echo "ERROR: containerd failed to start"; cat /var/log/containerd-bake.log; exit 1; }; \
     pids=""; \
     for ref in ${BAKED_IMAGE_REFS}; do \
         ( ctr --namespace k8s.io images pull "${ref}" >/dev/null \
