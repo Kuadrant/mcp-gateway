@@ -253,7 +253,7 @@ func TestProcess_EndOfStream(t *testing.T) {
 									SetHeaders: []*corev3.HeaderValueOption{
 										{Header: &corev3.HeaderValue{Key: ":authority"}},
 									},
-									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver"},
+									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 								},
 							},
 						},
@@ -569,7 +569,7 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 								SetHeaders: []*corev3.HeaderValueOption{
 									{Header: &corev3.HeaderValue{Key: ":authority"}},
 								},
-								RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver"},
+								RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 							},
 						},
 					},
