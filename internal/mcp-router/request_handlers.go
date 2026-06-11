@@ -243,7 +243,7 @@ func (s *ExtProcServer) RouteMCPRequest(ctx context.Context, mcpReq *MCPRequest)
 	)
 	defer span.End()
 
-	s.Logger.DebugContext(ctx, "HandleMCPRequest ", "session id", mcpReq.GetSessionID())
+	s.Logger.DebugContext(ctx, "HandleMCPRequest ", "session id", truncateToken(mcpReq.GetSessionID()))
 	switch {
 	case mcpReq.isElicitationResponse():
 		span.SetAttributes(attribute.String("mcp.route", "elicitation-response"))
@@ -523,7 +523,7 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 	}
 	var remoteMCPSeverSession string
 	if id, ok := exists[mcpReq.serverName]; ok {
-		s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", serverInfo.Name, "remote session", id)
+		s.Logger.DebugContext(ctx, "found session in cache", "session id", truncateToken(mcpReq.GetSessionID()), "for server", serverInfo.Name, "remote session", truncateToken(id))
 		remoteMCPSeverSession = id
 	}
 	if remoteMCPSeverSession == "" {
@@ -689,7 +689,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			return "", NewRouterErrorf(500, "failed to check for existing session: %w", err)
 		}
 		if id, ok := exists[mcpReq.serverName]; ok {
-			s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", mcpServerConfig.Name, "remote session", id)
+			s.Logger.DebugContext(ctx, "found session in cache", "session id", truncateToken(mcpReq.GetSessionID()), "for server", mcpServerConfig.Name, "remote session", truncateToken(id))
 			return id, nil
 		}
 		passThroughHeaders := map[string]string{}
@@ -763,12 +763,12 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			// use a fresh context: the request-scoped ctx is canceled long before this fires
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cleanupCancel()
-			s.Logger.DebugContext(cleanupCtx, "gateway session expired closing client", "Session ", mcpReq.GetSessionID())
+			s.Logger.DebugContext(cleanupCtx, "gateway session expired closing client", "Session ", truncateToken(mcpReq.GetSessionID()))
 			if err := clientHandle.Close(); err != nil {
 				s.Logger.DebugContext(cleanupCtx, "failed to close client connection", "err", err)
 			}
 			if err := s.SessionCache.DeleteSessions(cleanupCtx, mcpReq.GetSessionID()); err != nil {
-				s.Logger.DebugContext(cleanupCtx, "failed to delete session", "session", mcpReq.GetSessionID(), "err", err)
+				s.Logger.DebugContext(cleanupCtx, "failed to delete session", "session", truncateToken(mcpReq.GetSessionID()), "err", err)
 			}
 		}
 		// close connection with remote backend and delete any sessions when our gateway session expires
@@ -789,7 +789,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
 		remoteSessionID := clientHandle.GetSessionId()
-		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
+		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", truncateToken(remoteSessionID))
 		{
 			_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",
 				trace.WithAttributes(
