@@ -236,12 +236,12 @@ func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *eppb.
 	// the token is already trusted. We surface the verified sub as the internal
 	// x-mcp-verified-sub header so the broker can bind token submissions to an
 	// identity without re-parsing the raw token. The header is in
-	// internalOnlyHeaders, so any client-supplied value is stripped first.
+	// clientStrippedHeaders, so any client-supplied value is stripped first.
 	authHeader := getSingleValueHeader(headers.GetHeaders(), authorizationHeader)
 	if sub, _ := internaljwt.ExtractSubClaim(authHeader); sub != "" {
 		requestHeaders.WithVerifiedSub(sub)
 	}
-	return response.WithRequestHeadersResponse(requestHeaders.Build(), internalOnlyHeaders...).Build(), nil
+	return response.WithRequestHeadersResponse(requestHeaders.Build(), clientStrippedHeaders...).Build(), nil
 }
 
 // RouteMCPRequest handles request bodies for MCP requests.

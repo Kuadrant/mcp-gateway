@@ -34,6 +34,10 @@ const (
 // and routing that must be stripped before forwarding to upstream MCP servers.
 var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader, mcpVerifiedSubHeader}
 
+// clientStrippedHeaders are headers that the router unconditionally strips from
+// incoming client requests during the headers phase.
+var clientStrippedHeaders = []string{mcpVirtualServerHeader, mcpVerifiedSubHeader}
+
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {
 		return ""
