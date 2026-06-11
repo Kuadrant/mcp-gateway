@@ -121,7 +121,7 @@ var _ = BeforeSuite(func() {
 	err = k8sClient.DeleteAllOf(ctx, &mcpv1alpha1.MCPServerRegistration{}, client.InNamespace(TestServerNameSpace), &client.DeleteAllOfOptions{ListOptions: client.ListOptions{
 		LabelSelector: labels.Everything(),
 	}})
-	Expect(err).ToNot(HaveOccurred(), "all existing MCPSevers should be removed before the e2e test suite")
+	Expect(err).ToNot(HaveOccurred(), "all existing MCPServers should be removed before the e2e test suite")
 
 	By("cleaning up all http routes")
 	err = k8sClient.DeleteAllOf(ctx, &gatewayapiv1.HTTPRoute{}, client.InNamespace(TestServerNameSpace))

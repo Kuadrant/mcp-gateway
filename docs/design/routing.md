@@ -16,7 +16,7 @@ MCP Gateway router component as ext_proc intercept all requests hitting the /mcp
 
 ### The Router
 
-The router component is configured to know about the different backend MCP Servers that have been registered. This MCPSever configuration is managed by the MCP Gateway Controller component. The router should also be configured with the public listener hostname via `required` flag `--mcp-gateway-public-host`. The router intercepts all requests to the gateway MCP listener before routing has happened and based on its configuration decides whether the request should be processed by the MCP Broker or configure the routing to ensure the request is sent to the correct MCP Server. The router only re-routes `tools/calls` but validates all calls hitting the MCP gateway listener to ensure clients cannot explicitly bypass the broker (note they can never bypass the router).
+The router component is configured to know about the different backend MCP Servers that have been registered. This MCPServer configuration is managed by the MCP Gateway Controller component. The router should also be configured with the public listener hostname via `required` flag `--mcp-gateway-public-host`. The router intercepts all requests to the gateway MCP listener before routing has happened and based on its configuration decides whether the request should be processed by the MCP Broker or configure the routing to ensure the request is sent to the correct MCP Server. The router only re-routes `tools/calls` but validates all calls hitting the MCP gateway listener to ensure clients cannot explicitly bypass the broker (note they can never bypass the router).
 
 #### The MCPServerRegistration resource
 

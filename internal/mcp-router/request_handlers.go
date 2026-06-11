@@ -521,13 +521,13 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 			return calculatedResponse.Build()
 		}
 	}
-	var remoteMCPSeverSession string
+	var remoteMCPServerSession string
 	if id, ok := exists[mcpReq.serverName]; ok {
 		s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", serverInfo.Name, "remote session", id)
-		remoteMCPSeverSession = id
+		remoteMCPServerSession = id
 	}
-	if remoteMCPSeverSession == "" {
-		id, err := s.initializeMCPSeverSession(ctx, mcpReq)
+	if remoteMCPServerSession == "" {
+		id, err := s.initializeMCPServerSession(ctx, mcpReq)
 		if err != nil {
 			var routerErr *RouterError
 			if errors.As(err, &routerErr) {
@@ -540,11 +540,11 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 			span.SetAttributes(attribute.String("error.type", "session_init_error"))
 			return calculatedResponse.Build()
 		}
-		remoteMCPSeverSession = id
+		remoteMCPServerSession = id
 	}
-	mcpReq.backendSessionID = remoteMCPSeverSession
+	mcpReq.backendSessionID = remoteMCPServerSession
 
-	headers.WithMCPSession(remoteMCPSeverSession)
+	headers.WithMCPSession(remoteMCPServerSession)
 	headers.WithAuthority(serverInfo.Hostname)
 	body, err := mcpReq.ToBytes()
 	if err != nil {
@@ -659,10 +659,10 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	return response.Build()
 }
 
-// initializeMCPSeverSession will create a new session and connection with the backend MCP server
+// initializeMCPServerSession will create a new session and connection with the backend MCP server
 // This connection is kept open for the life of the gateway session to ensure the backend session is not closed/invalidated.
 // TODO when we receive a 404 from a backend MCP Server we should have a way to close the connection at that point also currently when we receive a 404 we remove the session from cache and will open a new connection. They will all be closed once the gateway session expires or the client sends a delete but it is a source of potential leaks
-func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
+func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
 	ctx, initSpan := tracer().Start(ctx, "mcp-router.session-init",
 		trace.WithAttributes(
 			componentAttr,

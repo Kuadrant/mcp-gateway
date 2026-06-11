@@ -1200,13 +1200,13 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 	})
 }
 
-// TestInitializeMCPSeverSession_PassThroughHeaders verifies that headers
+// TestInitializeMCPServerSession_PassThroughHeaders verifies that headers
 // forwarded to the upstream initialize call drop the router-internal headers
 // (mcp-init-host, router-key) and the gateway-bound mcp-session-id even when
 // supplied by a client. Anything else is preserved so custom headers still
 // flow through. This is defense-in-depth on top of the explicit override in
 // clients.Initialize.
-func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
+func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	cache, err := session.NewCache()
@@ -1266,7 +1266,7 @@ func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
 		},
 	}
 
-	_, err = srv.initializeMCPSeverSession(context.Background(), req)
+	_, err = srv.initializeMCPServerSession(context.Background(), req)
 	require.Error(t, err, "expected mock init error to surface")
 	require.NotNil(t, captured, "InitForClient must have been called")
 
