@@ -81,6 +81,10 @@ jobs:
             context: .
             dockerfile: tests/servers/user-specific-server/Dockerfile
             image-name: test-user-specific-server
+          - server: a2a-server
+            context: tests/servers/a2a-server
+            dockerfile: Dockerfile
+            image-name: test-a2a-server
 
     steps:
       - name: Check out code
