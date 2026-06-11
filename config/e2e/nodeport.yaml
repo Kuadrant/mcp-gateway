@@ -1,3 +1,6 @@
+# nodePort values pinned inside the k8s static subrange (30000-30085, KEP-3668)
+# so dynamic allocations (e.g. istio-generated per-gateway loadbalancer services)
+# will not draw them first. must match extraPortMappings in config/kind/cluster*.yaml.
 ---
 apiVersion: v1
 kind: Service
@@ -14,7 +17,7 @@ spec:
   ports:
     - appProtocol: http
       name: mcp
-      nodePort: 30472
+      nodePort: 30072
       port: 8080
       protocol: TCP
       targetPort: 8080
@@ -38,7 +41,7 @@ spec:
   ports:
     - appProtocol: http
       name: mcp
-      nodePort: 30471
+      nodePort: 30071
       port: 8080
       protocol: TCP
       targetPort: 8080
@@ -63,7 +66,7 @@ spec:
   ports:
     - appProtocol: http
       name: team-a-mcp
-      nodePort: 30473
+      nodePort: 30073
       port: 8080
       protocol: TCP
       targetPort: 8080
@@ -88,7 +91,7 @@ spec:
   ports:
     - appProtocol: http
       name: team-b-mcp
-      nodePort: 30474
+      nodePort: 30074
       port: 8081
       protocol: TCP
       targetPort: 8081

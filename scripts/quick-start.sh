@@ -66,6 +66,8 @@ nodes:
   - containerPort: 30080
     hostPort: 8001
     protocol: TCP
+  # 30089 matches the pinned VERSION's release manifests; becomes 30081 once
+  # the default VERSION includes the nodeport renumbering
   - containerPort: 30089 # keycloak
     hostPort: 8002
     protocol: TCP

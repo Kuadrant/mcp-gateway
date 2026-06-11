@@ -14,22 +14,24 @@ nodes:
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
     syncFrequency: "10s"
+  # containerPorts are pinned nodePort values; keep inside 30000-30085 (k8s static
+  # subrange, KEP-3668) so dynamic nodePort allocation will not collide with them
   extraPortMappings:
   - containerPort: 30080 # mcp-gateway (standard)
     hostPort: 8001
     protocol: TCP
-  - containerPort: 30089 # keycloak
+  - containerPort: 30081 # keycloak
     hostPort: 8002
     protocol: TCP
-  - containerPort: 30471 # e2e-2 gateway
+  - containerPort: 30071 # e2e-2 gateway
     hostPort: 8003
     protocol: TCP
-  - containerPort: 30472 # e2e-1 gateway
+  - containerPort: 30072 # e2e-1 gateway
     hostPort: 8004
     protocol: TCP
-  - containerPort: 30473 # shared-gateway team-a
+  - containerPort: 30073 # shared-gateway team-a
     hostPort: 8005
     protocol: TCP
-  - containerPort: 30474 # shared-gateway team-b
+  - containerPort: 30074 # shared-gateway team-b
     hostPort: 8006
     protocol: TCP

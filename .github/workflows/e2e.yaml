@@ -29,6 +29,13 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # packages: read lets the baked CI node image probe see GITHUB_TOKEN-
+    # published ghcr packages, which default to private; pull-requests: read
+    # keeps the PR changed-files lookup in the detection step working
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
 
     steps:
       - name: Checkout
@@ -78,6 +85,41 @@ jobs:
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "test-server image source: $source"
 
+      # ci-node-image.yaml bakes the e2e infra and test-server images into a
+      # kindest/node image tagged with a content hash of the version pins
+      # (utils/ci-node-image-hash.sh). on a hit the cluster boots from it and
+      # the test-server pulls are skipped; on a miss or probe failure this run
+      # uses stock kindest/node and the standard pull path. a locally-built
+      # test-server source always wins so PR changes are never masked.
+      - name: Probe baked CI node image
+        id: ci-node
+        env:
+          DETECTED_TEST_SERVER_SOURCE: ${{ steps.test-server-images.outputs.source }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          # any probe failure (including the hash computation) must fall back
+          # to stock kindest/node rather than fail the run
+          hit=false
+          if image="$(make -s print-ci-node-image 2>/dev/null)"; then
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              hit=true
+            fi
+          else
+            image=""
+            echo "could not compute baked CI node image ref, using stock kindest/node"
+          fi
+          source="$DETECTED_TEST_SERVER_SOURCE"
+          if [ "$hit" = "true" ] && [ "$source" = "pull" ]; then
+            source=baked
+          fi
+          {
+            echo "hit=$hit"
+            echo "image=$image"
+            echo "test-server-source=$source"
+          } >> "$GITHUB_OUTPUT"
+          echo "baked CI node image: $image (hit=$hit), test-server image source: $source"
+
       - name: Compute image build LDFLAGS
         id: ldflags
         run: echo "ldflags=$(make -s print-ldflags)" >> "$GITHUB_OUTPUT"
@@ -106,11 +148,20 @@ jobs:
           cache-from: type=gha,scope=controller-image
           cache-to: type=gha,mode=max,scope=controller-image
 
+      # create with the pinned bin/kind and node image so the make load
+      # targets (same bin/kind) can always load into the node's containerd;
+      # the runner-preinstalled kind's default node moved to a containerd
+      # config version the pinned bin/kind cannot load into
       - name: Create Kind cluster
-        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+        run: |
+          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
+          else
+            make kind-create-cluster-ci
+          fi
 
       - name: Setup CI environment
-        run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.test-server-images.outputs.source }}
+        run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.ci-node.outputs.test-server-source }}
 
       - name: Run E2E tests
         run: make test-e2e-ci

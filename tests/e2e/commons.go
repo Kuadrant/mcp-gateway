@@ -20,8 +20,7 @@ const (
 	TestTimeoutShort      = time.Second * 45
 	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6
-	TestRetryInterval     = time.Second * 5
-	TestRetryFast         = time.Second * 2
+	TestRetryInterval     = time.Second * 1
 )
 
 // Namespace and resource name constants

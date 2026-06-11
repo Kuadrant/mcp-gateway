@@ -358,12 +358,8 @@ kind-load-test-servers: kind build-test-servers ## Build test server images loca
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
 
-# Pre-built test server images published to ghcr.io by .github/workflows/test-images.yaml
-TEST_SERVER_IMAGE_REPO ?= ghcr.io/kuadrant/mcp-gateway
-TEST_SERVER_IMAGE_TAG ?= latest
-TEST_SERVER_IMAGES = test-server1 test-server2 test-server3 test-api-key-server \
-	test-broken-server test-custom-path-server test-oidc-server \
-	test-everything-server test-custom-response-server test-user-specific-server
+# TEST_SERVER_IMAGE_REPO/TAG and TEST_SERVER_IMAGES live in build/ci-node.mk
+# so the baked CI node image tag hashes them
 
 # pull pre-built images straight into containerd on the kind node, in parallel,
 # avoiding both the local rebuild and the docker save + kind load tax.
@@ -419,7 +415,9 @@ kind-load-tls-server: kind build-tls-server ## Build TLS test server image local
 
 # How test server images reach the Kind cluster: "build" (default) builds them
 # locally and loads via kind load, "pull" fetches the pre-built images published
-# to ghcr.io on merges to main. CI uses pull unless the change touches
+# to ghcr.io on merges to main, "baked" skips loading entirely because the
+# cluster was created from the baked CI node image (build/ci-node/Dockerfile)
+# that already carries them. CI uses pull or baked unless the change touches
 # tests/servers/** or internal/tests/**, which are not published from PRs.
 TEST_SERVER_IMAGE_SOURCE ?= build
 
@@ -430,8 +428,13 @@ load-tls-server: kind-pull-tls-server
 else ifeq ($(TEST_SERVER_IMAGE_SOURCE),build)
 load-test-servers: kind-load-test-servers
 load-tls-server: kind-load-tls-server
+else ifeq ($(TEST_SERVER_IMAGE_SOURCE),baked)
+load-test-servers:
+	@echo "Test server images pre-seeded in the baked CI node image, skipping load"
+load-tls-server:
+	@echo "TLS test server image pre-seeded in the baked CI node image, skipping load"
 else
-$(error TEST_SERVER_IMAGE_SOURCE must be "build" or "pull", got "$(TEST_SERVER_IMAGE_SOURCE)")
+$(error TEST_SERVER_IMAGE_SOURCE must be "build", "pull" or "baked", got "$(TEST_SERVER_IMAGE_SOURCE)")
 endif
 
 # Deploy TLS test server with cert-manager CA chain

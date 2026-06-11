@@ -154,7 +154,7 @@ var _ = Describe("Elicitation", func() {
 		Expect(responseText).To(ContainSubstring("User declined"))
 	})
 
-	It("[Elicitation] should error when calling elicitation tool without handler", func() {
+	It("[Full][Elicitation] should error when calling elicitation tool without handler", func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		By("Creating a standard client without elicitation handler")

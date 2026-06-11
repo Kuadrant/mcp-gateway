@@ -61,7 +61,7 @@ Also sets up an Istio Gateway API Gateway with the everything test server behind
 ```bash
 make local-env-setup
 
-# Or with custom ports (defaults: 8001->30080->8080 for MCP Broker/Gateway, 8002->30089->8002 for Keycloak)
+# Or with custom ports (defaults: 8001->30080->8080 for MCP Broker/Gateway, 8002->30081->8002 for Keycloak)
 KIND_HOST_PORT_MCP_GATEWAY=8090 KIND_HOST_PORT_KEYCLOAK=8453 make local-env-setup
 ```
 

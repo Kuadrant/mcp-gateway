@@ -45,7 +45,7 @@
 
 ### [Happy] Test notifications are received when a notifications/tools/list_changed notification is sent
 
-- When an MCPServerRegistration is registered with the MCP Gateway, a `notifications/tools/list_changed` should be sent to any clients connected to the MCP Gateway. This notification should work for a single connected client as well as multiple connected clients. They should all receive the same notification at least once. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.
+- When an MCPServerRegistration is registered with the MCP Gateway, a `list_changed` notification should be sent to any clients connected to the MCP Gateway. One spec registers a server exposing both tools and prompts (server1) and covers the registration-driven notification for both lists. This notification should work for a single connected client as well as multiple connected clients. They should all receive the same notification at least once. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.
 
 - When a registered backend MCP Server, emits a `notifications/tools/list_changed` a notification should be received by the connected clients. When the clients receive this notification they should get a changed tools/list. 
 
@@ -67,17 +67,18 @@
 
 - When a backend MCP Server becomes unavailable, the gateway should no longer show its tools in the tools/list response and a notification should be sent to the client within one minute. When the MCP Server becomes available again, the tools/list should be updated to include the tools again. While unavailable any tools/call should result in a 503 response
 
-### [Happy] MCP Server status
+### [Full] MCP Server status
 
 - When a backend MCPServerRegistration is added but the backend MCP is invalid because it doesn't meet the protocol version the status of the MCPServerRegistration resource should report the reason for the MCPSever being invalid
 
-- When a backend MCPServerRegistration is added but the backend MCP is invalid because it has conflicting tools due to tool name overlap with another server that has been added, the status of the MCPServerRegistration resource should report the reason for the MCPSever being invalid
-
 - When a backend MCPServerRegistration is added but the backend MCP is invalid because the broker cannot connect to the the backend MCP server, the MCPServerRegistration resource should report the reason for the MCPSever being invalid
 
-### [Happy] Multiple MCP Servers without prefix
+### [Full] Multiple MCP Servers without prefix
 
 - When two servers with no prefix are used, the gateway sees and forwards both tools correctly.
+
+### [Happy] Prefix conflict resolved by adding a prefix
+
 - When two servers with no prefix conflict and one is then modified to have a specified prefix via the MCPServer resource, both tools should become available via the gateway and capable of being invoked
 
 ### [multi-gateway] Multiple Isolated MCP Gateways deployed to the same cluster
@@ -92,7 +93,7 @@
 
 - When an MCPGatewayExtension is deleted, the MCPGatewayExtension condition should be removed from the Gateway's listener status. The Gateway should no longer show the MCPGatewayExtension condition for that listener.
 
-### [Happy] MCPGatewayExtension with invalid sectionName is rejected
+### [Full] MCPGatewayExtension with invalid sectionName is rejected
 
 - When an MCPGatewayExtension is created with a `targetRef.sectionName` that does not match any listener on the Gateway, the extension should be marked as Invalid with a status message containing "listener not found". No EnvoyFilter or broker-router deployment should be created.
 
@@ -104,9 +105,13 @@
 
 - When an MCPGatewayExtension targets a listener that has `allowedRoutes.namespaces.from: Same` and the MCPGatewayExtension is in a different namespace than the Gateway, the extension should be marked as Invalid with a status message indicating the namespace is not allowed.
 
-### [Happy] Second MCPGatewayExtension in same namespace is rejected
+### [Full] Second MCPGatewayExtension in same namespace is rejected
 
 - When a namespace already has one MCPGatewayExtension that is Ready, and a second MCPGatewayExtension is created in the same namespace, the second extension should be marked as Invalid with a status message indicating a conflict. Only one MCPGatewayExtension is allowed per namespace, and the oldest by creation timestamp wins.
+
+### [Full] MCPGatewayExtension targeting non-existent Gateway is rejected
+
+- When an MCPGatewayExtension is created with a `targetRef` pointing to a Gateway that does not exist, the extension should be marked as Invalid with a status message indicating the invalid configuration.
 
 ### [multi-gateway] Shared Gateway with team isolation via sectionName
 
@@ -175,13 +180,9 @@
 
 - When a client sends a prompts/get request with a prompt name that does not match any registered server, the gateway should return a JSON-RPC error with code -32602 (Invalid params).
 
-### [Happy] Prompt notifications on registration
+### [Happy] Tool and prompt conflicts with same prefix
 
-- When an MCPServerRegistration is registered with a backend MCP server that has prompts, a `list_changed` notification should be sent to any clients connected to the MCP Gateway. Multiple connected clients should all receive the notification. The clients should receive these notifications within one minute of the MCPServerRegistration having reached a ready state.
-
-### [Happy] Prompt conflicts with same prefix
-
-- When two MCPServerRegistrations with the same prefix point to backends that both have prompts with the same name (e.g., both have a "greet" prompt producing "pconflict_greet"), at least one MCPServerRegistration should report a conflict in its status. This mirrors the tool conflict behavior where overlapping prefixed names cause a conflict.
+- When two MCPServerRegistrations with the same prefix point to a backend that has both tools and prompts (e.g. server1, where both registrations produce "conflict_time" and "conflict_greet"), at least one MCPServerRegistration should report a conflict in its status. One two-server cycle covers both the tool and the prompt name overlap behaviour.
 
 ### [Auth] JWT-filtered prompts/list with Keycloak
 
@@ -203,19 +204,19 @@
 
 - When a client connects to the gateway with an elicitation handler that declines requests, and calls a tool that triggers an elicitation request, the gateway should broker the elicitation between the upstream server and the client. The tool response should indicate that the user declined.
 
-### [Happy] Elicitation without handler errors
+### [Full] Elicitation without handler errors
 
 - When a client connects to the gateway without an elicitation handler and calls a tool that triggers an elicitation request, the call should result in an error. The error may be a transport error or an error indicated in the tool result.
 
-### [Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client
+### [Happy,URLElicitation] URL elicitation triggers on missing token; server without tokenURLElicitation is unaffected
 
-- When an elicitation-capable client calls a tool on an MCPServerRegistration that has `tokenURLElicitation` configured but the client has no cached token, the gateway should return a -32042 URLElicitationRequired error containing a URL pointing to the token page. The response should be an SSE JSON-RPC error with code -32042 and a `data.url` field.
+- When an elicitation-capable client calls a tool on an MCPServerRegistration that has `tokenURLElicitation` configured but the client has no cached token, the gateway should return a -32042 URLElicitationRequired error containing a URL pointing to the token page. The response should be an SSE JSON-RPC error with code -32042 and a `data.url` field. The same spec registers a second server without `tokenURLElicitation` or a credentialRef and verifies a tool call to it from the same session proceeds without any token resolution or -32042 error.
 
 ### [Happy,URLElicitation] Full round-trip: token page submit then retry succeeds
 
 - When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response.
 
-### [URLElicitation] Cached token reused across multiple tool calls
+### [Full][URLElicitation] Cached token reused across multiple tool calls
 
 - After a token has been submitted via the token page, subsequent tool calls to the same server from the same session should reuse the cached token without triggering a new -32042 error. The upstream server should receive the token on each call.
 
@@ -227,27 +228,15 @@
 
 - When a client has a valid cached token and an established backend session, and the upstream server rejects a subsequent tool call with 401 (simulated via `X-Force-Auth-Reject` header on the api-key-server), the gateway should delete the cached token and pass the 401 through. The next tool call should trigger a fresh -32042 elicitation error. The client can then re-submit the correct token and retry successfully.
 
-### [Happy,URLElicitation] Server without tokenURLElicitation is unaffected
-
-- When an MCPServerRegistration does NOT have `tokenURLElicitation` configured and the backend does not require auth, tool calls should proceed without any token resolution or -32042 errors, regardless of whether the client declares elicitation capability.
-
 ### [Happy] discover_tools returns correct metadata for registered servers
 
 - When an MCPServerRegistration is created with `category` and `hint` fields, calling `discover_tools` should return a server entry containing the correct categories, hint, and prefixed tool names.
 
-### [Happy] discover_tools category filter returns only matching servers (case-insensitive)
+### [Happy] discover_tools category filtering: case-insensitive match, multi-category match, no match
 
-- When multiple servers are registered with different categories, calling `discover_tools` with a `category` parameter should return only servers whose category list contains a case-insensitive match. Servers with non-matching categories should be excluded from the response.
+- One spec registers a multi-category server (e.g. `["Dining", "reservations"]`) and a single-category messaging server once, then exercises three filters: a lowercase `dining` filter should return the multi-category server (case-insensitive match) and exclude the messaging server; a `reservations` filter should also return the multi-category server (matched by either category value); a category value no registered server has should match neither server.
 
-### [Happy] discover_tools multi-category server matched by either category value
-
-- When an MCPServerRegistration has multiple categories (e.g. `["dining", "reservations"]`), calling `discover_tools` with either category as the filter should return that server.
-
-### [Happy] discover_tools returns empty servers for non-matching category
-
-- When `discover_tools` is called with a category value that no registered server has, the response should contain no servers matching that category.
-
-### [Happy] discover_tools respects auth filtering
+### [Full] discover_tools respects auth filtering
 
 - When a client sends requests with an `X-Mcp-Authorized` JWT that restricts visible tools, `discover_tools` should only return tools that the JWT authorises. Servers with no authorised tools should be excluded entirely.
 
@@ -255,9 +244,9 @@
 
 - When a client sends requests with an `X-Mcp-Virtualserver` header, `discover_tools` should only return tools that the MCPVirtualServer allows. Servers with no allowed tools should be excluded.
 
-### [Happy] select_tools scopes subsequent tools/list
+### [Happy] select_tools scopes, re-scopes, and resets within one session
 
-- When a client calls `select_tools` with a list of tool names, subsequent `tools/list` requests should return only those tools (plus the discover_tools and select_tools meta-tools).
+- One spec drives a single session through the full scope lifecycle: calling `select_tools` with a list of tool names should make subsequent `tools/list` requests return only those tools (plus the discover_tools and select_tools meta-tools); calling `select_tools` again should completely replace the first selection; calling it with an empty tools array should reset the session scope so `tools/list` returns the full tool set again.
 
 ### [Happy] select_tools returns error for invalid tool name
 
@@ -267,27 +256,19 @@
 
 - When `select_tools` is called with a list containing both valid and invalid tool names, the entire selection should fail. No partial scope should be applied.
 
-### [Happy] select_tools re-scoping replaces previous selection
-
-- When `select_tools` is called twice in the same session, the second selection should completely replace the first. The `tools/list` response should reflect only the most recent selection.
-
-### [Happy] select_tools empty list resets to full tool set
-
-- When `select_tools` is called with an empty tools array, the session scope should be reset to the full tool set. Subsequent `tools/list` should return all tools.
-
 ### [Happy] notifications/tools/list_changed delivered after select_tools
 
 - When a client with SSE notification support calls `select_tools`, a `notifications/tools/list_changed` notification should be delivered to that client over the SSE channel.
 
-### [Happy] discovery-tools-enabled=false hides meta-tools
+### [Full] discovery-tools-enabled=false hides meta-tools
 
 - When the broker is started with `--discovery-tools-enabled=false`, `tools/list` should not include `discover_tools` or `select_tools`. Calling these tools should return an error.
 
-### [Happy] discovery-tool-threshold=0 means never hide
+### [Full] discovery-tool-threshold=0 means never hide
 
 - When the threshold is 0 (default), all real tools should be visible alongside the meta-tools regardless of how many tools are registered.
 
-### [Happy] threshold above: only meta-tools shown
+### [Full] threshold above: only meta-tools shown
 
 - When the `--discovery-tool-threshold` is set to a value lower than the number of registered tools, `tools/list` should return only the meta-tools. After using `select_tools` to scope down, the selected tools should become visible.
 
@@ -299,7 +280,7 @@
 
 - When two concurrent `select_tools` calls are made on the same session, the result should be a consistent single scope (one of the two wins), not a corrupted mixed state.
 
-### [Happy] controller re-reconciles when category/hint updated
+### [Full] controller re-reconciles when category/hint updated
 
 - When the `category` or `hint` fields on a live MCPServerRegistration are updated, the controller should re-reconcile and the broker should reflect the new metadata in subsequent `discover_tools` calls. The old category should no longer match.
 
@@ -348,13 +329,9 @@ make test-e2e-https
 | GitHub external | Skipped | Yes (needs `GITHUB_MCP_PAT`) |
 | Real public certs | Skipped | Yes (needs real TLS cluster) |
 
-### [Happy] OAuth protected resource metadata served from CRD config
+### [Happy] OAuth protected resource metadata served from CRD config and reverted after removal
 
-- When an MCPGatewayExtension has `spec.oauthProtectedResource` configured with at least one authorization server, the controller should inject `OAUTH_*` env vars into the broker-router deployment and the `/.well-known/oauth-protected-resource` endpoint should return the configured metadata as JSON. The response should contain `authorization_servers`, `resource`, and `bearer_methods_supported` fields.
-
-### [Happy] OAuth protected resource reverts to defaults after removal
-
-- When `oauthProtectedResource` is removed from the MCPGatewayExtension spec, the controller should remove the OAUTH env vars from the broker-router deployment. After the deployment rolls out, the `/.well-known/oauth-protected-resource` endpoint should still respond but `authorization_servers` should revert to an empty array (the broker's built-in default when no OAUTH env vars are set).
+- When an MCPGatewayExtension has `spec.oauthProtectedResource` configured with at least one authorization server, the controller should inject `OAUTH_*` env vars into the broker-router deployment and the `/.well-known/oauth-protected-resource` endpoint should return the configured metadata as JSON. The response should contain `authorization_servers`, `resource`, and `bearer_methods_supported` fields. When `oauthProtectedResource` is then removed from the spec, the controller should remove the OAUTH env vars; after the deployment rolls out, the endpoint should still respond but `authorization_servers` should revert to an empty array (the broker's built-in default when no OAUTH env vars are set). One spec covers the serve and revert halves in a single configure-remove cycle.
 
 ### [Happy,UserSpecificList] User sees their own tools merged with cached tools
 
