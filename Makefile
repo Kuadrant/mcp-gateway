@@ -337,6 +337,7 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest .
 	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/user-specific-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest .
+	cd tests/servers/a2a-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-a2a-server:latest .
 
 # Build conformance server Docker image
 .PHONY: build-conformance-server
@@ -357,6 +358,7 @@ kind-load-test-servers: kind build-test-servers ## Build test server images loca
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-a2a-server:latest)
 
 # TEST_SERVER_IMAGE_REPO/TAG and TEST_SERVER_IMAGES live in build/ci-node.mk
 # so the baked CI node image tag hashes them

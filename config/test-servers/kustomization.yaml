@@ -43,3 +43,7 @@ resources:
   - user-specific-server-httproute.yaml
   - user-specific-server-httproute-ext.yaml
   - user-specific-server-mcpserverregistration.yaml
+  - a2a-server-deployment.yaml
+  - a2a-server-service.yaml
+  - a2a-server-httproute.yaml
+  - a2a-server-httproute-ext.yaml
