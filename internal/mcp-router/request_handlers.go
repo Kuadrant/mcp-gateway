@@ -831,7 +831,7 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 	)
 	defer span.End()
 
-	s.Logger.DebugContext(ctx, "HandleMCPBrokerRequest", "HTTP Method", mcpReq.GetSingleHeaderValue(":method"), "mcp method", mcpReq.Method, "session", mcpReq.sessionID)
+	s.Logger.DebugContext(ctx, "HandleMCPBrokerRequest", "HTTP Method", mcpReq.GetSingleHeaderValue(":method"), "mcp method", mcpReq.Method, "session", truncateToken(mcpReq.sessionID))
 	headers := NewHeaders().WithMCPMethod(mcpReq.Method)
 	response := NewResponse()
 	if mcpReq.isInitializeRequest() {
@@ -938,4 +938,14 @@ func buildSSEToolError(requestID any, message string) string {
 		b.WriteString(strconv.Quote(message))
 		b.WriteString("}],\"isError\":true}}")
 	})
+}
+
+// truncateToken returns the first 8 characters of a token followed by "..."
+// to avoid logging full JWT values at debug level.
+func truncateToken(token string) string {
+	const prefixLen = 8
+	if len(token) <= prefixLen {
+		return token
+	}
+	return token[:prefixLen] + "..."
 }
