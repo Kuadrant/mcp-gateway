@@ -3,8 +3,8 @@ package mcprouter
 import (
 	"fmt"
 
-	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
+	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 const (
