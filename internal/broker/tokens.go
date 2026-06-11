@@ -85,7 +85,7 @@ func (h *TokenHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 		Value:    csrf,
 		Path:     "/tokens",
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   120,
 	})
