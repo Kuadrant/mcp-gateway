@@ -135,6 +135,40 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	})
 
+	// Regression test: an HTTP backend with an explicit sectionName targeting the
+	// HTTPS listener must still get an http:// URL in the broker config. The gateway
+	// listener protocol (HTTPS) must not bleed into the upstream service URL.
+	It("[Happy] HTTP backend with explicit HTTPS listener sectionName", func() {
+		By("Registering a plain HTTP server with sectionName targeting the HTTPS listener")
+		registration := NewTestResources("https-listener-http-backend", k8sClient).
+			ForInternalService(sharedMCPTestServer1, 9090).
+			WithPrefix("httpback_").
+			WithSectionName(GatewayListenerName).
+			Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools are accessible")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("httpback_", toolsList)).To(BeTrue())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		By("Calling a tool to verify the broker connected over HTTP")
+		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "httpback_greet", Arguments: map[string]string{"name": "test"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+		Expect(res.Content).NotTo(BeEmpty())
+	})
+
 	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
 		cred := BuildCredentialSecret("mcp-credential", "test-api-key-secret-toke")
 		registration := NewMCPServerResourcesWithDefaults("credentials", k8sClient).
