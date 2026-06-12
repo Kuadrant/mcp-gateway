@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -9,6 +10,20 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 )
+
+// blockingDeleter blocks DeleteSessions until the supplied context is canceled
+// or its deadline elapses, then returns ctx.Err().
+type blockingDeleter struct {
+	called chan struct{}
+}
+
+func (b *blockingDeleter) DeleteSessions(ctx context.Context, _ ...string) error {
+	if b.called != nil {
+		close(b.called)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -354,6 +369,54 @@ func TestValidate_RejectsTokenWithWrongAudience(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+
+	// craft a token with no exp claim
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte("test-key"))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	isNotAllowed, err := manager.Validate(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+	if !isNotAllowed {
+		t.Error("expected isNotAllowed to be true for token without exp")
+	}
+}
+
+func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte("test-key"))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	_, err = manager.GetExpiresIn(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+}
+
 func TestTerminate(t *testing.T) {
 	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
 
@@ -366,6 +429,38 @@ func TestTerminate(t *testing.T) {
 		}
 		if isNotAllowed {
 			t.Error("expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("terminate bounds a stalled deleter via context deadline", func(t *testing.T) {
+		// Wire a deleter whose DeleteSessions blocks until the passed context
+		// is canceled. Without the WithTimeout fix, Terminate would block
+		// indefinitely; with it, Terminate must return within ~terminateTimeout.
+		deleter := &blockingDeleter{called: make(chan struct{})}
+		manager, err := NewJWTManager("test-key", 0, testLogger(), deleter)
+		if err != nil {
+			t.Fatalf("unexpected error constructing manager: %v", err)
+		}
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := manager.Terminate("session-id")
+			errCh <- err
+		}()
+
+		select {
+		case <-deleter.called:
+		case <-time.After(2 * time.Second):
+			t.Fatal("DeleteSessions was not invoked")
+		}
+
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+			}
+		case <-time.After(terminateTimeout + 2*time.Second):
+			t.Fatalf("Terminate did not return within %v of the configured deadline", terminateTimeout)
 		}
 	})
 }

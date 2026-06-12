@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -132,6 +133,40 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
+	})
+
+	// Regression test: an HTTP backend with an explicit sectionName targeting the
+	// HTTPS listener must still get an http:// URL in the broker config. The gateway
+	// listener protocol (HTTPS) must not bleed into the upstream service URL.
+	It("[Happy] HTTP backend with explicit HTTPS listener sectionName", func() {
+		By("Registering a plain HTTP server with sectionName targeting the HTTPS listener")
+		registration := NewTestResources("https-listener-http-backend", k8sClient).
+			ForInternalService(sharedMCPTestServer1, 9090).
+			WithPrefix("httpback_").
+			WithSectionName(GatewayListenerName).
+			Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools are accessible")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("httpback_", toolsList)).To(BeTrue())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		By("Calling a tool to verify the broker connected over HTTP")
+		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "httpback_greet", Arguments: map[string]string{"name": "test"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+		Expect(res.Content).NotTo(BeEmpty())
 	})
 
 	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
@@ -501,23 +536,27 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(len(allToolsAgain.Tools)).To(BeNumerically(">", 1), "expected more than 1 tool without virtual server header")
 	})
 
-	It("[Happy] should send notifications/tools/list_changed to connected clients when MCPServerRegistration is registered", func() {
+	It("[Happy] should send list_changed notifications to connected clients when a server with tools and prompts is registered", func() {
 		// NOTE on notifications. A notification is sent when servers are removed during clean up as this effects tools list also.
 		// as the list_changed notification is broadcast, this can mean clients in other tests receive additional notifications
 		// for that reason we only assert we received at least one rather than a set number
 		By("Creating clients with notification handlers and different sessions")
 		client1Notification := false
 		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			GinkgoWriter.Println("client 1 received notification registration", j.Method)
-			client1Notification = true
+			if strings.Contains(j.Method, "list_changed") {
+				GinkgoWriter.Println("client 1 received notification registration", j.Method)
+				client1Notification = true
+			}
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client1.Close() }()
 
 		client2Notification := false
 		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			GinkgoWriter.Println("client 2 received notification registration", j.Method)
-			client2Notification = true
+			if strings.Contains(j.Method, "list_changed") {
+				GinkgoWriter.Println("client 2 received notification registration", j.Method)
+				client2Notification = true
+			}
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client2.Close() }()
@@ -525,8 +564,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(client2.sessionID).NotTo(BeEmpty())
 		Expect(client1.sessionID).NotTo(Equal(client2.sessionID))
 
-		By("registering a new MCPServerRegistration")
-		registration := NewMCPServerResourcesWithDefaults("notification-test", k8sClient).Build()
+		By("registering a new MCPServerRegistration pointing to server1 which has both tools and prompts")
+		registration := NewMCPServerResourcesWithDefaults("notification-test", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("notif_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
 
@@ -535,20 +575,21 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		// We do this to wait for the tools to show up as we know then that the gateway has done its work
+		// We do this to wait for the tools and prompts to show up as we know then that the gateway has done its work
 		Eventually(func(g Gomega) {
 			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
 
-		By("Verifying both clients received notifications/tools/list_changed within 1 minutes")
+		By("Verifying both clients received list_changed notifications within 1 minutes")
 		Eventually(func(g Gomega) {
 			_, err := client1.ListTools(ctx, mcp.ListToolsRequest{})
 			Expect(err).NotTo(HaveOccurred())
 			g.Expect(client1Notification).To(BeTrue(), "client1 should have received a notification within 1 minutes")
-			g.Expect(client2Notification).To(BeTrue(), "client1 should have received a notification within 1 minutes")
+			g.Expect(client2Notification).To(BeTrue(), "client2 should have received a notification within 1 minutes")
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
@@ -644,6 +685,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Registering an MCPServerRegistration pointing to server3")
 		registration := NewMCPServerResourcesWithDefaults("unavailable-test", k8sClient).
+			WithPrefix("unavailable_").
 			WithBackendTarget(scaledMCPTestServer, 9090).Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
@@ -735,9 +777,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	})
 
 	It("[Happy] should filter tools based on x-mcp-authorized JWT header", func() {
-		if !IsTrustedHeadersEnabled(ctx) {
-			Skip("trusted headers public key not configured - skipping x-mcp-authorized test")
-		}
+		SetupTrustedHeadersAuth(ctx, k8sClient)
 
 		By("Creating an MCPServerRegistration with tools")
 		registration := NewMCPServerResourcesWithDefaults("authorized-capabilities-test", k8sClient).Build()
@@ -802,7 +842,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should report invalid protocol version in MCPServerRegistration status", func() {
+	It("[Full] should report invalid protocol version in MCPServerRegistration status", func() {
 		By("Creating an MCPServerRegistration pointing to the broken server with wrong protocol version")
 		// The broken server is already deployed with --failure-mode=protocol
 		registration := NewMCPServerResourcesWithDefaults("protocol-status-test", k8sClient).
@@ -824,10 +864,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(msg).To(ContainSubstring("unsupported protocol version"))
 	})
 
-	It("[Happy] should report tool conflicts in MCPServerRegistration status when same prefix is used", func() {
-
-		By("Creating first MCPServerRegistration with a specific prefix")
-		registration1 := NewMCPServerResourcesWithDefaults("conflict-test-1", k8sClient).
+	It("[Happy] should report tool and prompt conflicts in MCPServerRegistration status when same prefix is used", func() {
+		// server1 has both tools (greet, time, headers, slow, add_tool) and a
+		// "greet" prompt, so registering it twice under the same prefix
+		// produces both tool and prompt name conflicts in one cycle
+		By("Creating first MCPServerRegistration with a specific prefix pointing to server1")
+		registration1 := NewMCPServerResources("conflict-test-1", "conflict-s1.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
@@ -837,16 +879,16 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Creating second MCPServerRegistration with the SAME prefix pointing to server2")
-		registration2 := NewMCPServerResourcesWithDefaults("conflict-test-2", k8sClient).
+		By("Creating second MCPServerRegistration with the SAME prefix pointing to server1 via a different hostname")
+		registration2 := NewMCPServerResources("conflict-test-2", "conflict-s2.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
 
-		By("Verifying at least one MCPServerRegistration reports tool conflict in status")
-		// Both servers have tools like "time", "headers" etc.
-		// With the same prefix, they would produce "conflict_time", "conflict_headers" etc.
-		// At least one server should report a conflict.
+		By("Verifying at least one MCPServerRegistration reports the conflict in status")
+		// Both registrations expose the same tool and prompt names under the
+		// same prefix ("conflict_time", "conflict_greet" etc), so at least
+		// one server should report a conflict.
 		Eventually(func(g Gomega) {
 			// Check if either server reports a conflict
 			msg1, err1 := GetMCPServerRegistrationStatusMessage(ctx, k8sClient, server1.Name, server1.Namespace)
@@ -860,21 +902,21 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 			// At least one should contain conflict-related message
 			hasConflict := strings.Contains(msg1, "conflict") || strings.Contains(msg2, "conflict")
-			g.Expect(hasConflict).To(BeTrue(), "expected at least one server to report tool conflict")
+			g.Expect(hasConflict).To(BeTrue(), "expected at least one server to report a conflict")
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should allow multiple MCP Servers without prefixes", func() {
+	It("[Full] should allow multiple MCP Servers without prefixes", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
-		registration := NewMCPServerResources("same-prefix", "everything-server.mcp.local", "everything-server", 9090, k8sClient).
+		registration := NewMCPServerResources("same-prefix", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer1 := registration.Register(ctx)
 
 		// This server has a 'hello_world' tool
-		registration = NewMCPServerResources("same-prefix", "e2e-server2.mcp.local", "mcp-test-server2", 9090, k8sClient).
+		registration = NewMCPServerResources("same-prefix", "e2e-server2.mcp-gateway.local", "mcp-test-server2", 9090, k8sClient).
 			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
@@ -955,6 +997,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(promptResult).NotTo(BeNil())
 		Expect(len(promptResult.Messages)).To(BeNumerically(">=", 1), "prompt should return at least one message")
+		content, ok := promptResult.Messages[0].Content.(mcp.TextContent)
+		Expect(ok).To(BeTrue(), "prompt message content should be TextContent")
+		Expect(content.Text).To(Equal("Say hi to e2e"))
 
 		By("Unregistering the MCPServerRegistration")
 		Expect(k8sClient.Delete(ctx, registeredServer)).To(Succeed())
@@ -970,12 +1015,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should aggregate prompts from multiple servers with different prefixes", func() {
 		By("Creating two MCPServerRegistrations for server1 with different prefixes")
-		registration1 := NewMCPServerResources("prompt-multi-1", "prompt-s1a.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration1 := NewMCPServerResources("prompt-multi-1", "prompt-s1a.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("s1a_").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
 
-		registration2 := NewMCPServerResources("prompt-multi-2", "prompt-s1b.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration2 := NewMCPServerResources("prompt-multi-2", "prompt-s1b.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("s1b_").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
@@ -1043,13 +1088,147 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 	})
 
+	It("[Happy] should filter prompts based on x-mcp-authorized JWT header", func() {
+		SetupTrustedHeadersAuth(ctx, k8sClient)
+
+		// server1 exposes a single prompt (greet), so register it twice with
+		// different prefixes; allowing only one registration's prompt in the
+		// JWT proves the other is filtered out rather than the filter being a no-op
+		By("Creating two MCPServerRegistrations for server1 with different prefixes")
+		registrationA := NewMCPServerResourcesWithDefaults("authz-prompt-a", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("pauthza_").Build()
+		testResources = append(testResources, registrationA.GetObjects()...)
+		registeredServerA := registrationA.Register(ctx)
+
+		registrationB := NewMCPServerResourcesWithDefaults("authz-prompt-b", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("pauthzb_").Build()
+		testResources = append(testResources, registrationB.GetObjects()...)
+		registeredServerB := registrationB.Register(ctx)
+
+		By("Ensuring the gateway has registered both servers")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServerA.Name, registeredServerA.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServerB.Name, registeredServerB.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying both prompts are present without filtering")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServerA.Spec.Prefix)
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServerB.Spec.Prefix)
+
+		By("Creating a JWT allowing only the greet prompt from the first server")
+		allowedPrompts := map[string][]string{
+			fmt.Sprintf("%s/%s", registeredServerA.Namespace, registeredServerA.Name): {"greet"},
+		}
+		jwtToken, err := CreateAuthorizedPromptsJWT(allowedPrompts)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Creating a client with x-mcp-authorized header")
+		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"X-Mcp-Authorized": jwtToken,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = authorizedClient.Close() }()
+
+		By("Verifying only the allowed prompt is returned")
+		expectedPrompt := fmt.Sprintf("%s%s", registeredServerA.Spec.Prefix, "greet")
+		Eventually(func(g Gomega) {
+			filteredPrompts, err := authorizedClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredPrompts).NotTo(BeNil())
+			g.Expect(len(filteredPrompts.Prompts)).To(Equal(1), "expected exactly 1 prompt from authorized capabilities header")
+			g.Expect(filteredPrompts.Prompts[0].Name).To(Equal(expectedPrompt))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying a client without the header still sees both prompts")
+		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
+		Expect(PromptsListHasPrompt(promptsAll, fmt.Sprintf("%s%s", registeredServerB.Spec.Prefix, "greet"))).To(BeTrue())
+	})
+
+	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", func() {
+		By("Creating MCPServerRegistration for server1 with prompts")
+		registration := NewMCPServerResourcesWithDefaults("prompt-vs-nofilter", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("nofilt_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying prompts are available")
+		WaitForPromptsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
+
+		By("Creating an MCPVirtualServer with tools only (no prompts field)")
+		allowedTool := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+		virtualServer := NewMCPVirtualServerBuilder("prompt-nofilter-vs", TestServerNameSpace).
+			WithTools([]string{allowedTool}).Build()
+		testResources = append(testResources, virtualServer)
+		Expect(k8sClient.Create(ctx, virtualServer)).To(Succeed())
+
+		By("Creating a client with X-Mcp-Virtualserver header")
+		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
+		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"X-Mcp-Virtualserver": virtualServerHeader,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = virtualServerClient.Close() }()
+
+		By("Verifying all prompts are returned (no prompts field = no filtering)")
+		Eventually(func(g Gomega) {
+			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredPrompts).NotTo(BeNil())
+			expectedPrompt := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
+			g.Expect(PromptsListHasPrompt(filteredPrompts, expectedPrompt)).To(BeTrueBecause("all prompts should be exposed when prompts field is omitted"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools ARE filtered by the VirtualServer")
+		Eventually(func(g Gomega) {
+			filteredTools, err := virtualServerClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(filteredTools).NotTo(BeNil())
+			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server")
+			g.Expect(filteredTools.Tools[0].Name).To(Equal(allowedTool))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
+
+	It("[Happy] should return error for prompts/get with nonexistent prompt", func() {
+		By("Creating MCPServerRegistration for server1")
+		registration := NewMCPServerResourcesWithDefaults("prompt-notfound", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("notfound_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Ensuring the gateway has registered the server")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Initialising a raw HTTP session for JSON-RPC error inspection")
+		sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
+
+		By("Calling prompts/get with a nonexistent prompt name")
+		status, body, err := mcpGetPrompt(ctx, gatewayURL, sessionID, "nonexistent_prompt_that_does_not_exist", nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK))
+
+		rpcErr, parseErr := parseSSEError(body)
+		Expect(parseErr).NotTo(HaveOccurred(), "expected a JSON-RPC error in SSE response")
+		Expect(rpcErr.Code).To(Equal(mcp.INVALID_PARAMS), "expected JSON-RPC invalid-params error code (-32602)")
+	})
+
 	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
 		// server1 has: greet, time, slow, headers, add_tool
 		// server2 has: hello_world, time, headers, auth1234, slow, set_time, pour_chocolate_into_mold
 		// Both have time, headers, slow - these will conflict
 
 		By("Creating first MCPServer without prefix pointing to server1")
-		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
@@ -1060,7 +1239,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating second MCPServer without prefix pointing to server2 (also has time, headers, slow)")
-		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp.local", sharedMCPTestServer2, 9090, k8sClient).
+		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp-gateway.local", sharedMCPTestServer2, 9090, k8sClient).
 			WithPrefix("").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
@@ -1114,5 +1293,61 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
+	})
+
+	It("[Happy] should disable and re-enable an MCPServerRegistration", func() {
+		By("Creating an MCPServerRegistration with default state (Enabled)")
+		registration := NewMCPServerResourcesWithDefaults("disable-enable-test", k8sClient).WithPrefix("distest_").Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready and tools are present")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should exist", registeredServer.Spec.Prefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Disabling the MCPServerRegistration by patching spec.state to Disabled")
+		patch := client.MergeFrom(registeredServer.DeepCopy())
+		registeredServer.Spec.State = mcpv1alpha1.ServerStateDisabled
+		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
+
+		By("Verifying tools are removed from the gateway's tool list")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s tools should be removed when disabled", registeredServer.Spec.Prefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying MCPServerRegistration status is Ready=False with reason Disabled")
+		Eventually(func(g Gomega) {
+			err := VerifyMCPServerRegistrationNotReadyWithReason(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace, "server is disabled")
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+
+		By("Re-enabling the MCPServerRegistration by patching spec.state back to Enabled")
+		patch = client.MergeFrom(registeredServer.DeepCopy())
+		registeredServer.Spec.State = mcpv1alpha1.ServerStateEnabled
+		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
+
+		By("Verifying tools return to the gateway's tool list")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should return after re-enabling", registeredServer.Spec.Prefix))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying MCPServerRegistration status is Ready=True after re-enabling")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 })

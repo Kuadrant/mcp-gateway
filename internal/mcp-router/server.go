@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -25,11 +27,11 @@ var _ config.Observer = &ExtProcServer{}
 // SessionCache defines how the router interacts with a store to store and retrieves sessions
 type SessionCache interface {
 	GetSession(ctx context.Context, key string) (map[string]string, error)
-	AddSession(ctx context.Context, key, mcpID, mcpSession string) (bool, error)
+	AddSession(ctx context.Context, key, mcpID, mcpSession string, ttl time.Duration) (bool, error)
 	DeleteSessions(ctx context.Context, key ...string) error
 	RemoveServerSession(ctx context.Context, key, mcpServerID string) error
 	KeyExists(ctx context.Context, key string) (bool, error)
-	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
+	SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
 	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
@@ -39,7 +41,7 @@ type SessionCache interface {
 // InitForClient defines a function for initializing an MCP server for a client.
 // initToken is a short-lived JWT minted by the router and validated again when
 // the hairpin request re-enters the gateway.
-type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
@@ -51,6 +53,7 @@ type ExtProcServer struct {
 	ElicitationMap      idmap.Map
 	TokenElicitationMap elicitation.Map
 	MaxRequestBodySize  int
+	HairpinHTTPClient   *http.Client
 	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker
@@ -78,6 +81,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
+	// ensure orphaned elicitation idmap entries are cleaned up on any exit path
+	// (e.g. stream.Recv/Send errors before endOfStream). Flush is idempotent so
+	// this is a no-op on the happy path where it has already run.
+	defer func() {
+		if rewriter != nil {
+			_ = rewriter.Flush(ctx)
+		}
+	}()
 	for {
 		req, err := stream.Recv()
 
@@ -111,13 +122,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			span.End()
 			ctx, span = tracer().Start(ctx, "mcp-router.process", //nolint:spancheck // ended via defer closure
 				trace.WithAttributes(
+					componentAttr,
 					attribute.String("http.method", method),
 					attribute.String("http.path", requestPath),
 					attribute.String("http.request_id", requestID),
 				),
 			)
 
-			responses, _ := s.HandleRequestHeaders(r.RequestHeaders)
+			responses, _ := s.HandleRequestHeaders(ctx, r.RequestHeaders)
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", requestPath, "method", method)
 			for _, response := range responses {
 				s.Logger.DebugContext(ctx, "sending header processing instructions to envoy", "response", response)
@@ -275,7 +287,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
 				}
 				mcpRequest.clientElicitation = clientElicitation
-				if clientElicitation {
+				if clientElicitation && statusCode == "200" {
 					rewriter = &sseRewriter{
 						idMap:      s.ElicitationMap,
 						req:        mcpRequest,

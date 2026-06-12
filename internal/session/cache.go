@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+	"time"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -69,8 +70,9 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 	return c.extClient.Del(ctx, allKeys...).Err()
 }
 
-// AddSession will add a session under the key. If the key exists it will append that session
-func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession string) (bool, error) {
+// AddSession will add a session under the key. If the key exists it will append that session.
+// ttl sets the expiry on the Redis hash key; pass 0 for no expiry (in-memory mode ignores ttl).
+func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession string, ttl time.Duration) (bool, error) {
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
@@ -86,7 +88,12 @@ func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession str
 		c.inmemory.Store(key, next)
 		return true, nil
 	}
-	if err := c.extClient.HSet(ctx, key, mcpServerID, mcpSession).Err(); err != nil {
+	pipe := c.extClient.Pipeline()
+	pipe.HSet(ctx, key, mcpServerID, mcpSession)
+	if ttl > 0 {
+		pipe.Expire(ctx, key, ttl)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -110,14 +117,15 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 	return c.extClient.HDel(ctx, key, mcpServerID).Err()
 }
 
-// SetClientElicitation records that the client for this gateway session supports elicitation
-func (c *Cache) SetClientElicitation(ctx context.Context, gatewaySessionID string) error {
+// SetClientElicitation records that the client for this gateway session supports elicitation.
+// ttl sets the key expiry in Redis; pass 0 for no expiry (in-memory mode ignores ttl).
+func (c *Cache) SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error {
 	key := clientElicitationPrefix + gatewaySessionID
 	if c.inmemory != nil {
 		c.inmemory.Store(key, true)
 		return nil
 	}
-	return c.extClient.Set(ctx, key, "1", 0).Err()
+	return c.extClient.Set(ctx, key, "1", ttl).Err()
 }
 
 // GetClientElicitation returns whether the client for this gateway session supports elicitation

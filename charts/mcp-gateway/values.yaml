@@ -23,6 +23,10 @@ controller:
 broker:
   # How often (in seconds) the broker pings upstream MCP servers
   pollInterval: 60
+  # Enable discover_tools and select_tools meta-tools
+  discoveryToolsEnabled: true
+  # Tool count above which real tools are hidden, only meta-tools shown. 0 = never hide.
+  discoveryToolThreshold: 0
 
 # Gateway configuration
 gateway:
@@ -58,8 +62,9 @@ gateway:
   nodePort:
     # Create a NodePort service for the Gateway
     create: false
-    # NodePort for the MCP port
-    mcpPort: 30471
+    # NodePort for the MCP port (keep inside the k8s static subrange
+    # 30000-30085 so dynamic nodePort allocation will not collide with it)
+    mcpPort: 30071
     # Status port configuration (Istio health check port)
     statusPort:
       enabled: false

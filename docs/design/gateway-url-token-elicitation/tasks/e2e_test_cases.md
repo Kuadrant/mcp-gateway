@@ -32,7 +32,7 @@ tags: Happy,URLElicitation,Security
 
 ### [Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation
 
-- When the upstream MCP server returns a 401 Unauthorized response (e.g. because the cached token has expired or been revoked), the gateway should delete the cached token for that server and session, and return a -32042 URLElicitationRequiredError to the client. The client should be able to provide a new token via the broker page and retry successfully.
+- When the upstream MCP server returns a 401 Unauthorized response (e.g. because the cached token has expired or been revoked), the gateway should delete the cached token for that server and session and pass the 401 through to the client. On the client's next tool call retry, the cache miss triggers a -32042 URLElicitationRequiredError. The client should be able to provide a new token via the broker page and retry successfully.
 
 
 ### [URLElicitation] Non-elicitation-capable client gets standard error on missing token

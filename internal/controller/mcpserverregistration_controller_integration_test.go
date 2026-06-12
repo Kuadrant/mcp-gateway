@@ -4,8 +4,15 @@ package controller
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -24,6 +31,27 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
+
+func generateTestCACertPEM() []byte {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
 
 // mockMCPServerConfigReaderWriter is a mock for testing
 type mockMCPServerConfigReaderWriter struct {
@@ -448,6 +476,404 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 		})
 	})
 
+	Context("When MCPServerRegistration has caCertSecretRef", func() {
+		const (
+			resourceName  = "test-mcpsr-cacert"
+			httpRouteName = "test-route-cacert"
+			gatewayName   = "test-gw-cacert"
+			serviceName   = "test-svc-cacert"
+			secretName    = "test-ca-bundle"
+		)
+
+		ctx := context.Background()
+
+		mcpsrNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			gw := createTestGateway(gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+
+			svc := createTestService(serviceName, "default", 8080)
+			Expect(testK8sClient.Create(ctx, svc)).To(Succeed())
+
+			httpRoute := createTestHTTPRoute(httpRouteName, "default", "test.example.com", serviceName, 8080, gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, httpRoute)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: httpRouteName, Namespace: "default"}, route)).To(Succeed())
+				g.Expect(setHTTPRouteAcceptedStatus(ctx, route, gatewayName, "default")).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			mcpExt := createTestMCPGatewayExtension("test-ext-cacert", "default", gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				ext := &mcpv1alpha1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: "test-ext-cacert", Namespace: "default"}, ext)).To(Succeed())
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "ready")
+				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			testCaPEM := generateTestCACertPEM()
+			caSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"ca.crt": testCaPEM,
+				},
+			}
+			Expect(testK8sClient.Create(ctx, caSecret)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, resourceName, "default")
+			forceDeleteTestMCPGatewayExtension(ctx, "test-ext-cacert", "default")
+			deleteTestHTTPRoute(ctx, httpRouteName, "default")
+			deleteTestService(ctx, serviceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+			_ = client.IgnoreNotFound(testK8sClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
+			}))
+		})
+
+		It("should include CA cert in config when caCertSecretRef is set", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: secretName,
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				g.Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+				for _, server := range configWriter.upsertedServers {
+					if server.Name == fmt.Sprintf("default/%s", resourceName) {
+						g.Expect(server.CACert).To(ContainSubstring("BEGIN CERTIFICATE"))
+						return
+					}
+				}
+				g.Expect(false).To(BeTrue(), "server not found in upserted configs")
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should fail when CA cert secret is missing required label", func() {
+			unlabeledSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "unlabeled-ca",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"ca.crt": []byte("-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----"),
+				},
+			}
+			Expect(testK8sClient.Create(ctx, unlabeledSecret)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, unlabeledSecret)
+			}()
+
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: "unlabeled-ca",
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("missing required label"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should use default key ca.crt when key is not specified", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: secretName,
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				g.Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+				for _, server := range configWriter.upsertedServers {
+					if server.Name == fmt.Sprintf("default/%s", resourceName) {
+						g.Expect(server.CACert).To(ContainSubstring("BEGIN CERTIFICATE"))
+						return
+					}
+				}
+				g.Expect(false).To(BeTrue(), "server not found in upserted configs")
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should fail when CA cert secret does not exist", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: "nonexistent-secret",
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("not found"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should fail when CA cert secret is missing the expected key", func() {
+			wrongKeySecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "wrong-key-ca",
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"cert.pem": []byte("-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----"),
+				},
+			}
+			Expect(testK8sClient.Create(ctx, wrongKeySecret)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, wrongKeySecret)
+			}()
+
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: "wrong-key-ca",
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("missing key"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should include both credential and CA cert when both refs are set", func() {
+			credSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cred-with-ca",
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"token": []byte("Bearer test-token"),
+				},
+			}
+			Expect(testK8sClient.Create(ctx, credSecret)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, credSecret)
+			}()
+
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CredentialRef = &mcpv1alpha1.SecretReference{
+				Name: "test-cred-with-ca",
+				Key:  "token",
+			}
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: secretName,
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				g.Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+				for _, server := range configWriter.upsertedServers {
+					if server.Name == fmt.Sprintf("default/%s", resourceName) {
+						g.Expect(server.CACert).To(ContainSubstring("BEGIN CERTIFICATE"))
+						g.Expect(server.Credential).To(Equal("Bearer test-token"))
+						return
+					}
+				}
+				g.Expect(false).To(BeTrue(), "server not found in upserted configs")
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should fail when CA cert contains invalid PEM data", func() {
+			invalidPEMSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-pem-ca",
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"ca.crt": []byte("this is not valid PEM data"),
+				},
+			}
+			Expect(testK8sClient.Create(ctx, invalidPEMSecret)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, invalidPEMSecret)
+			}()
+
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: "invalid-pem-ca",
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
+				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
+				g.Expect(readyCond).NotTo(BeNil())
+				g.Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(readyCond.Message).To(ContainSubstring("invalid"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should fail when CA cert data exceeds maximum size", func() {
+			oversizedData := make([]byte, maxCACertSize+1)
+			for i := range oversizedData {
+				oversizedData[i] = 'A'
+			}
+			oversizedSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "oversized-ca",
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"ca.crt": oversizedData,
+				},
+			}
+			Expect(testK8sClient.Create(ctx, oversizedSecret)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, oversizedSecret)
+			}()
+
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+				Name: "oversized-ca",
+				Key:  "ca.crt",
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: mcpsrNamespacedName,
+				})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
+				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
+				g.Expect(readyCond).NotTo(BeNil())
+				g.Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(readyCond.Message).To(ContainSubstring("exceeds maximum size"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
 	Context("When HTTPRoute has no accepted gateways", func() {
 		const (
 			resourceName  = "test-mcpsr-not-accepted"
@@ -509,5 +935,41 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(cond.Message).To(ContainSubstring("no valid gateways"))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
+	})
+
+	Context("prefix field CRD validation", func() {
+		ctx := context.Background()
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, "prefix-valid", "default")
+		})
+
+		DescribeTable("rejects invalid prefix values",
+			func(prefix string) {
+				mcpsr := createTestMCPServerRegistration("prefix-invalid", "default", "some-route", prefix)
+				err := testK8sClient.Create(ctx, mcpsr)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.IsInvalid(err)).To(BeTrue(), "expected Invalid error, got: %v", err)
+			},
+			Entry("uppercase letters", "MyServer_"),
+			Entry("hyphen", "my-server"),
+			Entry("starts with underscore", "_test1"),
+			Entry("space", "my server"),
+			Entry("special characters", "test!@#"),
+			Entry("mixed case", "testServer"),
+		)
+
+		DescribeTable("accepts valid prefix values",
+			func(prefix string) {
+				mcpsr := createTestMCPServerRegistration("prefix-valid", "default", "some-route", prefix)
+				Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+				forceDeleteTestMCPServerRegistration(ctx, "prefix-valid", "default")
+			},
+			Entry("lowercase with trailing underscore", "test_"),
+			Entry("alphanumeric with underscore", "server1_"),
+			Entry("single letter", "a"),
+			Entry("digits and underscores", "s1_prefix_"),
+			Entry("all lowercase", "weatherserver"),
+		)
 	})
 })

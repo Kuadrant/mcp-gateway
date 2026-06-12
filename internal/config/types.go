@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 )
 
@@ -87,14 +88,19 @@ func (config *MCPServersConfig) GetServerConfigByName(serverName string) (*MCPSe
 
 // MCPServer represents a server
 type MCPServer struct {
-	Name                string                     `json:"name"                              yaml:"name"`
-	URL                 string                     `json:"url"                               yaml:"url"`
-	Hostname            string                     `json:"hostname,omitempty"                yaml:"hostname,omitempty"`
-	Prefix              string                     `json:"prefix,omitempty"                  yaml:"prefix,omitempty"`
-	Auth                *AuthConfig                `json:"auth,omitempty"                    yaml:"auth,omitempty"`
-	Credential          string                     `json:"credential,omitempty"              yaml:"credential,omitempty"`
-	Enabled             bool                       `json:"enabled"                           yaml:"enabled"`
+	Name                string                     `json:"name"                          yaml:"name"`
+	URL                 string                     `json:"url"                           yaml:"url"`
+	Hostname            string                     `json:"hostname,omitempty"            yaml:"hostname,omitempty"`
+	Prefix              string                     `json:"prefix,omitempty"              yaml:"prefix,omitempty"`
+	Auth                *AuthConfig                `json:"auth,omitempty"                yaml:"auth,omitempty"`
+	Credential          string                     `json:"credential,omitempty"          yaml:"credential,omitempty"`
+	CACert              string                     `json:"caCert,omitempty"              yaml:"caCert,omitempty"`
+	State               string                     `json:"state"                         yaml:"state"`
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty" yaml:"tokenURLElicitation,omitempty"`
+	UserSpecificList    bool                       `json:"userSpecificList,omitempty"    yaml:"userSpecificList,omitempty"`
+	Category            []string                   `json:"category,omitempty"            yaml:"category,omitempty"`
+	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
+	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -107,14 +113,51 @@ func (mcpServer *MCPServer) ID() UpstreamMCPID {
 	return UpstreamMCPID(fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.Prefix, mcpServer.Hostname))
 }
 
+func normalizeState(state string) string {
+	if state == "" {
+		return "Enabled"
+	}
+	return state
+}
+
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, hostname, or credential variable.
+// This means having a different name, prefix, hostname, credential, state, category, hint, or tags.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
-	return existingConfig.Name != mcpServer.Name ||
+	if existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
 		existingConfig.Hostname != mcpServer.Hostname ||
 		existingConfig.Credential != mcpServer.Credential ||
-		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation)
+		existingConfig.CACert != mcpServer.CACert ||
+		normalizeState(existingConfig.State) != normalizeState(mcpServer.State) ||
+		existingConfig.Hint != mcpServer.Hint ||
+		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) {
+		return true
+	}
+	if !slices.Equal(existingConfig.Category, mcpServer.Category) {
+		return true
+	}
+	return !tagsEqual(mcpServer.Tags, existingConfig.Tags)
+}
+
+// tagsEqual returns true if the two tag slices contain the same elements regardless of order.
+func tagsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	counts := make(map[string]int, len(a))
+	for _, t := range a {
+		counts[t]++
+	}
+	for _, t := range b {
+		counts[t]--
+		if counts[t] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {

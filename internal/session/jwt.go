@@ -139,6 +139,7 @@ func (m *JWTManager) ValidateBackendInitToken(tokenValue, expectedHost string) e
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(backendInitAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBackendInitToken, err)
@@ -178,6 +179,7 @@ func (m *JWTManager) Validate(tokenValue string) (bool, error) {
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(sessionAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return true, fmt.Errorf("failed to parse token: %w", err)
@@ -200,6 +202,7 @@ func (m *JWTManager) GetExpiresIn(tokenValue string) (time.Time, error) {
 		jwt.WithIssuer(issuer),
 		jwt.WithAudience(sessionAudience),
 		jwt.WithValidMethods([]string{signingMethodHS256}),
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return time.Now(), fmt.Errorf("failed to parse token: %w", err)
@@ -211,12 +214,17 @@ func (m *JWTManager) GetExpiresIn(tokenValue string) (time.Time, error) {
 	return nd.Time, nil
 }
 
+// bounds cache deletion in Terminate so a stalled store cannot block forever
+const terminateTimeout = 5 * time.Second
+
 // Terminate part of the SessionIDManager interface. Will remove the associated sessions from cache
 func (m *JWTManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
 	m.logger.Info("terminate session id in jwt session manager", "session", sessionID)
 	if m.sessionDeleter != nil {
 		// TODO(craig) this method will be invoked by the MCPBroker so we can probably do the cache deletion there rather than in this manager
-		ctx := context.TODO()
+		// background ctx with deadline; SessionIdManager interface gives us none
+		ctx, cancel := context.WithTimeout(context.Background(), terminateTimeout)
+		defer cancel()
 		if err := m.sessionDeleter.DeleteSessions(ctx, sessionID); err != nil {
 			return false, fmt.Errorf("error clearing out associated sessions : %w", err)
 		}

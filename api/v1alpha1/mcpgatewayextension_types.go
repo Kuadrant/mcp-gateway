@@ -113,6 +113,50 @@ type MCPGatewayExtensionSpec struct {
 	// +optional
 	// +default="Disabled"
 	URLElicitation URLElicitationPolicy `json:"urlElicitation,omitempty"`
+
+	// oauthProtectedResource configures the OAuth protected resource metadata
+	// served at /.well-known/oauth-protected-resource. When set, the controller
+	// injects the corresponding OAUTH_* env vars into the broker-router deployment.
+	// +optional
+	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
+}
+
+// OAuthProtectedResource configures the OAuth protected resource metadata
+// served at /.well-known/oauth-protected-resource.
+type OAuthProtectedResource struct {
+	// authorizationServers lists the OAuth authorization server URLs.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:Pattern=`^https?://[^,]+$`
+	// +listType=atomic
+	AuthorizationServers []string `json:"authorizationServers,omitempty"`
+
+	// resourceName is the human-readable name for this resource.
+	// Defaults to "MCP Server".
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// resource is the URI of the protected resource.
+	// Defaults to https://<publicHost>/mcp.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	Resource string `json:"resource,omitempty"`
+
+	// bearerMethodsSupported lists the supported bearer token methods.
+	// Defaults to ["header"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=atomic
+	BearerMethodsSupported []string `json:"bearerMethodsSupported,omitempty"`
+
+	// scopesSupported lists the supported OAuth scopes.
+	// Defaults to ["basic"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=atomic
+	ScopesSupported []string `json:"scopesSupported,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.

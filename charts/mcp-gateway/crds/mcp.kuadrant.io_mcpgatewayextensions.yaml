@@ -75,6 +75,55 @@ spec:
                 - Enabled
                 - Disabled
                 type: string
+              oauthProtectedResource:
+                description: |-
+                  oauthProtectedResource configures the OAuth protected resource metadata
+                  served at /.well-known/oauth-protected-resource. When set, the controller
+                  injects the corresponding OAUTH_* env vars into the broker-router deployment.
+                properties:
+                  authorizationServers:
+                    description: authorizationServers lists the OAuth authorization
+                      server URLs.
+                    items:
+                      pattern: ^https?://[^,]+$
+                      type: string
+                    maxItems: 10
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  bearerMethodsSupported:
+                    description: |-
+                      bearerMethodsSupported lists the supported bearer token methods.
+                      Defaults to ["header"].
+                    items:
+                      type: string
+                    maxItems: 10
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  resource:
+                    description: |-
+                      resource is the URI of the protected resource.
+                      Defaults to https://<publicHost>/mcp.
+                    maxLength: 2048
+                    type: string
+                  resourceName:
+                    description: |-
+                      resourceName is the human-readable name for this resource.
+                      Defaults to "MCP Server".
+                    maxLength: 253
+                    type: string
+                  scopesSupported:
+                    description: |-
+                      scopesSupported lists the supported OAuth scopes.
+                      Defaults to ["basic"].
+                    items:
+                      type: string
+                    maxItems: 50
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - authorizationServers
+                type: object
               privateHost:
                 description: |-
                   privateHost overrides the internal host used for hair-pinning requests

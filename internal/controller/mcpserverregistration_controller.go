@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -41,10 +43,19 @@ const (
 	ManagedSecretLabel = "mcp.kuadrant.io/secret" //nolint:gosec // not a credential, just a label name
 	// ManagedSecretValue is the required value for the managed secret label
 	ManagedSecretValue = "true"
+	// maxCACertSize is the maximum allowed size for CA certificate PEM data (64 KiB)
+	maxCACertSize = 64 * 1024
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
 	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
+
+	// conditionReasonReady is the reason used when the MCPServerRegistration is ready
+	conditionReasonReady = "Ready"
+	// conditionReasonNotReady is the reason used when the MCPServerRegistration is not ready
+	conditionReasonNotReady = "NotReady"
+	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
+	conditionReasonDisabled = "Disabled"
 )
 
 // ServerInfo holds server information
@@ -135,7 +146,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -149,7 +160,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// find gateways that have accepted the httproute
 	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -163,7 +174,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -179,7 +190,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
 			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
-			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -189,7 +200,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 		if len(mcpGatewayExtensions) == 0 {
 			// this is not an error so we are going to exit
-			if err := r.updateStatus(ctx, mcpsr, false, "no valid mcpgatewayextensions configured", 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured", 0); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -211,7 +222,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -222,7 +233,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
-			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -318,13 +329,20 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpG
 	log := logf.FromContext(ctx)
 	log.V(1).Info("setMCPServerRegistrationStatus", "mcpregistrationname", mcpsr.Name, "valid gateway extension namespace", mcpGatewayExtNS)
 
+	// If the server is explicitly disabled, set status with Disabled reason and return without polling the broker.
+	// This avoids the errServerNotPresent retry loop for intentionally disabled servers.
+	if mcpsr.Spec.State == mcpv1alpha1.ServerStateDisabled {
+		log.V(1).Info("server is disabled, updating status without polling broker", "mcpregistrationname", mcpsr.Name)
+		return r.updateStatus(ctx, mcpsr, false, conditionReasonDisabled, "server is disabled", 0)
+	}
+
 	validator := NewServerValidator(r.Client)
 	// TODO this currently lists all servers in the extension
 	statusResponse, err := validator.ValidateServers(ctx, mcpGatewayExtNS)
 	if err != nil {
 		log.Error(err, "Failed to validate server status via broker")
 		ready, message := false, fmt.Sprintf("Validation failed: %v", err)
-		if err := r.updateStatus(ctx, mcpsr, ready, message, 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, ready, conditionReasonNotReady, message, 0); err != nil {
 			log.Error(err, "Failed to update status")
 			return err
 		}
@@ -343,7 +361,11 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpG
 	log.Info("server status ", "mcpregistrationname", mcpsr.Name, "status", gatewayServerStatus)
 	// if there is an id that matches then the gateway is registering the mcp
 	if gatewayServerStatus.ID != "" {
-		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
+		reason := conditionReasonNotReady
+		if gatewayServerStatus.Ready {
+			reason = conditionReasonReady
+		}
+		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, reason, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
 			log.Error(err, "Failed to update status")
 			return err
 		}
@@ -359,7 +381,7 @@ func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpG
 	}
 	// otherwise it hasn't picked up the config yet
 
-	if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, errServerNotPresent.Error(), 0); err != nil {
+	if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, conditionReasonNotReady, errServerNotPresent.Error(), 0); err != nil {
 		return err
 	}
 
@@ -376,14 +398,31 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		return nil, err
 	}
 
+	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
+	// if a CA cert is configured, the upstream must be HTTPS
+	endpoint := serverInfo.Endpoint
+	if mcpsr.Spec.CACertSecretRef != nil {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse endpoint URL %q: %w", endpoint, err)
+		}
+		if strings.EqualFold(u.Scheme, "http") {
+			u.Scheme = "https"
+			endpoint = u.String()
+		}
+	}
+
 	serverConfig := config.MCPServer{
-		Name:     serverName,
-		URL:      serverInfo.Endpoint,
-		Hostname: serverInfo.Hostname,
-		Prefix:   mcpsr.Spec.Prefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		Name:             serverName,
+		URL:              endpoint,
+		Hostname:         serverInfo.Hostname,
+		Prefix:           mcpsr.Spec.Prefix,
+		State:            string(mcpsr.Spec.State),
+		Category:         append([]string(nil), mcpsr.Spec.Category...),
+		Hint:             mcpsr.Spec.Hint,
+		UserSpecificList: mcpsr.Spec.UserSpecificList == mcpv1alpha1.UserSpecificListEnabled,
+		Tags:             append([]string(nil), mcpsr.Spec.Tags...),
 	}
 
 	if mcpsr.Spec.TokenURLElicitation != nil {
@@ -419,6 +458,42 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		serverConfig.Credential = string(val)
 
 	}
+
+	if mcpsr.Spec.CACertSecretRef != nil {
+		caSecret := &corev1.Secret{}
+		err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
+			Name:      mcpsr.Spec.CACertSecretRef.Name,
+			Namespace: mcpsr.Namespace,
+		}, caSecret)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("CA certificate secret %s not found", mcpsr.Spec.CACertSecretRef.Name)
+			}
+			return nil, fmt.Errorf("failed to get CA certificate secret: %w", err)
+		}
+
+		if caSecret.Labels == nil || caSecret.Labels[ManagedSecretLabel] != ManagedSecretValue {
+			return nil, fmt.Errorf("CA certificate secret %s is missing required label %s=%s",
+				mcpsr.Spec.CACertSecretRef.Name, ManagedSecretLabel, ManagedSecretValue)
+		}
+
+		key := mcpsr.Spec.CACertSecretRef.Key
+		if key == "" {
+			key = "ca.crt"
+		}
+		val, ok := caSecret.Data[key]
+		if !ok {
+			return nil, fmt.Errorf("CA certificate secret %s missing key %s", mcpsr.Spec.CACertSecretRef.Name, key)
+		}
+		if len(val) > maxCACertSize {
+			return nil, fmt.Errorf("CA certificate data in secret %s exceeds maximum size (%d bytes)", mcpsr.Spec.CACertSecretRef.Name, maxCACertSize)
+		}
+		if err := validateCACertPEM(val); err != nil {
+			return nil, fmt.Errorf("CA certificate in secret %s is invalid: %w", mcpsr.Spec.CACertSecretRef.Name, err)
+		}
+		serverConfig.CACert = string(val)
+	}
+
 	return &serverConfig, nil
 }
 
@@ -501,7 +576,10 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 	return endpoint, routingHostname
 }
 
-// determineProtocol determines the protocol (http/https) for the service endpoint
+// determineProtocol determines the protocol (http/https) for the service endpoint.
+// For external services it checks the appProtocol on the matching port.
+// For internal services it defaults to http; TLS upstreams are handled by the
+// caCertSecretRef scheme upgrade in buildMCPServerConfig.
 func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
 	if isExternal {
 		for _, port := range service.Spec.Ports {
@@ -512,11 +590,6 @@ func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *core
 				break
 			}
 		}
-		return "http"
-	}
-
-	if route.UsesHTTPS() {
-		return "https"
 	}
 	return "http"
 }
@@ -588,20 +661,21 @@ func (r *MCPReconciler) updateStatus(
 	ctx context.Context,
 	mcpsr *mcpv1alpha1.MCPServerRegistration,
 	ready bool,
+	reason string,
 	message string,
 	toolCount int32,
 ) error {
 	condition := metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionFalse,
-		Reason:             "NotReady",
+		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
 	}
 
 	if ready {
 		condition.Status = metav1.ConditionTrue
-		condition.Reason = "Ready"
+		condition.Reason = conditionReasonReady
 	}
 
 	statusChanged := false
@@ -742,6 +816,37 @@ func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Conte
 	return requests
 }
 
+// validateCACertPEM checks that the data contains at least one valid PEM-encoded certificate.
+func validateCACertPEM(data []byte) error {
+	rest := data
+	found := false
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return fmt.Errorf("unexpected PEM block type %q, expected CERTIFICATE", block.Type)
+		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return fmt.Errorf("failed to parse certificate: %w", err)
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("no valid PEM certificate blocks found")
+	}
+	return nil
+}
+
+// mcpsrReferencesSecret checks whether a MCPServerRegistration references the named secret
+// via either credentialRef or caCertSecretRef.
+func mcpsrReferencesSecret(spec mcpv1alpha1.MCPServerRegistrationSpec, secretName string) bool {
+	return (spec.CredentialRef != nil && spec.CredentialRef.Name == secretName) ||
+		(spec.CACertSecretRef != nil && spec.CACertSecretRef.Name == secretName)
+}
+
 // findMCPServerRegistrationsForSecret finds MCPServerRegistrations referencing the given secret
 func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
@@ -756,8 +861,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 	log.Info("findMCPServerRegistrationsForSecret", "total mcpserverregistrations", len(mcpsrList.Items))
 	var requests []reconcile.Request
 	for _, mcpsr := range mcpsrList.Items {
-		// check if references this secret
-		if mcpsr.Spec.CredentialRef != nil && mcpsr.Spec.CredentialRef.Name == secret.Name {
+		if mcpsrReferencesSecret(mcpsr.Spec, secret.Name) {
 			log.Info("findMCPServerRegistrationsForSecret", "requeue", mcpsr.Name)
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{

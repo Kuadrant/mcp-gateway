@@ -119,7 +119,6 @@ sequenceDiagram
     participant Client as MCP Client
     participant Gateway as Envoy
     participant Router as MCP Router (ext_proc)
-    participant Broker as MCP Broker
     participant Cache as Session Cache
     participant Upstream as Upstream MCP Server
 
@@ -133,18 +132,22 @@ sequenceDiagram
     Upstream-->>Gateway: 401 Unauthorized
     Gateway->>Router: ext_proc response (401)
     Router->>Cache: DeleteUserToken(sessionID, "github")
-    Router->>Router: Route to broker /mcp/elicitation endpoint
-    Router-->>Gateway: Set path=/mcp/elicitation, add elicitation headers
-    Gateway->>Broker: POST /mcp/elicitation
-    Broker-->>Client: URLElicitationRequiredError (-32042) via SSE
-    Note over Client,Broker: Client prompts user to re-enter token
+    Router-->>Gateway: Pass 401 through to client
+    Gateway-->>Client: 401 Unauthorized
+
+    Note over Client: Client retries tool call
+    Client->>Gateway: POST /mcp tools/call (retry)
+    Gateway->>Router: ext_proc request
+    Router->>Cache: GetUserToken → empty (deleted)
+    Router->>Router: Cache miss → trigger elicitation
+    Note over Router,Client: Existing cache-miss flow returns -32042
 ```
 
 ### Component Responsibilities
 
 | Component | Role |
 |-----------|------|
-| **Router** | (1) If `Authorization` header present, use as-is for upstream routing. (2) If absent, check cache — inject cached token on hit. (3) On cache miss, route the request to the broker's `/mcp/elicitation` endpoint (setting `x-mcp-elicitation-id` and `x-mcp-request-id` headers) if client declares `elicitation.url` capability, otherwise return standard error. (4) On upstream 401, invalidate cached token and re-elicit or error per client capability. |
+| **Router** | (1) If `Authorization` header present, use as-is for upstream routing. (2) If absent, check cache — inject cached token on hit. (3) On cache miss, route the request to the broker's `/mcp/elicitation` endpoint (setting `x-mcp-elicitation-id` and `x-mcp-request-id` headers) if client declares `elicitation.url` capability, otherwise return standard error. (4) On upstream 401, invalidate cached token and pass 401 through — the client's next retry hits the cache-miss path (3) which triggers re-elicitation. |
 | **Broker** | (1) Hosts `/mcp/elicitation` endpoint — looks up the elicitation entry, resolves the server config, builds the token page URL, and returns the `-32042` SSE response. (2) Hosts `/tokens` page for token collection, writes token to cache. |
 | **Cache** | Shared storage for per-user, per-server tokens |
 | **Controller** | Propagates `tokenURLElicitation` from CRD to config. Includes `/tokens` path rule in the generated HTTPRoute alongside `/mcp`. |

@@ -5,6 +5,9 @@ package clients
 
 import (
 	"context"
+	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -84,7 +87,7 @@ func TestInitialize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := Initialize(context.Background(), tc.gatewayHost, tc.routerKey, tc.conf, tc.passThroughHeaders, false)
+			client, err := Initialize(context.Background(), tc.gatewayHost, tc.routerKey, tc.conf, tc.passThroughHeaders, false, nil)
 			if tc.expectedError {
 				require.Error(t, err)
 				return
@@ -94,4 +97,55 @@ func TestInitialize(t *testing.T) {
 			require.NotNil(t, client)
 		})
 	}
+}
+
+func TestBuildHairpinHTTPClient(t *testing.T) {
+	t.Run("returns plain client for HTTP private host", func(t *testing.T) {
+		c, err := BuildHairpinHTTPClient("http://gw.svc:8080", "mcp.example.com", "")
+		require.NoError(t, err)
+		require.NotNil(t, c)
+	})
+
+	t.Run("returns plain client for bare host without scheme", func(t *testing.T) {
+		c, err := BuildHairpinHTTPClient("gw.svc:8080", "mcp.example.com", "")
+		require.NoError(t, err)
+		require.NotNil(t, c)
+	})
+
+	t.Run("HTTPS sets ServerName and TLS minimum version", func(t *testing.T) {
+		c, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+		require.NotNil(t, c)
+
+		tr, ok := c.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.Equal(t, "mcp.example.com", tr.TLSClientConfig.ServerName)
+		require.Equal(t, uint16(0x0303), tr.TLSClientConfig.MinVersion) // tls.VersionTLS12
+	})
+
+	t.Run("HTTPS strips port from publicHost for ServerName", func(t *testing.T) {
+		c, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com:8443", "")
+		require.NoError(t, err)
+		require.NotNil(t, c)
+
+		tr, ok := c.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.Equal(t, "mcp.example.com", tr.TLSClientConfig.ServerName)
+	})
+
+	t.Run("errors on non-existent CA cert path", func(t *testing.T) {
+		_, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", "/nonexistent/ca.crt")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to read gateway CA cert")
+	})
+
+	t.Run("errors on invalid PEM content", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		badCert := filepath.Join(tmpDir, "bad.crt")
+		require.NoError(t, os.WriteFile(badCert, []byte("not a certificate"), 0600))
+
+		_, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", badCert)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse gateway CA cert PEM")
+	})
 }

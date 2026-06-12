@@ -113,6 +113,13 @@ func (m *MockMCP) Ping(_ context.Context) error {
 	return m.pingErr
 }
 
+func (m *MockMCP) IsEnabled() bool {
+	if m.cfg == nil {
+		return true
+	}
+	return m.cfg.State == "" || m.cfg.State == string(mcpv1alpha1.ServerStateEnabled)
+}
+
 func (m *MockMCP) ProtocolInfo() *mcp.InitializeResult {
 	result := &mcp.InitializeResult{
 		ProtocolVersion: m.protocolVersion,
@@ -532,6 +539,30 @@ func TestMCPManager_manage_Success(t *testing.T) {
 	assert.Len(t, gateway.tools, 2)
 	assert.Contains(t, gateway.tools, "test_tool1")
 	assert.Contains(t, gateway.tools, "test_tool2")
+}
+
+func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("user-specific-server", "us_")
+	mock.cfg.UserSpecificList = true
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasToolsCap = false
+	gateway := newMockToolsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+
+	status := manager.GetStatus()
+	assert.True(t, status.Ready, "server should be healthy")
+	assert.Equal(t, 0, status.TotalTools, "no tools should be cached")
+	assert.Contains(t, status.Message, "userSpecificList")
+
+	// no tools added to gateway
+	assert.Empty(t, gateway.tools, "tools should not be added to gateway for userSpecificList servers")
+
+	// connect and ping still ran
+	assert.True(t, mock.connected.Load(), "server should still be connected for health checks")
 }
 
 func TestDiffTools(t *testing.T) {

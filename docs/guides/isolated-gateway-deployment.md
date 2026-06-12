@@ -274,10 +274,10 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
   --set gateway.nodePort.create=true \
-  --set gateway.nodePort.mcpPort=30471
+  --set gateway.nodePort.mcpPort=30071
 ```
 
-> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30471) to host ports.
+> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30071) to host ports. Pick NodePorts inside the Kubernetes static subrange (30000-30085 for the default port range) so dynamic NodePort allocation will not collide with them.
 
 ## Next Steps: Register MCP Servers
 

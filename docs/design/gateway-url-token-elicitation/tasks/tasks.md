@@ -13,7 +13,7 @@ Branch: `URL-Elicitation-User-Credentials`
 ### Client elicitation capability flow (already implemented)
 1. **Parsed**: `MCPRequest.clientSupportsElicitation()` (`request_handlers.go:134-149`) — checks `capabilities.elicitation` in initialize params
 2. **Stored**: `HandleResponseHeaders` (`response_handlers.go:26-35`) — on initialize response, calls `SessionCache.SetClientElicitation(ctx, sessionID)` to persist the flag
-3. **Read**: `initializeMCPSeverSession` (`request_handlers.go:537-544`) — reads `SessionCache.GetClientElicitation()` and sets `mcpReq.clientElicitation`
+3. **Read**: `initializeMCPServerSession` (`request_handlers.go:537-544`) — reads `SessionCache.GetClientElicitation()` and sets `mcpReq.clientElicitation`
 4. **Forwarded**: `clients.Initialize()` (`internal/clients/clients.go:40-42`) — if client declared elicitation, gateway declares it to backend too via `mcp.ElicitationCapability{}`
 5. **Cache impl**: `internal/session/cache.go:96-120` — stores as `clientelicitation:<sessionID>` key
 
@@ -180,24 +180,23 @@ Depends on: Task 3. Independent of Task 4 — touches broker, not router.
 
 ---
 
-### Task 6: Router 401 invalidation + re-elicitation (CONNLINK-999)
+### Task 6: Router 401 invalidation (CONNLINK-999)
 
-Depends on: Task 4 (reuses the -32042 helper).
+Depends on: Task 4.
 
 **Files:**
 - `internal/mcp-router/response_handlers.go` — modify `HandleResponseHeaders` to handle 401:
   1. If status is 401 and server has `TokenURLElicitation` config and `--enable-url-elicitation`:
-     - Delete cached token via `UserTokenCache.DeleteUserToken`
-     - Check client capability via `SessionCache.GetClientElicitation(ctx, gatewaySessionID)` (same flow as Task 4)
-     - If client supports elicitation → return `-32042` immediate response (reuse helper from Task 4)
-     - If not → pass 401 through as-is
+     - Delete cached token via `SessionCache.DeleteUserToken`
+     - Pass the 401 through to the client as-is
+  2. On the client's next retry, the existing cache-miss path in `HandleToolCall` triggers `-32042` re-elicitation
 - `internal/mcp-router/response_handlers_test.go` — unit tests
 
 **Acceptance criteria:**
-- [ ] 401 from upstream with elicitation-configured server → token deleted + -32042 returned
-- [ ] 401 without elicitation capability → standard 401 pass-through
-- [ ] 401 from non-elicitation server → no change (existing behavior)
-- [ ] Feature flag disabled → 401 passed through as-is
+- [x] 401 from upstream with elicitation-configured server → token deleted, 401 passed through
+- [x] Next retry after 401 → cache miss triggers -32042 re-elicitation
+- [x] 401 from non-elicitation server → no change (existing behavior)
+- [x] Feature flag disabled → 401 passed through as-is, no token deletion
 
 **E2E test cases (from `e2e_test_cases.md`):**
 - `[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation`

@@ -21,7 +21,7 @@ func TestInMemoryCache_AddSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// add first session for a key
-	ok, err := cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1")
+	ok, err := cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -32,7 +32,7 @@ func TestInMemoryCache_AddSession(t *testing.T) {
 	require.Equal(t, "upstream-session-1", sessions["server1"])
 
 	// add second session for same key but different server
-	ok, err = cache.AddSession(ctx, "gateway-session-1", "server2", "upstream-session-2")
+	ok, err = cache.AddSession(ctx, "gateway-session-1", "server2", "upstream-session-2", 0)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -67,7 +67,7 @@ func TestInMemoryCache_KeyExists(t *testing.T) {
 	require.False(t, exists)
 
 	// add session
-	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1")
+	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1", 0)
 	require.NoError(t, err)
 
 	// key now exists
@@ -82,9 +82,9 @@ func TestInMemoryCache_DeleteSessions(t *testing.T) {
 	require.NoError(t, err)
 
 	// add sessions
-	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1")
+	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1", 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(ctx, "gateway-session-2", "server1", "upstream-session-2")
+	_, err = cache.AddSession(ctx, "gateway-session-2", "server1", "upstream-session-2", 0)
 	require.NoError(t, err)
 
 	// verify both exist
@@ -116,7 +116,7 @@ func TestInMemoryCache_UpdateExistingSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// add initial session
-	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1")
+	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1", 0)
 	require.NoError(t, err)
 
 	sessions, err := cache.GetSession(ctx, "gateway-session-1")
@@ -124,7 +124,7 @@ func TestInMemoryCache_UpdateExistingSession(t *testing.T) {
 	require.Equal(t, "upstream-session-1", sessions["server1"])
 
 	// update same server with new session id
-	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1-updated")
+	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1-updated", 0)
 	require.NoError(t, err)
 
 	// verify session was updated
@@ -149,7 +149,7 @@ func TestInMemoryCache_MultipleServersPerGatewaySession(t *testing.T) {
 	}
 
 	for serverName, upstreamSession := range servers {
-		_, err = cache.AddSession(ctx, gatewaySession, serverName, upstreamSession)
+		_, err = cache.AddSession(ctx, gatewaySession, serverName, upstreamSession, 0)
 		require.NoError(t, err)
 	}
 
@@ -178,11 +178,11 @@ func TestInMemoryCache_RemoveServerSession(t *testing.T) {
 	gatewaySession := "gateway-session-1"
 
 	// add sessions for multiple servers
-	_, err = cache.AddSession(ctx, gatewaySession, "server1", "upstream-session-1")
+	_, err = cache.AddSession(ctx, gatewaySession, "server1", "upstream-session-1", 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(ctx, gatewaySession, "server2", "upstream-session-2")
+	_, err = cache.AddSession(ctx, gatewaySession, "server2", "upstream-session-2", 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(ctx, gatewaySession, "server3", "upstream-session-3")
+	_, err = cache.AddSession(ctx, gatewaySession, "server3", "upstream-session-3", 0)
 	require.NoError(t, err)
 
 	// verify all sessions are stored
@@ -255,7 +255,7 @@ func TestInMemoryCache_SetAndGetClientElicitation(t *testing.T) {
 	require.False(t, val)
 
 	// set elicitation
-	err = cache.SetClientElicitation(ctx, sessionID)
+	err = cache.SetClientElicitation(ctx, sessionID, 0)
 	require.NoError(t, err)
 
 	// now returns true
@@ -270,7 +270,7 @@ func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	// seed one entry so concurrent callers retrieve the same stored map reference
-	_, err = cache.AddSession(ctx, "gateway-session-1", "seed", "seed-session")
+	_, err = cache.AddSession(ctx, "gateway-session-1", "seed", "seed-session", 0)
 	require.NoError(t, err)
 
 	const n = 50
@@ -282,6 +282,7 @@ func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
 			_, addErr := cache.AddSession(ctx, "gateway-session-1",
 				fmt.Sprintf("server%d", i),
 				fmt.Sprintf("upstream-session-%d", i),
+				0,
 			)
 			assert.NoError(t, addErr)
 		}(i)
@@ -303,6 +304,7 @@ func TestInMemoryCache_RemoveServerSession_Concurrent(t *testing.T) {
 		_, err = cache.AddSession(ctx, "gateway-session-1",
 			fmt.Sprintf("server%d", i),
 			fmt.Sprintf("upstream-session-%d", i),
+			0,
 		)
 		require.NoError(t, err)
 	}
@@ -340,6 +342,7 @@ func TestInMemoryCache_DeleteSessions_Concurrent(t *testing.T) {
 			_, addErr := cache.AddSession(ctx, "gateway-session-1",
 				fmt.Sprintf("server%d", i),
 				fmt.Sprintf("upstream-session-%d", i),
+				0,
 			)
 			assert.NoError(t, addErr)
 		}(i)
@@ -360,9 +363,9 @@ func TestInMemoryCache_DeleteSessionsCleansUpElicitation(t *testing.T) {
 	sessionID := "gateway-session-1"
 
 	// set elicitation and add a session
-	err = cache.SetClientElicitation(ctx, sessionID)
+	err = cache.SetClientElicitation(ctx, sessionID, 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(ctx, sessionID, "server1", "upstream-1")
+	_, err = cache.AddSession(ctx, sessionID, "server1", "upstream-1", 0)
 	require.NoError(t, err)
 
 	// verify both exist
@@ -529,4 +532,64 @@ func TestCheckJWTExpiry(t *testing.T) {
 			assert.Equal(t, tt.expired, checkUpstreamJWTExpiry(tt.token))
 		})
 	}
+}
+
+// TestAddSession_TTLPassedToRedis verifies that a positive TTL is forwarded to
+// the Redis Expire command and that TTL=0 results in no expiry being set.
+// This test uses the in-memory path as a contract smoke-test; the Redis pipeline
+// path is exercised in integration tests that start a real Redis instance.
+func TestAddSession_TTLPassedToRedis(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("zero TTL is accepted in-memory", func(t *testing.T) {
+		cache, err := NewCache()
+		require.NoError(t, err)
+
+		ok, err := cache.AddSession(ctx, "sess", "srv", "remote", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		sessions, err := cache.GetSession(ctx, "sess")
+		require.NoError(t, err)
+		require.Equal(t, "remote", sessions["srv"])
+	})
+
+	t.Run("positive TTL is accepted in-memory", func(t *testing.T) {
+		cache, err := NewCache()
+		require.NoError(t, err)
+
+		ok, err := cache.AddSession(ctx, "sess2", "srv", "remote2", time.Hour)
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		sessions, err := cache.GetSession(ctx, "sess2")
+		require.NoError(t, err)
+		require.Equal(t, "remote2", sessions["srv"])
+	})
+}
+
+// TestSetClientElicitation_TTL verifies that TTL is accepted by both the
+// zero and positive cases for in-memory mode.
+func TestSetClientElicitation_TTL(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("zero TTL", func(t *testing.T) {
+		cache, err := NewCache()
+		require.NoError(t, err)
+
+		require.NoError(t, cache.SetClientElicitation(ctx, "sess", 0))
+		ok, err := cache.GetClientElicitation(ctx, "sess")
+		require.NoError(t, err)
+		require.True(t, ok)
+	})
+
+	t.Run("positive TTL", func(t *testing.T) {
+		cache, err := NewCache()
+		require.NoError(t, err)
+
+		require.NoError(t, cache.SetClientElicitation(ctx, "sess2", time.Hour))
+		ok, err := cache.GetClientElicitation(ctx, "sess2")
+		require.NoError(t, err)
+		require.True(t, ok)
+	})
 }

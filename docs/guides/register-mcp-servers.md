@@ -213,6 +213,22 @@ rm -f /tmp/mcp_headers
 
 You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
 
+## Disabling a Server
+
+You can temporarily disable a registered server without deleting it. Setting `state: Disabled` disconnects the broker from the upstream server and removes its tools and prompts from the gateway.
+
+```bash
+kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Disabled"}}'
+```
+
+The status condition will show `Ready: False` with reason `Disabled`. To re-enable:
+
+```bash
+kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Enabled"}}'
+```
+
+The broker reconnects and restores the server's tools and prompts. No other resources need to be recreated.
+
 ## Next Steps
 
 After you have MCP servers registered, you can explore advanced features:

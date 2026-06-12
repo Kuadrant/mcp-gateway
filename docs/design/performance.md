@@ -30,6 +30,6 @@ Always use the injected `logger` instance so log levels are respected and tests 
 
 ## Profiling
 
-pprof is always available on port 6060 in the broker. Load testing and profile capture:
+pprof is always available on port 6060 in the broker-router binary. Load testing and profile capture:
 
 See `tests/perf/` for load testing scripts and `tests/perf/README.md` for full details. PR #797 for profiling methodology.

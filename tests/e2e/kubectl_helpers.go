@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -95,29 +96,131 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 	return nil
 }
 
-// AddDeploymentCommandFlag patches a deployment's first container to add a command-line flag
-// if it isn't already present. Triggers a rollout and waits for it to complete.
-func AddDeploymentCommandFlag(namespace, name, flag string) error {
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", name,
-		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}")
+// AddDeploymentCommandFlag appends a flag to a deployment's container command array.
+func AddDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"%s"}]`, flag)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to get deployment args: %s: %w", string(output), err)
-	}
-	if strings.Contains(string(output), flag) {
-		return nil
-	}
-
-	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":"%s","args":["%s"]}]}}}}`, name, flag)
-	// use strategic merge so the args array is merged, not replaced
-	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", name,
-		"-n", namespace, "--type=strategic", "-p", patch)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to patch deployment %s: %s: %w", name, string(output), err)
+		return fmt.Errorf("failed to add command flag on deployment %s: %s: %w", deploymentName, string(output), err)
 	}
 	return nil
+}
+
+// RemoveDeploymentCommandFlag removes a flag from a deployment's container command array by value.
+func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName, flag string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].command}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get command array: %s: %w", string(output), err)
+	}
+	var command []string
+	if err := json.Unmarshal(output, &command); err != nil {
+		return fmt.Errorf("failed to parse command array: %w: %s", err, string(output))
+	}
+	idx := -1
+	for i, c := range command {
+		if c == flag {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/command/%d"}]`, idx)
+	cmd = exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patch)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to remove command flag on deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return nil
+}
+
+// AddGatewayHTTPSListener patches a Gateway to add an HTTPS listener with TLS termination.
+func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listenerName, hostname, certSecretName string, port int) error {
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/listeners/-","value":{`+
+		`"name":"%s","hostname":"%s","port":%d,"protocol":"HTTPS",`+
+		`"tls":{"mode":"Terminate","certificateRefs":[{"kind":"Secret","name":"%s"}]},`+
+		`"allowedRoutes":{"namespaces":{"from":"All"}}}}]`,
+		listenerName, hostname, port, certSecretName)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
+		"-n", namespace, "--type=json", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
+	}
+	return nil
+}
+
+// PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.
+func PatchDeploymentJSON(ctx context.Context, namespace, deploymentName, patchJSON string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "deployment", deploymentName,
+		"-n", namespace, "--type=json", "-p", patchJSON)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return nil
+}
+
+// RemoveDeploymentVolume removes a volume by name from a deployment's pod spec.
+func RemoveDeploymentVolume(ctx context.Context, namespace, deploymentName, volumeName string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.volumes}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get volumes: %s: %w", string(output), err)
+	}
+	var volumes []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(output, &volumes); err != nil {
+		return fmt.Errorf("failed to parse volumes: %w: %s", err, string(output))
+	}
+	idx := -1
+	for i, v := range volumes {
+		if v.Name == volumeName {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/volumes/%d"}]`, idx)
+	return PatchDeploymentJSON(ctx, namespace, deploymentName, patch)
+}
+
+// RemoveDeploymentVolumeMount removes a volume mount by name from the first container.
+func RemoveDeploymentVolumeMount(ctx context.Context, namespace, deploymentName, mountName string) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
+		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].volumeMounts}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get volumeMounts: %s: %w", string(output), err)
+	}
+	var mounts []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(output, &mounts); err != nil {
+		return fmt.Errorf("failed to parse volumeMounts: %w: %s", err, string(output))
+	}
+	idx := -1
+	for i, m := range mounts {
+		if m.Name == mountName {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/volumeMounts/%d"}]`, idx)
+	return PatchDeploymentJSON(ctx, namespace, deploymentName, patch)
 }
 
 // SetURLElicitation patches the MCPGatewayExtension to enable or disable URL elicitation.
@@ -147,6 +250,34 @@ func IsTrustedHeadersEnabled(ctx context.Context) bool {
 		return false
 	}
 	return strings.TrimSpace(string(output)) != ""
+}
+
+// SetOAuthProtectedResource patches the MCPGatewayExtension to set the oauthProtectedResource field.
+func SetOAuthProtectedResource(ctx context.Context, namespace, name string, authServers []string) error {
+	servers, err := json.Marshal(authServers)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authServers: %w", err)
+	}
+	patch := fmt.Sprintf(`{"spec":{"oauthProtectedResource":{"authorizationServers":%s}}}`, servers)
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to patch mcpgatewayextension %s: %s: %w", name, string(output), err)
+	}
+	return nil
+}
+
+// ClearOAuthProtectedResource removes the oauthProtectedResource field from the MCPGatewayExtension.
+func ClearOAuthProtectedResource(ctx context.Context, namespace, name string) error {
+	patch := `{"spec":{"oauthProtectedResource":null}}`
+	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
+		"-n", namespace, "--type=merge", "-p", patch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to clear oauthProtectedResource on %s: %s: %w", name, string(output), err)
+	}
+	return nil
 }
 
 // IsAuthPolicyConfigured checks if AuthPolicy resources exist in the gateway namespace
