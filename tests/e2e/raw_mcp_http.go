@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,12 +23,8 @@ var mcpHTTPClient *http.Client
 
 func getMCPHTTPClient() *http.Client {
 	if mcpHTTPClient == nil {
-		if strings.ToLower(useInsecureClient) == "true" {
-			mcpHTTPClient = &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-				},
-			}
+		if hc := e2eHTTPClient(gatewayURL); hc != nil {
+			mcpHTTPClient = hc
 		} else {
 			mcpHTTPClient = &http.Client{}
 		}

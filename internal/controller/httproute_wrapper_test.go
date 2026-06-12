@@ -286,39 +286,61 @@ func TestHTTPRouteWrapper_Accessors(t *testing.T) {
 }
 
 func TestHTTPRouteWrapper_UsesHTTPS(t *testing.T) {
-	httpsSectionName := gatewayv1.SectionName("https")
-	httpSectionName := gatewayv1.SectionName("http")
+	httpsListener := gatewayv1.SectionName("mcp-tls")
+	httpListener := gatewayv1.SectionName("mcp")
+
+	gateway := &gatewayv1.Gateway{
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{
+				{Name: "mcp-tls", Port: 8443, Protocol: gatewayv1.HTTPSProtocolType},
+				{Name: "mcp", Port: 8080, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
 
 	tests := []struct {
 		name       string
 		parentRefs []gatewayv1.ParentReference
+		gateway    *gatewayv1.Gateway
 		want       bool
 	}{
 		{
 			name:       "no parent refs",
 			parentRefs: nil,
+			gateway:    gateway,
 			want:       false,
 		},
 		{
-			name: "https section name",
+			name: "section targets HTTPS listener",
 			parentRefs: []gatewayv1.ParentReference{{
-				SectionName: &httpsSectionName,
+				SectionName: &httpsListener,
 			}},
-			want: true,
+			gateway: gateway,
+			want:    true,
 		},
 		{
-			name: "http section name",
+			name: "section targets HTTP listener",
 			parentRefs: []gatewayv1.ParentReference{{
-				SectionName: &httpSectionName,
+				SectionName: &httpListener,
 			}},
-			want: false,
+			gateway: gateway,
+			want:    false,
 		},
 		{
 			name: "nil section name",
 			parentRefs: []gatewayv1.ParentReference{{
 				SectionName: nil,
 			}},
-			want: false,
+			gateway: gateway,
+			want:    false,
+		},
+		{
+			name: "nil gateway",
+			parentRefs: []gatewayv1.ParentReference{{
+				SectionName: &httpsListener,
+			}},
+			gateway: nil,
+			want:    false,
 		},
 	}
 
@@ -341,7 +363,7 @@ func TestHTTPRouteWrapper_UsesHTTPS(t *testing.T) {
 			}
 
 			w := WrapHTTPRoute(route)
-			if got := w.UsesHTTPS(); got != tt.want {
+			if got := w.UsesHTTPS(tt.gateway); got != tt.want {
 				t.Errorf("UsesHTTPS() = %v, want %v", got, tt.want)
 			}
 		})

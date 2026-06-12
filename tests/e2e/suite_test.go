@@ -45,6 +45,7 @@ import (
 	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -139,6 +140,10 @@ var _ = BeforeSuite(func() {
 		g.Expect(extList.Items).To(BeEmpty())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
+	By("adding HTTPS listener to the gateway")
+	Expect(AddGatewayHTTPSListener(ctx, GatewayNamespace, GatewayName,
+		GatewayListenerName, "*.mcp-gateway.local", "mcp-gateway-tls-cert", 8443)).To(Succeed())
+
 	By("setting up MCPGatewayExtension with ReferenceGrant")
 	defaultMCPGatewayExt = NewMCPGatewayExtensionSetup(k8sClient).
 		WithName(MCPExtensionName).
@@ -146,6 +151,7 @@ var _ = BeforeSuite(func() {
 		TargetingGateway(GatewayName, GatewayNamespace).
 		WithSectionName(GatewayListenerName).
 		WithPublicHost(gatewayPublicHost).
+		WithListenerPort(8443).
 		Build()
 
 	defaultMCPGatewayExt.
@@ -168,12 +174,58 @@ var _ = BeforeSuite(func() {
 
 	By("enabling debug logging on the gateway")
 	Expect(AddDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--log-level=-4")).To(Succeed())
+
+	By("patching broker-router: CA cert for HTTPS listener")
+	caSecret := &corev1.Secret{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)).To(Succeed())
+	caCertPEM, ok := caSecret.Data["ca.crt"]
+	Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
+
+	caBundle := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-ca-bundle",
+			Namespace: SystemNamespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"ca.crt": caCertPEM},
+	}
+	_ = k8sClient.Delete(ctx, caBundle)
+	Expect(k8sClient.Create(ctx, caBundle)).To(Succeed())
+
+	combinedPatch := `[` +
+		`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},` +
+		`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
+		`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
+		`]`
+	Expect(PatchDeploymentJSON(ctx, SystemNamespace, "mcp-gateway", combinedPatch)).To(Succeed())
 	Expect(WaitForDeploymentReady(ctx, SystemNamespace, "mcp-gateway")).To(Succeed())
 
 })
 
 var _ = AfterSuite(func() {
 	By("Tearing down the test environment")
+
+	By("cleaning up gateway CA bundle and deployment patches")
+	caBundle := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
+	}
+	_ = k8sClient.Delete(ctx, caBundle)
+	_ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
+	_ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+	_ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
+
+	By("removing HTTPS listener from gateway")
+	gw := &gatewayapiv1.Gateway{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: GatewayName, Namespace: GatewayNamespace}, gw); err == nil {
+		var listeners []gatewayapiv1.Listener
+		for _, l := range gw.Spec.Listeners {
+			if string(l.Name) != GatewayListenerName {
+				listeners = append(listeners, l)
+			}
+		}
+		gw.Spec.Listeners = listeners
+		_ = k8sClient.Update(ctx, gw)
+	}
 
 	if defaultMCPGatewayExt != nil {
 		defaultMCPGatewayExt.TearDown(ctx)

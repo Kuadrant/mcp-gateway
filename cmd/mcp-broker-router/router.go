@@ -15,6 +15,7 @@ func (a *app) createRouter() {
 		Logger:              a.logger.With("component", "router"),
 		JWTManager:          a.jwtMgr,
 		InitForClient:       clients.Initialize,
+		HairpinHTTPClient:   a.hairpinClient,
 		SessionCache:        a.sessionCache,
 		ElicitationMap:      a.elicitMap,
 		TokenElicitationMap: a.tokenElicitMap,

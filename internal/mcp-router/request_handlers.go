@@ -753,7 +753,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpotel.SpanError(initSpan, err, "failed to generate backend-init token")
 			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
 		}
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinHTTPClient)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")

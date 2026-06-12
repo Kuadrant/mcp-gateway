@@ -36,13 +36,13 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 									{Name: "grpc", ContainerPort: 50051},
 								},
 								VolumeMounts: []corev1.VolumeMount{
-									{Name: "config", MountPath: "/config"},
+									{Name: "config-volume", MountPath: "/config"},
 								},
 							},
 						},
 						Volumes: []corev1.Volume{
 							{
-								Name: "config",
+								Name: "config-volume",
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: "config-secret",
@@ -122,29 +122,39 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "volume mount changed",
+			name: "managed volume mount changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/new-config"
 			},
 			expected: true,
 		},
 		{
-			name: "volume added",
+			name: "user-added volume does not trigger update",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Volumes = append(
 					d.Spec.Template.Spec.Volumes,
 					corev1.Volume{
-						Name: "data",
+						Name: "ca-cert",
 						VolumeSource: corev1.VolumeSource{
-							EmptyDir: &corev1.EmptyDirVolumeSource{},
+							Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"},
 						},
 					},
 				)
 			},
-			expected: true,
+			expected: false,
 		},
 		{
-			name: "volume secret name changed",
+			name: "user-added volume mount does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					d.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{Name: "ca-cert", MountPath: "/certs"},
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "managed volume secret name changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Volumes[0].Secret.SecretName = "new-secret"
 			},
@@ -1577,6 +1587,90 @@ func TestMergeEnvVars(t *testing.T) {
 			got := mergeEnvVars(tt.desired, tt.existing)
 			if !equality.Semantic.DeepEqual(got, tt.want) {
 				t.Errorf("mergeEnvVars() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeVolumes(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  []corev1.Volume
+		existing []corev1.Volume
+		want     []corev1.Volume
+	}{
+		{
+			name:     "no user volumes",
+			desired:  []corev1.Volume{{Name: "config-volume"}},
+			existing: []corev1.Volume{{Name: "config-volume"}},
+			want:     []corev1.Volume{{Name: "config-volume"}},
+		},
+		{
+			name:    "preserves user volumes from existing",
+			desired: []corev1.Volume{{Name: "config-volume"}},
+			existing: []corev1.Volume{
+				{Name: "config-volume"},
+				{Name: "ca-cert", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"}}},
+			},
+			want: []corev1.Volume{
+				{Name: "config-volume"},
+				{Name: "ca-cert", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"}}},
+			},
+		},
+		{
+			name:    "updates managed volume, preserves user volume",
+			desired: []corev1.Volume{{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "new-config"}}}},
+			existing: []corev1.Volume{
+				{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "old-config"}}},
+				{Name: "user-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+			want: []corev1.Volume{
+				{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "new-config"}}},
+				{Name: "user-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeVolumes(tt.desired, tt.existing)
+			if !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("mergeVolumes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeVolumeMounts(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  []corev1.VolumeMount
+		existing []corev1.VolumeMount
+		want     []corev1.VolumeMount
+	}{
+		{
+			name:     "no user mounts",
+			desired:  []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			existing: []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			want:     []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+		},
+		{
+			name:    "preserves user mounts from existing",
+			desired: []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			existing: []corev1.VolumeMount{
+				{Name: "config-volume", MountPath: "/config"},
+				{Name: "ca-cert", MountPath: "/certs/ca.crt", SubPath: "ca.crt", ReadOnly: true},
+			},
+			want: []corev1.VolumeMount{
+				{Name: "config-volume", MountPath: "/config"},
+				{Name: "ca-cert", MountPath: "/certs/ca.crt", SubPath: "ca.crt", ReadOnly: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeVolumeMounts(tt.desired, tt.existing)
+			if !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("mergeVolumeMounts() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -824,10 +824,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(msg).To(ContainSubstring("unsupported protocol version"))
 	})
 
-	It("[Happy] should report tool conflicts in MCPServerRegistration status when same prefix is used", func() {
-
-		By("Creating first MCPServerRegistration with a specific prefix")
-		registration1 := NewMCPServerResourcesWithDefaults("conflict-test-1", k8sClient).
+	It("[Happy] should report tool and prompt conflicts in MCPServerRegistration status when same prefix is used", func() {
+		// server1 has both tools (greet, time, headers, slow, add_tool) and a
+		// "greet" prompt, so registering it twice under the same prefix
+		// produces both tool and prompt name conflicts in one cycle
+		By("Creating first MCPServerRegistration with a specific prefix pointing to server1")
+		registration1 := NewMCPServerResources("conflict-test-1", "conflict-s1.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
@@ -837,8 +839,8 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Creating second MCPServerRegistration with the SAME prefix pointing to server2")
-		registration2 := NewMCPServerResourcesWithDefaults("conflict-test-2", k8sClient).
+		By("Creating second MCPServerRegistration with the SAME prefix pointing to server1 via a different hostname")
+		registration2 := NewMCPServerResources("conflict-test-2", "conflict-s2.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("conflict_").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
@@ -867,14 +869,14 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	It("[Happy] should allow multiple MCP Servers without prefixes", func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
-		registration := NewMCPServerResources("same-prefix", "everything-server.mcp.local", "everything-server", 9090, k8sClient).
+		registration := NewMCPServerResources("same-prefix", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer1 := registration.Register(ctx)
 
 		// This server has a 'hello_world' tool
-		registration = NewMCPServerResources("same-prefix", "e2e-server2.mcp.local", "mcp-test-server2", 9090, k8sClient).
+		registration = NewMCPServerResources("same-prefix", "e2e-server2.mcp-gateway.local", "mcp-test-server2", 9090, k8sClient).
 			WithPrefix("").Build()
 		// Important as we need to make sure to clean up
 		testResources = append(testResources, registration.GetObjects()...)
@@ -973,12 +975,12 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should aggregate prompts from multiple servers with different prefixes", func() {
 		By("Creating two MCPServerRegistrations for server1 with different prefixes")
-		registration1 := NewMCPServerResources("prompt-multi-1", "prompt-s1a.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration1 := NewMCPServerResources("prompt-multi-1", "prompt-s1a.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("s1a_").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
 
-		registration2 := NewMCPServerResources("prompt-multi-2", "prompt-s1b.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration2 := NewMCPServerResources("prompt-multi-2", "prompt-s1b.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("s1b_").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
@@ -1207,7 +1209,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		// Both have time, headers, slow - these will conflict
 
 		By("Creating first MCPServer without prefix pointing to server1")
-		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp.local", sharedMCPTestServer1, 9090, k8sClient).
+		registration1 := NewMCPServerResources("prefix-conflict-1", "conflict-server1.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("").Build()
 		testResources = append(testResources, registration1.GetObjects()...)
 		server1 := registration1.Register(ctx)
@@ -1218,7 +1220,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating second MCPServer without prefix pointing to server2 (also has time, headers, slow)")
-		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp.local", sharedMCPTestServer2, 9090, k8sClient).
+		registration2 := NewMCPServerResources("prefix-conflict-2", "conflict-server2.mcp-gateway.local", sharedMCPTestServer2, 9090, k8sClient).
 			WithPrefix("").Build()
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)

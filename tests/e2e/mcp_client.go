@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"maps"
+	"net"
 	"net/http"
 	"strings"
 
@@ -17,6 +18,27 @@ import (
 )
 
 var useInsecureClient = goenv.GetDefault("INSECURE_CLIENT", "false")
+
+// e2eHTTPClient returns an *http.Client configured for e2e tests.
+// For HTTPS URLs it sets InsecureSkipVerify and adds a custom dialer
+// that resolves non-routable hostnames (e.g. *.mcp-gateway.local) to localhost.
+func e2eHTTPClient(url string) *http.Client {
+	if !strings.HasPrefix(url, "https://") && strings.ToLower(useInsecureClient) != "true" {
+		return nil
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, _ := net.SplitHostPort(addr)
+				if strings.HasSuffix(host, ".local") {
+					addr = net.JoinHostPort("127.0.0.1", port)
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
 
 // NotifyingMCPClient wraps an MCP client with notification handling
 type NotifyingMCPClient struct {
@@ -35,13 +57,8 @@ func NewMCPGatewayClientWithHeaders(ctx context.Context, gatewayHost string, hea
 	maps.Copy(allHeaders, headers)
 	options := []transport.StreamableHTTPCOption{transport.
 		WithHTTPHeaders(allHeaders), transport.WithContinuousListening()}
-	if strings.ToLower(useInsecureClient) == "true" {
-		GinkgoWriter.Println("using insecure client for tests")
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-		client := &http.Client{Transport: tr}
-		options = append(options, transport.WithHTTPBasicClient(client))
+	if hc := e2eHTTPClient(gatewayHost); hc != nil {
+		options = append(options, transport.WithHTTPBasicClient(hc))
 	}
 
 	gatewayClient, err := mcpclient.NewStreamableHttpClient(gatewayHost, options...)
@@ -101,13 +118,8 @@ func NewMCPGatewayClientWithElicitation(ctx context.Context, gatewayHost string,
 		transport.WithHTTPHeaders(allHeaders),
 		transport.WithContinuousListening(),
 	}
-	if strings.ToLower(useInsecureClient) == "true" {
-		GinkgoWriter.Println("using insecure client for tests")
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-		httpClient := &http.Client{Transport: tr}
-		options = append(options, transport.WithHTTPBasicClient(httpClient))
+	if hc := e2eHTTPClient(gatewayHost); hc != nil {
+		options = append(options, transport.WithHTTPBasicClient(hc))
 	}
 
 	trans, err := transport.NewStreamableHTTP(gatewayHost, options...)
