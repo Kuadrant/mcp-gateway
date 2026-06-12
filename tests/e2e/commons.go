@@ -28,7 +28,7 @@ const (
 const (
 	ConfigMapName       = "mcp-gateway-config"
 	GatewayName         = "mcp-gateway"
-	GatewayListenerName = "mcp" // listener name on mcp-gateway
+	GatewayListenerName = "mcp-tls" // primary HTTPS listener
 	MCPExtensionName    = "mcp-gateway-extension"
 	ReferenceGrantName  = "allow-mcp-gateway"
 )
@@ -73,7 +73,7 @@ var (
 
 // public hosts - derived from E2E_DOMAIN
 var (
-	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp."+e2eDomain)
+	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp.mcp-gateway.local")
 	E2E1PublicHost    = goenv.GetDefault("E2E1_PUBLIC_HOST", "e2e-1."+e2eDomain)
 	TeamAPublicHost   = goenv.GetDefault("TEAM_A_PUBLIC_HOST", "team-a."+e2eDomain)
 	TeamBPublicHost   = goenv.GetDefault("TEAM_B_PUBLIC_HOST", "team-b."+e2eDomain)
@@ -81,7 +81,7 @@ var (
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
 var (
-	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "http://localhost:8001/mcp"))
+	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8009/mcp"))
 	E2E1GatewayURL  = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
 	TeamAGatewayURL = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
 	TeamBGatewayURL = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))

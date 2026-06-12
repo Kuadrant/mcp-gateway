@@ -21,7 +21,10 @@ nodes:
   - containerPort: 30089 # keycloak
     hostPort: 8002
     protocol: TCP
-  - containerPort: 30471 # e2e-2 gateway
+  - containerPort: 30082 # mcp-gateway HTTPS
+    hostPort: 8009
+    protocol: TCP
+  - containerPort: 30071 # e2e-2 gateway
     hostPort: 8003
     protocol: TCP
   - containerPort: 30472 # e2e-1 gateway

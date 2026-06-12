@@ -384,6 +384,7 @@ deploy-tls-test-server: kind-load-tls-server cert-manager-install ## Deploy TLS 
 	$(KUBECTL) apply -f config/test-servers/namespace.yaml
 	$(KUBECTL) apply -f config/test-servers/tls-server-cert-manager.yaml
 	@$(KUBECTL) wait --for=condition=Ready certificate/private-ca -n cert-manager --timeout=60s
+	@$(KUBECTL) wait --for=condition=Ready certificate/mcp-gateway-tls-cert -n gateway-system --timeout=60s
 	@$(KUBECTL) wait --for=condition=Ready certificate/tls-test-server-cert -n mcp-test --timeout=60s
 	@echo "Deploying TLS test server..."
 	$(KUBECTL) apply -f config/test-servers/tls-server-deployment.yaml

@@ -30,9 +30,9 @@ import (
 const (
 	tlsServerName     = "mcp-tls-server"
 	tlsServerPort     = int32(8443)
-	tlsListenerName   = "mcps-https"
-	tlsListenerHost   = "*.mcp-tls.local"
-	tlsServerHostname = "tls-server.mcp-tls.local"
+	tlsListenerName   = "mcp-tls"
+	tlsListenerHost   = "*.mcp-gateway.local"
+	tlsServerHostname = "tls-server.mcp-gateway.local"
 	caKeypairSecret   = "private-ca-keypair"
 	certManagerNS     = "cert-manager"
 	caLabeledSecret   = "e2e-ca-bundle"

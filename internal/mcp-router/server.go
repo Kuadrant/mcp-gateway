@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ type SessionCache interface {
 // InitForClient defines a function for initializing an MCP server for a client.
 // initToken is a short-lived JWT minted by the router and validated again when
 // the hairpin request re-enters the gateway.
-type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
@@ -52,6 +53,7 @@ type ExtProcServer struct {
 	ElicitationMap      idmap.Map
 	TokenElicitationMap elicitation.Map
 	MaxRequestBodySize  int
+	HairpinHTTPClient   *http.Client
 	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker

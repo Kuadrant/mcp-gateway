@@ -49,7 +49,7 @@ var _ = Describe("Elicitation", func() {
 
 	BeforeEach(func() {
 		By("Registering an MCPServerRegistration pointing to the everything-server")
-		registration := NewMCPServerResources("elicitation", "everything-server.mcp.local", "everything-server", 9090, k8sClient).
+		registration := NewMCPServerResources("elicitation", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("es_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)

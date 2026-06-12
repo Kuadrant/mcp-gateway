@@ -3,7 +3,6 @@ package controller
 
 import (
 	"fmt"
-	"strings"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -90,14 +89,4 @@ func (w *HTTPRouteWrapper) IsHostnameBackend() bool {
 // IsServiceBackend returns true if the backend is a Service
 func (w *HTTPRouteWrapper) IsServiceBackend() bool {
 	return w.BackendKind() == "Service"
-}
-
-// UsesHTTPS checks if any parent ref section name contains "https"
-func (w *HTTPRouteWrapper) UsesHTTPS() bool {
-	for _, parentRef := range w.Spec.ParentRefs {
-		if parentRef.SectionName != nil && strings.Contains(string(*parentRef.SectionName), "https") {
-			return true
-		}
-	}
-	return false
 }

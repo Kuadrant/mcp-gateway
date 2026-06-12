@@ -13,6 +13,8 @@ import (
 	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func TestMcpsrReferencesSecret(t *testing.T) {
@@ -193,3 +195,44 @@ func TestIsValidHostname(t *testing.T) {
 		})
 	}
 }
+
+// TestDetermineProtocol_InternalServiceAlwaysHTTP is a regression test:
+// the upstream protocol for internal services must always be http, regardless
+// of the gateway listener protocol. The gateway listener (HTTP vs HTTPS) only
+// affects the hairpin path, not the broker→upstream connection. TLS upstreams
+// are handled separately via caCertSecretRef in buildMCPServerConfig.
+func TestDetermineProtocol_InternalServiceAlwaysHTTP(t *testing.T) {
+	r := &MCPReconciler{}
+	route := WrapHTTPRoute(&gatewayv1.HTTPRoute{
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{
+					SectionName: ptrTo(gatewayv1.SectionName("mcp-tls")),
+				}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				BackendRefs: []gatewayv1.HTTPBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name: "my-server",
+							Port: ptrTo(gatewayv1.PortNumber(9090)),
+						},
+					},
+				}},
+			}},
+		},
+	})
+	svc := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Port: 9090}},
+		},
+	}
+
+	got := r.determineProtocol(route, svc, false)
+	if got != "http" {
+		t.Errorf("determineProtocol() = %q for internal service, want %q — "+
+			"gateway listener protocol must not affect upstream URL scheme", got, "http")
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

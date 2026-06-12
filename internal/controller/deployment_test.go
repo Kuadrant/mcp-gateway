@@ -36,13 +36,13 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 									{Name: "grpc", ContainerPort: 50051},
 								},
 								VolumeMounts: []corev1.VolumeMount{
-									{Name: "config", MountPath: "/config"},
+									{Name: "config-volume", MountPath: "/config"},
 								},
 							},
 						},
 						Volumes: []corev1.Volume{
 							{
-								Name: "config",
+								Name: "config-volume",
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: "config-secret",
@@ -85,7 +85,7 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].Command = append(
 					d.Spec.Template.Spec.Containers[0].Command,
-					"--log-level=debug",
+					"--discovery-tools-enabled=false",
 				)
 			},
 			expected: false,
@@ -122,29 +122,39 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "volume mount changed",
+			name: "managed volume mount changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/new-config"
 			},
 			expected: true,
 		},
 		{
-			name: "volume added",
+			name: "user-added volume does not trigger update",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Volumes = append(
 					d.Spec.Template.Spec.Volumes,
 					corev1.Volume{
-						Name: "data",
+						Name: "ca-cert",
 						VolumeSource: corev1.VolumeSource{
-							EmptyDir: &corev1.EmptyDirVolumeSource{},
+							Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"},
 						},
 					},
 				)
 			},
-			expected: true,
+			expected: false,
 		},
 		{
-			name: "volume secret name changed",
+			name: "user-added volume mount does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					d.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{Name: "ca-cert", MountPath: "/certs"},
+				)
+			},
+			expected: false,
+		},
+		{
+			name: "managed volume secret name changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Volumes[0].Secret.SecretName = "new-secret"
 			},
@@ -580,7 +590,7 @@ func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
 		"--mcp-broker-public-address=0.0.0.0:8080",
 		"--mcp-gateway-public-host=example.com",
 		"--mcp-router-key=deadbeefcafebabe",
-		"--log-level=debug",
+		"--discovery-tools-enabled=false",
 	}
 	got := mergeCommand(desired, existing)
 	for _, arg := range got {
@@ -588,16 +598,17 @@ func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
 			t.Errorf("mergeCommand should strip legacy --mcp-router-key, got %v", got)
 		}
 	}
-	foundLogLevel := false
+	foundUserFlag := false
 	for _, arg := range got {
-		if arg == "--log-level=debug" {
-			foundLogLevel = true
+		if arg == "--discovery-tools-enabled=false" {
+			foundUserFlag = true
 		}
 	}
-	if !foundLogLevel {
+	if !foundUserFlag {
 		t.Errorf("mergeCommand should preserve unrelated user flags, got %v", got)
 	}
 }
+
 
 func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 	tests := []struct {
@@ -1352,7 +1363,7 @@ func TestFilterManagedFlags(t *testing.T) {
 		},
 		{
 			name:    "user flags stripped",
-			command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--cache-connection-string=redis://localhost"},
+			command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--cache-connection-string=redis://localhost"},
 			want:    []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
 		},
 		{
@@ -1393,8 +1404,8 @@ func TestMergeCommand(t *testing.T) {
 		{
 			name:     "preserves user flags from existing",
 			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
-			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug"},
-			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false"},
 		},
 		{
 			name:     "updates managed flag and preserves user flags",
@@ -1405,8 +1416,8 @@ func TestMergeCommand(t *testing.T) {
 		{
 			name:     "multiple user flags preserved",
 			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
-			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--session-length=3600"},
-			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--session-length=3600"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--session-length=3600"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--session-length=3600"},
 		},
 		{
 			name:     "existing has no flags",
@@ -1577,6 +1588,90 @@ func TestMergeEnvVars(t *testing.T) {
 			got := mergeEnvVars(tt.desired, tt.existing)
 			if !equality.Semantic.DeepEqual(got, tt.want) {
 				t.Errorf("mergeEnvVars() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeVolumes(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  []corev1.Volume
+		existing []corev1.Volume
+		want     []corev1.Volume
+	}{
+		{
+			name:     "no user volumes",
+			desired:  []corev1.Volume{{Name: "config-volume"}},
+			existing: []corev1.Volume{{Name: "config-volume"}},
+			want:     []corev1.Volume{{Name: "config-volume"}},
+		},
+		{
+			name:    "preserves user volumes from existing",
+			desired: []corev1.Volume{{Name: "config-volume"}},
+			existing: []corev1.Volume{
+				{Name: "config-volume"},
+				{Name: "ca-cert", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"}}},
+			},
+			want: []corev1.Volume{
+				{Name: "config-volume"},
+				{Name: "ca-cert", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "my-ca"}}},
+			},
+		},
+		{
+			name:    "updates managed volume, preserves user volume",
+			desired: []corev1.Volume{{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "new-config"}}}},
+			existing: []corev1.Volume{
+				{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "old-config"}}},
+				{Name: "user-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+			want: []corev1.Volume{
+				{Name: "config-volume", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "new-config"}}},
+				{Name: "user-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeVolumes(tt.desired, tt.existing)
+			if !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("mergeVolumes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeVolumeMounts(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  []corev1.VolumeMount
+		existing []corev1.VolumeMount
+		want     []corev1.VolumeMount
+	}{
+		{
+			name:     "no user mounts",
+			desired:  []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			existing: []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			want:     []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+		},
+		{
+			name:    "preserves user mounts from existing",
+			desired: []corev1.VolumeMount{{Name: "config-volume", MountPath: "/config"}},
+			existing: []corev1.VolumeMount{
+				{Name: "config-volume", MountPath: "/config"},
+				{Name: "ca-cert", MountPath: "/certs/ca.crt", SubPath: "ca.crt", ReadOnly: true},
+			},
+			want: []corev1.VolumeMount{
+				{Name: "config-volume", MountPath: "/config"},
+				{Name: "ca-cert", MountPath: "/certs/ca.crt", SubPath: "ca.crt", ReadOnly: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeVolumeMounts(tt.desired, tt.existing)
+			if !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("mergeVolumeMounts() = %v, want %v", got, tt.want)
 			}
 		})
 	}

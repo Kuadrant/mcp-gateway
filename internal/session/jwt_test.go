@@ -416,4 +416,5 @@ func TestTerminate(t *testing.T) {
 			t.Error("expected isNotAllowed to be false")
 		}
 	})
+
 }

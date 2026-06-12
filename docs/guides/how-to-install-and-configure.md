@@ -27,7 +27,7 @@ MCP Gateway runs on Kubernetes and integrates with Gateway API and Istio. You sh
 ### Step 1: Install CRDs
 
 ```bash
-export MCP_GATEWAY_VERSION=0.7.0
+export MCP_GATEWAY_VERSION=0.7.1
 kubectl apply -k "https://github.com/kuadrant/mcp-gateway/config/crd?ref=v${MCP_GATEWAY_VERSION}"
 ```
 
@@ -86,6 +86,28 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 > **Note:** The router authenticates its own hairpin backend-init requests with a short-lived JWT signed by the same HMAC key as client session JWTs (`GATEWAY_SIGNING_KEY`). There is no separate router-key secret to manage; the previous `--mcp-router-key` flag has been removed.
 
 The `--mcp-gateway-private-host` flag enables hair-pinning: when a `tools/call` request arrives, the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec.
+
+#### HTTPS Listeners and `--gateway-ca-cert`
+
+When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. The broker-router's hairpin request connects to the internal service address but verifies the TLS certificate against the public hostname (`--mcp-gateway-public-host`).
+
+For listeners using a **private CA** (e.g. cert-manager with a self-signed CA), the broker-router also needs the CA certificate to trust the gateway's TLS cert. Add the `--gateway-ca-cert` flag pointing to the CA cert file:
+
+| Flag | Description |
+|------|-------------|
+| `--gateway-ca-cert` | Path to a PEM CA certificate file for the gateway's TLS listener. Only needed when the listener uses a private CA. |
+
+The operator does not set this flag automatically. To configure it, mount the CA certificate as a volume and add the flag to the broker-router deployment:
+
+```bash
+kubectl patch deployment mcp-gateway -n mcp-system --type=json -p '[
+  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"my-ca-bundle"}}},
+  {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},
+  {"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}
+]'
+```
+
+The operator preserves user-added volumes, volume mounts, and command flags across reconciliations.
 
 The `--mcp-gateway-public-host` flag tells the router which `Host` header to expect on incoming requests, so it avoids rewriting it during routing.
 

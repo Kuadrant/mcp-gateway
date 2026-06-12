@@ -51,6 +51,12 @@ var managedCommandFlags = []string{
 	"--enable-url-elicitation",
 }
 
+// managedVolumeNames are the volume names the controller owns and reconciles.
+// Any volume not in this list is user-managed and preserved as-is.
+var managedVolumeNames = []string{
+	"config-volume",
+}
+
 // managedEnvVarNames are the env var names the controller owns and reconciles.
 // Any env var not in this list is user-managed and preserved as-is.
 var managedEnvVarNames = []string{
@@ -392,10 +398,10 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingContainer.Image = desiredContainer.Image
 		existingContainer.Ports = desiredContainer.Ports
 		existingContainer.Env = mergeEnvVars(desiredContainer.Env, existingContainer.Env)
-		existingContainer.VolumeMounts = desiredContainer.VolumeMounts
+		existingContainer.VolumeMounts = mergeVolumeMounts(desiredContainer.VolumeMounts, existingContainer.VolumeMounts)
 		existingContainer.ReadinessProbe = desiredContainer.ReadinessProbe
 		existingDeployment.Spec.Template.Spec.Containers[0] = existingContainer
-		existingDeployment.Spec.Template.Spec.Volumes = deployment.Spec.Template.Spec.Volumes
+		existingDeployment.Spec.Template.Spec.Volumes = mergeVolumes(deployment.Spec.Template.Spec.Volumes, existingDeployment.Spec.Template.Spec.Volumes)
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
@@ -512,14 +518,19 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	if !equality.Semantic.DeepEqual(desiredContainer.Ports, existingContainer.Ports) {
 		return true, fmt.Sprintf("ports changed: %+v -> %+v", existingContainer.Ports, desiredContainer.Ports)
 	}
-	if !equality.Semantic.DeepEqual(desiredContainer.VolumeMounts, existingContainer.VolumeMounts) {
-		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingContainer.VolumeMounts, desiredContainer.VolumeMounts)
+	// only compare volumes/mounts the controller manages; user-added ones are preserved
+	desiredMounts := filterManagedVolumeMounts(desiredContainer.VolumeMounts)
+	existingMounts := filterManagedVolumeMounts(existingContainer.VolumeMounts)
+	if !equality.Semantic.DeepEqual(desiredMounts, existingMounts) {
+		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingMounts, desiredMounts)
 	}
 	if !equality.Semantic.DeepEqual(desiredContainer.ReadinessProbe, existingContainer.ReadinessProbe) {
 		return true, fmt.Sprintf("readinessProbe changed: %+v -> %+v", existingContainer.ReadinessProbe, desiredContainer.ReadinessProbe)
 	}
-	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
-		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existing.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes)
+	desiredVolumes := filterManagedVolumes(desired.Spec.Template.Spec.Volumes)
+	existingVolumes := filterManagedVolumes(existing.Spec.Template.Spec.Volumes)
+	if !equality.Semantic.DeepEqual(desiredVolumes, existingVolumes) {
+		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existingVolumes, desiredVolumes)
 	}
 	// only compare env vars the controller manages; user-added env vars are preserved
 	desiredEnv := filterManagedEnvVars(desiredContainer.Env)
@@ -586,6 +597,50 @@ func mergeEnvVars(desired, existing []corev1.EnvVar) []corev1.EnvVar {
 	return slices.Concat(desired, userEnvVars)
 }
 
+// filterManagedVolumes returns only volumes the controller manages.
+func filterManagedVolumes(volumes []corev1.Volume) []corev1.Volume {
+	var out []corev1.Volume
+	for _, v := range volumes {
+		if slices.Contains(managedVolumeNames, v.Name) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// mergeVolumes preserves user-added volumes while updating controller-managed ones.
+func mergeVolumes(desired, existing []corev1.Volume) []corev1.Volume {
+	var userVolumes []corev1.Volume
+	for _, v := range existing {
+		if !slices.Contains(managedVolumeNames, v.Name) {
+			userVolumes = append(userVolumes, v)
+		}
+	}
+	return slices.Concat(desired, userVolumes)
+}
+
+// filterManagedVolumeMounts returns only volume mounts the controller manages.
+func filterManagedVolumeMounts(mounts []corev1.VolumeMount) []corev1.VolumeMount {
+	var out []corev1.VolumeMount
+	for _, m := range mounts {
+		if slices.Contains(managedVolumeNames, m.Name) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// mergeVolumeMounts preserves user-added volume mounts while updating controller-managed ones.
+func mergeVolumeMounts(desired, existing []corev1.VolumeMount) []corev1.VolumeMount {
+	var userMounts []corev1.VolumeMount
+	for _, m := range existing {
+		if !slices.Contains(managedVolumeNames, m.Name) {
+			userMounts = append(userMounts, m)
+		}
+	}
+	return slices.Concat(desired, userMounts)
+}
+
 func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
@@ -604,13 +659,19 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha
 		},
 	}
 
+	// set Group, Kind, and Weight explicitly to match API server defaults,
+	// otherwise DeepEqual sees nil vs defaulted values on every reconcile
+	weight := int32(1)
 	backendRefs := []gatewayv1.HTTPBackendRef{
 		{
 			BackendRef: gatewayv1.BackendRef{
 				BackendObjectReference: gatewayv1.BackendObjectReference{
-					Name: gatewayv1.ObjectName(brokerRouterName),
-					Port: &port,
+					Group: ptr.To(gatewayv1.Group("")),
+					Kind:  ptr.To(gatewayv1.Kind("Service")),
+					Name:  gatewayv1.ObjectName(brokerRouterName),
+					Port:  &port,
 				},
+				Weight: &weight,
 			},
 		},
 	}
@@ -727,9 +788,12 @@ func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1alpha1
 						{
 							BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name: gatewayv1.ObjectName(brokerRouterName),
-									Port: &port,
+									Group: ptr.To(gatewayv1.Group("")),
+									Kind:  ptr.To(gatewayv1.Kind("Service")),
+									Name:  gatewayv1.ObjectName(brokerRouterName),
+									Port:  &port,
 								},
+								Weight: ptr.To(int32(1)),
 							},
 						},
 					},

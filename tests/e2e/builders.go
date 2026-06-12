@@ -128,7 +128,7 @@ func NewTestResources(testName string, k8sClient client.Client) *TestResourcesBu
 		k8sClient:        k8sClient,
 		testName:         testName,
 		namespace:        TestServerNameSpace,
-		hostname:         "e2e-server2.mcp.local",
+		hostname:         "e2e-server2.mcp-gateway.local",
 		serviceName:      "mcp-test-server2",
 		port:             9090,
 		credentialKey:    "token",
@@ -146,7 +146,7 @@ func NewTestResourcesWithDefaults(testName string, k8sClient client.Client) *Tes
 func (b *TestResourcesBuilder) ForInternalService(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -155,7 +155,7 @@ func (b *TestResourcesBuilder) ForInternalService(serviceName string, port int32
 func (b *TestResourcesBuilder) ForExternalService(externalHost string, port int32) *TestResourcesBuilder {
 	b.serviceName = externalHost
 	b.port = port
-	b.hostname = fmt.Sprintf("e2e-external-%s.mcp.local", b.testName)
+	b.hostname = fmt.Sprintf("e2e-external-%s.mcp-gateway.local", b.testName)
 	b.isExternal = true
 	return b
 }
@@ -196,7 +196,7 @@ func (b *TestResourcesBuilder) WithHint(hint string) *TestResourcesBuilder {
 func (b *TestResourcesBuilder) WithBackendTarget(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -371,7 +371,7 @@ func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 			},
 			Hostnames: []gatewayapiv1.Hostname{
 				gatewayapiv1.Hostname(b.hostname),
-				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp.local", "."+e2eDomain, 1)),
+				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp-gateway.local", "."+e2eDomain, 1)),
 			},
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{
