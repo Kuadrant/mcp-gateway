@@ -90,21 +90,3 @@ func (w *HTTPRouteWrapper) IsHostnameBackend() bool {
 func (w *HTTPRouteWrapper) IsServiceBackend() bool {
 	return w.BackendKind() == "Service"
 }
-
-// UsesHTTPS checks if any parent ref targets an HTTPS listener on the gateway.
-func (w *HTTPRouteWrapper) UsesHTTPS(gateway *gatewayv1.Gateway) bool {
-	if gateway == nil {
-		return false
-	}
-	for _, parentRef := range w.Spec.ParentRefs {
-		if parentRef.SectionName == nil {
-			continue
-		}
-		for _, l := range gateway.Spec.Listeners {
-			if string(l.Name) == string(*parentRef.SectionName) && l.Protocol == gatewayv1.HTTPSProtocolType {
-				return true
-			}
-		}
-	}
-	return false
-}
