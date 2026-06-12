@@ -119,6 +119,7 @@ jobs:
                 const remainingTriageLabels = currentLabels.filter(l =>
                   l.startsWith('triage/') &&
                   l !== 'triage/accepted' &&
+                  l !== 'triage/needs-triage' &&
                   !labelsToRemove.includes(l)
                 );
 
