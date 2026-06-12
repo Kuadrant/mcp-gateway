@@ -17,7 +17,9 @@ output() {
 
 cleanup() {
   output "Cleaning up GitHub MCP resources"
-  kubectl delete oidcpolicy mcp-oidc -n mcp-system --ignore-not-found
+  kubectl delete authpolicy mcp-tokens-oidc -n mcp-system --ignore-not-found
+  kubectl delete authpolicy mcp-tokens-oidc-callback -n mcp-system --ignore-not-found
+  kubectl delete httproute mcp-tokens-oidc-callback -n mcp-system --ignore-not-found
   kubectl delete authpolicy mcp-oidc-policy -n gateway-system --ignore-not-found
   kubectl delete mcpserverregistration github -n "$NAMESPACE" --ignore-not-found
   kubectl delete secret github-token -n "$NAMESPACE" --ignore-not-found
@@ -144,11 +146,13 @@ output "Step 6: Applying AuthPolicy for OIDC authentication"
 kubectl apply -f "$SCRIPT_DIR/authpolicy.yaml"
 echo "AuthPolicy applied — gateway will require OIDC tokens via Keycloak."
 
-# --- Deploy OIDCPolicy for /tokens ---
+# --- Deploy OIDC auth for /tokens ---
 
-output "Step 7: Applying OIDCPolicy for /tokens browser authentication"
-kubectl apply -f "$SCRIPT_DIR/oidcpolicy.yaml"
-echo "OIDCPolicy applied — browser requests to /tokens will redirect to Keycloak login."
+output "Step 7: Applying OIDC browser authentication for /tokens"
+kubectl apply -f "$SCRIPT_DIR/callback-httproute.yaml"
+kubectl apply -f "$SCRIPT_DIR/tokens-authpolicy.yaml"
+kubectl apply -f "$SCRIPT_DIR/callback-authpolicy.yaml"
+echo "OIDC auth applied — browser requests to /tokens will redirect to Keycloak login."
 
 # --- Wait for readiness ---
 
