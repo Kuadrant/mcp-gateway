@@ -85,7 +85,7 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].Command = append(
 					d.Spec.Template.Spec.Containers[0].Command,
-					"--log-level=debug",
+					"--discovery-tools-enabled=false",
 				)
 			},
 			expected: false,
@@ -590,7 +590,7 @@ func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
 		"--mcp-broker-public-address=0.0.0.0:8080",
 		"--mcp-gateway-public-host=example.com",
 		"--mcp-router-key=deadbeefcafebabe",
-		"--log-level=debug",
+		"--discovery-tools-enabled=false",
 	}
 	got := mergeCommand(desired, existing)
 	for _, arg := range got {
@@ -598,16 +598,17 @@ func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
 			t.Errorf("mergeCommand should strip legacy --mcp-router-key, got %v", got)
 		}
 	}
-	foundLogLevel := false
+	foundUserFlag := false
 	for _, arg := range got {
-		if arg == "--log-level=debug" {
-			foundLogLevel = true
+		if arg == "--discovery-tools-enabled=false" {
+			foundUserFlag = true
 		}
 	}
-	if !foundLogLevel {
+	if !foundUserFlag {
 		t.Errorf("mergeCommand should preserve unrelated user flags, got %v", got)
 	}
 }
+
 
 func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 	tests := []struct {
@@ -1362,7 +1363,7 @@ func TestFilterManagedFlags(t *testing.T) {
 		},
 		{
 			name:    "user flags stripped",
-			command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--cache-connection-string=redis://localhost"},
+			command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--cache-connection-string=redis://localhost"},
 			want:    []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
 		},
 		{
@@ -1403,8 +1404,8 @@ func TestMergeCommand(t *testing.T) {
 		{
 			name:     "preserves user flags from existing",
 			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
-			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug"},
-			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false"},
 		},
 		{
 			name:     "updates managed flag and preserves user flags",
@@ -1415,8 +1416,8 @@ func TestMergeCommand(t *testing.T) {
 		{
 			name:     "multiple user flags preserved",
 			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
-			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--session-length=3600"},
-			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=debug", "--session-length=3600"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--session-length=3600"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--discovery-tools-enabled=false", "--session-length=3600"},
 		},
 		{
 			name:     "existing has no flags",
