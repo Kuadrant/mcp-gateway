@@ -59,7 +59,7 @@ func (s *ExtProcServer) HandleResponseHeaders(ctx context.Context, responseHeade
 	// intercept 401 from backend: if the server uses URL token elicitation,
 	// delete the cached user token so the next tool call triggers re-elicitation
 	if status == "401" && req != nil && s.ElicitationEnabled {
-		serverInfo, cfgErr := s.RoutingConfig.GetServerConfigByName(req.serverName)
+		serverInfo, cfgErr := s.RoutingConfig.Load().GetServerConfigByName(req.serverName)
 		if cfgErr == nil && serverInfo.TokenURLElicitation != nil {
 			span := trace.SpanFromContext(ctx)
 			span.SetAttributes(

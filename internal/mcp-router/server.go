@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
@@ -44,7 +45,10 @@ type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MC
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
-	RoutingConfig       *config.MCPServersConfig
+	// RoutingConfig is replaced wholesale by OnConfigChange (which fires from
+	// viper's fsnotify goroutine) while ext_proc handlers read it from the
+	// per-stream Process goroutines. atomic.Pointer keeps the swap race-free.
+	RoutingConfig       atomic.Pointer[config.MCPServersConfig]
 	JWTManager          *session.JWTManager
 	Logger              *slog.Logger
 	InitForClient       InitForClient
@@ -63,7 +67,7 @@ type ExtProcServer struct {
 
 // OnConfigChange is used to register the router for config changes
 func (s *ExtProcServer) OnConfigChange(_ context.Context, newConfig *config.MCPServersConfig) {
-	s.RoutingConfig = newConfig
+	s.RoutingConfig.Store(newConfig)
 }
 
 // Process function

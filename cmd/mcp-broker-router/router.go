@@ -11,7 +11,6 @@ func (a *app) createRouter() {
 	cfg := &a.routerCfg
 	a.grpcServer = grpc.NewServer()
 	a.router = &mcpRouter.ExtProcServer{
-		RoutingConfig:       a.mcpConfig,
 		Logger:              a.logger.With("component", "router"),
 		JWTManager:          a.jwtMgr,
 		InitForClient:       clients.Initialize,
@@ -23,6 +22,11 @@ func (a *app) createRouter() {
 		MaxRequestBodySize:  cfg.maxRequestBodySize,
 		ElicitationEnabled:  cfg.enableURLElicitation,
 	}
+	// seed initial routing config so reader sites never observe a nil pointer before the first OnConfigChange fires.
+	if a.mcpConfig == nil {
+		panic("mcpConfig must be non-nil before constructing the ext_proc server")
+	}
+	a.router.RoutingConfig.Store(a.mcpConfig)
 
 	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.router)
 }

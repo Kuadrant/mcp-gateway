@@ -229,7 +229,7 @@ func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *eppb.
 	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
 	requestHeaders := NewHeaders()
 	response := NewResponse()
-	requestHeaders.WithAuthority(s.RoutingConfig.MCPGatewayExternalHostname)
+	requestHeaders.WithAuthority(s.RoutingConfig.Load().MCPGatewayExternalHostname)
 	// Trust model: ExtractSubClaim only decodes the JWT payload, it does NOT
 	// verify the signature. That is safe here because AuthPolicy validates the
 	// Authorization JWT before the request reaches ext_proc, so by this point
@@ -632,7 +632,7 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	// restore the id for the request
 	mcpReq.ID = entry.BackendID
 
-	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(entry.ServerName)
+	mcpServerConfig, err := s.RoutingConfig.Load().GetServerConfigByName(entry.ServerName)
 	if err != nil {
 		s.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
 		mcpotel.SpanError(span, err, "server not found")
@@ -683,7 +683,9 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 	)
 	defer initSpan.End()
 
-	mcpServerConfig, err := s.RoutingConfig.GetServerConfigByName(mcpReq.serverName)
+	// snapshot once to avoid torn reads if config is swapped mid-function
+	routingCfg := s.RoutingConfig.Load()
+	mcpServerConfig, err := routingCfg.GetServerConfigByName(mcpReq.serverName)
 	if err != nil {
 		return "", NewRouterErrorf(500, "failed check for server: %w", err)
 	}
@@ -765,7 +767,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 		}
 		passThroughHeaders[RoutingKey] = initToken
 		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool)
+		clientHandle, err := s.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")

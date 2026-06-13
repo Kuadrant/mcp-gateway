@@ -200,9 +200,6 @@ func TestHandleRequestBody(t *testing.T) {
 	}
 
 	server := &ExtProcServer{
-		RoutingConfig: &config.MCPServersConfig{
-			Servers: serverConfigs,
-		},
 		JWTManager:    jwtManager,
 		Logger:        logger,
 		SessionCache:  cache,
@@ -211,6 +208,7 @@ func TestHandleRequestBody(t *testing.T) {
 			"s_mytool": "dummy",
 		}),
 	}
+	server.RoutingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
 
 	data := &MCPRequest{
 		ID:      ptr.To(0),
@@ -782,15 +780,13 @@ func TestHandleElicitationResponse(t *testing.T) {
 		gatewayID := mustStoreIDMap(t, elicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
 
 		server := &ExtProcServer{
-			RoutingConfig: &config.MCPServersConfig{
-				Servers: serverConfigs,
-			},
 			JWTManager:     jwtManager,
 			Logger:         logger,
 			SessionCache:   cache,
 			ElicitationMap: elicitationMap,
 			Broker:         newMockBroker(serverConfigs, map[string]string{}),
 		}
+		server.RoutingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
 
 		data := &MCPRequest{
 			ID:      gatewayID,
@@ -891,15 +887,14 @@ func TestHandleElicitationResponse(t *testing.T) {
 		gatewayID := mustStoreIDMap(t, elicitationMap, float64(1), "nonexistent-server", "session-123", validToken)
 
 		server := &ExtProcServer{
-			RoutingConfig: &config.MCPServersConfig{
-				Servers: []*config.MCPServer{}, // no servers configured
-			},
 			JWTManager:     jwtManager,
 			Logger:         logger,
 			SessionCache:   cache,
 			ElicitationMap: elicitationMap,
 			Broker:         newMockBroker(nil, map[string]string{}),
 		}
+		// no servers configured
+		server.RoutingConfig.Store(&config.MCPServersConfig{Servers: []*config.MCPServer{}})
 
 		data := &MCPRequest{
 			ID:      gatewayID,
@@ -940,15 +935,13 @@ func TestHandleElicitationResponse(t *testing.T) {
 		gatewayID := mustStoreIDMap(t, elicitationMap, "original-string-id", "test-server", "backend-session-xyz", validToken)
 
 		server := &ExtProcServer{
-			RoutingConfig: &config.MCPServersConfig{
-				Servers: serverConfigs,
-			},
 			JWTManager:     jwtManager,
 			Logger:         logger,
 			SessionCache:   cache,
 			ElicitationMap: elicitationMap,
 			Broker:         newMockBroker(serverConfigs, map[string]string{}),
 		}
+		server.RoutingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
 
 		data := &MCPRequest{
 			ID:      gatewayID,
@@ -997,15 +990,13 @@ func TestHandleElicitationResponse_ViaRouteMCPRequest(t *testing.T) {
 	gatewayID := mustStoreIDMap(t, elicitationMap, float64(99), "test-server", "backend-session-456", validToken)
 
 	server := &ExtProcServer{
-		RoutingConfig: &config.MCPServersConfig{
-			Servers: serverConfigs,
-		},
 		JWTManager:     jwtManager,
 		Logger:         logger,
 		SessionCache:   cache,
 		ElicitationMap: elicitationMap,
 		Broker:         newMockBroker(serverConfigs, map[string]string{}),
 	}
+	server.RoutingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
 
 	// elicitation response routed via RouteMCPRequest (the main switch)
 	data := &MCPRequest{
@@ -1058,13 +1049,14 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 		require.NoError(t, err)
 		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
-		return &ExtProcServer{
-			RoutingConfig: &config.MCPServersConfig{},
-			JWTManager:    jwtManager,
-			Logger:        logger,
-			SessionCache:  cache,
-			Broker:        newMockBroker(nil, map[string]string{}),
+		server := &ExtProcServer{
+			JWTManager:   jwtManager,
+			Logger:       logger,
+			SessionCache: cache,
+			Broker:       newMockBroker(nil, map[string]string{}),
 		}
+		server.RoutingConfig.Store(&config.MCPServersConfig{})
+		return server
 	}
 
 	mustImmediate := func(t *testing.T, resp []*eppb.ProcessingResponse, expectedCode int32) {
@@ -1238,16 +1230,16 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 		},
 	}
 	srv := &ExtProcServer{
-		RoutingConfig: &config.MCPServersConfig{
-			Servers:                    serverConfigs,
-			MCPGatewayInternalHostname: "mcp-gateway.local",
-		},
 		JWTManager:    jwtManager,
 		Logger:        logger,
 		SessionCache:  cache,
 		InitForClient: mockInitForClient,
 		Broker:        newMockBroker(serverConfigs, map[string]string{}),
 	}
+	srv.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers:                    serverConfigs,
+		MCPGatewayInternalHostname: "mcp-gateway.local",
+	})
 
 	req := &MCPRequest{
 		ID:         ptr.To(0),
@@ -1340,12 +1332,12 @@ func TestHandleRequestHeaders(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			server := &ExtProcServer{
-				RoutingConfig: &config.MCPServersConfig{
-					MCPGatewayExternalHostname: tc.GatewayHostname,
-				},
 				Logger: logger,
 				Broker: newMockBroker(nil, map[string]string{}),
 			}
+			server.RoutingConfig.Store(&config.MCPServersConfig{
+				MCPGatewayExternalHostname: tc.GatewayHostname,
+			})
 
 			incomingHeaders := []*corev3.HeaderValue{
 				{Key: ":authority", RawValue: []byte("original.host.com")},
@@ -1513,15 +1505,15 @@ func TestHandlePromptGet(t *testing.T) {
 	}
 
 	srv := &ExtProcServer{
-		RoutingConfig: &config.MCPServersConfig{
-			Servers: serverConfigs,
-		},
 		JWTManager:    jwtManager,
 		Logger:        logger,
 		SessionCache:  cache,
 		InitForClient: mockInitForClient,
 		Broker:        testBroker,
 	}
+	srv.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers: serverConfigs,
+	})
 
 	data := &MCPRequest{
 		ID:      ptr.To(0),
@@ -1589,10 +1581,6 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 	}
 
 	server := &ExtProcServer{
-		RoutingConfig: &config.MCPServersConfig{
-			Servers:                    serverConfigs,
-			MCPGatewayExternalHostname: "gateway.example.com",
-		},
 		JWTManager:   jwtManager,
 		Logger:       logger,
 		SessionCache: cache,
@@ -1604,6 +1592,10 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 		TokenElicitationMap: tokenElicitationMap,
 		ElicitationEnabled:  true,
 	}
+	server.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers:                    serverConfigs,
+		MCPGatewayExternalHostname: "gateway.example.com",
+	})
 	return server, validToken
 }
 

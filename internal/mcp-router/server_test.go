@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
@@ -528,22 +530,23 @@ func newTestServer(t *testing.T) *ExtProcServer {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cache, err := session.NewCache()
 	require.NoError(t, err)
-	return &ExtProcServer{
+	server := &ExtProcServer{
 		Logger:       logger,
 		SessionCache: cache,
 		Broker:       newMockBroker(nil, map[string]string{}),
-		RoutingConfig: &config.MCPServersConfig{
-			Servers: []*config.MCPServer{
-				{
-					Name:     "dummy",
-					URL:      "http://localhost:9090",
-					Prefix:   "",
-					State:    "Enabled",
-					Hostname: "dummy",
-				},
+	}
+	server.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers: []*config.MCPServer{
+			{
+				Name:     "dummy",
+				URL:      "http://localhost:9090",
+				Prefix:   "",
+				State:    "Enabled",
+				Hostname: "dummy",
 			},
 		},
-	}
+	})
+	return server
 }
 
 // requestHeadersStep returns a standard request headers step
@@ -778,4 +781,53 @@ func requireMatchingHTTPStatus(t *testing.T, expected, actual *typev3.HttpStatus
 	require.NotNil(t, expected, "actual HTTP status is %d", actual.Code)
 	require.NotNil(t, actual)
 	require.Equal(t, expected.Code, actual.Code)
+}
+
+// TestExtProcServer_OnConfigChange_DataRace exercises a config-reload landing
+// concurrently with a request-handler read of RoutingConfig. The race detector
+// is the assertion; run with go test -race ./internal/mcp-router/...
+func TestExtProcServer_OnConfigChange_DataRace(_ *testing.T) {
+	server := &ExtProcServer{
+		Logger: slog.Default(),
+	}
+	server.RoutingConfig.Store(&config.MCPServersConfig{
+		MCPGatewayExternalHostname: "initial.gateway",
+	})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// reader: invoke a handler that reads RoutingConfig.Load() on the hot path
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = server.HandleRequestHeaders(context.Background(), nil)
+			}
+		}
+	}()
+
+	// writer: mirror OnConfigChange firing repeatedly from viper fsnotify
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				server.OnConfigChange(context.Background(), &config.MCPServersConfig{
+					MCPGatewayExternalHostname: "replacement.gateway",
+				})
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
