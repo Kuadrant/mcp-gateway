@@ -121,7 +121,7 @@ type MCPGatewayExtensionReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get;update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;delete
@@ -164,8 +164,18 @@ func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpE
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
-		return ctrl.Result{}, err
+	ns := &corev1.Namespace{}
+	nsTerminating := false
+	if err := r.Get(ctx, types.NamespacedName{Name: mcpExt.Namespace}, ns); err == nil {
+		nsTerminating = !ns.DeletionTimestamp.IsZero()
+	}
+
+	if !nsTerminating {
+		if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
+		r.log.Info("skipping WriteEmptyConfig because namespace is terminating", "namespace", mcpExt.Namespace)
 	}
 
 	controllerutil.RemoveFinalizer(mcpExt, mcpGatewayFinalizer)

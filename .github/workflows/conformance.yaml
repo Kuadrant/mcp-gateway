@@ -48,10 +48,8 @@ jobs:
         with:
           node-version: "24"
 
-      # create with the pinned bin/kind and node image so the make load
-      # targets (same bin/kind) can always load into the node's containerd
       - name: Create Kind cluster
-        run: make kind-create-cluster-ci
+        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
 
       - name: Setup CI environment
         run: |
@@ -68,9 +66,20 @@ jobs:
             HTTP_STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" ${{ env.MCP_URL }} || echo "000")
             if [[ "$HTTP_STATUS" != "000" && "$HTTP_STATUS" != "0" && "$HTTP_STATUS" != "502" && "$HTTP_STATUS" != "503" ]]; then
               echo "Gateway route is active! HTTP Status: $HTTP_STATUS"
-              # Extra wait for broker to connect and fetch tools from the conformance server
-              sleep 10
-              break
+              echo "Waiting for broker to discover tools from conformance server..."
+              for j in {1..60}; do
+                STATUS_JSON=$(curl -s http://mcp.127-0-0-1.sslip.io:8001/status/mcp-test/conformance-server || echo "")
+                if echo "$STATUS_JSON" | grep -q '"ready":true'; then
+                  echo "Broker has successfully discovered tools! Starting tests..."
+                  break 2
+                fi
+                echo "Attempt $j/60: Broker not ready yet. Retrying in 2 seconds..."
+                sleep 2
+                if [ $j -eq 60 ]; then
+                  echo "ERROR: Broker failed to discover tools after 120 seconds."
+                  exit 1
+                fi
+              done
             fi
             echo "Attempt $i/30: Gateway route not ready yet (Status: $HTTP_STATUS). Retrying in 2 seconds..."
             sleep 2

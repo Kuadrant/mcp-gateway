@@ -317,7 +317,7 @@ deploy-example-minimal: install-crd ## Deploy MCPServerRegistration for everythi
 	@echo "Deploying MCPServerRegistration for everything server..."
 	kubectl apply -f config/samples/mcpserverregistration-everything-server.yaml
 	@echo "Waiting for MCPServerRegistration to be ready..."
-	@kubectl wait --for=condition=Ready mcpserverregistration/everything-server -n mcp-test --timeout=240s
+	@kubectl wait --for=condition=Accepted mcpserverregistration/everything-server -n mcp-test --timeout=240s
 
 # Build everything server image only
 build-everything-server: ## Build everything server Docker image
@@ -482,7 +482,7 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 	@echo "Conformance server ready, deploying MCPServerRegistration resource..."
 	kubectl apply -f config/samples/mcpserverregistration-conformance-server.yaml
 	@echo "Waiting for MCPServerRegistration to be Ready..."
-	@kubectl wait --for=condition=Ready mcpsr/conformance-server -n mcp-test --timeout=120s
+	@kubectl wait --for=condition=Accepted mcpsr/conformance-server -n mcp-test --timeout=120s
 
 # Generate e2e gateway configs from templates
 .PHONY: generate-e2e-config

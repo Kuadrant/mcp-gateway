@@ -4,8 +4,12 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
@@ -52,7 +56,7 @@ func (v *Verifier) getHTTPRoute(name, namespace string) (*gatewayapiv1.HTTPRoute
 	return httpRoute, nil
 }
 
-// MCPServerRegistrationReady checks if the MCPServerRegistration has Ready=True condition
+// MCPServerRegistrationReady checks if the MCPServerRegistration has Accepted=True condition
 func (v *Verifier) MCPServerRegistrationReady(name, namespace string) error {
 	mcpServer, err := v.getMCPServerRegistration(name, namespace)
 	if err != nil {
@@ -60,32 +64,14 @@ func (v *Verifier) MCPServerRegistrationReady(name, namespace string) error {
 	}
 
 	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
+		if condition.Type == "Accepted" && condition.Status == metav1.ConditionTrue {
 			return nil
 		}
 	}
-	return fmt.Errorf("MCPServerRegistration %s/%s not ready", namespace, name)
+	return fmt.Errorf("MCPServerRegistration %s/%s not accepted", namespace, name)
 }
 
-// MCPServerRegistrationReadyWithToolsCount checks Ready=True and expected tool count
-func (v *Verifier) MCPServerRegistrationReadyWithToolsCount(name, namespace string, expectedCount int32) error {
-	mcpServer, err := v.getMCPServerRegistration(name, namespace)
-	if err != nil {
-		return err
-	}
-
-	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
-			if mcpServer.Status.DiscoveredTools != expectedCount {
-				return fmt.Errorf("expected %d tools, got %d", expectedCount, mcpServer.Status.DiscoveredTools)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("MCPServerRegistration %s/%s not ready", namespace, name)
-}
-
-// MCPServerRegistrationNotReadyWithReason checks Ready=False with expected reason in message
+// MCPServerRegistrationNotReadyWithReason checks Accepted=False with expected reason in message
 func (v *Verifier) MCPServerRegistrationNotReadyWithReason(name, namespace, expectedReason string) error {
 	mcpServer, err := v.getMCPServerRegistration(name, namespace)
 	if err != nil {
@@ -93,9 +79,9 @@ func (v *Verifier) MCPServerRegistrationNotReadyWithReason(name, namespace, expe
 	}
 
 	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" {
+		if condition.Type == "Accepted" {
 			if condition.Status == metav1.ConditionTrue {
-				return fmt.Errorf("MCPServerRegistration %s/%s is Ready, expected NotReady", namespace, name)
+				return fmt.Errorf("MCPServerRegistration %s/%s is Accepted, expected not accepted", namespace, name)
 			}
 			if !strings.Contains(condition.Message, expectedReason) {
 				return fmt.Errorf("message %q does not contain expected reason %q", condition.Message, expectedReason)
@@ -103,7 +89,7 @@ func (v *Verifier) MCPServerRegistrationNotReadyWithReason(name, namespace, expe
 			return nil
 		}
 	}
-	return fmt.Errorf("MCPServerRegistration %s/%s has no Ready condition", namespace, name)
+	return fmt.Errorf("MCPServerRegistration %s/%s has no Accepted condition", namespace, name)
 }
 
 // MCPServerRegistrationHasCondition checks if the resource has any status condition
@@ -119,7 +105,7 @@ func (v *Verifier) MCPServerRegistrationHasCondition(name, namespace string) err
 	return nil
 }
 
-// MCPServerRegistrationStatusMessage returns the Ready condition message
+// MCPServerRegistrationStatusMessage returns the Accepted condition message
 func (v *Verifier) MCPServerRegistrationStatusMessage(name, namespace string) (string, error) {
 	mcpServer, err := v.getMCPServerRegistration(name, namespace)
 	if err != nil {
@@ -127,11 +113,11 @@ func (v *Verifier) MCPServerRegistrationStatusMessage(name, namespace string) (s
 	}
 
 	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" {
+		if condition.Type == "Accepted" {
 			return condition.Message, nil
 		}
 	}
-	return "", fmt.Errorf("MCPServerRegistration %s/%s has no Ready condition", namespace, name)
+	return "", fmt.Errorf("MCPServerRegistration %s/%s has no Accepted condition", namespace, name)
 }
 
 // HTTPRouteHasProgrammedCondition checks if the HTTPRoute has Programmed=True condition
@@ -257,10 +243,6 @@ func (v *Verifier) HTTPRouteNotFound(name, namespace string) error {
 
 func VerifyMCPServerRegistrationReady(ctx context.Context, k8sClient client.Client, name, namespace string) error {
 	return NewVerifier(ctx, k8sClient).MCPServerRegistrationReady(name, namespace)
-}
-
-func VerifyMCPServerRegistrationReadyWithToolsCount(ctx context.Context, k8sClient client.Client, name, namespace string, toolsCount int32) error {
-	return NewVerifier(ctx, k8sClient).MCPServerRegistrationReadyWithToolsCount(name, namespace, toolsCount)
 }
 
 func VerifyMCPServerRegistrationNotReadyWithReason(ctx context.Context, k8sClient client.Client, name, namespace, expectedReason string) error {
@@ -507,3 +489,38 @@ func GetGatewayListenerMCPConditionMessage(ctx context.Context, k8sClient client
 }
 
 //revive:enable:exported
+
+// GetBrokerServerStatus fetches the server status from the broker's /status endpoint
+func GetBrokerServerStatus(_, namespace, name string) (map[string]interface{}, error) {
+	cmd := exec.CommandContext(context.Background(), "kubectl", "port-forward", "-n", "mcp-system", "svc/mcp-gateway", "8080:8080")
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start port-forward: %w", err)
+	}
+
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	// Give the port-forward time to establish connection
+	time.Sleep(2 * time.Second)
+
+	url := fmt.Sprintf("http://localhost:8080/status/%s/%s", namespace, name)
+	//nolint:gosec,noctx // this is an E2E test, URL is dynamically derived
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch status via port-forward: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var status map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, err
+	}
+	return status, nil
+}

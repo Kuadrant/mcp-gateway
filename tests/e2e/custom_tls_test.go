@@ -261,10 +261,11 @@ var _ = Describe("HTTPS External Backends", func() {
 
 		By("Asserting the registered server has discovered at least one tool")
 		Eventually(func(g Gomega) {
-			sr := &mcpv1alpha1.MCPServerRegistration{}
-			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(mcpServer), sr)).To(Succeed())
-			g.Expect(sr.Status.DiscoveredTools).To(BeNumerically(">", 0),
-				"expected at least one tool discovered over HTTPS from GitHub MCP")
+			status, err := GetBrokerServerStatus(gatewayURL, mcpServer.Namespace, mcpServer.Name)
+			g.Expect(err).NotTo(HaveOccurred())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue(), "expected broker status to contain ready field")
+			g.Expect(ready).To(BeTrue(), "expected server to be ready and connected")
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Asserting the config stored for this server uses an https:// URL")

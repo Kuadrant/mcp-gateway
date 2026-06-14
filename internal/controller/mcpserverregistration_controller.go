@@ -4,12 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,13 +26,9 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
-	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// errServerNotPresent indicates the MCP server config has not been loaded by the gateway yet
-var errServerNotPresent = errors.New("mcp server is not present in gateway yet")
 
 const (
 
@@ -50,10 +44,10 @@ const (
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
 	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
 
-	// conditionReasonReady is the reason used when the MCPServerRegistration is ready
-	conditionReasonReady = "Ready"
-	// conditionReasonNotReady is the reason used when the MCPServerRegistration is not ready
-	conditionReasonNotReady = "NotReady"
+	// conditionReasonAccepted is the reason used when the MCPServerRegistration config is accepted
+	conditionReasonAccepted = "Accepted"
+	// conditionReasonNotAccepted is the reason used when the MCPServerRegistration config is not accepted
+	conditionReasonNotAccepted = "NotAccepted"
 	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
 	conditionReasonDisabled = "Disabled"
 )
@@ -146,7 +140,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -160,7 +154,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// find gateways that have accepted the httproute
 	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -174,7 +168,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -190,7 +184,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
 			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -200,7 +194,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 		if len(mcpGatewayExtensions) == 0 {
 			// this is not an error so we are going to exit
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured", 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, "no valid mcpgatewayextensions configured"); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -222,7 +216,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -233,7 +227,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotAccepted, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -244,18 +238,24 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	// Everything is in place now so we will now poll the gateway to check the registration status of the mcpserver
-	// NOTE We loop here but there should only ever be one
-	for _, mcpExtensionNS := range validNamespaces {
-		if err := r.setMCPServerRegistrationStatus(ctx, mcpExtensionNS, mcpsr, string(mcpServerconfig.ID())); err != nil {
-			if errors.Is(err, errServerNotPresent) {
-				logger.V(1).Info("config not loaded in gateway yet. Will retry status check", "mcpserverregistration", mcpsr.Name)
-				// no point hammering the gateway when we know we are waiting for the config to be loaded
-				return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	// Config has been written. Mark status based on spec.State — fire-and-forget.
+	// Runtime health is observable via broker logs and the /status endpoint.
+	if mcpsr.Spec.State == mcpv1alpha1.ServerStateDisabled {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonDisabled, "server is disabled"); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
-			logger.Error(err, "failed to set mcpserverregistration status", "mcpserverregistration", mcpsr.Name)
-			// TODO: handle persistent failures with specific error types
-			return reconcile.Result{}, err
+			return ctrl.Result{}, err
+		}
+	} else {
+		if err := r.updateStatus(ctx, mcpsr, true, conditionReasonAccepted, "config written to gateway"); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+			logger.Error(err, "failed to update HTTPRoute status")
 		}
 	}
 
@@ -322,70 +322,6 @@ func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, pare
 		return nil, fmt.Errorf("failed to get parent gateway for httproute: %w", err)
 	}
 	return g, nil
-}
-
-// setMCPServerRegistrationStatus polls the broker to check registration status and updates the MCPServerRegistration status
-func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpGatewayExtNS string, mcpsr *mcpv1alpha1.MCPServerRegistration, serverID string) error {
-	log := logf.FromContext(ctx)
-	log.V(1).Info("setMCPServerRegistrationStatus", "mcpregistrationname", mcpsr.Name, "valid gateway extension namespace", mcpGatewayExtNS)
-
-	// If the server is explicitly disabled, set status with Disabled reason and return without polling the broker.
-	// This avoids the errServerNotPresent retry loop for intentionally disabled servers.
-	if mcpsr.Spec.State == mcpv1alpha1.ServerStateDisabled {
-		log.V(1).Info("server is disabled, updating status without polling broker", "mcpregistrationname", mcpsr.Name)
-		return r.updateStatus(ctx, mcpsr, false, conditionReasonDisabled, "server is disabled", 0)
-	}
-
-	validator := NewServerValidator(r.Client)
-	// TODO this currently lists all servers in the extension
-	statusResponse, err := validator.ValidateServers(ctx, mcpGatewayExtNS)
-	if err != nil {
-		log.Error(err, "Failed to validate server status via broker")
-		ready, message := false, fmt.Sprintf("Validation failed: %v", err)
-		if err := r.updateStatus(ctx, mcpsr, ready, conditionReasonNotReady, message, 0); err != nil {
-			log.Error(err, "Failed to update status")
-			return err
-		}
-		return err
-	}
-
-	var gatewayServerStatus upstream.ServerValidationStatus
-	for _, sr := range statusResponse.Servers {
-		log.Info("server response ", "id", sr.ID, "controller id ", serverID)
-		if sr.ID == serverID {
-			gatewayServerStatus = sr
-			break
-		}
-	}
-
-	log.Info("server status ", "mcpregistrationname", mcpsr.Name, "status", gatewayServerStatus)
-	// if there is an id that matches then the gateway is registering the mcp
-	if gatewayServerStatus.ID != "" {
-		reason := conditionReasonNotReady
-		if gatewayServerStatus.Ready {
-			reason = conditionReasonReady
-		}
-		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, reason, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
-			log.Error(err, "Failed to update status")
-			return err
-		}
-
-		if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
-			log.Error(err, "Failed to update HTTPRoute status")
-		}
-		if !gatewayServerStatus.Ready {
-			return errServerNotPresent
-		}
-		log.V(1).Info("server is ready")
-		return nil
-	}
-	// otherwise it hasn't picked up the config yet
-
-	if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, conditionReasonNotReady, errServerNotPresent.Error(), 0); err != nil {
-		return err
-	}
-
-	return errServerNotPresent
 }
 
 func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {
@@ -660,22 +596,21 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1a
 func (r *MCPReconciler) updateStatus(
 	ctx context.Context,
 	mcpsr *mcpv1alpha1.MCPServerRegistration,
-	ready bool,
+	accepted bool,
 	reason string,
 	message string,
-	toolCount int32,
 ) error {
 	condition := metav1.Condition{
-		Type:               "Ready",
+		Type:               "Accepted",
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
 	}
 
-	if ready {
+	if accepted {
 		condition.Status = metav1.ConditionTrue
-		condition.Reason = conditionReasonReady
+		condition.Reason = conditionReasonAccepted
 	}
 
 	statusChanged := false
@@ -699,10 +634,6 @@ func (r *MCPReconciler) updateStatus(
 	}
 	if !found {
 		mcpsr.Status.Conditions = append(mcpsr.Status.Conditions, condition)
-		statusChanged = true
-	}
-	if mcpsr.Status.DiscoveredTools != toolCount {
-		mcpsr.Status.DiscoveredTools = toolCount
 		statusChanged = true
 	}
 

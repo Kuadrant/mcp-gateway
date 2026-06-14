@@ -33,8 +33,7 @@ const (
 // +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.prefix",description="Prefix for federation"
 // +kubebuilder:printcolumn:name="Target",type="string",JSONPath=".spec.targetRef.name",description="Target HTTPRoute.  MCP Gateway only supports routes with a single BackendRef"
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
-// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
-// +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".status.discoveredTools",description="Number of discovered tools"
+// +kubebuilder:printcolumn:name="Accepted",type="string",JSONPath=".status.conditions[?(@.type=='Accepted')].status",description="Configuration accepted by gateway"
 // +kubebuilder:printcolumn:name="Category",type="string",JSONPath=".spec.category",description="Server categories for discovery"
 // +kubebuilder:printcolumn:name="Credentials",type="string",JSONPath=".spec.credentialRef.name"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -206,20 +205,17 @@ type CACertSecretReference struct {
 }
 
 // MCPServerRegistrationStatus represents the observed state of the MCPServerRegistration resource.
-// It contains conditions that indicate whether the referenced servers have been successfully discovered and are ready for use.
+// The 'Accepted' condition indicates the configuration has been written to the gateway.
+// Runtime health is observable via broker logs and the /status endpoint.
 type MCPServerRegistrationStatus struct {
 	// conditions represent the latest available observations of the MCPServerRegistration's state.
-	// Common conditions include 'Ready' to indicate if all referenced servers are accessible.
+	// The 'Accepted' condition indicates whether the configuration was successfully written to the gateway.
 	// +listType=map
 	// +listMapKey=type
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
-
-	// discoveredTools is the number of tools discovered from this MCPServerRegistration.
-	// +optional
-	DiscoveredTools int32 `json:"discoveredTools,omitempty"`
 }
 
 // +kubebuilder:object:root=true

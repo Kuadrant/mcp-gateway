@@ -88,8 +88,9 @@ func createTestHTTPRoute(name, namespace, hostname, serviceName string, port int
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
 					{
-						Name:      gatewayv1.ObjectName(gatewayName),
-						Namespace: ptr.To(gatewayv1.Namespace(gatewayNamespace)),
+						Name:        gatewayv1.ObjectName(gatewayName),
+						Namespace:   ptr.To(gatewayv1.Namespace(gatewayNamespace)),
+						SectionName: ptr.To(gatewayv1.SectionName("http")),
 					},
 				},
 			},
@@ -358,6 +359,33 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(errors.IsNotFound(err)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
+
+		It("should set Accepted=False with reason Disabled when state is Disabled", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.State = mcpv1alpha1.ServerStateDisabled
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			for i := 0; i < 3; i++ {
+				_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1alpha1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(conditionReasonDisabled))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// config is still written for disabled servers
+			Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+		})
 	})
 
 	Context("When no valid MCPGatewayExtension exists", func() {
@@ -422,7 +450,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Message).To(ContainSubstring("no valid mcpgatewayextensions"))
@@ -469,7 +497,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -612,7 +640,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Message).To(ContainSubstring("missing required label"))
@@ -671,7 +699,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Message).To(ContainSubstring("not found"))
@@ -717,7 +745,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Message).To(ContainSubstring("missing key"))
@@ -816,7 +844,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
-				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
+				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Accepted")
 				g.Expect(readyCond).NotTo(BeNil())
 				g.Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(readyCond.Message).To(ContainSubstring("invalid"))
@@ -866,7 +894,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
-				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
+				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Accepted")
 				g.Expect(readyCond).NotTo(BeNil())
 				g.Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(readyCond.Message).To(ContainSubstring("exceeds maximum size"))
@@ -929,7 +957,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Accepted")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Message).To(ContainSubstring("no valid gateways"))

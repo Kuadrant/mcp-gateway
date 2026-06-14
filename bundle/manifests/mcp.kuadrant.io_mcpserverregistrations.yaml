@@ -30,14 +30,10 @@ spec:
       jsonPath: .spec.path
       name: Path
       type: string
-    - description: Ready status
-      jsonPath: .status.conditions[?(@.type=='Ready')].status
-      name: Ready
+    - description: Configuration accepted by gateway
+      jsonPath: .status.conditions[?(@.type=='Accepted')].status
+      name: Accepted
       type: string
-    - description: Number of discovered tools
-      jsonPath: .status.discoveredTools
-      name: Tools
-      type: integer
     - description: Server categories for discovery
       jsonPath: .spec.category
       name: Category
@@ -238,7 +234,7 @@ spec:
               conditions:
                 description: |-
                   conditions represent the latest available observations of the MCPServerRegistration's state.
-                  Common conditions include 'Ready' to indicate if all referenced servers are accessible.
+                  The 'Accepted' condition indicates whether the configuration was successfully written to the gateway.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -297,11 +293,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              discoveredTools:
-                description: discoveredTools is the number of tools discovered from
-                  this MCPServerRegistration.
-                format: int32
-                type: integer
             type: object
         type: object
     served: true

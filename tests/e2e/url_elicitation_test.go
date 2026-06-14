@@ -52,7 +52,11 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for the server to become ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+			status, err := GetBrokerServerStatus(gatewayURL, registeredServer.Namespace, registeredServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 	})
 
@@ -76,7 +80,11 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		toolName2 := fmt.Sprintf("%sgreet", registeredServer2.Spec.Prefix)
 
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer2.Name, registeredServer2.Namespace)).To(BeNil())
+			status, err := GetBrokerServerStatus(gatewayURL, registeredServer2.Namespace, registeredServer2.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 
 		By("Initializing with elicitation capability")

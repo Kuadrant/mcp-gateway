@@ -57,7 +57,11 @@ var _ = Describe("Elicitation", func() {
 
 		By("Waiting for the server to become ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+			status, err := GetBrokerServerStatus(gatewayURL, registeredServer.Namespace, registeredServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 

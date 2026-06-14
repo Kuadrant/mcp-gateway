@@ -238,6 +238,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			WithPublicHost(E2E1PublicHost).
 			Build()
 		newSetup.Register(ctx)
+		defer newSetup.TearDown(ctx)
 
 		By("Verifying MCPGatewayExtension becomes ready again")
 		Eventually(func(g Gomega) {
@@ -327,14 +328,20 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for team A server to be registered with main gateway")
 		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamAResources.GetMCPServer().Name, TestServerNameSpace)
-			g.Expect(err).NotTo(HaveOccurred())
+			status, err := GetBrokerServerStatus(gatewayURL, TestServerNameSpace, teamAResources.GetMCPServer().Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for team B server to be registered with e2e-1 gateway")
 		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamBResources.GetMCPServer().Name, e2e1ExtNamespace)
-			g.Expect(err).NotTo(HaveOccurred())
+			status, err := GetBrokerServerStatus(E2E1GatewayURL, e2e1ExtNamespace, teamBResources.GetMCPServer().Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Connecting to main gateway (team A)")
@@ -525,14 +532,20 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for Team A server to be registered")
 		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamAResources.GetMCPServer().Name, TeamANamespace)
-			g.Expect(err).NotTo(HaveOccurred())
+			status, err := GetBrokerServerStatus(TeamAGatewayURL, TeamANamespace, teamAResources.GetMCPServer().Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for Team B server to be registered")
 		Eventually(func(g Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamBResources.GetMCPServer().Name, TeamBNamespace)
-			g.Expect(err).NotTo(HaveOccurred())
+			status, err := GetBrokerServerStatus(TeamBGatewayURL, TeamBNamespace, teamBResources.GetMCPServer().Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Connecting to Team A gateway")
