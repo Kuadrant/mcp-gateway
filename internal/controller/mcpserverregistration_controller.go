@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -41,6 +43,8 @@ const (
 	maxCACertSize = 64 * 1024
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
+	// MCPServerRegistrationReferenceGrantIndex used to find MCPServerRegistrations for ReferenceGrants
+	MCPServerRegistrationReferenceGrantIndex = "spec.targetRef.referencegrant"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
 	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
 
@@ -51,6 +55,8 @@ const (
 	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
 	conditionReasonDisabled = "Disabled"
 )
+
+var errReferenceGrantRequired = errors.New("ReferenceGrant required")
 
 // ServerInfo holds server information
 type ServerInfo struct {
@@ -83,6 +89,7 @@ type MCPReconciler struct {
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpserverregistrations/status,verbs=get;update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes/status,verbs=update
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get
 
@@ -140,7 +147,14 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+		statusReason := conditionReasonNotReady
+		if errors.Is(err, errReferenceGrantRequired) {
+			statusReason = mcpv1alpha1.ConditionReasonRefGrantRequired
+			if removeErr := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); removeErr != nil {
+				return ctrl.Result{}, removeErr
+			}
+		}
+		if err := r.updateStatus(ctx, mcpsr, false, statusReason, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -316,7 +330,21 @@ func (r *MCPReconciler) findValidGatewaysForMCPServer(ctx context.Context, targe
 }
 
 func (r *MCPReconciler) getTargetHTTPRoute(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration) (*gatewayv1.HTTPRoute, error) {
-	namespaceName := types.NamespacedName{Namespace: mcpsr.Namespace, Name: mcpsr.Spec.TargetRef.Name}
+	targetNamespace := targetRefNamespace(mcpsr.Namespace, mcpsr.Spec.TargetRef)
+	if targetNamespace != mcpsr.Namespace {
+		hasGrant, err := r.hasValidHTTPRouteReferenceGrant(ctx, mcpsr, targetNamespace)
+		if err != nil {
+			return nil, err
+		}
+		if !hasGrant {
+			return nil, fmt.Errorf("%w in %s to allow cross-namespace HTTPRoute reference from %s", errReferenceGrantRequired, targetNamespace, mcpsr.Namespace)
+		}
+	}
+
+	namespaceName := types.NamespacedName{
+		Namespace: targetNamespace,
+		Name:      mcpsr.Spec.TargetRef.Name,
+	}
 	logger := logf.FromContext(ctx).WithValues("method", "getTargetHTTPRoute")
 	logger.V(1).Info("httproute target ", "namespacename ", namespaceName)
 	targetRoute := &gatewayv1.HTTPRoute{}
@@ -325,6 +353,43 @@ func (r *MCPReconciler) getTargetHTTPRoute(ctx context.Context, mcpsr *mcpv1alph
 	}
 	return targetRoute, nil
 
+}
+
+func (r *MCPReconciler) hasValidHTTPRouteReferenceGrant(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration, targetNamespace string) (bool, error) {
+	refGrantList := &gatewayv1beta1.ReferenceGrantList{}
+	if err := r.List(ctx, refGrantList, client.InNamespace(targetNamespace)); err != nil {
+		return false, fmt.Errorf("failed to list ReferenceGrants: %w", err)
+	}
+	for i := range refGrantList.Items {
+		if referenceGrantAllowsMCPServerRegistrationHTTPRoute(&refGrantList.Items[i], mcpsr) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func referenceGrantAllowsMCPServerRegistrationHTTPRoute(rg *gatewayv1beta1.ReferenceGrant, mcpsr *mcpv1alpha1.MCPServerRegistration) bool {
+	fromAllowed := false
+	for _, from := range rg.Spec.From {
+		if string(from.Group) == mcpv1alpha1.GroupVersion.Group &&
+			string(from.Kind) == "MCPServerRegistration" &&
+			string(from.Namespace) == mcpsr.Namespace {
+			fromAllowed = true
+			break
+		}
+	}
+	if !fromAllowed {
+		return false
+	}
+
+	for _, to := range rg.Spec.To {
+		if string(to.Group) == gatewayv1.GroupVersion.Group &&
+			(to.Kind == "" || string(to.Kind) == "HTTPRoute") &&
+			(to.Name == nil || *to.Name == "" || string(*to.Name) == mcpsr.Spec.TargetRef.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, parent *gatewayv1.ParentReference) (*gatewayv1.Gateway, error) {
@@ -561,15 +626,21 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1a
 		return nil
 	}
 
-	namespace := mcpsr.Namespace
-	if targetRef.Namespace != "" {
-		namespace = targetRef.Namespace
+	targetNamespace := targetRefNamespace(mcpsr.Namespace, targetRef)
+	if targetNamespace != mcpsr.Namespace {
+		hasGrant, err := r.hasValidHTTPRouteReferenceGrant(ctx, mcpsr, targetNamespace)
+		if err != nil {
+			return err
+		}
+		if !hasGrant && mcpsr.DeletionTimestamp == nil {
+			return nil
+		}
 	}
 
 	httpRoute := &gatewayv1.HTTPRoute{}
 	err := r.Get(ctx, types.NamespacedName{
 		Name:      targetRef.Name,
-		Namespace: namespace,
+		Namespace: targetNamespace,
 	}, httpRoute)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -659,6 +730,10 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 		return fmt.Errorf("failed to setup required index from MCPServerRegistration to httproutes %w", err)
 	}
 
+	if err := setupIndexMCPRegistrationToReferenceGrant(ctx, mgr.GetFieldIndexer()); err != nil {
+		return fmt.Errorf("failed to setup required index from MCPServerRegistration to referencegrants %w", err)
+	}
+
 	if err := setupIndexProgrammedHTTPRoutes(ctx, mgr.GetFieldIndexer()); err != nil {
 		return fmt.Errorf("failed to setup required index for programmed httproutes %w", err)
 	}
@@ -683,6 +758,10 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 			&mcpv1alpha1.MCPGatewayExtension{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForMCPGatewayExtension),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForReferenceGrant),
 		)
 
 	return controller.Complete(r)
@@ -690,6 +769,14 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 
 func httpRouteIndexValue(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func mcpServerRegistrationToRefGrantIndexValue(mcpsr mcpv1alpha1.MCPServerRegistration) string {
+	return fmt.Sprintf("%s/MCPServerRegistration/%s", mcpv1alpha1.GroupVersion.Group, mcpsr.Namespace)
+}
+
+func refGrantFromToMCPServerRegistrationIndexValue(from gatewayv1beta1.ReferenceGrantFrom) string {
+	return fmt.Sprintf("%s/%s/%s", from.Group, from.Kind, from.Namespace)
 }
 
 func setupIndexProgrammedHTTPRoutes(ctx context.Context, indexer client.FieldIndexer) error {
@@ -714,17 +801,34 @@ func setupIndexMCPRegistrationToHTTPRoute(ctx context.Context, indexer client.Fi
 		mcpsr := rawObj.(*mcpv1alpha1.MCPServerRegistration)
 		targetRef := mcpsr.Spec.TargetRef
 		if targetRef.Kind == "HTTPRoute" {
-			namespace := targetRef.Namespace
-			if namespace == "" {
-				namespace = mcpsr.Namespace
-			}
-			return []string{httpRouteIndexValue(namespace, targetRef.Name)}
+			return []string{httpRouteIndexValue(targetRefNamespace(mcpsr.Namespace, targetRef), targetRef.Name)}
 		}
 		return []string{}
 	}); err != nil {
 		return err
 	}
 	return nil
+}
+
+func setupIndexMCPRegistrationToReferenceGrant(ctx context.Context, indexer client.FieldIndexer) error {
+	if err := indexer.IndexField(ctx, &mcpv1alpha1.MCPServerRegistration{}, MCPServerRegistrationReferenceGrantIndex, func(rawObj client.Object) []string {
+		mcpsr := rawObj.(*mcpv1alpha1.MCPServerRegistration)
+		targetRef := mcpsr.Spec.TargetRef
+		if targetRef.Kind == "HTTPRoute" && targetRef.Namespace != "" && targetRef.Namespace != mcpsr.Namespace {
+			return []string{mcpServerRegistrationToRefGrantIndexValue(*mcpsr)}
+		}
+		return []string{}
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func targetRefNamespace(defaultNamespace string, targetRef mcpv1alpha1.TargetReference) string {
+	if targetRef.Namespace != "" {
+		return targetRef.Namespace
+	}
+	return defaultNamespace
 }
 
 // findMCPServerRegistrationsForHTTPRoute finds all MCPServerRegistrations that reference the given HTTPRoute
@@ -752,6 +856,35 @@ func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Conte
 		})
 	}
 
+	return requests
+}
+
+func (r *MCPReconciler) findMCPServerRegistrationsForReferenceGrant(ctx context.Context, obj client.Object) []reconcile.Request {
+	ref, ok := obj.(*gatewayv1beta1.ReferenceGrant)
+	if !ok || len(ref.Spec.From) == 0 {
+		return nil
+	}
+
+	seen := map[types.NamespacedName]struct{}{}
+	var requests []reconcile.Request
+	for _, from := range ref.Spec.From {
+		mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+		if err := r.List(ctx, mcpsrList,
+			client.MatchingFields{MCPServerRegistrationReferenceGrantIndex: refGrantFromToMCPServerRegistrationIndexValue(from)},
+		); err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to list MCPServerRegistrations for ReferenceGrant")
+			continue
+		}
+
+		for _, mcpsr := range mcpsrList.Items {
+			nn := client.ObjectKeyFromObject(&mcpsr)
+			if _, ok := seen[nn]; ok {
+				continue
+			}
+			seen[nn] = struct{}{}
+			requests = append(requests, reconcile.Request{NamespacedName: nn})
+		}
+	}
 	return requests
 }
 
