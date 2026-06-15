@@ -115,12 +115,9 @@ The gateway uses TLS termination (`tls.mode: Terminate`) on HTTPS listeners. Env
 
 **Fully supported — tool discovery and tool calls work:**
 
-- **HTTP listener → HTTP backend** — standard setup, no TLS involved.
+- **HTTP listener → HTTP backend** — no TLS involved.
 - **HTTPS listener → HTTP backend** — Envoy terminates client TLS, forwards HTTP to backend. Requires `--gateway-ca-cert` if the listener uses a private CA.
 - **HTTPS listener → external HTTPS backend (with DestinationRule)** — Envoy terminates client TLS, then a DestinationRule configures TLS origination to the external service. See [External MCP Servers](./external-mcp-server.md).
-
-**Partially supported — tool discovery only, tool calls fail:**
-
 - **Any listener → internal HTTPS backend (`caCertSecretRef`)** — the broker connects directly to the backend using the CA cert, so tool discovery works. However, `tools/call` is routed through Envoy, which sends plain HTTP to the TLS backend after termination. The backend rejects the non-TLS connection.
 
 > **Workaround:** To enable `tools/call` for an internal TLS backend, create an Istio DestinationRule with TLS origination for that service — the same pattern used for [external MCP servers](./external-mcp-server.md). This tells Envoy to re-encrypt traffic to the backend.
