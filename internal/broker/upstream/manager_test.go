@@ -387,7 +387,7 @@ func TestMCPManager_setStatus(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
 			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
-			manager.serverTools = make([]GatewayTool, tc.numServerTools)
+			manager.tools.serverItems = make([]GatewayTool, tc.numServerTools)
 
 			manager.setStatus(tc.err, tc.totalTools, 0, nil, nil)
 
@@ -474,7 +474,7 @@ func TestMCPManager_toolToServerTool(t *testing.T) {
 		Description: "A test tool",
 	}
 
-	serverTool := manager.toolToServerTool(tool)
+	serverTool := manager.tools.toServer(tool)
 
 	assert.Equal(t, "prefix_mytool", serverTool.Tool.Name)
 	assert.Equal(t, "A test tool", serverTool.Tool.Description)
@@ -780,7 +780,7 @@ func TestDiffTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			added, removed := manager.diffTools(tt.oldTools, tt.newTools)
+			added, removed := manager.tools.diff(tt.oldTools, tt.newTools)
 			assert.Len(t, added, tt.expectedAdded, "unexpected number of added tools")
 			assert.Len(t, removed, tt.expectedRemoved, "unexpected number of removed tools")
 
@@ -907,7 +907,8 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 			require.NoError(t, err)
 
 			if tt.hasExistingTools {
-				manager.serverTools = []GatewayTool{{Tool: mcp.Tool{Name: "existing_tool"}}}
+				// set serverTools directly since shouldFetchTools checks this field
+				manager.tools.serverItems = []GatewayTool{{Tool: mcp.Tool{Name: "existing_tool"}}}
 			}
 
 			result := manager.shouldFetchTools(tt.eventType)
@@ -1107,8 +1108,8 @@ func TestServerToolsManagement(t *testing.T) {
 
 			// Verify serverTools
 			manager.toolsLock.RLock()
-			serverToolNames := make([]string, len(manager.serverTools))
-			for i, st := range manager.serverTools {
+			serverToolNames := make([]string, len(manager.tools.serverItems))
+			for i, st := range manager.tools.serverItems {
 				serverToolNames[i] = st.Tool.Name
 			}
 			manager.toolsLock.RUnlock()
@@ -1395,7 +1396,7 @@ func TestMCPManager_promptToServerPrompt(t *testing.T) {
 			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
-			serverPrompt := manager.promptToServerPrompt(mcp.Prompt{Name: tt.promptName, Description: tt.promptDesc})
+			serverPrompt := manager.prompts.toServer(mcp.Prompt{Name: tt.promptName, Description: tt.promptDesc})
 
 			assert.Equal(t, tt.expectedName, serverPrompt.Prompt.Name)
 			assert.Equal(t, tt.promptDesc, serverPrompt.Prompt.Description)
@@ -1457,7 +1458,7 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			added, removed := manager.diffPrompts(tt.oldPrompts, tt.newPrompts)
+			added, removed := manager.prompts.diff(tt.oldPrompts, tt.newPrompts)
 			assert.Len(t, added, tt.expectedAdded)
 			assert.Len(t, removed, tt.expectedRemoved)
 		})
