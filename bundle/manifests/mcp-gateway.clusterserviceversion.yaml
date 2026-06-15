@@ -6,7 +6,7 @@ metadata:
     capabilities: Basic Install
     categories: Integration & Delivery
     containerImage: ghcr.io/kuadrant/mcp-controller:latest
-    createdAt: "2026-05-27T17:36:10Z"
+    createdAt: "2026-06-15T11:00:27Z"
     description: An Envoy-based gateway for Model Context Protocol (MCP) servers
     operators.operatorframework.io/builder: operator-sdk-v1.38.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
@@ -55,6 +55,8 @@ spec:
                 - namespaces
               verbs:
                 - get
+                - list
+                - watch
             - apiGroups:
                 - ""
               resources:
