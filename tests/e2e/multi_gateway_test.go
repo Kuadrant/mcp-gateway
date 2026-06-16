@@ -328,7 +328,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for team A server to be registered with main gateway")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(gatewayURL, TestServerNameSpace, teamAResources.GetMCPServer().Name)
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", TestServerNameSpace, teamAResources.GetMCPServer().Name)
 			g.Expect(err).To(BeNil())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue())
@@ -337,7 +337,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for team B server to be registered with e2e-1 gateway")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(E2E1GatewayURL, e2e1ExtNamespace, teamBResources.GetMCPServer().Name)
+			status, err := GetBrokerServerStatus(e2e1ExtNamespace, "mcp-gateway", e2e1ExtNamespace, teamBResources.GetMCPServer().Name)
 			g.Expect(err).To(BeNil())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue())
@@ -532,7 +532,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for Team A server to be registered")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(TeamAGatewayURL, TeamANamespace, teamAResources.GetMCPServer().Name)
+			status, err := GetBrokerServerStatus(TeamANamespace, "mcp-gateway", TeamANamespace, teamAResources.GetMCPServer().Name)
 			g.Expect(err).To(BeNil())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue())
@@ -541,7 +541,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Waiting for Team B server to be registered")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(TeamBGatewayURL, TeamBNamespace, teamBResources.GetMCPServer().Name)
+			status, err := GetBrokerServerStatus(TeamBNamespace, "mcp-gateway", TeamBNamespace, teamBResources.GetMCPServer().Name)
 			g.Expect(err).To(BeNil())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue())

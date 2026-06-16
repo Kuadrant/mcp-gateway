@@ -151,6 +151,9 @@ func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listen
 		"-n", namespace, "--type=json", "-p", patch)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(string(output), "Duplicate value") {
+			return nil
+		}
 		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
 	}
 	return nil

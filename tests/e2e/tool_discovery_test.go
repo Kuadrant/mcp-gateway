@@ -72,7 +72,7 @@ var _ = Describe("Tool Discovery", func() {
 
 			By("waiting for the server to become ready")
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("waiting for tools to appear via gateway")
@@ -122,8 +122,8 @@ var _ = Describe("Tool Discovery", func() {
 
 			By("waiting for both servers to be ready")
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, sMulti.Name, sMulti.Namespace)).To(Succeed())
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, sMsg.Name, sMsg.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, sMulti.Name, sMulti.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, sMsg.Name, sMsg.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "multicat_")
@@ -181,7 +181,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("creating a JWT that allows only one tool")
@@ -226,7 +226,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "discvs_")
@@ -271,7 +271,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("establishing a raw session")
@@ -373,7 +373,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
@@ -414,7 +414,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			var receivedNotification atomic.Bool
@@ -493,7 +493,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
@@ -530,7 +530,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			// set threshold to 1 so any server with >1 tools triggers hiding
@@ -595,7 +595,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("creating two sessions")
@@ -649,7 +649,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
@@ -727,7 +727,7 @@ var _ = Describe("Tool Discovery", func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "reconf_")

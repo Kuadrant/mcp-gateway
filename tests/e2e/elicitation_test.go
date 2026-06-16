@@ -57,7 +57,7 @@ var _ = Describe("Elicitation", func() {
 
 		By("Waiting for the server to become ready")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(gatewayURL, registeredServer.Namespace, registeredServer.Name)
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", registeredServer.Namespace, registeredServer.Name)
 			g.Expect(err).To(BeNil())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue())

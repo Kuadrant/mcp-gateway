@@ -53,12 +53,31 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Waiting for standard server to be ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for user-specific server to have a status condition")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for standard server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", stdServer.Namespace, stdServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for user-specific server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", uspecServer.Namespace, uspecServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			// uspecServers won't be ready=true due to auth requirements
+			_ = ready
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with user-a auth")
@@ -91,6 +110,16 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		By("Waiting for user-specific server to have a status condition")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for user-specific server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", uspecServer.Namespace, uspecServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			// uspecServers won't be ready=true due to auth requirements
+			_ = ready
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating clients for user-a and user-b")
@@ -150,6 +179,16 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
+		By("Waiting for user-specific server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", uspecServer.Namespace, uspecServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			// uspecServers won't be ready=true due to auth requirements
+			_ = ready
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
 		By("Creating a client with user-a auth")
 		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
@@ -177,7 +216,16 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		stdServer := stdReg.Register(ctx)
 
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for standard server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", stdServer.Namespace, stdServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Listing tools without user-specific server — record baseline")
@@ -203,6 +251,16 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for user-specific server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", uspecServer.Namespace, uspecServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			// uspecServers won't be ready=true due to auth requirements
+			_ = ready
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying client without auth still sees same standard tools (no user-specific tools leak)")
@@ -232,7 +290,16 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		stdServer := stdReg.Register(ctx)
 
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Waiting for standard server to be synced in the broker")
+		Eventually(func(g Gomega) {
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", stdServer.Namespace, stdServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Scaling down the user-specific server")

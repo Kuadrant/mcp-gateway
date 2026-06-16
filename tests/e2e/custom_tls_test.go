@@ -14,7 +14,6 @@ import (
 	"os"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -130,7 +129,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Verifying MCPServerRegistration becomes ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 
 		By("Verifying tools with tls_e2e_ prefix are present")
@@ -179,21 +178,14 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Verifying MCPServerRegistration is not ready with certificate error")
 		Eventually(func(g Gomega) {
-			mcpsr := &mcpv1alpha1.MCPServerRegistration{}
-			g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: registeredServer.Name, Namespace: registeredServer.Namespace,
-			}, mcpsr)).To(Succeed())
-			g.Expect(mcpsr.Status.Conditions).NotTo(BeEmpty())
-			for _, cond := range mcpsr.Status.Conditions {
-				if cond.Type == "Ready" {
-					g.Expect(cond.Status).To(Equal(metav1.ConditionFalse),
-						"MCPServerRegistration should not be ready with wrong CA")
-					g.Expect(cond.Message).To(ContainSubstring("x509"),
-						"condition message should indicate a TLS certificate error")
-					return
-				}
-			}
-			g.Expect(false).To(BeTrue(), "no Ready condition found")
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", registeredServer.Namespace, registeredServer.Name)
+			g.Expect(err).To(BeNil())
+			ready, ok := status["ready"].(bool)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(ready).To(BeFalse(), "MCPServerRegistration should not be ready with wrong CA")
+			msg, ok := status["message"].(string)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(msg).To(ContainSubstring("x509"), "condition message should indicate a TLS certificate error")
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 
 		By("Verifying tools with tls_wrong_ prefix are absent")
@@ -256,12 +248,12 @@ var _ = Describe("HTTPS External Backends", func() {
 
 		By("Waiting for MCPServerRegistration to become Ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, mcpServer.Name, TestServerNameSpace)).To(Succeed())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, mcpServer.Name, TestServerNameSpace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Asserting the registered server has discovered at least one tool")
 		Eventually(func(g Gomega) {
-			status, err := GetBrokerServerStatus(gatewayURL, mcpServer.Namespace, mcpServer.Name)
+			status, err := GetBrokerServerStatus(SystemNamespace, "mcp-gateway", mcpServer.Namespace, mcpServer.Name)
 			g.Expect(err).NotTo(HaveOccurred())
 			ready, ok := status["ready"].(bool)
 			g.Expect(ok).To(BeTrue(), "expected broker status to contain ready field")
@@ -310,7 +302,7 @@ var _ = Describe("HTTPS External Backends", func() {
 
 		By("Waiting for MCPServerRegistration to become Ready over HTTPS")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, mcpServer.Name, TestServerNameSpace)).To(Succeed())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, mcpServer.Name, TestServerNameSpace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Verifying tools are accessible via the HTTPS gateway URL")

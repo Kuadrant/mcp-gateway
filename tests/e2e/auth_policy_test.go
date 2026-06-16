@@ -67,8 +67,8 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 
 		By("Waiting for MCPServerRegistrations to become ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for Authorino to start enforcing auth (polling for 401)")
@@ -223,7 +223,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		}()
 
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, evServer.Name, evServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, evServer.Name, evServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a VirtualServer that allows only the everything-server prompt (user has no JWT role for it)")

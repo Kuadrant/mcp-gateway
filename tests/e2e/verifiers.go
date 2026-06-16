@@ -5,11 +5,10 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
@@ -241,7 +240,7 @@ func (v *Verifier) HTTPRouteNotFound(name, namespace string) error {
 // TODO: Remove these after updating all tests to use Verifier
 //revive:disable:exported
 
-func VerifyMCPServerRegistrationReady(ctx context.Context, k8sClient client.Client, name, namespace string) error {
+func VerifyMCPServerRegistrationAccepted(ctx context.Context, k8sClient client.Client, name, namespace string) error {
 	return NewVerifier(ctx, k8sClient).MCPServerRegistrationReady(name, namespace)
 }
 
@@ -491,36 +490,21 @@ func GetGatewayListenerMCPConditionMessage(ctx context.Context, k8sClient client
 //revive:enable:exported
 
 // GetBrokerServerStatus fetches the server status from the broker's /status endpoint
-func GetBrokerServerStatus(_, namespace, name string) (map[string]interface{}, error) {
-	cmd := exec.CommandContext(context.Background(), "kubectl", "port-forward", "-n", "mcp-system", "svc/mcp-gateway", "8080:8080")
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start port-forward: %w", err)
-	}
-
-	defer func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-	}()
-
-	// Give the port-forward time to establish connection
-	time.Sleep(2 * time.Second)
-
-	url := fmt.Sprintf("http://localhost:8080/status/%s/%s", namespace, name)
-	//nolint:gosec,noctx // this is an E2E test, URL is dynamically derived
-	resp, err := http.Get(url)
+func GetBrokerServerStatus(brokerNamespace, brokerServiceName, namespace, name string) (map[string]interface{}, error) {
+	rawPath := fmt.Sprintf("/api/v1/namespaces/%s/services/%s:8080/proxy/status/%s/%s", brokerNamespace, brokerServiceName, namespace, name)
+	cmd := exec.CommandContext(context.Background(), "kubectl", "get", "--raw", rawPath)
+	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch status via port-forward: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("kubectl get --raw failed: %w, stderr: %s", err, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("kubectl get --raw failed: %w", err)
 	}
 
 	var status map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, err
+	if err := json.Unmarshal(output, &status); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON from %s: %w\nOutput: %s", rawPath, err, string(output))
 	}
 	return status, nil
 }

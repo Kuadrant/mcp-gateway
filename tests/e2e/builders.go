@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -128,7 +127,7 @@ func NewTestResources(testName string, k8sClient client.Client) *TestResourcesBu
 		k8sClient:        k8sClient,
 		testName:         testName,
 		namespace:        TestServerNameSpace,
-		hostname:         "e2e-server2.mcp.local",
+		hostname:         "e2e-server2.mcp-gateway.local",
 		serviceName:      "mcp-test-server2",
 		port:             9090,
 		credentialKey:    "token",
@@ -139,14 +138,14 @@ func NewTestResources(testName string, k8sClient client.Client) *TestResourcesBu
 
 // NewTestResourcesWithDefaults creates a builder with default backend (mcp-test-server2)
 func NewTestResourcesWithDefaults(testName string, k8sClient client.Client) *TestResourcesBuilder {
-	return NewTestResources(testName, k8sClient)
+	return NewTestResources(testName, k8sClient).WithSectionName(GatewayListenerName)
 }
 
 // ForInternalService configures the builder for an internal Kubernetes service
 func (b *TestResourcesBuilder) ForInternalService(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -196,7 +195,7 @@ func (b *TestResourcesBuilder) WithHint(hint string) *TestResourcesBuilder {
 func (b *TestResourcesBuilder) WithBackendTarget(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -371,7 +370,6 @@ func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 			},
 			Hostnames: []gatewayapiv1.Hostname{
 				gatewayapiv1.Hostname(b.hostname),
-				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp.local", "."+e2eDomain, 1)),
 			},
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{

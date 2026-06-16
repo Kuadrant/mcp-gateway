@@ -47,7 +47,7 @@ var _ = Describe("Tool Schema Validation", func() {
 
 		By("Waiting for MCPServerRegistration to become ready")
 		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationAccepted(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Verifying the invalid tool is NOT served through the gateway")
