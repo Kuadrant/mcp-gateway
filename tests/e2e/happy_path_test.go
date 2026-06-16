@@ -1398,6 +1398,17 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			}
 			g.Expect(hasPrefix).To(BeTrue(), "tools with prefix %q should exist after restart", registeredServer.Spec.Prefix)
 
+			_, prompts, err := mcpListPrompts(ctx, gatewayURL, sessionID, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			hasPromptPrefix := false
+			for _, p := range prompts {
+				if strings.HasPrefix(p, registeredServer.Spec.Prefix) {
+					hasPromptPrefix = true
+					break
+				}
+			}
+			g.Expect(hasPromptPrefix).To(BeTrue(), "prompts with prefix %q should exist after restart", registeredServer.Spec.Prefix)
+
 			_, content, err := mcpCallTool(ctx, gatewayURL, sessionID, toolName, map[string]any{"name": "restart-test"}, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(content).NotTo(BeEmpty())
