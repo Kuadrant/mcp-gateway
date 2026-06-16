@@ -47,7 +47,7 @@ jobs:
 
       # Provision a Kind cluster using the same config as the standard e2e suite
       - name: Create Kind cluster
-        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+        run: make kind-create-cluster-ci
 
       # Full gateway stack: Istio, gateway, controller, test servers
       - name: Setup CI environment

@@ -49,7 +49,7 @@ jobs:
           node-version: "24"
 
       - name: Create Kind cluster
-        run: kind create cluster --name mcp-gateway --config config/kind/cluster-ci.yaml
+        run: make kind-create-cluster-ci
 
       - name: Setup CI environment
         run: |
@@ -68,7 +68,7 @@ jobs:
               echo "Gateway route is active! HTTP Status: $HTTP_STATUS"
               echo "Waiting for broker to discover tools from conformance server..."
               for j in {1..60}; do
-                STATUS_JSON=$(curl -s http://mcp.127-0-0-1.sslip.io:8001/status/mcp-test/conformance-server || echo "")
+                STATUS_JSON=$(kubectl get --raw "/api/v1/namespaces/mcp-system/services/mcp-gateway:8080/proxy/status/mcp-test/conformance-server" 2>/dev/null || echo "")
                 if echo "$STATUS_JSON" | grep -q '"ready":true'; then
                   echo "Broker has successfully discovered tools! Starting tests..."
                   break 2
