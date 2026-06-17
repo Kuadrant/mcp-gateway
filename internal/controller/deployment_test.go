@@ -630,32 +630,48 @@ func TestMergeCommand_StripsLegacyRouterKeyFlag(t *testing.T) {
 	}
 }
 
-// TestBuildBrokerRouterDeployment_LogLevel verifies the broker --log-level
-// flag is emitted only when the controller is configured with one
-// (BROKER_ROUTER_LOG_LEVEL env var).
-func TestBuildBrokerRouterDeployment_LogLevel(t *testing.T) {
+// TestBuildBrokerRouterDeployment_SpecLogLevel verifies the broker --log-level
+// flag is emitted from spec.logLevel with correct numeric mapping, and that
+// spec.logLevel takes precedence over the operator-wide BrokerRouterLogLevel.
+func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 	tests := []struct {
-		name     string
-		logLevel string
-		want     string
+		name           string
+		brokerLogLevel string
+		specLogLevel   mcpv1alpha1.LogLevel
+		want           string
 	}{
 		{
-			name:     "no log-level flag when unset",
-			logLevel: "",
-			want:     "",
+			name:         "spec.logLevel debug maps to -4",
+			specLogLevel: mcpv1alpha1.LogLevelDebug,
+			want:         "--log-level=-4",
 		},
 		{
-			name:     "log-level flag emitted when set",
-			logLevel: "-4",
-			want:     "--log-level=-4",
+			name:         "spec.logLevel info maps to 0",
+			specLogLevel: mcpv1alpha1.LogLevelInfo,
+			want:         "--log-level=0",
+		},
+		{
+			name:         "spec.logLevel warn maps to 4",
+			specLogLevel: mcpv1alpha1.LogLevelWarn,
+			want:         "--log-level=4",
+		},
+		{
+			name:         "spec.logLevel error maps to 8",
+			specLogLevel: mcpv1alpha1.LogLevelError,
+			want:         "--log-level=8",
+		},
+		{
+			name:           "spec.logLevel overrides operator-wide BrokerRouterLogLevel",
+			brokerLogLevel: "-4",
+			specLogLevel:   mcpv1alpha1.LogLevelError,
+			want:           "--log-level=8",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &MCPGatewayExtensionReconciler{
 				BrokerRouterImage:    "test-image:v1",
-				BrokerRouterLogLevel: tt.logLevel,
+				BrokerRouterLogLevel: tt.brokerLogLevel,
 			}
 			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
@@ -667,12 +683,11 @@ func TestBuildBrokerRouterDeployment_LogLevel(t *testing.T) {
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
+					LogLevel: tt.specLogLevel,
 				},
 			}
-
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080))
 			command := deployment.Spec.Template.Spec.Containers[0].Command
-
 			var got string
 			for _, arg := range command {
 				if strings.HasPrefix(arg, "--log-level=") {
