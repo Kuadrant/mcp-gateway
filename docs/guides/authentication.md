@@ -80,25 +80,36 @@ kubectl patch gateway mcp-gateway -n gateway-system --type json -p '[
 
 ## Step 2: Configure MCP Gateway OAuth Environment
 
-Configure the MCP Gateway broker to respond with OAuth discovery information:
+Configure the MCP Gateway broker to respond with OAuth discovery information by setting `oauthProtectedResource` on your MCPGatewayExtension:
 
 ```bash
-kubectl set env deployment/mcp-gateway \
-  OAUTH_RESOURCE_NAME="MCP Server" \
-  OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
-  OAUTH_AUTHORIZATION_SERVERS="https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
-  OAUTH_BEARER_METHODS_SUPPORTED="header" \
-  OAUTH_SCOPES_SUPPORTED="basic,groups,roles,profile,offline_access" \
-  -n mcp-system
+kubectl patch mcpgatewayextension mcp-gateway -n mcp-system --type merge -p '
+spec:
+  oauthProtectedResource:
+    resourceName: "MCP Server"
+    resource: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
+    authorizationServers:
+      - "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"
+    bearerMethodsSupported:
+      - "header"
+    scopesSupported:
+      - "basic"
+      - "groups"
+      - "roles"
+      - "profile"
+      - "offline_access"
+'
 ```
 
-**Environment Variables Explained:**
+Verify the configuration was applied:
 
-- `OAUTH_RESOURCE_NAME`: Human-readable name for this resource server
-- `OAUTH_RESOURCE`: Canonical URI of the MCP server (used for token audience validation)
-- `OAUTH_AUTHORIZATION_SERVERS`: Authorization server URL for client discovery
-- `OAUTH_BEARER_METHODS_SUPPORTED`: Supported bearer token methods (header, body, query)
-- `OAUTH_SCOPES_SUPPORTED`: OAuth scopes this resource server understands
+```bash
+kubectl get mcpgatewayextension mcp-gateway -n mcp-system -o jsonpath='{.spec.oauthProtectedResource}' | jq .
+```
+
+The controller injects the corresponding `OAUTH_*` env vars into the broker-router deployment automatically. `resourceName`, `bearerMethodsSupported`, and `scopesSupported` are optional and have defaults (`"MCP Server"`, `["header"]`, and `["basic"]` respectively). `resource` defaults to `https://<publicHost>/mcp` if not set.
+
+> **Note:** `authorizationServers` is required when `oauthProtectedResource` is set.
 
 ## Step 3: Configure AuthPolicy for Authentication
 

@@ -6,15 +6,10 @@ auth-example-setup-no-vault: cert-manager-install kuadrant-install keycloak-inst
 	@echo "Setting up OAuth Example (no Vault)"
 	@echo "========================================="
 	@echo ""
-	@echo "Step 1/4: Configuring OAuth environment variables..."
-	@kubectl set env deployment/mcp-gateway \
-		OAUTH_RESOURCE_NAME="MCP Server" \
-		OAUTH_RESOURCE="http://mcp.127-0-0-1.sslip.io:8001/mcp" \
-		OAUTH_AUTHORIZATION_SERVERS="https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp" \
-		OAUTH_BEARER_METHODS_SUPPORTED="header" \
-		OAUTH_SCOPES_SUPPORTED="basic,groups,roles,profile,offline_access" \
-		-n mcp-system
-	@echo "✅ OAuth environment variables configured"
+	@echo "Step 1/4: Configuring OAuth protected resource via CRD..."
+	@kubectl patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type='merge' \
+		-p='{"spec":{"oauthProtectedResource":{"resource":"http://mcp.127-0-0-1.sslip.io:8001/mcp","authorizationServers":["https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp"],"scopesSupported":["basic","groups","roles","profile","offline_access"]}}}'
+	@echo "✅ OAuth protected resource configured"
 	@echo ""
 	@echo "Step 2/4: Configuring CORS rules for the OpenID Connect Client Registration endpoint..."
 	@kubectl apply -f ./config/keycloak/preflight_envoyfilter.yaml

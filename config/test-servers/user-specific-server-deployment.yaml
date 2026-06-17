@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-test-user-specific-server
+  labels:
+    app: mcp-test-user-specific-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-test-user-specific-server
+  template:
+    metadata:
+      labels:
+        app: mcp-test-user-specific-server
+    spec:
+      containers:
+        - name: mcp-test-user-specific-server
+          image: ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9090
+              name: http
+          env:
+            - name: PORT
+              value: "9090"
+          readinessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "100m"
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-test-user-specific-server
+  labels:
+    app: mcp-test-user-specific-server
+spec:
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+  selector:
+    app: mcp-test-user-specific-server
+  type: ClusterIP

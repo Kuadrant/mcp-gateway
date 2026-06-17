@@ -62,8 +62,9 @@ gateway:
   nodePort:
     # Create a NodePort service for the Gateway
     create: false
-    # NodePort for the MCP port
-    mcpPort: 30471
+    # NodePort for the MCP port (keep inside the k8s static subrange
+    # 30000-30085 so dynamic nodePort allocation will not collide with it)
+    mcpPort: 30071
     # Status port configuration (Istio health check port)
     statusPort:
       enabled: false

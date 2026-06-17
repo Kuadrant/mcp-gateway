@@ -2,7 +2,7 @@
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPGatewayExtension
 metadata:
-  name: {{ include "mcp-gateway.fullname" . }}
+  name: {{ include "mcp-gateway.fullname" . }}-extension
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "mcp-gateway.labels" . | nindent 4 }}

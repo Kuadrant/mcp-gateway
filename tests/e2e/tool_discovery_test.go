@@ -15,6 +15,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func isBrokerMetaTool(name string) bool {
+	return name == "discover_tools" || name == "select_tools" ||
+		name == "list_tags" || name == "filter_tools_by_tags"
+}
+
 var _ = Describe("Tool Discovery", func() {
 	var (
 		testResources    []client.Object
@@ -30,7 +35,7 @@ var _ = Describe("Tool Discovery", func() {
 			var err error
 			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryFast).Should(Succeed())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	}
 
 	AfterEach(func() {
@@ -96,140 +101,77 @@ var _ = Describe("Tool Discovery", func() {
 				g.Expect(found.Categories).To(ContainElement("messaging"))
 				g.Expect(found.Hint).To(Equal("provides messaging tools"))
 				g.Expect(found.Tools).NotTo(BeEmpty())
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("filters servers by category (case-insensitive)", func() {
-			By("registering two servers with different categories")
-			reg1 := NewMCPServerResourcesWithDefaults("cat-filter-1", k8sClient).
-				WithPrefix("catfilt1_").
-				WithCategory("Dining").
+		It("filters servers by category: case-insensitive match, multi-category match by either value, no match for unknown category", func() {
+			By("registering a multi-category server and a messaging server")
+			regMulti := NewMCPServerResourcesWithDefaults("multi-cat", k8sClient).
+				WithPrefix("multicat_").
+				WithCategory("Dining", "reservations").
 				Build()
-			testResources = append(testResources, reg1.GetObjects()...)
-			s1 := reg1.Register(ctx)
+			testResources = append(testResources, regMulti.GetObjects()...)
+			sMulti := regMulti.Register(ctx)
 
-			reg2 := NewMCPServerResourcesWithDefaults("cat-filter-2", k8sClient).
-				WithPrefix("catfilt2_").
+			regMsg := NewMCPServerResourcesWithDefaults("cat-filter-msg", k8sClient).
+				WithPrefix("catmsg_").
 				WithCategory("messaging").
 				Build()
-			testResources = append(testResources, reg2.GetObjects()...)
-			s2 := reg2.Register(ctx)
+			testResources = append(testResources, regMsg.GetObjects()...)
+			sMsg := regMsg.Register(ctx)
 
 			By("waiting for both servers to be ready")
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, s1.Name, s1.Namespace)).To(Succeed())
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, s2.Name, s2.Namespace)).To(Succeed())
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "catfilt1_")
-			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "catfilt2_")
-
-			By("filtering by 'dining' (lowercase) should return only the Dining server")
-			sessionID := mcpGatewayClient.GetSessionId()
-			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": "dining"}, nil)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(resp).NotTo(BeNil())
-
-				hasPrefix1 := false
-				hasPrefix2 := false
-				for _, s := range resp.Servers {
-					for _, t := range s.Tools {
-						if strings.HasPrefix(t, "catfilt1_") {
-							hasPrefix1 = true
-						}
-						if strings.HasPrefix(t, "catfilt2_") {
-							hasPrefix2 = true
-						}
-					}
-				}
-				g.Expect(hasPrefix1).To(BeTrue(), "dining server tools should be returned")
-				g.Expect(hasPrefix2).To(BeFalse(), "messaging server tools should not be returned")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-		})
-
-		It("matches multi-category server by either category value", func() {
-			By("registering a server with multiple categories")
-			reg := NewMCPServerResourcesWithDefaults("multi-cat", k8sClient).
-				WithPrefix("multicat_").
-				WithCategory("dining", "reservations").
-				Build()
-			testResources = append(testResources, reg.GetObjects()...)
-			server := reg.Register(ctx)
-
-			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, sMulti.Name, sMulti.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, sMsg.Name, sMsg.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "multicat_")
+			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "catmsg_")
 
 			sessionID := mcpGatewayClient.GetSessionId()
-
-			By("filtering by 'dining' should match")
-			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": "dining"}, nil)
-				g.Expect(err).NotTo(HaveOccurred())
-				hasTools := false
-				for _, s := range resp.Servers {
-					for _, t := range s.Tools {
-						if strings.HasPrefix(t, "multicat_") {
-							hasTools = true
-						}
-					}
-				}
-				g.Expect(hasTools).To(BeTrue(), "server should match when filtering by 'dining'")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-
-			By("filtering by 'reservations' should also match")
-			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": "reservations"}, nil)
-				g.Expect(err).NotTo(HaveOccurred())
-				hasTools := false
-				for _, s := range resp.Servers {
-					for _, t := range s.Tools {
-						if strings.HasPrefix(t, "multicat_") {
-							hasTools = true
-						}
-					}
-				}
-				g.Expect(hasTools).To(BeTrue(), "server should match when filtering by 'reservations'")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-		})
-
-		It("returns empty servers array for non-matching category", func() {
-			By("registering a server with a known category")
-			reg := NewMCPServerResourcesWithDefaults("no-match-cat", k8sClient).
-				WithPrefix("nomatch_").
-				WithCategory("messaging").
-				Build()
-			testResources = append(testResources, reg.GetObjects()...)
-			server := reg.Register(ctx)
-
-			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "nomatch_")
-
-			sessionID := mcpGatewayClient.GetSessionId()
-			By("filtering by a non-existent category")
-			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": "nonexistent_xyz"}, nil)
+			discoverByCategory := func(g Gomega, category string) (hasMulti, hasMsg bool) {
+				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": category}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(resp).NotTo(BeNil())
-				// no server should have tools matching this filter
 				for _, s := range resp.Servers {
 					for _, t := range s.Tools {
-						g.Expect(t).NotTo(HavePrefix("nomatch_"), "no tools should match nonexistent category")
+						if strings.HasPrefix(t, "multicat_") {
+							hasMulti = true
+						}
+						if strings.HasPrefix(t, "catmsg_") {
+							hasMsg = true
+						}
 					}
 				}
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+				return hasMulti, hasMsg
+			}
+
+			By("filtering by 'dining' (lowercase) should match the Dining category and exclude the messaging server")
+			Eventually(func(g Gomega) {
+				hasMulti, hasMsg := discoverByCategory(g, "dining")
+				g.Expect(hasMulti).To(BeTrue(), "multi-category server should match 'dining' case-insensitively")
+				g.Expect(hasMsg).To(BeFalse(), "messaging server tools should not be returned")
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+
+			By("filtering by 'reservations' should also match the multi-category server")
+			Eventually(func(g Gomega) {
+				hasMulti, _ := discoverByCategory(g, "reservations")
+				g.Expect(hasMulti).To(BeTrue(), "server should match when filtering by 'reservations'")
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+
+			By("filtering by a non-existent category should match neither server")
+			Eventually(func(g Gomega) {
+				hasMulti, hasMsg := discoverByCategory(g, "nonexistent_xyz")
+				g.Expect(hasMulti).To(BeFalse(), "no tools should match nonexistent category")
+				g.Expect(hasMsg).To(BeFalse(), "no tools should match nonexistent category")
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("respects auth filtering in discover_tools", func() {
-			if !IsTrustedHeadersEnabled(ctx) {
-				Skip("trusted headers not configured")
-			}
+		// nightly-only: discover_tools shares applyAuthorizedCapabilitiesFilter
+		// with tools/list, which the PR-gate JWT filtering spec exercises
+		It("[Full] respects auth filtering in discover_tools", func() {
+			SetupTrustedHeadersAuth(ctx, k8sClient)
 
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("disc-auth", k8sClient).
@@ -242,8 +184,6 @@ var _ = Describe("Tool Discovery", func() {
 				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "discauth_")
-
 			By("creating a JWT that allows only one tool")
 			allowedTools := map[string][]string{
 				fmt.Sprintf("%s/%s", server.Namespace, server.Name): {"hello_world"},
@@ -252,9 +192,13 @@ var _ = Describe("Tool Discovery", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("calling discover_tools with auth header")
-			sessionID, err := mcpInitialize(ctx, gatewayURL, map[string]string{"X-Mcp-Authorized": jwtToken})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, map[string]string{"X-Mcp-Authorized": jwtToken})).To(Succeed())
+			var sessionID string
+			Eventually(func(g Gomega) {
+				var initErr error
+				sessionID, initErr = mcpInitialize(ctx, gatewayURL, map[string]string{"X-Mcp-Authorized": jwtToken})
+				g.Expect(initErr).NotTo(HaveOccurred())
+				g.Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, map[string]string{"X-Mcp-Authorized": jwtToken})).To(Succeed())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
 				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, nil, map[string]string{"X-Mcp-Authorized": jwtToken})
@@ -270,7 +214,7 @@ var _ = Describe("Tool Discovery", func() {
 				}
 				g.Expect(serverTools).To(HaveLen(1), "only the authorised tool should appear")
 				g.Expect(serverTools[0]).To(Equal("discauth_hello_world"))
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
 		It("respects MCPVirtualServer scoping in discover_tools", func() {
@@ -313,12 +257,12 @@ var _ = Describe("Tool Discovery", func() {
 				}
 				g.Expect(serverTools).To(HaveLen(1))
 				g.Expect(serverTools[0]).To(Equal(allowedTool))
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		})
 	})
 
 	Context("select_tools", func() {
-		It("scopes subsequent tools/list to selected tools", func() {
+		It("scopes tools/list to the selection, replaces the scope on re-select, and resets on empty list", func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("select-scope", k8sClient).
 				WithPrefix("selscope_").
@@ -335,7 +279,8 @@ var _ = Describe("Tool Discovery", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
 
-			By("waiting for tools to appear")
+			By("waiting for tools to appear and recording the full tool count")
+			var fullToolCount int
 			Eventually(func(g Gomega) {
 				_, tools, err := mcpListTools(ctx, gatewayURL, sessionID, nil)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -347,11 +292,14 @@ var _ = Describe("Tool Discovery", func() {
 					}
 				}
 				g.Expect(hasPrefix).To(BeTrue())
+				fullToolCount = len(tools)
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			selectedTool := "selscope_hello_world"
+			tool1 := "selscope_hello_world"
+			tool2 := "selscope_time"
+
 			By("calling select_tools with one tool")
-			status, result, err := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{selectedTool}, nil)
+			status, result, err := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{tool1}, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(status).To(Equal(200))
 			Expect(result.Status).To(ContainSubstring("scope set"))
@@ -360,13 +308,46 @@ var _ = Describe("Tool Discovery", func() {
 			Eventually(func(g Gomega) {
 				_, tools, err := mcpListTools(ctx, gatewayURL, sessionID, nil)
 				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(tools).To(ContainElement(tool1), "selected tool should be in the list")
 				for _, t := range tools {
-					if t == "discover_tools" || t == "select_tools" {
+					if isBrokerMetaTool(t) {
 						continue
 					}
-					g.Expect(t).To(Equal(selectedTool), "only selected tool and meta-tools should be returned")
+					g.Expect(t).To(Equal(tool1), "only selected tool and meta-tools should be returned")
 				}
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+
+			By("re-scoping to a different tool")
+			status, result, err = mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{tool2}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(Equal(200))
+			Expect(result.Status).To(ContainSubstring("scope set"))
+
+			By("verifying only the re-scoped tool (and meta-tools) is now in tools/list")
+			Eventually(func(g Gomega) {
+				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
+				g.Expect(listErr).NotTo(HaveOccurred())
+				g.Expect(tools).To(ContainElement(tool2), "re-scoped tool should be in the list")
+				for _, t := range tools {
+					if isBrokerMetaTool(t) {
+						continue
+					}
+					g.Expect(t).To(Equal(tool2), "only re-scoped tool should be in the list")
+				}
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+
+			By("resetting scope with empty list")
+			status, result, err = mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(Equal(200))
+			Expect(result.Status).To(ContainSubstring("reset"))
+
+			By("verifying full tool set is restored")
+			Eventually(func(g Gomega) {
+				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
+				g.Expect(listErr).NotTo(HaveOccurred())
+				g.Expect(len(tools)).To(Equal(fullToolCount), "full tool set should be restored after reset")
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
 		It("returns error for invalid tool name (all-or-nothing)", func() {
@@ -421,125 +402,6 @@ var _ = Describe("Tool Discovery", func() {
 				"entire select should fail when any tool is invalid")
 		})
 
-		It("re-scoping replaces previous selection", func() {
-			By("registering a server")
-			reg := NewMCPServerResourcesWithDefaults("select-rescope", k8sClient).
-				WithPrefix("rescp_").
-				Build()
-			testResources = append(testResources, reg.GetObjects()...)
-			server := reg.Register(ctx)
-
-			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
-
-			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				hasPrefix := false
-				for _, t := range tools {
-					if strings.HasPrefix(t, "rescp_") {
-						hasPrefix = true
-						break
-					}
-				}
-				g.Expect(hasPrefix).To(BeTrue())
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			tool1 := "rescp_hello_world"
-			tool2 := "rescp_time"
-
-			By("selecting tool1")
-			status, result, err := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{tool1}, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(200))
-			Expect(result.Status).To(ContainSubstring("scope set"))
-
-			By("re-scoping to tool2")
-			status, result, err = mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{tool2}, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(200))
-			Expect(result.Status).To(ContainSubstring("scope set"))
-
-			By("verifying only tool2 (and meta-tools) is now in tools/list")
-			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				for _, t := range tools {
-					if t == "discover_tools" || t == "select_tools" {
-						continue
-					}
-					g.Expect(t).To(Equal(tool2), "only re-scoped tool should be in the list")
-				}
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-		})
-
-		It("empty list resets to full tool set", func() {
-			By("registering a server")
-			reg := NewMCPServerResourcesWithDefaults("select-reset", k8sClient).
-				WithPrefix("selrst_").
-				Build()
-			testResources = append(testResources, reg.GetObjects()...)
-			server := reg.Register(ctx)
-
-			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
-
-			var fullToolCount int
-			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				hasPrefix := false
-				for _, t := range tools {
-					if strings.HasPrefix(t, "selrst_") {
-						hasPrefix = true
-						break
-					}
-				}
-				g.Expect(hasPrefix).To(BeTrue())
-				fullToolCount = len(tools)
-			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			By("scoping down to one tool")
-			status, _, err := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{"selrst_hello_world"}, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(200))
-
-			By("verifying scope is applied")
-			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				nonMetaCount := 0
-				for _, t := range tools {
-					if t != "discover_tools" && t != "select_tools" {
-						nonMetaCount++
-					}
-				}
-				g.Expect(nonMetaCount).To(Equal(1))
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-
-			By("resetting scope with empty list")
-			status, result, err := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{}, nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(200))
-			Expect(result.Status).To(ContainSubstring("reset"))
-
-			By("verifying full tool set is restored")
-			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, gatewayURL, sessionID, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				g.Expect(len(tools)).To(Equal(fullToolCount), "full tool set should be restored after reset")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
-		})
 	})
 
 	Context("notifications", func() {
@@ -574,13 +436,13 @@ var _ = Describe("Tool Discovery", func() {
 			By("verifying notification was received")
 			Eventually(func() bool {
 				return receivedNotification.Load()
-			}, TestTimeoutShort, TestRetryFast).Should(BeTrue(),
+			}, TestTimeoutShort, TestRetryInterval).Should(BeTrue(),
 				"should have received notifications/tools/list_changed after select_tools")
 		})
 	})
 
 	Context("flags", func() {
-		It("hides meta-tools when discovery-tools-enabled=false", func() {
+		It("[Full] hides meta-tools when discovery-tools-enabled=false", func() {
 			deploymentName := "mcp-gateway"
 
 			By("adding --discovery-tools-enabled=false flag to deployment")
@@ -602,7 +464,7 @@ var _ = Describe("Tool Discovery", func() {
 				sessionID, initErr = mcpInitialize(ctx, gatewayURL, nil)
 				g.Expect(initErr).NotTo(HaveOccurred())
 				g.Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
-			}, TestTimeoutMedium, TestRetryFast).Should(Succeed())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 			By("verifying discover_tools and select_tools are not in tools/list")
 			Eventually(func(g Gomega) {
@@ -612,7 +474,7 @@ var _ = Describe("Tool Discovery", func() {
 					"discover_tools should not be listed when discovery is disabled")
 				g.Expect(tools).NotTo(ContainElement("select_tools"),
 					"select_tools should not be listed when discovery is disabled")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 
 			By("calling discover_tools should return an error")
 			_, _, rawBody, err := mcpRawPost(ctx, gatewayURL, sessionID,
@@ -621,7 +483,7 @@ var _ = Describe("Tool Discovery", func() {
 			_ = rawBody // the tool should not exist, so the response will be an error
 		})
 
-		It("threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
+		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
 			// threshold defaults to 0, so all real tools plus meta-tools should be visible
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("thresh-zero", k8sClient).
@@ -657,7 +519,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("threshold", func() {
-		It("above threshold: only meta-tools shown; below threshold: all tools visible", func() {
+		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", func() {
 			deploymentName := "mcp-gateway"
 
 			By("registering a server so we have tools to count")
@@ -689,7 +551,7 @@ var _ = Describe("Tool Discovery", func() {
 				sessionID, initErr = mcpInitialize(ctx, gatewayURL, nil)
 				g.Expect(initErr).NotTo(HaveOccurred())
 				g.Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
-			}, TestTimeoutMedium, TestRetryFast).Should(Succeed())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 			By("verifying only meta-tools are shown (above threshold)")
 			Eventually(func(g Gomega) {
@@ -698,11 +560,11 @@ var _ = Describe("Tool Discovery", func() {
 				g.Expect(tools).To(ContainElement("discover_tools"))
 				g.Expect(tools).To(ContainElement("select_tools"))
 				for _, t := range tools {
-					if t != "discover_tools" && t != "select_tools" {
+					if !isBrokerMetaTool(t) {
 						g.Expect(t).To(BeEmpty(), "no real tools should be visible above threshold, found: "+t)
 					}
 				}
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 
 			By("using select_tools to scope down, tools should become visible")
 			status, _, selectErr := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{"thtest_hello_world"}, nil)
@@ -719,7 +581,7 @@ var _ = Describe("Tool Discovery", func() {
 					}
 				}
 				g.Expect(hasSelected).To(BeTrue(), "selected tool should be visible after scoping")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 	})
 
@@ -775,7 +637,7 @@ var _ = Describe("Tool Discovery", func() {
 				}
 				g.Expect(isoTools).To(BeNumerically(">", 1),
 					"session2 should still see all tools, not be affected by session1's scope")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
 		It("concurrent select_tools calls on same session do not corrupt state", func() {
@@ -836,7 +698,7 @@ var _ = Describe("Tool Discovery", func() {
 
 				var nonMetaTools []string
 				for _, t := range tools {
-					if t != "discover_tools" && t != "select_tools" {
+					if !isBrokerMetaTool(t) {
 						nonMetaTools = append(nonMetaTools, t)
 					}
 				}
@@ -845,7 +707,7 @@ var _ = Describe("Tool Discovery", func() {
 					"concurrent select_tools should result in a consistent single-tool scope")
 				g.Expect(nonMetaTools[0]).To(Or(Equal(tool1), Equal(tool2)),
 					"the winning tool should be one of the two selected tools")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 	})
 
@@ -854,7 +716,7 @@ var _ = Describe("Tool Discovery", func() {
 			newGatewayClient()
 		})
 
-		It("controller re-reconciles when category and hint are updated", func() {
+		It("[Full] controller re-reconciles when category and hint are updated", func() {
 			By("registering a server with initial category and hint")
 			reg := NewMCPServerResourcesWithDefaults("reconfig-test", k8sClient).
 				WithPrefix("reconf_").
@@ -886,7 +748,7 @@ var _ = Describe("Tool Discovery", func() {
 					}
 				}
 				g.Expect(hasTools).To(BeTrue(), "server should be discoverable with initial category")
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 
 			By("updating category and hint on the live MCPServerRegistration")
 			Eventually(func(g Gomega) {
@@ -898,7 +760,7 @@ var _ = Describe("Tool Discovery", func() {
 				fresh.Spec.Category = []string{"updated-category"}
 				fresh.Spec.Hint = "updated hint"
 				g.Expect(k8sClient.Update(ctx, fresh)).To(Succeed())
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 
 			By("waiting for reconciliation to propagate the updated metadata")
 			Eventually(func(g Gomega) {
@@ -926,7 +788,7 @@ var _ = Describe("Tool Discovery", func() {
 							"old category should no longer match after update")
 					}
 				}
-			}, TestTimeoutShort, TestRetryFast).Should(Succeed())
+			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 	})
 })

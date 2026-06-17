@@ -1,15 +1,31 @@
 # Contributing to this project
 
-Greetings! We are grateful for your interest in joining the Kuadrant community and making a positive impact. Whether you're raising issues, enhancing documentation, fixing bugs, or developing new features, your contributions are essential to our success.
+Thanks for your interest in contributing. Read this document before opening issues or pull requests.
 
-To get started, kindly read through this document and familiarize yourself with our code of conduct. 
+## Submitting Pull Requests
 
-We can't wait to collaborate with you!
+Feature, planned or speculative work must reference an existing GitHub issue. PRs for such work without a linked issue will be closed.
+
+Bugfixes and security patches are exempt: open a PR directly, no issue required. If in doubt, file an issue first.
+
+The issue-first workflow:
+
+1. Check existing issues. If one covers your change, comment on it.
+2. If no issue exists, file one. Describe the feature or proposed change. Wait for discussion before starting work.
+3. Once the issue is accepted, implement your change and open a PR referencing the issue (e.g. `Fixes #123` or `Relates to #123`).
+
+Such PRs that arrive without an associated issue skip the design and prioritisation discussion that protects both contributors and maintainers from wasted effort. File the issue first.
+
+Additional PR guidance (aligned with [Kuadrant upstream contributing rules](https://kuadrant.io/contributing/#submitting-pull-requests)):
+
+- One open PR per project at a time. Getting one change reviewed and merged is worth more than several open in parallel.
+- Squash into a single commit where possible. If not, each commit should be a logical, independently reviewable unit.
+- If your PR is not getting review, post in the public Slack channel or mailing list. Do not message maintainers directly.
+- If you used AI tools, review the [AI tools guidance](https://kuadrant.io/contributing/#ai-tools) before submitting. You are responsible for understanding, testing, and verifying any generated code.
 
 ## Issues
 
-Please feel free to report an issue for bugs, and any other problems you
-encounter with the MCP Gateway project.
+Report bugs and any other problems via GitHub issues.
 
 ### Process
 

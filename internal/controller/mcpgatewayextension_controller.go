@@ -109,6 +109,9 @@ type MCPGatewayExtensionReconciler struct {
 	ConfigWriterDeleter   ConfigWriterDeleter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 	BrokerRouterImage     string
+	// BrokerRouterLogLevel, when non-empty, is passed to the broker-router
+	// as --log-level (sourced from the BROKER_ROUTER_LOG_LEVEL env var)
+	BrokerRouterLogLevel string
 }
 
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch;update

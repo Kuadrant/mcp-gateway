@@ -2,7 +2,7 @@
 
 This guide demonstrates how to add the [Kubernetes MCP server](https://github.com/containers/kubernetes-mcp-server) as an external MCP server behind the MCP Gateway.
 
-The Kubernetes MCP server runs on the local machine alongside a Kubernetes Kind cluster that has the MCP Gateway stack deployed to it.
+This guide assumes you have an active, standard Kubernetes cluster with the MCP Gateway already installed and accessible.
 
 This demo is part of a 3-use case series:
 
@@ -16,21 +16,11 @@ This demo is part of a 3-use case series:
 
 In this use case, the Kubernetes MCP server does not handle authentication for the client. It uses the access from the current `.kube/config` file to connect to the known Kubernetes clusters when tools are called.
 
-### ❶ Setup a local cluster with the MCP Gateway stack
+### Step 1: Setup the MCP Gateway stack
 
-Clone the MCP Gateway repo (so you have the tooling to easily setup a local dev/test environment):
+Ensure you have a standard Kubernetes cluster with the MCP Gateway already installed and running. If not, follow the installation instructions for the gateway first.
 
-```sh
-git clone git@github.com:Kuadrant/mcp-gateway.git && cd mcp-gateway
-```
-
-Create a local cluster with MCP Gateway:
-
-```sh
-make local-env-setup
-```
-
-### ❷ Run the Kubernetes MCP server locally
+### Step 2: Run the Kubernetes MCP server
 
 Clone the Kubernetes MCP server repo:
 
@@ -52,12 +42,13 @@ Run the MCP server on port 9999:
 
 > **Note:** The command above will hold the shell. Start a new session to run the next steps.
 
-### ❸ Register the MCP server with the MCP Gateway
+### Step 3: Register the MCP server with the MCP Gateway
 
-Add a dedicated gateway listener for the MCP server:
+Add a dedicated gateway listener for the external MCP server. Gateway API requires a valid DNS hostname for listeners. Replace `kubernetes-mcp.example.com` with the actual reachable hostname of the machine running the MCP server.
 
 ```sh
-export CONTAINERS_HOSTNAME=$(which podman &>/dev/null && echo "host.containers.internal" || echo "host.docker.internal")
+# Note: If you start a new shell session later, you must re-export this variable.
+export EXTERNAL_HOSTNAME="kubernetes-mcp.example.com"
 
 kubectl patch gateway mcp-gateway -n gateway-system --type json -p="[
   {
@@ -65,7 +56,7 @@ kubectl patch gateway mcp-gateway -n gateway-system --type json -p="[
     \"path\": \"/spec/listeners/-\",
     \"value\": {
       \"name\": \"kubernetes-mcp\",
-      \"hostname\": \"$CONTAINERS_HOSTNAME\",
+      \"hostname\": \"$EXTERNAL_HOSTNAME\",
       \"port\": 8080,
       \"protocol\": \"HTTP\",
       \"allowedRoutes\": {
@@ -78,9 +69,11 @@ kubectl patch gateway mcp-gateway -n gateway-system --type json -p="[
 ]"
 ```
 
-Create a route, external service and `MCPServer` custom resource:
+Create a route, external service and `MCPServerRegistration` custom resource:
 
 ```sh
+kubectl create namespace mcp-test
+
 kubectl apply -n mcp-test -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -93,7 +86,7 @@ spec:
     name: mcp-gateway
     namespace: gateway-system
   hostnames:
-  - $CONTAINERS_HOSTNAME
+  - $EXTERNAL_HOSTNAME
   rules:
   - matches:
     - path:
@@ -111,7 +104,7 @@ metadata:
   name: kubernetes-mcp-external
 spec:
   type: ExternalName
-  externalName: $CONTAINERS_HOSTNAME
+  externalName: $EXTERNAL_HOSTNAME
   ports:
   - name: http
     port: 9999
@@ -126,7 +119,7 @@ metadata:
   namespace: mcp-test
 spec:
   hosts:
-  - $CONTAINERS_HOSTNAME
+  - $EXTERNAL_HOSTNAME
   ports:
   - number: 9999
     name: https
@@ -147,15 +140,11 @@ spec:
 EOF
 ```
 
-### ❹ Try the MCP server behind the gateway
+### Step 4: Try the MCP server behind the gateway
 
-From the MCP gateway repo, run the following command to launch the MCP Inspector on your default web browser:
+Connect your preferred MCP client or the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to your MCP Gateway's endpoint.
 
-```sh
-make inspect-gateway
-```
-
-In the MCP Inspector, click _Connect_:
+In the MCP Inspector, configure the connection URL and click _Connect_:
 
 ![MCP Inspector](images/mcp-inspector-1.png)
 
@@ -185,13 +174,20 @@ The accessible Kubernetes API servers accept same-domain OIDC access tokens, whi
 
 **Requisite:** You have successfully completed [Use case 1: No auth](#use-case-1-no-auth).
 
-### ❶ Enable auth for `tool/list` and `tool/call` requests in the MCP Gateway
+### Step 1: Enable auth for `tool/list` and `tool/call` requests in the MCP Gateway
+
+Ensure your MCP Gateway is configured with OIDC authentication (see the [Authentication Guide](authentication.md) for setup details) and a Keycloak (or other OIDC provider) instance is available. 
+
+You must also have a Kubernetes Secret named `token-exchange` in the `mcp-test` namespace containing your OIDC client credentials (with an `oauth-client-basic-auth` key). For example:
 
 ```sh
-make auth-example-setup
+kubectl create secret generic token-exchange -n mcp-test \
+  --from-literal=oauth-client-basic-auth="Basic <base64-encoded-client-id:client-secret>"
 ```
 
-### ❷ Create an AuthPolicy for the Kubernetes MCP server route
+### Step 2: Create an AuthPolicy for the Kubernetes MCP server route
+
+In the policy below, replace `https://keycloak.example.com` and `https://mcp.example.com` with your actual OIDC provider and MCP client endpoints.
 
 ```sh
 kubectl apply -f -<<EOF
@@ -209,13 +205,13 @@ spec:
     authentication: #validates the token
       'keycloak':
         jwt:
-          issuerUrl: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp
+          issuerUrl: https://keycloak.example.com/realms/mcp
     metadata:
       oauth-token-exchange:
         when:
           - predicate: type(auth.identity.aud) != string || auth.identity.aud != request.headers['x-mcp-servername']
         http:
-          url: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/token
+          url: https://keycloak.example.com/realms/mcp/protocol/openid-connect/token
           method: POST
           credentials:
             authorizationHeader:
@@ -266,7 +262,7 @@ spec:
       unauthenticated:
         headers:
           'WWW-Authenticate':
-            value: Bearer resource_metadata=http://mcp.127-0-0-1.sslip.io:8888/.well-known/oauth-protected-resource/mcp
+            value: Bearer resource_metadata=https://mcp.example.com/.well-known/oauth-protected-resource/mcp
         body:
           value: |
             {
@@ -283,7 +279,7 @@ spec:
 EOF
 ```
 
-### ❸ Authorize the `mcp` Keycloak user for the Kubernetes API server
+### Step 3: Authorize the `mcp` Keycloak user for the Kubernetes API server
 
 ```sh
 kubectl apply -f -<<EOF
@@ -298,15 +294,15 @@ roleRef:
 subjects:
 - apiGroup: rbac.authorization.k8s.io
   kind: User
-  name: https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp#mcp
+  name: https://keycloak.example.com/realms/mcp#mcp
 EOF
 ```
 
-### ❹ Try the MCP server behind the gateway with OIDC authentication and token exchange performed by the MCP gateway
+### Step 4: Try the MCP server behind the gateway with OIDC authentication and token exchange performed by the MCP gateway
 
-Follow the same steps as [before](#-try-the-mcp-server-behind-the-gateway) to try the MCP server behind the gateway using the MCP Inspector as client.
+Follow the same steps as [before](#step-4-try-the-mcp-server-behind-the-gateway) to try the MCP server behind the gateway using your MCP client.
 
-> **Note:** You may need to add an exception for your browser to trust the Keycloak self-signed server certificate.
+> **Note:** You may need to add an exception for your browser to trust your OIDC provider's self-signed server certificate if applicable.
 
 When redirected to the Keycloak login page, authenticate with username/password: `mcp` / `mcp`.
 
@@ -327,7 +323,7 @@ When calling any of the Kubernetes MCP server tools, an authentication token suc
     "mcp-users"
   ],
   "iat": 1763121281,
-  "iss": "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp",
+  "iss": "https://keycloak.example.com/realms/mcp",
   "jti": "ntrtte:1a144de4-8206-3ae1-1c12-9e67a5cc207f",
   "name": "mcp mcp",
   "preferred_username": "mcp",

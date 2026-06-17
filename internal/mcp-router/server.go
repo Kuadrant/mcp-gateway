@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -25,11 +27,11 @@ var _ config.Observer = &ExtProcServer{}
 // SessionCache defines how the router interacts with a store to store and retrieves sessions
 type SessionCache interface {
 	GetSession(ctx context.Context, key string) (map[string]string, error)
-	AddSession(ctx context.Context, key, mcpID, mcpSession string) (bool, error)
+	AddSession(ctx context.Context, key, mcpID, mcpSession string, ttl time.Duration) (bool, error)
 	DeleteSessions(ctx context.Context, key ...string) error
 	RemoveServerSession(ctx context.Context, key, mcpServerID string) error
 	KeyExists(ctx context.Context, key string) (bool, error)
-	SetClientElicitation(ctx context.Context, gatewaySessionID string) error
+	SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
 	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
@@ -39,7 +41,7 @@ type SessionCache interface {
 // InitForClient defines a function for initializing an MCP server for a client.
 // initToken is a short-lived JWT minted by the router and validated again when
 // the hairpin request re-enters the gateway.
-type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
@@ -53,6 +55,8 @@ type ExtProcServer struct {
 	TokenElicitationMap elicitation.Map
 	initFlight          singleflight.Group
 	MaxRequestBodySize  int
+	HairpinHTTPClient   *http.Client
+	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker
 }
@@ -76,6 +80,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
+	// ensure orphaned elicitation idmap entries are cleaned up on any exit path
+	// (e.g. stream.Recv/Send errors before endOfStream). Flush is idempotent so
+	// this is a no-op on the happy path where it has already run.
+	defer func() {
+		if rewriter != nil {
+			_ = rewriter.Flush(ctx)
+		}
+	}()
 	for {
 		req, err := stream.Recv()
 

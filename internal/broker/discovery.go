@@ -35,14 +35,25 @@ To avoid loading all tool schemas upfront, use the discovery tools:
 3. To change scope, call select_tools again with a new set. Pass an empty list to reset to the full tool set.`
 )
 
-// isBrokerToolName returns true if the name is a broker-internal meta-tool.
+// isBrokerToolName returns true if the name is a statically-registered broker meta-tool.
 func isBrokerToolName(name string) bool {
 	return name == discoverToolsName || name == selectToolsName
 }
 
-// IsBrokerTool returns true if the given tool is a broker-internal meta-tool (discover_tools, select_tools).
+// IsBrokerTool returns true if the given tool is a broker-internal meta-tool,
+// either by name (static tools) or by meta annotation (dynamic tools like tags).
 func IsBrokerTool(tool mcp.Tool) bool {
-	return isBrokerToolName(tool.Name)
+	if isBrokerToolName(tool.Name) {
+		return true
+	}
+	if tool.Meta != nil {
+		if v, ok := tool.Meta.AdditionalFields[brokerToolMetaKey]; ok {
+			if b, ok := v.(bool); ok && b {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // discoveryConfig holds discovery feature configuration
@@ -219,11 +230,17 @@ func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.CallToolR
 		return m.marshalToolResult(m.selectResponse("scope reset to all tools", nil, warning)), nil
 	}
 
-	if err := m.validateToolSelection(toolNames, req.Header, sessionID); err != nil {
+	m.mcpLock.RLock()
+	valErr := m.validateToolSelectionLocked(toolNames, req.Header, sessionID)
+	if valErr == nil {
+		m.scopeStore.setScope(sessionID, toolNames)
+	}
+	m.mcpLock.RUnlock()
+
+	if valErr != nil {
 		return mcp.NewToolResultError("tool not available"), nil
 	}
 
-	m.scopeStore.setScope(sessionID, toolNames)
 	warning := m.sendToolsListChanged(sessionID)
 
 	if span.IsRecording() {
@@ -234,11 +251,10 @@ func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.CallToolR
 	return m.marshalToolResult(m.selectResponse(status, toolNames, warning)), nil
 }
 
-// validateToolSelection checks that every requested tool is visible and not a broker meta-tool.
-func (m *mcpBrokerImpl) validateToolSelection(toolNames []string, headers map[string][]string, sessionID string) error {
-	m.mcpLock.RLock()
+// validateToolSelectionLocked checks that every requested tool is visible and not a broker meta-tool.
+// caller must hold mcpLock.
+func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers map[string][]string, sessionID string) error {
 	visible := m.getVisibleToolNames(headers)
-	m.mcpLock.RUnlock()
 
 	for _, name := range toolNames {
 		if isBrokerToolName(name) {

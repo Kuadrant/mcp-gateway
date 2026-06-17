@@ -8,3 +8,25 @@ spec:
   values:
     pilot:
       autoscaleEnabled: false
+    meshConfig:
+      extensionProviders:
+        - name: mcp-json-access-log
+          envoyFileAccessLog:
+            path: /dev/stdout
+            logFormat:
+              labels:
+                timestamp: "%START_TIME%"
+                method: "%REQ(:METHOD)%"
+                path: "%REQ(:PATH)%"
+                response_code: "%RESPONSE_CODE%"
+                request_id: "%REQ(X-REQUEST-ID)%"
+                traceparent: "%REQ(TRACEPARENT)%"
+                mcp_method: "%REQ(X-MCP-METHOD)%"
+                mcp_tool_name: "%REQ(X-MCP-TOOLNAME)%"
+                mcp_server_name: "%REQ(X-MCP-SERVERNAME)%"
+                mcp_session_id: "%REQ(MCP-SESSION-ID)%"
+                mcp_user_id: "%REQ(X-AUTH-IDENTITY)%"
+                duration_ms: "%DURATION%"
+                upstream_host: "%UPSTREAM_HOST%"
+                bytes_sent: "%BYTES_SENT%"
+                bytes_received: "%BYTES_RECEIVED%"

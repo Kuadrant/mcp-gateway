@@ -4,6 +4,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ServerState defines the desired operational state of an MCPServerRegistration.
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type ServerState string
+
+// ServerState constants define the valid operational states for an MCPServerRegistration.
+const (
+	// ServerStateEnabled indicates the broker should maintain a connection to this server.
+	ServerStateEnabled ServerState = "Enabled"
+	// ServerStateDisabled indicates the broker should not connect to this server and should remove any registered tools.
+	ServerStateDisabled ServerState = "Disabled"
+)
+
+// UserSpecificListPolicy controls whether the broker fetches tools per-user from this server
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type UserSpecificListPolicy string
+
+const (
+	// UserSpecificListEnabled enables per-user tool fetching
+	UserSpecificListEnabled UserSpecificListPolicy = "Enabled"
+	// UserSpecificListDisabled uses the shared cached tool list
+	UserSpecificListDisabled UserSpecificListPolicy = "Disabled"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
@@ -35,6 +58,7 @@ type MCPServerRegistration struct {
 
 // MCPServerRegistrationSpec defines the desired state of MCPServerRegistration.
 // It specifies which HTTPRoutes point to MCP servers and how their tools should be federated.
+// +kubebuilder:validation:XValidation:rule="self.userSpecificList != \"Enabled\" || self.prefix != \"\" ",message="prefix is required when userSpecificList is Enabled"
 type MCPServerRegistrationSpec struct {
 	// targetRef specifies an HTTPRoute that points to a backend MCP server.
 	// The referenced HTTPRoute should have a backend service that implements the MCP protocol.
@@ -48,6 +72,7 @@ type MCPServerRegistrationSpec struct {
 	// For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="prefix is immutable once set"
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_]*$`
 	Prefix string `json:"prefix,omitempty"`
 
 	// path specifies the URL path where the MCP server endpoint is exposed.
@@ -64,11 +89,33 @@ type MCPServerRegistrationSpec struct {
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
 
+	// state dictates whether the broker should maintain a connection to this server.
+	// When set to Disabled, the broker will remove any registered tools and stop connecting to the server.
+	// The server can be re-enabled at any time by setting this field back to Enabled.
+	// Defaults to Enabled.
+	// +optional
+	// +default="Enabled"
+	State ServerState `json:"state,omitempty"`
+
+	// caCertSecretRef references a Secret containing a PEM-encoded CA certificate bundle.
+	// The broker uses this CA to verify TLS connections to the upstream MCP server.
+	// The referenced Secret must have the label mcp.kuadrant.io/secret=true.
+	// If key is not specified, defaults to "ca.crt".
+	// +optional
+	CACertSecretRef *CACertSecretReference `json:"caCertSecretRef,omitempty"`
 	// tokenURLElicitation enables per-user token collection via URL elicitation.
 	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
 	// to collect tokens from capable clients at tool-call time.
 	// +optional
 	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
+
+	// userSpecificList indicates that this MCP server returns different tools
+	// per user based on their credentials. When Enabled, the broker fetches tools
+	// from this server on each tools/list request using the user's session
+	// headers, rather than caching the service account's tool list.
+	// +optional
+	// +default="Disabled"
+	UserSpecificList UserSpecificListPolicy `json:"userSpecificList,omitempty"`
 
 	// category assigns one or more categories to this MCP server for tool discovery.
 	// Used by the discover_tools meta-tool to allow agents to filter servers by category.
@@ -85,6 +132,15 @@ type MCPServerRegistrationSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Hint string `json:"hint,omitempty"`
+
+	// tags is an optional list of arbitrary labels for this MCP server.
+	// Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	Tags []string `json:"tags,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -132,6 +188,20 @@ type SecretReference struct {
 	// If not specified, defaults to "token".
 	// +optional
 	// +default="token"
+	Key string `json:"key,omitempty"`
+}
+
+// CACertSecretReference identifies a Secret containing a PEM-encoded CA certificate bundle.
+type CACertSecretReference struct {
+	// name is the name of the Secret resource.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
+
+	// key is the key within the Secret that contains the CA certificate PEM data.
+	// If not specified, defaults to "ca.crt".
+	// +optional
+	// +default="ca.crt"
 	Key string `json:"key,omitempty"`
 }
 
