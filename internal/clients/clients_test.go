@@ -5,6 +5,7 @@ package clients
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,7 +66,6 @@ func TestInitialize(t *testing.T) {
 	testCases := []struct {
 		name               string
 		gatewayHost        string
-		routerKey          string
 		conf               *config.MCPServer
 		passThroughHeaders map[string]string
 		expectedError      bool
@@ -73,7 +73,6 @@ func TestInitialize(t *testing.T) {
 		{
 			name:        "standard initialization",
 			gatewayHost: "%invalid",
-			routerKey:   "router-key-123",
 			conf: &config.MCPServer{
 				Name:     "test-server",
 				Prefix:   "test_",
@@ -87,7 +86,11 @@ func TestInitialize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := Initialize(context.Background(), tc.gatewayHost, tc.routerKey, tc.conf, tc.passThroughHeaders, false, nil)
+			pool := &HairpinClientPool{
+				defaultClient: &http.Client{},
+				clients:       make(map[string]*http.Client),
+			}
+			client, err := Initialize(context.Background(), tc.gatewayHost, tc.conf, tc.passThroughHeaders, false, pool)
 			if tc.expectedError {
 				require.Error(t, err)
 				return
@@ -99,42 +102,87 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
-func TestBuildHairpinHTTPClient(t *testing.T) {
-	t.Run("returns plain client for HTTP private host", func(t *testing.T) {
-		c, err := BuildHairpinHTTPClient("http://gw.svc:8080", "mcp.example.com", "")
+func TestBuildHairpinHTTPClientPool(t *testing.T) {
+	t.Run("returns plain pool for HTTP private host", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("http://gw.svc:8080", "mcp.example.com", "")
 		require.NoError(t, err)
-		require.NotNil(t, c)
+		require.NotNil(t, pool)
+		require.Nil(t, pool.baseTLSConfig)
+		require.NotNil(t, pool.Get(""))
 	})
 
-	t.Run("returns plain client for bare host without scheme", func(t *testing.T) {
-		c, err := BuildHairpinHTTPClient("gw.svc:8080", "mcp.example.com", "")
+	t.Run("returns plain pool for bare host without scheme", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("gw.svc:8080", "mcp.example.com", "")
 		require.NoError(t, err)
-		require.NotNil(t, c)
+		require.NotNil(t, pool)
+		require.Nil(t, pool.baseTLSConfig)
 	})
 
-	t.Run("HTTPS sets ServerName and TLS minimum version", func(t *testing.T) {
-		c, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", "")
+	t.Run("HTTPS sets default ServerName and TLS minimum version", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
 		require.NoError(t, err)
-		require.NotNil(t, c)
+		require.NotNil(t, pool)
 
+		c := pool.Get("")
 		tr, ok := c.Transport.(*http.Transport)
 		require.True(t, ok)
 		require.Equal(t, "mcp.example.com", tr.TLSClientConfig.ServerName)
-		require.Equal(t, uint16(0x0303), tr.TLSClientConfig.MinVersion) // tls.VersionTLS12
+		require.Equal(t, uint16(tls.VersionTLS12), tr.TLSClientConfig.MinVersion)
 	})
 
 	t.Run("HTTPS strips port from publicHost for ServerName", func(t *testing.T) {
-		c, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com:8443", "")
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com:8443", "")
 		require.NoError(t, err)
-		require.NotNil(t, c)
 
+		c := pool.Get("")
 		tr, ok := c.Transport.(*http.Transport)
 		require.True(t, ok)
 		require.Equal(t, "mcp.example.com", tr.TLSClientConfig.ServerName)
 	})
 
+	t.Run("Get with override returns client with different SNI", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+
+		defaultClient := pool.Get("")
+		overrideClient := pool.Get("server.mcp-alt.local")
+		require.NotEqual(t, defaultClient, overrideClient)
+
+		tr, ok := overrideClient.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.Equal(t, "server.mcp-alt.local", tr.TLSClientConfig.ServerName)
+	})
+
+	t.Run("Get with override strips port", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+
+		c := pool.Get("server.mcp-alt.local:8443")
+		tr, ok := c.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.Equal(t, "server.mcp-alt.local", tr.TLSClientConfig.ServerName)
+	})
+
+	t.Run("Get with override is cached", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+
+		c1 := pool.Get("server.mcp-alt.local")
+		c2 := pool.Get("server.mcp-alt.local")
+		require.Same(t, c1, c2)
+	})
+
+	t.Run("Get with override on HTTP pool returns default", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("http://gw.svc:8080", "mcp.example.com", "")
+		require.NoError(t, err)
+
+		defaultClient := pool.Get("")
+		overrideClient := pool.Get("server.mcp-alt.local")
+		require.Same(t, defaultClient, overrideClient)
+	})
+
 	t.Run("errors on non-existent CA cert path", func(t *testing.T) {
-		_, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", "/nonexistent/ca.crt")
+		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "/nonexistent/ca.crt")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to read gateway CA cert")
 	})
@@ -144,7 +192,7 @@ func TestBuildHairpinHTTPClient(t *testing.T) {
 		badCert := filepath.Join(tmpDir, "bad.crt")
 		require.NoError(t, os.WriteFile(badCert, []byte("not a certificate"), 0600))
 
-		_, err := BuildHairpinHTTPClient("https://gw.svc:443", "mcp.example.com", badCert)
+		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", badCert)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse gateway CA cert PEM")
 	})
