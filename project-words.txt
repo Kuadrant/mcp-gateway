@@ -1,5 +1,7 @@
 
 # New Words
+addgroup
+adduser
 afero
 Agentic
 ALPN
@@ -27,6 +29,7 @@ BMCPS
 boltdb
 btlspolicy
 buger
+buildkitd
 buildx
 cainjector
 caitlinelfring
@@ -40,6 +43,7 @@ clientelicitation
 clientgoscheme
 clientregistration
 clusterserviceversion
+coderabbit
 configmap
 CONNLINK
 controllerutil
@@ -80,6 +84,7 @@ envoyfilters
 envoyproxy
 envsubst
 envtest
+esac
 eppb
 erlene
 errcheck
@@ -144,6 +149,7 @@ healthz
 HKDF
 HMAC
 hostaliases
+hostedtoolcache
 hostnames
 hrpp
 htmlcov
@@ -174,6 +180,7 @@ istios
 istiotypev
 istiov
 Jacb
+jetstack
 josharian
 joshdk
 jsonparser
@@ -306,6 +313,7 @@ printcolumn
 procv
 promptname
 protoc
+proxyv
 pubout
 python3
 pytime
@@ -314,6 +322,7 @@ qwen
 randfill
 rbody
 readyz
+rebake
 referencegrant
 referencegrants
 refgrant
@@ -326,6 +335,7 @@ regpour
 regset
 regslow
 regtime
+retagging
 retval
 rhcl
 Rkfdsw
@@ -372,6 +382,7 @@ testprefix
 testwithcoverage
 tidwall
 tkennon
+tmpmounts
 Toddbgd
 tokenelicitation
 toolhive
@@ -428,6 +439,16 @@ hrpp
 deadbeefcafebabe
 myprompt
 promptname
+errgroup
+frontloads
 rescope
+benchmarkaction
+customSmallerIsBetter
+forcetypeassert
+k6mcp
 selfsigned
+ttlSecondsAfterFinished
+startable
+uspec
+userspecificserver
 weatherserver

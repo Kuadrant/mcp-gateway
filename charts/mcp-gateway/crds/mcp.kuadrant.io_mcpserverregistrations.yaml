@@ -161,6 +161,17 @@ spec:
                 - Enabled
                 - Disabled
                 type: string
+              tags:
+                description: |-
+                  tags is an optional list of arbitrary labels for this MCP server.
+                  Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+                items:
+                  maxLength: 128
+                  minLength: 1
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: atomic
               targetRef:
                 description: |-
                   targetRef specifies an HTTPRoute that points to a backend MCP server.
@@ -204,9 +215,23 @@ spec:
                     pattern: ^https?://
                     type: string
                 type: object
+              userSpecificList:
+                default: Disabled
+                description: |-
+                  userSpecificList indicates that this MCP server returns different tools
+                  per user based on their credentials. When Enabled, the broker fetches tools
+                  from this server on each tools/list request using the user's session
+                  headers, rather than caching the service account's tool list.
+                enum:
+                - Enabled
+                - Disabled
+                type: string
             required:
             - targetRef
             type: object
+            x-kubernetes-validations:
+            - message: prefix is required when userSpecificList is Enabled
+              rule: 'self.userSpecificList != "Enabled" || self.prefix != "" '
           status:
             description: status defines the observed state of MCPServerRegistration.
             properties:

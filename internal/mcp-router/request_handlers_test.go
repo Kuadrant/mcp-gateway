@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -246,6 +247,10 @@ func TestHandleRequestBody(t *testing.T) {
 	require.Equal(t, ":path", rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.Key)
 	require.Equal(t, []uint8("/mcp"), rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.RawValue)
 	require.Equal(t, "content-length", rb.RequestBody.Response.HeaderMutation.SetHeaders[6].Header.Key)
+
+	// internal-only headers must be stripped before forwarding to upstream
+	require.Contains(t, rb.RequestBody.Response.HeaderMutation.RemoveHeaders, "x-mcp-authorized")
+	require.Contains(t, rb.RequestBody.Response.HeaderMutation.RemoveHeaders, "x-mcp-virtualserver")
 
 	require.Equal(t,
 		`{"id":0,"jsonrpc":"2.0","method":"tools/call","params":{"name":"mytool","other":"other"}}`,
@@ -489,7 +494,7 @@ func TestValidateSession(t *testing.T) {
 	t.Run("invalid JWT", func(t *testing.T) {
 		routerErr := server.validateSession("invalid-jwt-token")
 		require.NotNil(t, routerErr)
-		require.Equal(t, int32(404), routerErr.Code())
+		require.Equal(t, int32(401), routerErr.Code())
 	})
 }
 
@@ -1154,6 +1159,8 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 		removed := rb.RequestBody.Response.HeaderMutation.RemoveHeaders
 		require.Contains(t, removed, "mcp-init-host")
 		require.Contains(t, removed, RoutingKey)
+		require.Contains(t, removed, "x-mcp-authorized")
+		require.Contains(t, removed, "x-mcp-virtualserver")
 	})
 
 	t.Run("rejects token signed by a different gateway", func(t *testing.T) {
@@ -1194,13 +1201,13 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 	})
 }
 
-// TestInitializeMCPSeverSession_PassThroughHeaders verifies that headers
+// TestInitializeMCPServerSession_PassThroughHeaders verifies that headers
 // forwarded to the upstream initialize call drop the router-internal headers
 // (mcp-init-host, router-key) and the gateway-bound mcp-session-id even when
 // supplied by a client. Anything else is preserved so custom headers still
 // flow through. This is defense-in-depth on top of the explicit override in
 // clients.Initialize.
-func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
+func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	cache, err := session.NewCache()
@@ -1254,11 +1261,13 @@ func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
 				{Key: RoutingKey, RawValue: []byte("attacker-supplied-key")},
 				{Key: "x-custom-header", RawValue: []byte("custom-value")},
 				{Key: "authorization", RawValue: []byte("Bearer client-token")},
+				{Key: "x-mcp-authorized", RawValue: []byte("signed-jwt-value")},
+				{Key: "x-mcp-virtualserver", RawValue: []byte("test/vs")},
 			},
 		},
 	}
 
-	_, err = srv.initializeMCPSeverSession(context.Background(), req)
+	_, err = srv.initializeMCPServerSession(context.Background(), req)
 	require.Error(t, err, "expected mock init error to surface")
 	require.NotNil(t, captured, "InitForClient must have been called")
 
@@ -1268,6 +1277,8 @@ func TestInitializeMCPSeverSession_PassThroughHeaders(t *testing.T) {
 	require.NotContains(t, captured, "mcp-session-id", "gateway session id must not be forwarded")
 	require.NotContains(t, captured, "mcp-init-host", "router-internal header must not leak from client input")
 	require.NotContains(t, captured, RoutingKey, "router-internal header must not leak from client input")
+	require.NotContains(t, captured, "x-mcp-authorized", "broker-only filtering header must not reach upstream")
+	require.NotContains(t, captured, "x-mcp-virtualserver", "broker-only filtering header must not reach upstream")
 
 	// custom headers and authorization are passed through
 	require.Equal(t, "custom-value", captured["x-custom-header"])

@@ -380,6 +380,82 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			},
 			expectChanged: false,
 		},
+		{
+			name: "tags added",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"prod"},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			expectChanged: true,
+		},
+		{
+			name: "tags removed",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"prod"},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "tags changed",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"prod", "hr"},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"prod", "finance"},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "same tags different order does not trigger change",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"finance", "prod"},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				Tags:     []string{"prod", "finance"},
+			},
+			expectChanged: false,
+		},
+		{
+			name: "both tags nil does not trigger change",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			expectChanged: false,
+		},
 	}
 
 	for _, tc := range testCases {

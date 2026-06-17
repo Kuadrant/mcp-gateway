@@ -1,6 +1,6 @@
-# User-Based Capability Filtering
+# User-Based Tool Filtering
 
-This guide shows how to filter `tools/list` and `prompts/list` responses based on the authenticated user's allowed capabilities. The MCP Gateway broker verifies a signed `x-mcp-authorized` header and only returns the tools and prompts listed in that header.
+This guide shows how to filter `tools/list` responses based on the authenticated user's allowed tools. The MCP Gateway broker verifies a signed `x-mcp-authorized` header and only returns the tools listed in that header.
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ This guide shows how to filter `tools/list` and `prompts/list` responses based o
 - At least one MCP server is registered with the gateway
 - Kuadrant `AuthPolicy` is available in your cluster
 - You know the name and namespace of your `MCPGatewayExtension`
-- Your identity provider includes per-server tool and prompt permissions in the authenticated user's token claims
+- Your identity provider includes per-server tool permissions in the authenticated user's token claims
 
 In the examples below:
 
@@ -26,19 +26,19 @@ Replace these values if your installation uses different names.
 1. An upstream authorization system validates the user's identity
 2. It creates a signed JWT containing the user's allowed capabilities in an `allowed-capabilities` claim
 3. This JWT is passed to the broker via the `x-mcp-authorized` header
-4. The broker validates the JWT signature and filters `tools/list` and `prompts/list` responses accordingly
+4. The broker validates the JWT signature and filters `tools/list` responses accordingly
 
-The `allowed-capabilities` claim is a JSON-encoded string containing a capabilities map. The top-level keys are the capability types (`tools`, `prompts`), each mapping server names to allowed names:
+The `allowed-capabilities` claim is a JSON-encoded string containing a capabilities map. The top-level key is the capability type, and the `tools` entry maps server names to allowed tool names:
 
 ```json
 {
-  "allowed-capabilities": "{\"tools\":{\"mcp-test/server1-route\":[\"greet\",\"time\"],\"mcp-test/server2-route\":[\"hello_world\"]},\"prompts\":{\"mcp-test/server1-route\":[\"math_tutor\"]}}",
+  "allowed-capabilities": "{\"tools\":{\"mcp-test/server1-route\":[\"greet\",\"time\"],\"mcp-test/server2-route\":[\"hello_world\"]}}",
   "exp": 1760004918,
   "iat": 1760004618
 }
 ```
 
-The value of `allowed-capabilities` is a string, not a nested JSON object. The broker deserializes this string to extract the `tools` and `prompts` maps for filtering.
+The value of `allowed-capabilities` is a string, not a nested JSON object. The broker deserializes this string to extract the `tools` map for filtering.
 
 ## Step 1: Generate a signing key pair
 
@@ -113,8 +113,8 @@ trusted-headers-public-key
 Apply an AuthPolicy that:
 
 - authenticates the user with your identity provider
-- allows `tools/list`, `prompts/list`, `initialize`, and `notifications/initialized`
-- extracts the user's allowed tools and prompts from the identity claims
+- allows `tools/list`, `initialize`, and `notifications/initialized`
+- extracts the user's allowed tools from the identity claims
 - returns the `x-mcp-authorized` wristband header signed with the private key
 
 If you already created an authentication-only `mcp-auth-policy`, delete it first. This guide uses `spec.rules`, while the authentication guide uses `spec.defaults.rules`. Replacing the object avoids ending up with both shapes merged together.
@@ -148,7 +148,7 @@ spec:
         patternMatching:
           patterns:
             - predicate: |
-                !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","prompts/list","initialize","notifications/initialized"])
+                !request.headers.exists(h, h == 'x-mcp-method') || (request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"])
       authorized-capabilities:
         opa:
           rego: |
@@ -159,13 +159,6 @@ spec:
                 tools := [substring(r, count("tool:"), -1) |
                   r := input.auth.identity.resource_access[server].roles[_]
                   startswith(r, "tool:")
-                ]
-              },
-              "prompts": { server: prompts |
-                server := object.keys(input.auth.identity.resource_access)[_]
-                prompts := [substring(r, count("prompt:"), -1) |
-                  r := input.auth.identity.resource_access[server].roles[_]
-                  startswith(r, "prompt:")
                 ]
               }
             }
@@ -218,11 +211,11 @@ Expected output:
 True
 ```
 
-> **Note:** The `authorized-capabilities` Rego expects the authenticated user's permissions to be present in `resource_access`, keyed by MCP server name such as `mcp-test/server1-route`. Tool roles must be prefixed with `tool:` (e.g., `tool:greet`) and prompt roles with `prompt:` (e.g., `prompt:math_tutor`).
+> **Note:** The `authorized-capabilities` Rego expects the authenticated user's tool permissions to be present in `resource_access`, keyed by MCP server name such as `mcp-test/server1-route`. Tool roles must be prefixed with `tool:`, such as `tool:greet`.
 
-## Step 5: Verify that `tools/list` and `prompts/list` are filtered
+## Step 5: Verify that `tools/list` is filtered
 
-Open MCP Inspector and sign in as a user who should only see a subset of tools and prompts:
+Open MCP Inspector and sign in as a user who should only see a subset of tools:
 
 ```bash
 npx @modelcontextprotocol/inspector@0.21.1
@@ -247,9 +240,9 @@ For example, if the signed header only allows:
 }
 ```
 
-Then the broker should only return the prefixed tools for those entries, such as `test1_greet`, `test1_time`, and `test2_hello_world`. The same filtering applies to `prompts/list` responses based on the `prompts` key in the capabilities map.
+Then the broker should only return the prefixed tools for those entries, such as `test1_greet`, `test1_time`, and `test2_hello_world`.
 
-To verify that filtering is user-specific, sign out and authenticate as a different user with a different set of roles. The `tools/list` and `prompts/list` responses should change to match that user's permissions.
+To verify that filtering is user-specific, sign out and authenticate as a different user with a different set of tool roles. The `tools/list` response should change to match that user's permissions.
 
 ## Cleanup
 

@@ -104,7 +104,7 @@ info "running helm install"
 
 # 9. verify MCPGatewayExtension is ready
 info "waiting for MCPGatewayExtension to be ready"
-kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway -n "$NAMESPACE" --timeout="${TIMEOUT}" \
+kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n "$NAMESPACE" --timeout="${TIMEOUT}" \
     || fail "MCPGatewayExtension not ready"
 
 # 10. verify deployments are available

@@ -338,6 +338,17 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		return
 	}
 
+	if man.mcp.GetConfig().UserSpecificList {
+		man.logger.Debug("userSpecificList server healthy, tools fetched per-user", "upstream mcp server", man.mcp.ID())
+		man.status.ID = string(man.mcp.ID())
+		man.status.LastValidated = time.Now()
+		man.status.Name = man.MCPName()
+		man.status.Ready = true
+		man.status.Message = "userSpecificList server healthy, tools fetched per-user"
+		man.resetBackoff()
+		return
+	}
+
 	var toolErr error
 	var invalidTools []InvalidToolInfo
 	if !man.shouldFetchTools(event) {

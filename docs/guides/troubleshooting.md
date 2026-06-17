@@ -248,6 +248,19 @@ kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway
 - Ensure backend server returns valid MCP protocol responses
 - Verify `prefix` in MCPServerRegistration spec is valid (no spaces or special chars)
 
+### Tools Not Appearing After Registration (~60s Delay)
+
+**Symptom**: A new MCPServerRegistration is created and the config Secret is updated, but tools don't appear in `tools/list` for up to a minute.
+
+**Cause**: The broker watches its config Secret via fsnotify and reloads automatically, but kubelet only syncs mounted Secrets approximately every 60 seconds (the default `syncFrequency`). Until the kubelet syncs, the broker sees the old file content.
+
+**Solutions**:
+- Wait ~60 seconds. The broker reloads automatically once the kubelet syncs the Secret -- no manual restart required.
+- To confirm the broker has reloaded, check its logs for a config reload message:
+  ```bash
+  kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway | grep -i "config"
+  ```
+
 ### Prefix Not Applied
 
 **Symptom**: Tools appear without the configured prefix

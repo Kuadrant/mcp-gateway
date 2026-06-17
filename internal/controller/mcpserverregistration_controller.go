@@ -400,14 +400,29 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
+	// if a CA cert is configured, the upstream must be HTTPS
+	endpoint := serverInfo.Endpoint
+	if mcpsr.Spec.CACertSecretRef != nil {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse endpoint URL %q: %w", endpoint, err)
+		}
+		if strings.EqualFold(u.Scheme, "http") {
+			u.Scheme = "https"
+			endpoint = u.String()
+		}
+	}
+
 	serverConfig := config.MCPServer{
-		Name:     serverName,
-		URL:      serverInfo.Endpoint,
-		Hostname: serverInfo.Hostname,
-		Prefix:   mcpsr.Spec.Prefix,
-		State:    string(mcpsr.Spec.State),
-		Category: append([]string(nil), mcpsr.Spec.Category...),
-		Hint:     mcpsr.Spec.Hint,
+		Name:             serverName,
+		URL:              endpoint,
+		Hostname:         serverInfo.Hostname,
+		Prefix:           mcpsr.Spec.Prefix,
+		State:            string(mcpsr.Spec.State),
+		Category:         append([]string(nil), mcpsr.Spec.Category...),
+		Hint:             mcpsr.Spec.Hint,
+		UserSpecificList: mcpsr.Spec.UserSpecificList == mcpv1alpha1.UserSpecificListEnabled,
+		Tags:             append([]string(nil), mcpsr.Spec.Tags...),
 	}
 
 	if mcpsr.Spec.TokenURLElicitation != nil {
@@ -561,7 +576,10 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 	return endpoint, routingHostname
 }
 
-// determineProtocol determines the protocol (http/https) for the service endpoint
+// determineProtocol determines the protocol (http/https) for the service endpoint.
+// For external services it checks the appProtocol on the matching port.
+// For internal services it defaults to http; TLS upstreams are handled by the
+// caCertSecretRef scheme upgrade in buildMCPServerConfig.
 func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
 	if isExternal {
 		for _, port := range service.Spec.Ports {
@@ -572,11 +590,6 @@ func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *core
 				break
 			}
 		}
-		return "http"
-	}
-
-	if route.UsesHTTPS() {
-		return "https"
 	}
 	return "http"
 }

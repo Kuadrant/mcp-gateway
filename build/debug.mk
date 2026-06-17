@@ -1,5 +1,50 @@
 # Debugging commands (most are accessed via main Makefile)
 
+MCP_SYSTEM_NS ?= mcp-system
+
+# Enable debug logging on the controller and all broker-router deployments.
+# Both binaries use spec.containers[0].command (never args).
+.PHONY: debug-mcp
+debug-mcp:
+	@echo "Enabling debug logging on controller and broker-router in $(MCP_SYSTEM_NS)..."
+	@FAILED=0; \
+	CMD=$$(kubectl get deployment mcp-gateway-controller -n $(MCP_SYSTEM_NS) \
+		-o jsonpath='{.spec.template.spec.containers[0].command}' 2>/dev/null); \
+	if [ -z "$$CMD" ]; then \
+		echo "  controller: not found"; \
+	elif echo "$$CMD" | grep -q -- '--log-level='; then \
+		echo "  controller: log-level already set, skipping"; \
+	else \
+		kubectl patch deployment mcp-gateway-controller -n $(MCP_SYSTEM_NS) --type=json \
+			-p '[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--log-level=-4"}]' >/dev/null && \
+			kubectl rollout status deployment/mcp-gateway-controller -n $(MCP_SYSTEM_NS) --timeout=60s >/dev/null 2>&1 && \
+			echo "  controller: debug enabled" || \
+			{ echo "  controller: patch or rollout failed"; FAILED=1; }; \
+	fi; \
+	for DEP in $$(kubectl get deployments -n $(MCP_SYSTEM_NS) -l app.kubernetes.io/name=mcp-gateway -o name 2>/dev/null); do \
+		NAME=$$(echo $$DEP | cut -d'/' -f2); \
+		DEP_CMD=$$(kubectl get $$DEP -n $(MCP_SYSTEM_NS) \
+			-o jsonpath='{.spec.template.spec.containers[0].command}' 2>/dev/null); \
+		if [ -z "$$DEP_CMD" ]; then \
+			echo "  $$NAME: no command found, skipping"; \
+			continue; \
+		fi; \
+		if echo "$$DEP_CMD" | grep -q -- '--log-level='; then \
+			echo "  $$NAME: log-level already set, skipping"; \
+			continue; \
+		fi; \
+		kubectl patch $$DEP -n $(MCP_SYSTEM_NS) --type=json \
+			-p '[{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--log-level=-4"}]' >/dev/null && \
+			kubectl rollout status $$DEP -n $(MCP_SYSTEM_NS) --timeout=60s >/dev/null 2>&1 && \
+			echo "  $$NAME: debug enabled" || \
+			{ echo "  $$NAME: patch or rollout failed"; FAILED=1; }; \
+	done; \
+	if [ "$$FAILED" = "1" ]; then \
+		echo "Warning: some deployments failed to update."; \
+	else \
+		echo "Debug logging enabled."; \
+	fi
+
 # Enable debug logging for Envoy
 debug-envoy-impl:
 	@echo "Enabling debug logging for all Istio gateways..."

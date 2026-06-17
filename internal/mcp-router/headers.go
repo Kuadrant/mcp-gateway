@@ -18,7 +18,15 @@ const (
 	mcpTarget             = "mcp-target"
 	// RoutingKey is an internal header used to authenticate a request from the router
 	RoutingKey = "router-key"
+
+	// broker-only filtering headers that must not reach upstream servers
+	mcpAuthorizedHeader    = "x-mcp-authorized"
+	mcpVirtualServerHeader = "x-mcp-virtualserver"
 )
+
+// internalOnlyHeaders are headers used internally by the gateway for filtering
+// and routing that must be stripped before forwarding to upstream MCP servers.
+var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader}
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {

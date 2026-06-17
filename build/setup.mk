@@ -8,7 +8,11 @@ setup-cluster-base: tools kind-create-cluster build-and-load-image gateway-api-i
 # Deploy controller only (no MCPGatewayExtension - for e2e tests)
 .PHONY: deploy-controller-only
 deploy-controller-only: ## Deploy only the controller (tests create their own MCPGatewayExtensions)
-	$(KUBECTL) apply -k config/mcp-gateway/overlays/ci/
+	@for i in 1 2 3; do \
+		$(KUBECTL) apply -k config/mcp-gateway/overlays/ci/ && break; \
+		echo "Retrying controller deploy (attempt $$i/3)..."; \
+		sleep 5; \
+	done
 	@echo "Waiting for controller to be ready..."
 	@$(KUBECTL) wait --for=condition=available --timeout=180s deployment/mcp-gateway-controller -n mcp-system
 

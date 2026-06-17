@@ -136,6 +136,12 @@ func TestIsBrokerTool(t *testing.T) {
 	require.False(t, IsBrokerTool(mcp.Tool{Name: "user_tool"}))
 	require.True(t, IsBrokerTool(mcp.Tool{Name: "discover_tools"}))
 	require.True(t, IsBrokerTool(mcp.Tool{Name: "select_tools"}))
+
+	// tags tools are detected via meta annotation, not name
+	require.False(t, IsBrokerTool(mcp.Tool{Name: "list_tags"}))
+	tagsTool := mcp.Tool{Name: "list_tags"}
+	tagsTool.Meta = mcp.NewMetaFromMap(map[string]any{brokerToolMetaKey: true})
+	require.True(t, IsBrokerTool(tagsTool))
 }
 
 func TestIsBrokerToolName(t *testing.T) {
@@ -147,6 +153,13 @@ func TestIsBrokerToolName(t *testing.T) {
 
 	disabled := &mcpBrokerImpl{discovery: discoveryConfig{enabled: false}}
 	require.False(t, disabled.IsBrokerToolName("discover_tools"))
+
+	// tags tools are gated on tagsToolsRegistered
+	require.False(t, b.IsBrokerToolName("list_tags"))
+	require.False(t, b.IsBrokerToolName("filter_tools_by_tags"))
+	b.tagsToolsRegistered.Store(true)
+	require.True(t, b.IsBrokerToolName("list_tags"))
+	require.True(t, b.IsBrokerToolName("filter_tools_by_tags"))
 }
 
 func TestParseToolNames(t *testing.T) {

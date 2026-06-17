@@ -23,6 +23,75 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 )
 
+// SetupTrustedHeadersAuth configures trusted headers for JWT validation on the MCPGateway.
+// creates the required secret and patches MCPGatewayExtension, then registers cleanup
+// to restore the original state.
+func SetupTrustedHeadersAuth(ctx context.Context, k8sClient client.Client) {
+	// create the secret if it doesn't exist
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "trusted-headers-public-key",
+			Namespace: SystemNamespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"key": []byte(GetTestHeaderPublicKey()),
+		},
+	}
+	Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
+
+	DeferCleanup(func() {
+		Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+	})
+
+	// get current deployment generation before patching
+	gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+	Expect(err).NotTo(HaveOccurred())
+
+	ext := &mcpv1alpha1.MCPGatewayExtension{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{
+		Name: MCPExtensionName, Namespace: SystemNamespace,
+	}, ext)).To(Succeed())
+
+	patch := client.MergeFrom(ext.DeepCopy())
+	ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+		SecretName: "trusted-headers-public-key",
+	}
+	Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
+
+	DeferCleanup(func() {
+		// get current deployment generation before cleanup
+		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+		Expect(err).NotTo(HaveOccurred())
+
+		ext := &mcpv1alpha1.MCPGatewayExtension{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name: MCPExtensionName, Namespace: SystemNamespace,
+		}, ext)
+		if err == nil {
+			patch := client.MergeFrom(ext.DeepCopy())
+			ext.Spec.TrustedHeadersKey = nil
+			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
+
+			// wait for deployment spec to be updated
+			Eventually(func(g Gomega) {
+				g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeFalse())
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+			// wait for deployment to roll out
+			Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+		}
+	})
+
+	// wait for deployment to be updated with the env var
+	Eventually(func(g Gomega) {
+		g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeTrue())
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+	// wait for deployment to roll out with new pods
+	Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+}
+
 // TestResourcesBuilder is a unified builder for creating test resources
 type TestResourcesBuilder struct {
 	k8sClient           client.Client
@@ -41,6 +110,7 @@ type TestResourcesBuilder struct {
 	caCertSecretRef     *mcpv1alpha1.CACertSecretReference
 	sectionName         string
 	tokenURLElicitation *mcpv1alpha1.TokenURLElicitationConfig
+	userSpecificList    mcpv1alpha1.UserSpecificListPolicy
 	httpRoute           *gatewayapiv1.HTTPRoute
 	mcpServer           *mcpv1alpha1.MCPServerRegistration
 	serviceEntry        *istionetv1beta1.ServiceEntry
@@ -58,7 +128,7 @@ func NewTestResources(testName string, k8sClient client.Client) *TestResourcesBu
 		k8sClient:        k8sClient,
 		testName:         testName,
 		namespace:        TestServerNameSpace,
-		hostname:         "e2e-server2.mcp.local",
+		hostname:         "e2e-server2.mcp-gateway.local",
 		serviceName:      "mcp-test-server2",
 		port:             9090,
 		credentialKey:    "token",
@@ -76,7 +146,7 @@ func NewTestResourcesWithDefaults(testName string, k8sClient client.Client) *Tes
 func (b *TestResourcesBuilder) ForInternalService(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -85,7 +155,7 @@ func (b *TestResourcesBuilder) ForInternalService(serviceName string, port int32
 func (b *TestResourcesBuilder) ForExternalService(externalHost string, port int32) *TestResourcesBuilder {
 	b.serviceName = externalHost
 	b.port = port
-	b.hostname = fmt.Sprintf("e2e-external-%s.mcp.local", b.testName)
+	b.hostname = fmt.Sprintf("e2e-external-%s.mcp-gateway.local", b.testName)
 	b.isExternal = true
 	return b
 }
@@ -126,7 +196,7 @@ func (b *TestResourcesBuilder) WithHint(hint string) *TestResourcesBuilder {
 func (b *TestResourcesBuilder) WithBackendTarget(serviceName string, port int32) *TestResourcesBuilder {
 	b.serviceName = serviceName
 	b.port = port
-	b.hostname = fmt.Sprintf("%s.mcp.local", serviceName)
+	b.hostname = fmt.Sprintf("%s.mcp-gateway.local", serviceName)
 	b.isExternal = false
 	return b
 }
@@ -182,6 +252,12 @@ func (b *TestResourcesBuilder) WithSectionName(name string) *TestResourcesBuilde
 	return b
 }
 
+// WithUserSpecificList marks this server for per-user tool fetching.
+func (b *TestResourcesBuilder) WithUserSpecificList() *TestResourcesBuilder {
+	b.userSpecificList = mcpv1alpha1.UserSpecificListEnabled
+	return b
+}
+
 // Build constructs all the resources based on configuration. Must be called before GetObjects() or Register().
 func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	routeName := UniqueName("e2e-route-" + b.testName)
@@ -225,6 +301,9 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	}
 	if b.tokenURLElicitation != nil {
 		b.mcpServer.Spec.TokenURLElicitation = b.tokenURLElicitation
+	}
+	if b.userSpecificList != "" {
+		b.mcpServer.Spec.UserSpecificList = b.userSpecificList
 	}
 
 	if len(b.category) > 0 {
@@ -292,7 +371,7 @@ func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 			},
 			Hostnames: []gatewayapiv1.Hostname{
 				gatewayapiv1.Hostname(b.hostname),
-				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp.local", "."+e2eDomain, 1)),
+				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp-gateway.local", "."+e2eDomain, 1)),
 			},
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{
@@ -561,6 +640,7 @@ type MCPGatewayExtensionSetup struct {
 	gatewayNamespace string
 	sectionName      string
 	publicHost       string
+	listenerPort     int32
 	pollInterval     string
 	extension        *mcpv1alpha1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
@@ -579,6 +659,7 @@ func NewMCPGatewayExtensionSetup(k8sClient client.Client) *MCPGatewayExtensionSe
 		k8sClient:        k8sClient,
 		gatewayName:      GatewayName,
 		gatewayNamespace: GatewayNamespace,
+		listenerPort:     8080,
 	}
 }
 
@@ -620,6 +701,12 @@ func (s *MCPGatewayExtensionSetup) WithPollInterval(interval string) *MCPGateway
 	return s
 }
 
+// WithListenerPort sets the listener port used to compute the privateHost
+func (s *MCPGatewayExtensionSetup) WithListenerPort(port int32) *MCPGatewayExtensionSetup {
+	s.listenerPort = port
+	return s
+}
+
 // WithSectionName sets the sectionName (listener name) to target on the Gateway
 func (s *MCPGatewayExtensionSetup) WithSectionName(sectionName string) *MCPGatewayExtensionSetup {
 	s.sectionName = sectionName
@@ -652,6 +739,10 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	}
 	if s.publicHost != "" {
 		spec.PublicHost = s.publicHost
+	}
+	if gatewayClassName != "istio" {
+		spec.PrivateHost = fmt.Sprintf("%s-%s.%s.svc.cluster.local:%d",
+			s.gatewayName, gatewayClassName, s.gatewayNamespace, s.listenerPort)
 	}
 	if s.pollInterval != "" {
 		interval, _ := strconv.Atoi(s.pollInterval)
@@ -903,13 +994,15 @@ type MCPGatewayExtensionBuilder struct {
 	targetGateway   string
 	targetNamespace string
 	sectionName     string
+	listenerPort    int32
 }
 
 // NewMCPGatewayExtensionBuilder creates a new MCPGatewayExtensionBuilder
 func NewMCPGatewayExtensionBuilder(name, namespace string) *MCPGatewayExtensionBuilder {
 	return &MCPGatewayExtensionBuilder{
-		name:      name,
-		namespace: namespace,
+		name:         name,
+		namespace:    namespace,
+		listenerPort: 8080,
 	}
 }
 
@@ -928,6 +1021,11 @@ func (b *MCPGatewayExtensionBuilder) WithSectionName(sectionName string) *MCPGat
 
 // Build creates the MCPGatewayExtension resource
 func (b *MCPGatewayExtensionBuilder) Build() *mcpv1alpha1.MCPGatewayExtension {
+	var privateHost string
+	if gatewayClassName != "istio" {
+		privateHost = fmt.Sprintf("%s-%s.%s.svc.cluster.local:%d",
+			b.targetGateway, gatewayClassName, b.targetNamespace, b.listenerPort)
+	}
 	return &mcpv1alpha1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
@@ -942,6 +1040,7 @@ func (b *MCPGatewayExtensionBuilder) Build() *mcpv1alpha1.MCPGatewayExtension {
 				Namespace:   b.targetNamespace,
 				SectionName: b.sectionName,
 			},
+			PrivateHost: privateHost,
 		},
 	}
 }

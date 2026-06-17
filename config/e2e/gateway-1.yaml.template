@@ -4,14 +4,14 @@ kind: Gateway
 metadata:
   labels:
     istio: ingressgateway
-    gateway.io/name: e2e-2
-  name: e2e-2
+    gateway.io/name: e2e-1
+  name: e2e-1
   namespace: gateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: ${GATEWAY_CLASS_NAME}
   listeners:
     - name: mcp
-      hostname: 'e2e-2.127-0-0-1.sslip.io'
+      hostname: 'e2e-1.${E2E_DOMAIN}'
       port: 8080
       protocol: HTTP
       allowedRoutes:
@@ -20,7 +20,7 @@ spec:
     - name: mcps
       port: 8080
       protocol: HTTP
-      hostname: '*.e2e-2.mcp.local'
+      hostname: '*.e2e-1.mcp.local'
       allowedRoutes:
         namespaces:
           from: All

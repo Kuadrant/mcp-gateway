@@ -35,6 +35,26 @@ spec:
   ca:
     secretName: private-ca-keypair
 ---
+# gateway HTTPS listener certificate, issued by the same private CA
+# so the broker-router can trust it via --gateway-ca-cert
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-gateway-tls-cert
+  namespace: gateway-system
+spec:
+  secretName: mcp-gateway-tls-cert
+  duration: 8760h
+  dnsNames:
+    - "*.mcp-gateway.local"
+  issuerRef:
+    name: private-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -45,7 +65,7 @@ spec:
   duration: 8760h
   dnsNames:
     - mcp-tls-server.mcp-test.svc.cluster.local
-    - tls-server.mcp-tls.local
+    - tls-server.mcp-gateway.local
   issuerRef:
     name: private-ca-issuer
     kind: ClusterIssuer

@@ -1,25 +1,18 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with this repository.
-
 ## Project Overview
 
-MCP Gateway is an Envoy-based gateway for Model Context Protocol (MCP) servers. It consists of two separate binaries with four components:
+MCP Gateway: an Envoy-based gateway for Model Context Protocol (MCP) servers.
 
-**`cmd/mcp-broker-router/main.go`** — data-plane binary running:
-- **MCP Router**: Envoy external processor that routes MCP requests (gRPC on :50051)
-- **MCP Broker**: HTTP service that aggregates tools from multiple MCP servers (HTTP on :8080/mcp)
+Two binaries, four components:
 
-**`cmd/main.go`** — control-plane binary running:
-- **MCP Gateway Controller**: Kubernetes controller that discovers MCP servers via MCPServerRegistration and MCPVirtualServer CRDs
-- **MCP Gateway Operator**: Kubernetes controller that reconciles MCPGatewayExtension resources and deploys instances of the MCP Router and MCP Broker to form a working MCP Gateway instance
+**`cmd/mcp-broker-router/main.go`** — data-plane:
+- **Router**: Envoy ext_proc, routes MCP requests (gRPC :50051)
+- **Broker**: aggregates tools from upstream MCP servers (HTTP :8080/mcp)
 
-### Not Implemented
-- Resource federation (only tools and prompts currently)
-
-# Exploration
-
-To explore the code base, if the codebase-memory-mcp is configured, index the project and use this MCP server and use its tools to explore the project as much as possible.
+**`cmd/main.go`** — control-plane:
+- **Controller**: discovers MCP servers via MCPServerRegistration and MCPVirtualServer CRDs
+- **Operator**: reconciles MCPGatewayExtension, deploys router + broker instances
 
 ## Architecture
 
@@ -29,191 +22,73 @@ Client → Gateway (Envoy) → Router (ext_proc) → Broker → Upstream MCP Ser
            Controller → Secret ──────────────────┘
 ```
 
-- Controller watches MCPServerRegistration CRDs, discovers backends via HTTPRoutes, writes config Secret
-- Broker reads config Secret, connects to upstream servers, federates tools with prefixes
+- Controller watches CRDs, discovers backends via HTTPRoutes, writes config Secret
+- Broker reads config Secret, connects to upstreams, federates tools with prefixes
 - Router parses MCP requests, adds auth headers, tells Envoy where to route
-- Tool Calls use a lazy initialization model where the router hairpins an initialize request back through Envoy to the backend MCP Server before continuing with the MCP tool call. This ensures initialization is only done when needed and that policies are applied to both the initialize and tool/call requests.
+- Tool calls use lazy init: router hairpins an initialize request back through Envoy before the tool/call
 - All MCP traffic flows through Envoy for consistent policies
 
-- Overview Documentation: `docs/design/overview.md`
+Istio is ONLY a Gateway API provider — no sidecars, no ambient mode, no service mesh. Just istiod programming the Gateway's Envoy proxy.
 
-### Core Components
+## Authentication (Two Separate Paths)
 
-- `Router`: ext_proc server that parses MCP Requests and routes the request to the correct MCP Backend
-- `Broker`: default MCP Backend for the Gateway. It handles initialize and tool/list requests. Manages session initialization for the MCP Gateway. Serves aggregated tools for the gateway and handles backend MCP Server discovery and integration.
-- `controller`: Kubernetes-based controller that manages the CRDs defined by the code in `api/v1alpha1`
-- `operator`: Kubernetes-based controller that is responsible for deploying instances of the router and broker which together form the MCP Gateway
+1. **Broker → upstream** (`credentialRef`): broker uses MCPServerRegistration's `credentialRef` for tool listing and session management. NEVER injected into client tool/call requests. Router has no access to `credentialRef`.
 
-**Important**: We use Istio ONLY as a Gateway API provider, NOT as a service mesh:
-- No sidecars on any workload pods
-- No ambient mode (no ztunnels or waypoint proxies)
-- Just `istiod` programming the Gateway's Envoy proxy
-- ServiceEntry/DestinationRule only used for external service routing
+2. **Client → upstream** (`tools/call`): routed directly to backend via Envoy. Clients authenticate via AuthPolicy (OIDC, API key), URL token elicitation, or client-provided headers.
 
-### External Services
+Different AuthPolicies can apply per MCP server (each has its own HTTPRoute).
 
-The controller detects external services by checking the HTTPRoute backendRef kind:
-- `kind: Hostname` with `group: networking.istio.io` → treated as an external service, URL built directly from the hostname
-- `kind: Service` (default) → treated as an internal Kubernetes service, URL built from `{name}.{namespace}.svc.cluster.local`
-
-Users must create the Istio ServiceEntry, DestinationRule, and HTTPRoute resources for external services. See `docs/guides/external-mcp-server.md` for detailed instructions.
-
-### Authentication
-
-There are two separate auth paths:
-
-1. **Broker → upstream** (`credentialRef`): The broker uses credentials from the MCPServerRegistration's `credentialRef` secret to connect to upstream MCP servers for tool listing and session management. This credential is NEVER injected into client `tools/call` requests. The router does not have access to `credentialRef`.
-
-2. **Client → upstream** (`tools/call`): Client tool call requests are routed by the router directly to the backend via Envoy. Clients must authenticate through one of:
-   - AuthPolicy applied to the Gateway/HTTPRoute (e.g. OIDC, API key)
-   - URL token elicitation (`tokenURLElicitation`) — user submits a token via the token page, cached and injected by the router
-   - Client-provided headers passed through by the router during session initialization
-
-Users can apply different AuthPolicies per MCP Server since each server has its own HTTPRoute. There can be two layers: (1) a policy on the Gateway route / MCP Broker endpoints, (2) a distinct policy on a listener or HTTPRoute for a specific MCP server (e.g. a PAT for GitHub MCP access).
-
-
-## Key Dependencies
-
-- `github.com/mark3labs/mcp-go` — MCP server/client SDK (JSON-RPC 2.0, SSE transport)
-- `sigs.k8s.io/controller-runtime` — Kubebuilder controller framework
-- `sigs.k8s.io/gateway-api` — Gateway API types (HTTPRoute, Gateway)
-- `istio.io/client-go` — Istio EnvoyFilter types
-- `github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3` — Envoy ext_proc protocol
-- `github.com/golang-jwt/jwt/v5` — JWT session tokens
-- `github.com/onsi/ginkgo/v2` + `github.com/onsi/gomega` — BDD test framework
-- `go.opentelemetry.io/otel` — OpenTelemetry tracing/metrics/logs
-
-## Key Files
-
-- `cmd/mcp-broker-router/main.go`: Binary entry point for MCP Gateway both the broker and router components
-- `cmd/main.go`: Binary entry point for controller and operator
-- `internal/broker/broker.go`: MCP broker implementation
-- `internal/broker/upstream/manager.go`: Backend MCP manager. Connects to MCP Servers, ensures they are alive, aggregates tools
-- `internal/mcp-router/server.go`: Envoy external processor. Key file for the router
-- `internal/mcp-router/request_handlers.go` request handling and routing logic for the router component
-- `internal/mcp-router/response_handlers.go` response handling logic for the router component
-- `internal/controller/mcpserverregistration_controller.go`: MCPServerRegistration reconciliation. Controller component
-- `internal/controller/mcpgatewayextension_controller.go`: MCPGatewayExtension reconciliation. Operator component
-- `internal/controller/mcpvirtualserver_controller.go`: MCPVirtualServer reconciliation. Controller Component
-- `internal/config/config_writer.go`: Configuration management used by the controller to manage the configuration for the broker and router components
-- `internal/session/cache.go`: cache integration for the router and broker components. It stores session information.
-- `internal/session/jwt.go`: JWT-based session manager.
-- `internal/clients/`: MCP client for the internal hairpinned initialize during a tool/call
-- `internal/idmap/`: Maps gateway-assigned request IDs to backend server request IDs
-- `internal/otel/`: OpenTelemetry instrumentation (tracing, metrics, logs)
-- `internal/tests/`: Shared test utilities
-
-## Development
-
-### Code Style
+## Code Style
 
 - Minimal, DRY, terse comments (lowercase, only when necessary)
 - Idiomatic Go, leverage interfaces where appropriate
 - No emojis or AI-style formatting
 - Files must end with newline
-- Regularly run make lint to check for lint errors.
-- When adding or changing CRD fields in `api/v1alpha1/`, update the corresponding API reference doc in `docs/reference/` to reflect the change.
-
-### Development Checklists
-
-#### Adding a new upstream feature
-- [ ] Update `MCPManager` in `internal/broker/upstream/manager.go`
-- [ ] Add corresponding broker handling in `internal/broker/broker.go`
-- [ ] Update config types in `internal/config/types.go` if new config fields needed
-- [ ] Add unit tests alongside the implementation
-- [ ] Add e2e test in `tests/e2e/`
-
-#### Adding a new CRD field
-- [ ] Update types in `api/v1alpha1/`
-- [ ] Run `make generate-all` to regenerate deepcopy, CRDs, and sync Helm
-- [ ] Update the relevant controller reconciler
-- [ ] Update status conditions if needed
-- [ ] Add controller unit tests
-- [ ] Add e2e test coverage
-
-#### Adding a new ext_proc handler
-- [ ] Add handler in `internal/mcp-router/request_handlers.go` or `response_handlers.go`
-- [ ] Update `server.go` processing logic
-- [ ] Add OpenTelemetry span attributes for observability
-- [ ] Add unit tests with mock ext_proc streams
-
-#### Breaking changes
-- [ ] Document the breaking change in `docs/release-notes/0.0.7.md` (the next release)
-- [ ] Include migration steps for users (what to change, exact commands if possible)
-- [ ] Note any changes to CLI flags, environment variables, headers, or API fields
-
-#### Writing tests
-- [ ] Unit tests use `testing` + `testify` or Ginkgo/Gomega
-- [ ] E2E tests go in `tests/e2e/` using Ginkgo and are defined in a markdown file `tests/e2e/test_cases.md`
-- [ ] E2E tests use direct port-forwards to `deployment/mcp-gateway`
-- [ ] E2E tests clean up resources before creating them
-- [ ] Test servers live in `tests/servers/` — create new ones for specific test scenarios
-
-### Running Tests
-```bash
-make lint               # Run all lint and style checks
-make test-unit          # Unit tests
-make test-controller-integration  # Controller integration tests (envtest)
-```
-
-### Version References
-Docs and scripts on `main` always reference the latest published release version (plain SemVer, e.g., `0.5.1`). Git refs use a `v` prefix (e.g., `v${MCP_GATEWAY_VERSION}`), Helm `--version` uses bare SemVer. The `scripts/set-release-version.sh` script updates all version references and is run as part of the release process and the post-release bump on `main`.
-
-## Reference
-
-### Kubernetes Custom Resources
-- MCPGatewayExtension: `docs/reference/mcpgatewayextension.md`
-- MCPServerRegistration: `docs/reference/mcpserverregistration.md`
-- MCPVirtualServer: `docs/reference/mcpvirtualserver.md`
-
-### Important Ports
-- 8080: Broker HTTP (/mcp endpoint)
-- 50051: Router gRPC (ext_proc)
-- 8081: Controller health probes
-- 8001: Gateway port mapping
-- 8002: Keycloak port mapping
-
-### Configuration
-- `config/crd/mcp.kuadrant.io_*.yaml`: CRD definitions (generated by controller-gen)
-- `config/mcp-system/`: Kubernetes deployment manifests
-- `config/test-servers/`: Test MCP server deployments
-- `config/samples/remote-github/`: Example manifests for GitHub MCP integration
-
-### Documentation
-- `docs/CLAUDE.md`: Guidelines for writing and organizing documentation
-- `docs/guides/`: User-facing how-to guides (published at docs.kuadrant.io)
-- `docs/design/`: Developer-facing design docs and architecture
-
-### Test Servers
-
-Test servers in `config/test-servers/`:
-- **Server1**: Go SDK (tools: greet, time, slow, headers, add_tool; also has a prompt and resource)
-- **Server2**: Go SDK (tools: hello_world, time, headers, auth1234, slow)
-- **Server3**: Python FastMCP (tools: time, add, dozen, pi, get_weather, slow, get_headers)
-- **API Key Server**: Validates Bearer token authentication (tool: hello_world)
-- **Broken Server**: Intentionally broken server for testing error handling
-- **Custom Path Server**: Go SDK at `/v1/special/mcp` (tools: echo_custom, path_info, timestamp)
-- **OIDC Server**: Validates OpenID Connect (OIDC) Bearer tokens
-- **Everything Server**: Typescript SDK (prompts, tools, resources, sampling)
-- **Conformance Server**: Typescript SDK conformance test server
-- **Custom Response Server**: Tests custom response handling
-- **TLS Server**: Go SDK with native TLS support (tools: echo_tls, tls_info). Requires cert-manager; deployed via `make deploy-tls-test-server`
+- Run `make lint` regularly
 
 ## Concurrency
 
-Before using a mutex to protect memory access, consider whether golang channels are a better solution. Favour the principle of sharing memory by communicating rather than communicating via shared memory.
+Channels over mutexes. Share memory by communicating, not the other way around.
 
 ## Performance
 
 Broker and router are hot paths. Avoid allocations in per-request code.
 
-- Use pointer maps (`map[string]*T`) not value maps -- value lookups copy the struct
-- Use `for i := range` not `for _, v := range` on large structs in hot loops
-- Use structured logging (`logger.Info("msg", "key", val)`) not `fmt.Sprintf`
-- Use `logger.Debug` for per-request logging, `logger.Info` for lifecycle events only
-- Avoid expensive argument construction (e.g., `fmt.Sprintf`) in span attribute calls on hot paths; the OTel SDK already no-ops `SetAttributes` on non-recording spans
-- Use injected `logger`, never package-level `slog.Info`/`slog.Error`
+- Pointer maps (`map[string]*T`) not value maps
+- `for i := range` not `for _, v := range` on large structs
+- Structured logging (`logger.Info("msg", "key", val)`) not `fmt.Sprintf`
+- `logger.Debug` for per-request, `logger.Info` for lifecycle only
+- Injected `logger`, never package-level `slog.Info`/`slog.Error`
+- Don't construct expensive args for span attributes on hot paths
 
-Profiling: pprof on port 6060. See `tests/perf/` for load testing scripts and methodology.
+See `docs/design/performance.md` for rationale.
 
-Detailed explanations and rationale: `docs/design/performance.md`
+## Running Tests
+
+```bash
+make lint                         # lint and style checks
+make test-unit                    # unit tests
+make test-controller-integration  # controller integration tests (envtest)
+```
+
+## Design Docs (read before modifying related areas)
+
+- `docs/design/overview.md` — system architecture and component responsibilities
+- `docs/design/routing.md` — request routing and ext_proc flow
+- `docs/design/session-mgmt.md` — session lifecycle and JWT handling
+- `docs/design/performance.md` — hot path constraints and rationale
+- `docs/design/security-architecture.md` — auth model and threat boundaries
+
+## Exploration
+
+Use codebase-memory-mcp to index and explore the project when available.
+
+## Contributing
+
+Read `CONTRIBUTING.md` before creating PRs or issues. Feature, planned or speculative work requires an existing issue; bugfixes and security patches are exempt.
+
+## Reference
+
+- CRD docs: `docs/reference/`
+- User guides: `docs/guides/` (published at docs.kuadrant.io)
+- Doc guidelines: `docs/CLAUDE.md`

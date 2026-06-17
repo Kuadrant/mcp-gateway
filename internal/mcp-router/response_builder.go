@@ -14,14 +14,15 @@ type ResponseBuilder struct {
 }
 
 // WithRequestHeadersResponse adds a request headers response with header mutations, clears route cache
-func (rb *ResponseBuilder) WithRequestHeadersResponse(headers []*basepb.HeaderValueOption) *ResponseBuilder {
+func (rb *ResponseBuilder) WithRequestHeadersResponse(headers []*basepb.HeaderValueOption, removeHeaders ...string) *ResponseBuilder {
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_RequestHeaders{
 			RequestHeaders: &eppb.HeadersResponse{
 				Response: &eppb.CommonResponse{
 					ClearRouteCache: true,
 					HeaderMutation: &eppb.HeaderMutation{
-						SetHeaders: headers,
+						SetHeaders:    headers,
+						RemoveHeaders: removeHeaders,
 					},
 				},
 			},
@@ -31,7 +32,7 @@ func (rb *ResponseBuilder) WithRequestHeadersResponse(headers []*basepb.HeaderVa
 }
 
 // WithRequestBodyHeadersAndBodyResponse adds request body response with header and body mutations, clears route cache
-func (rb *ResponseBuilder) WithRequestBodyHeadersAndBodyResponse(headers []*basepb.HeaderValueOption, body []byte) *ResponseBuilder {
+func (rb *ResponseBuilder) WithRequestBodyHeadersAndBodyResponse(headers []*basepb.HeaderValueOption, body []byte, removeHeaders ...string) *ResponseBuilder {
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_RequestBody{
 			RequestBody: &eppb.BodyResponse{
@@ -39,7 +40,8 @@ func (rb *ResponseBuilder) WithRequestBodyHeadersAndBodyResponse(headers []*base
 					// Necessary so that the new headers are used in the routing decision.
 					ClearRouteCache: true,
 					HeaderMutation: &eppb.HeaderMutation{
-						SetHeaders: headers,
+						SetHeaders:    headers,
+						RemoveHeaders: removeHeaders,
 					},
 					BodyMutation: &eppb.BodyMutation{
 						Mutation: &eppb.BodyMutation_Body{
@@ -132,12 +134,15 @@ func (rb *ResponseBuilder) WithImmediateJSONRPCResponse(statusCode int32, setHea
 }
 
 // WithStreamingResponse adds a streaming request body response with headers
-func (rb *ResponseBuilder) WithStreamingResponse(headers []*basepb.HeaderValueOption, body []byte) *ResponseBuilder {
+func (rb *ResponseBuilder) WithStreamingResponse(headers []*basepb.HeaderValueOption, body []byte, removeHeaders ...string) *ResponseBuilder {
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_RequestBody{
 			RequestBody: &eppb.BodyResponse{
 				Response: &eppb.CommonResponse{
-					HeaderMutation: &eppb.HeaderMutation{SetHeaders: headers},
+					HeaderMutation: &eppb.HeaderMutation{
+						SetHeaders:    headers,
+						RemoveHeaders: removeHeaders,
+					},
 					BodyMutation: &eppb.BodyMutation{
 						Mutation: &eppb.BodyMutation_StreamedResponse{
 							StreamedResponse: &eppb.StreamedBodyResponse{
