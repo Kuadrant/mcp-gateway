@@ -44,10 +44,10 @@ dev-logs-gateway: # Watch logs from the Istio gateway
 .PHONY: dev-test
 dev-test: # Test MCP request through the gateway
 	@echo "Testing MCP request through gateway..."
-	curl -X POST \
+	curl -k -X POST \
 		-H "Content-Type: application/json" \
 		-d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}' \
-		http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp
+		$(GATEWAY_SCHEME)://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp
 
 # Clean up port forwards
 .PHONY: dev-stop-forward
