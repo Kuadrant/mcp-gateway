@@ -45,7 +45,11 @@ listeners:
 ```
 
 
-So here we have dedicated port 8080 to MCP requests.  It is strongly recommended to use another port for other workloads so that the router doesn't intercept these requests. In our example gateway we configure a new listener and port for keycloak for example:
+So here we have dedicated port 8080 to MCP requests. With HTTP, multiple listeners on the same port share a single Envoy route table, so the router can re-route `tools/call` requests to backend server routes on either listener.
+
+**HTTPS limitation:** With HTTPS, each listener gets its own TLS filter chain (selected by SNI) with an isolated route table. The router re-routes `tools/call` by rewriting the `:authority` header, but this can only reach routes within the same filter chain. A backend HTTPRoute on a separate HTTPS listener is unreachable. Use a single HTTPS listener with a wildcard hostname for both client and backend traffic.
+
+It is strongly recommended to use another port for other workloads so that the router doesn't intercept these requests. In our example gateway we configure a new listener and port for keycloak for example:
 
 
 ```yaml

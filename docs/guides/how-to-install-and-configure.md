@@ -123,6 +123,12 @@ The gateway uses TLS termination (`tls.mode: Terminate`) on HTTPS listeners. Env
 
 - **Any listener → internal HTTPS backend (`caCertSecretRef`)** — the broker connects directly to the backend using the CA cert, so tool discovery works. However, `tools/call` is routed through Envoy, which sends plain HTTP to the TLS backend after termination. The backend rejects the non-TLS connection. To enable `tools/call`, create an Istio DestinationRule with TLS origination for that service — the same pattern used for [external MCP servers](./external-mcp-server.md). See the [Istio documentation on destination rule TLS settings](https://istio.io/latest/docs/reference/config/networking/destination-rule/#ClientTLSSettings) for configuring `credentialName` with a custom CA certificate.
 
+#### HTTPS listener count
+
+With HTTP, multiple listeners can share the same port — the client-facing listener and backend server listeners share a single Envoy route table, so the router can re-route `tools/call` requests to any backend on the same port.
+
+With HTTPS, each listener gets its own TLS filter chain with an isolated route table (selected by SNI). The router re-routes `tools/call` by rewriting the `:authority` header, which can only reach routes within the same filter chain. A backend HTTPRoute on a separate HTTPS listener is unreachable from the client's filter chain. Use a **single HTTPS listener** with a wildcard hostname for both client and backend traffic. See [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md) for examples.
+
 The `--mcp-gateway-public-host` flag tells the router which `Host` header to expect on incoming requests, so it avoids rewriting it during routing.
 
 The **EnvoyFilter** is configured to intercept traffic on the listener's port and route it through the ext_proc (external processor) running on port 50051.
