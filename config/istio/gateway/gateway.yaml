@@ -12,8 +12,13 @@ spec:
   listeners:
     - name: mcp # gateway listener
       hostname: 'mcp.127-0-0-1.sslip.io' #public accessibly MCP host one used by client
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All

@@ -15,12 +15,12 @@ spec:
   externalTrafficPolicy: Cluster
   internalTrafficPolicy: Cluster
   ports:
-  - appProtocol: http
+  - appProtocol: https
     name: mcp
     nodePort: 30080
-    port: 8080
+    port: 8443
     protocol: TCP
-    targetPort: 8080
+    targetPort: 8443
   - appProtocol: https
     name: mcps
     nodePort: 30082

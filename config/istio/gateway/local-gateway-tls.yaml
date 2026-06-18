@@ -1,0 +1,54 @@
+# cert-manager resources for local gateway HTTPS.
+# reuses the same private CA chain as config/test-servers/tls-server-cert-manager.yaml.
+# applied by: make local-env-setup (after cert-manager-install)
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: private-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "MCP Gateway Test CA"
+  secretName: private-ca-keypair
+  duration: 8760h
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: private-ca-issuer
+spec:
+  ca:
+    secretName: private-ca-keypair
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-gateway-local-cert
+  namespace: gateway-system
+spec:
+  secretName: mcp-gateway-local-cert
+  duration: 8760h
+  dnsNames:
+    - "mcp.127-0-0-1.sslip.io"
+  issuerRef:
+    name: private-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
