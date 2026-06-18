@@ -22,4 +22,21 @@ spec:
   {{- if .Values.broker.pollInterval }}
   backendPingIntervalSeconds: {{ .Values.broker.pollInterval }}
   {{- end }}
+  {{- /* pass-through fields */ -}}
+  {{- with .Values.mcpGatewayExtension.httpRouteManagement }}
+  httpRouteManagement: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.mcpGatewayExtension.sessionStore.secretName }}
+  sessionStore:
+    secretName: {{ .Values.mcpGatewayExtension.sessionStore.secretName | quote }}
+  {{- end }}
+  {{- if or .Values.mcpGatewayExtension.trustedHeadersKey.generate .Values.mcpGatewayExtension.trustedHeadersKey.secretName }}
+  trustedHeadersKey:
+    {{- with .Values.mcpGatewayExtension.trustedHeadersKey.generate }}
+    generate: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.mcpGatewayExtension.trustedHeadersKey.secretName }}
+    secretName: {{ . | quote }}
+    {{- end }}
+  {{- end }}
 {{- end }}

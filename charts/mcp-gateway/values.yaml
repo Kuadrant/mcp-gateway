@@ -83,3 +83,21 @@ mcpGatewayExtension:
     namespace: gateway-system
     # Name of the listener on the Gateway to target (required)
     sectionName: mcp
+  
+  # advanced configuration fields
+  
+  # Whether the controller should manage the HTTPRoute for the broker. 
+  # Options: Enabled | Disabled (default is Enabled if omitted)
+  httpRouteManagement: ""
+
+  # Configuration for the session store used by the gateway
+  sessionStore:
+    # The name of the secret containing session storage credentials
+    secretName: ""
+
+  # Configuration for the public/private key pair used for header signing
+  trustedHeadersKey:
+    # Whether to automatically generate a key pair. Options: Enabled | Disabled
+    generate: ""
+    # The name of the secret containing a pre-existing key pair
+    secretName: ""
