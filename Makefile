@@ -78,6 +78,9 @@ MCP_GATEWAY_SUBDOMAIN ?= mcp
 MCP_GATEWAY_HOST ?= $(MCP_GATEWAY_SUBDOMAIN).127-0-0-1.sslip.io
 MCP_GATEWAY_NAME ?= mcp-gateway
 
+# default scheme for the local gateway URL (override to http for plain HTTP)
+GATEWAY_SCHEME ?= https
+
 # E2E configuration variables
 E2E_DOMAIN ?= 127-0-0-1.sslip.io
 GATEWAY_CLASS_NAME ?= istio
@@ -723,7 +726,10 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	@echo "========================================="
 	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
+	"$(MAKE)" cert-manager-install
 	"$(MAKE)" deploy-gateway
+	$(KUBECTL) apply -f config/istio/gateway/local-gateway-tls.yaml
+	@$(KUBECTL) wait --for=condition=Ready certificate/mcp-gateway-local-cert -n gateway-system --timeout=60s
 	"$(MAKE)" deploy
 	"${MAKE}" add-jwt-key
 	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
@@ -757,7 +763,7 @@ local-env-setup-complete-message:
 	@echo "Local environment setup complete"
 	@echo ""
 	@echo "MCP Gateway is available at:"
-	@echo "  http://$(MCP_GATEWAY_HOST):$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"
+	@echo "  $(GATEWAY_SCHEME)://$(MCP_GATEWAY_HOST):$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"
 	@echo ""
 	@echo "Run 'make urls' to see all service URLs."
 	@echo "Run 'make info' for more setup info."
