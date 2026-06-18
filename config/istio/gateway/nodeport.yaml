@@ -21,15 +21,9 @@ spec:
     port: 8443
     protocol: TCP
     targetPort: 8443
-  - appProtocol: https
-    name: mcps
-    nodePort: 30082
-    port: 8443
-    protocol: TCP
-    targetPort: 8443
   - appProtocol: http
     name: keycloak
-    nodePort: 30081
+    nodePort: 30089
     port: 8002
     protocol: TCP
     targetPort: 8002
