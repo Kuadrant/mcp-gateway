@@ -27,7 +27,8 @@ concurrency:
 
 env:
   CONFORMANCE_VERSION: "0.1.15"
-  MCP_URL: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
+  MCP_URL: "https://mcp.127-0-0-1.sslip.io:8001/mcp"
+  NODE_TLS_REJECT_UNAUTHORIZED: "0"
 
 jobs:
   conformance-tests:

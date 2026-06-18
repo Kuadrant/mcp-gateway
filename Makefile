@@ -806,11 +806,11 @@ info: ## Show quick setup info and useful commands
 
 .PHONY: urls
 urls: ## Show all available service URLs
-	@"$(MAKE)" -s -f build/inspect.mk urls-impl
+	@"$(MAKE)" -s -f build/inspect.mk urls-impl GATEWAY_SCHEME=$(GATEWAY_SCHEME)
 
 .PHONY: status
 status: ## Show status of all MCP components
-	@"$(MAKE)" -s -f build/inspect.mk status-impl
+	@"$(MAKE)" -s -f build/inspect.mk status-impl GATEWAY_SCHEME=$(GATEWAY_SCHEME)
 
 
 ##@ Tools

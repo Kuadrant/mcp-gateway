@@ -80,7 +80,7 @@ var (
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
 var (
-	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8009/mcp"))
+	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8001/mcp"))
 	E2E1GatewayURL  = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
 	TeamAGatewayURL = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
 	TeamBGatewayURL = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))
