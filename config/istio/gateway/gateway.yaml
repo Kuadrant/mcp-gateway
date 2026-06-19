@@ -23,57 +23,97 @@ spec:
         namespaces:
           from: All
     - name: mcps
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       hostname: '*.mcp.local' # this hostname can be any wildcard. It is here to simplify routing, ensure the MCP Server routes attach to this listener only, can be protected by the AuthPolicy and routed to via envoy and the MCPRouter.
       allowedRoutes:
         namespaces:
           from: All #any namespace can register an MCP server route
     - name: mcp-server1-route-ext
       hostname: 'server1.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcp-server2-route-ext
       hostname: 'server2.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcp-server3-route-ext
       hostname: 'server3.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcp-api-key-server-route-ext
       hostname: 'api-key-server.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcp-oidc-server-route-ext
       hostname: 'oidc-server.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcp-everything-server-route-ext
       hostname: 'everything-server.127-0-0-1.sslip.io'
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       allowedRoutes:
         namespaces:
           from: All
     - name: mcps-https
-      port: 8080
-      protocol: HTTP
+      port: 8443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: mcp-gateway-local-cert
       hostname: '*.mcp-tls.local'
       allowedRoutes:
         namespaces:

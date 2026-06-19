@@ -45,6 +45,9 @@ spec:
   duration: 8760h
   dnsNames:
     - "mcp.127-0-0-1.sslip.io"
+    - "*.127-0-0-1.sslip.io"
+    - "*.mcp.local"
+    - "*.mcp-tls.local"
   issuerRef:
     name: private-ca-issuer
     kind: ClusterIssuer
