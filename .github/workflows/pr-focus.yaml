@@ -22,7 +22,8 @@ jobs:
 
             console.log(`Checking PR #${pr.number} by ${author}`);
 
-            // check if author has write or admin access
+            // skip maintainers (write/admin). if the API call fails (e.g. fork
+            // contributor who isn't a collaborator), treat them as non-maintainer.
             try {
               const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,
@@ -47,6 +48,7 @@ jobs:
               state: 'open',
               sort: 'created',
               direction: 'asc',
+              per_page: 100,
             });
 
             const otherActivePRs = openPRs.filter(p =>
