@@ -43,6 +43,12 @@ Replace `your-gateway-name`, `your-gateway-namespace`, and the `mcp` hostname wi
 
 > **Note:** The patch above replaces all listeners. To preserve existing listeners, use a JSON patch or edit the Gateway directly with `kubectl edit gateway your-gateway-name -n your-gateway-namespace`.
 
+> **Important:** If you installed MCP Gateway using Helm, ensure the `gateway.publicHost` value in your Helm values matches the hostname above. For example:
+> ```bash
+> helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+>   --set gateway.publicHost=mcp.127-0-0-1.sslip.io
+> ```
+
 Verify both listeners were added:
 
 ```bash
