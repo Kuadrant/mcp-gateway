@@ -89,6 +89,7 @@ jobs:
         run: |
           make ci-setup
           kubectl apply -k config/mcp-gateway/base/ -n mcp-system
+          make patch-broker-local-ca
 
       - name: Deploy conformance server
         run: make deploy-conformance-server
