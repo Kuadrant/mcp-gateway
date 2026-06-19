@@ -1,8 +1,8 @@
-name: PR Focus
+name: "PR Focus: One Active PR Per Contributor"
 
 on:
   pull_request_target:
-    types: [opened, ready_for_review]
+    types: [opened, reopened, ready_for_review]
 
 jobs:
   check:
@@ -63,6 +63,22 @@ jobs:
             }
 
             console.log(`Found ${otherActivePRs.length} other active PR(s) from ${author}`);
+
+            // skip if we already left this comment on this PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 50,
+            });
+            const alreadyCommented = comments.some(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('focus on one PR at a time')
+            );
+            if (alreadyCommented) {
+              console.log('Already commented on this PR, skipping');
+              return;
+            }
 
             const prLinks = otherActivePRs.map(p => `- #${p.number}`).join('\n');
 
