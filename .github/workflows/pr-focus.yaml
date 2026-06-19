@@ -1,0 +1,112 @@
+name: "PR Focus: One Active PR Per Contributor"
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+jobs:
+  check:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check contributor PR focus
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            console.log(`Checking PR #${pr.number} by ${author}`);
+
+            // skip maintainers (write/admin). if the API call fails (e.g. fork
+            // contributor who isn't a collaborator), treat them as non-maintainer.
+            try {
+              const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: author,
+              });
+              const permission = permissionLevel.permission;
+              console.log(`${author} has ${permission} permission`);
+              if (permission === 'admin' || permission === 'write') {
+                console.log('Author is a maintainer, skipping');
+                return;
+              }
+            } catch (error) {
+              // not a collaborator at all, continue with the check
+              console.log(`${author} is not a collaborator`);
+            }
+
+            // find other non-draft PRs by the same author
+            const { data: openPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              sort: 'created',
+              direction: 'asc',
+              per_page: 100,
+            });
+
+            const otherActivePRs = openPRs.filter(p =>
+              p.user.login === author &&
+              !p.draft &&
+              p.number !== pr.number
+            );
+
+            if (otherActivePRs.length === 0) {
+              console.log('No other active PRs from this author');
+              return;
+            }
+
+            console.log(`Found ${otherActivePRs.length} other active PR(s) from ${author}`);
+
+            // skip if we already left this comment on this PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 50,
+            });
+            const alreadyCommented = comments.some(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('focus on one PR at a time')
+            );
+            if (alreadyCommented) {
+              console.log('Already commented on this PR, skipping');
+              return;
+            }
+
+            const prLinks = otherActivePRs.map(p => `- #${p.number}`).join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: [
+                `Thanks for the contribution, @${author}! You currently have other non-draft PR(s) open:`,
+                '',
+                prLinks,
+                '',
+                'To help us review and merge changes as efficiently as possible, we ask contributors to focus on one PR at a time. Activity on this project can be high, and maintainers have other priorities outside the project, so having a single active PR helps everyone get changes landed faster.',
+                '',
+                'This PR has been moved to draft. Once your other PR(s) are merged or closed, mark this one as ready for review and we will take a look.',
+                '',
+                '> [!NOTE]',
+                '> This is an experimental process and may change or need manual intervention while we trial it.',
+              ].join('\n'),
+            });
+
+            // convert to draft using GraphQL (REST API does not support this)
+            await github.graphql(`
+              mutation($id: ID!) {
+                convertPullRequestToDraft(input: { pullRequestId: $id }) {
+                  pullRequest { id }
+                }
+              }
+            `, { id: pr.node_id });
+
+            console.log(`PR #${pr.number} converted to draft`);
