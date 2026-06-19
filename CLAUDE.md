@@ -38,6 +38,17 @@ Istio is ONLY a Gateway API provider — no sidecars, no ambient mode, no servic
 
 Different AuthPolicies can apply per MCP server (each has its own HTTPRoute).
 
+## Invariants (never violate)
+
+1. `credentialRef` secrets never appear in router, client responses, or logs — broker-only, for upstream tool listing/caching
+2. Router strips internal headers before upstream forwarding: `mcp-session-id`, `mcp-init-host`, `router-key`, `x-mcp-authorized`, `x-mcp-virtualserver`
+3. Backend session IDs never reach clients — router rewrites to gateway session IDs before responding
+4. `x-mcp-toolname`/`x-mcp-servername` are router-set from JSON-RPC body, never client-settable — parsed before AuthPolicy evaluates
+5. `failure_mode_allow` must be false on ext_proc — router down means requests rejected, no auth bypass
+6. Router owns `:authority` header on the MCP gateway listener — gateway host for non-tool requests, backend host for tools/call
+7. `GATEWAY_SIGNING_KEY` required — broker/router refuse to start without it; hairpin init requires short-lived JWT with `aud=mcp-router`, `purpose=backend-init`
+8. Session cache keyed by gateway-session-id + server-name — no cross-client session access
+
 ## Code Style
 
 - Minimal, DRY, terse comments (lowercase, only when necessary)
