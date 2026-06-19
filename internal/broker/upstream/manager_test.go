@@ -388,7 +388,34 @@ func TestMCPManager_setStatus(t *testing.T) {
 			assert.Contains(t, manager.status.Message, tc.messageContain)
 			if tc.expectReady {
 				assert.Equal(t, tc.totalTools, manager.status.TotalTools)
+				// protocol validation is populated from the negotiated version on success
+				assert.True(t, manager.status.ProtocolValidation.IsValid)
+				assert.Equal(t, mock.protocolVersion, manager.status.ProtocolValidation.SupportedVersion)
+				assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, manager.status.ProtocolValidation.ExpectedVersion)
 			}
+		})
+	}
+}
+
+// TestMCPManager_setStatus_ProtocolVersions verifies the negotiated protocol version
+// reported by an upstream is surfaced on the status across the full valid-version
+// matrix. The matrix is driven by mcp.ValidProtocolVersions so it expands
+// automatically when the MCP library learns a new version.
+func TestMCPManager_setStatus_ProtocolVersions(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	for _, version := range mcp.ValidProtocolVersions {
+		t.Run(version, func(t *testing.T) {
+			mock := newMockMCP("test-server", "test_")
+			mock.protocolVersion = version
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.setStatus(nil, 1, 0, nil, nil)
+
+			assert.True(t, manager.status.ProtocolValidation.IsValid)
+			assert.Equal(t, version, manager.status.ProtocolValidation.SupportedVersion)
+			assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, manager.status.ProtocolValidation.ExpectedVersion)
 		})
 	}
 }
