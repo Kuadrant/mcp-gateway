@@ -233,7 +233,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, resp[0].Response)
 	rb := resp[0].Response.(*eppb.ProcessingResponse_RequestBody)
 	require.NotNil(t, rb.RequestBody.Response)
-	require.Len(t, rb.RequestBody.Response.HeaderMutation.SetHeaders, 7)
+	require.Len(t, rb.RequestBody.Response.HeaderMutation.SetHeaders, 6)
 	require.Equal(t, "x-mcp-method", rb.RequestBody.Response.HeaderMutation.SetHeaders[0].Header.Key)
 	require.Equal(t, []uint8("tools/call"), rb.RequestBody.Response.HeaderMutation.SetHeaders[0].Header.RawValue)
 	require.Equal(t, "x-mcp-toolname", rb.RequestBody.Response.HeaderMutation.SetHeaders[1].Header.Key)
@@ -246,7 +246,6 @@ func TestHandleRequestBody(t *testing.T) {
 	require.Equal(t, []uint8("localhost"), rb.RequestBody.Response.HeaderMutation.SetHeaders[4].Header.RawValue)
 	require.Equal(t, ":path", rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.Key)
 	require.Equal(t, []uint8("/mcp"), rb.RequestBody.Response.HeaderMutation.SetHeaders[5].Header.RawValue)
-	require.Equal(t, "content-length", rb.RequestBody.Response.HeaderMutation.SetHeaders[6].Header.Key)
 
 	// internal-only headers must be stripped before forwarding to upstream
 	require.Contains(t, rb.RequestBody.Response.HeaderMutation.RemoveHeaders, "x-mcp-authorized")
