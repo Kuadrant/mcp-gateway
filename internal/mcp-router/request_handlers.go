@@ -563,7 +563,6 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 		return calculatedResponse.Build()
 	}
 	headers.WithPath(path)
-	headers.WithContentLength(len(body))
 	if mcpReq.Streaming {
 		s.Logger.DebugContext(ctx, "returning streaming response")
 		calculatedResponse.WithStreamingResponse(headers.Build(), body, internalOnlyHeaders...)
