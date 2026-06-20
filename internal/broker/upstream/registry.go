@@ -126,6 +126,11 @@ func (r *entityRegistry[E, S]) findConflicts(toAdd []S) error {
 	for _, candidate := range toAdd {
 		candidateName := r.getServerName(candidate)
 		for existingName, existingPtr := range gatewayItems {
+			if existingPtr == nil {
+				r.logger.Error("nil entry in gateway items",
+					"upstream mcp server", r.serverID, r.entityTag, existingName)
+				continue
+			}
 			meta := r.getMetaFields(*existingPtr)
 			if meta == nil {
 				r.logger.Error("unable to check conflict, meta is nil",
