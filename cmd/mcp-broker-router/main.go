@@ -175,6 +175,8 @@ func (a *app) setupLogger() (*slog.HandlerOptions, bool) {
 	switch a.brokerCfg.logLevel {
 	case 0:
 		opts.Level = slog.LevelInfo
+	case 4:
+		opts.Level = slog.LevelWarn
 	case 8:
 		opts.Level = slog.LevelError
 	case -4:
