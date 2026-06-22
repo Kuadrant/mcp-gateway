@@ -93,20 +93,15 @@ jobs:
                 '',
                 'To help us review and merge changes as efficiently as possible, we ask contributors to focus on one PR at a time. Activity on this project can be high, and maintainers have other priorities outside the project, so having a single active PR helps everyone get changes landed faster.',
                 '',
-                'This PR has been moved to draft. Once your other PR(s) are merged or closed, mark this one as ready for review and we will take a look.',
+                'Please convert this PR to draft while your other PR(s) are in review. Once they are merged or closed, mark this one as ready for review and we will take a look.',
                 '',
                 '> [!NOTE]',
                 '> This is an experimental process and may change or need manual intervention while we trial it.',
               ].join('\n'),
             });
 
-            // convert to draft using GraphQL (REST API does not support this)
-            await github.graphql(`
-              mutation($id: ID!) {
-                convertPullRequestToDraft(input: { pullRequestId: $id }) {
-                  pullRequest { id }
-                }
-              }
-            `, { id: pr.node_id });
-
-            console.log(`PR #${pr.number} converted to draft`);
+            // GITHUB_TOKEN cannot call convertPullRequestToDraft (GraphQL returns FORBIDDEN
+            // for all integration tokens, not just forks). A PAT would work but is tied to a
+            // user account, requires token management and rotation, and the draft conversion
+            // would appear as that user rather than github-actions[bot]. For now, we ask the
+            // contributor to convert to draft themselves.
