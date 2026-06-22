@@ -109,6 +109,20 @@ kubectl patch deployment mcp-gateway -n mcp-system --type=json -p '[
 
 The operator preserves user-added volumes, volume mounts, and command flags across reconciliations.
 
+#### Supported TLS Configurations
+
+The gateway uses TLS termination (`tls.mode: Terminate`) on HTTPS listeners. Envoy decrypts incoming TLS, processes the request (ext_proc, AuthPolicy), then forwards **plain HTTP** to backends. This affects which backend setups work:
+
+**Fully supported — tool discovery and tool calls work:**
+
+- **HTTP listener → HTTP backend** — no TLS involved.
+- **HTTPS listener → HTTP backend** — Envoy terminates client TLS, forwards HTTP to backend. Requires `--gateway-ca-cert` if the listener uses a private CA.
+- **HTTPS listener → external HTTPS backend (with DestinationRule)** — Envoy terminates client TLS, then a DestinationRule configures TLS origination to the external service. See [External MCP Servers](./external-mcp-server.md).
+
+**Partial support — tool discovery works, tool calls require additional configuration:**
+
+- **Any listener → internal HTTPS backend (`caCertSecretRef`)** — the broker connects directly to the backend using the CA cert, so tool discovery works. However, `tools/call` is routed through Envoy, which sends plain HTTP to the TLS backend after termination. The backend rejects the non-TLS connection. To enable `tools/call`, create an Istio DestinationRule with TLS origination for that service — the same pattern used for [external MCP servers](./external-mcp-server.md). See the [Istio documentation on destination rule TLS settings](https://istio.io/latest/docs/reference/config/networking/destination-rule/#ClientTLSSettings) for configuring `credentialName` with a custom CA certificate.
+
 The `--mcp-gateway-public-host` flag tells the router which `Host` header to expect on incoming requests, so it avoids rewriting it during routing.
 
 The **EnvoyFilter** is configured to intercept traffic on the listener's port and route it through the ext_proc (external processor) running on port 50051.

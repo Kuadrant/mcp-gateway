@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
+	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -39,9 +39,8 @@ type SessionCache interface {
 }
 
 // InitForClient defines a function for initializing an MCP server for a client.
-// initToken is a short-lived JWT minted by the router and validated again when
-// the hairpin request re-enters the gateway.
-type InitForClient func(ctx context.Context, gatewayHost, initToken string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinHTTPClient *http.Client) (*client.Client, error)
+// The caller sets routing headers (router-key, mcp-init-host) in passThroughHeaders before calling.
+type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *clients.HairpinClientPool) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {
@@ -53,7 +52,7 @@ type ExtProcServer struct {
 	ElicitationMap      idmap.Map
 	TokenElicitationMap elicitation.Map
 	MaxRequestBodySize  int
-	HairpinHTTPClient   *http.Client
+	HairpinClientPool   *clients.HairpinClientPool
 	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker

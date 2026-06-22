@@ -696,11 +696,10 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 		if mcpReq.Headers != nil {
 			// We don't want to pass through any pseudo routing headers (:authority,
 			// :path, etc.), the gateway-bound mcp-session-id, or the router-internal
-			// headers (mcp-init-host, router-key) which we set ourselves below via
-			// clients.Initialize. Dropping the router-internal headers here is
-			// defense-in-depth so a client-supplied value can never reach the
-			// hairpin request even if the override in clients.Initialize is later
-			// refactored. Everything else is passed through for custom headers.
+			// headers (mcp-init-host, router-key) which we set ourselves below.
+			// Dropping the router-internal headers here is defense-in-depth so a
+			// client-supplied value can never reach the hairpin request.
+			// Everything else is passed through for custom headers.
 			for _, h := range mcpReq.Headers.Headers {
 				key := strings.ToLower(h.Key)
 				if strings.HasPrefix(key, ":") ||
@@ -753,7 +752,9 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 			mcpotel.SpanError(initSpan, err, "failed to generate backend-init token")
 			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
 		}
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinHTTPClient)
+		passThroughHeaders[RoutingKey] = initToken
+		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")

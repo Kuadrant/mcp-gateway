@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -182,7 +182,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.True(t, sessionAdded)
 
 	// Mock InitForClient - should not be called since session exists
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
 		// This should not be called in this test since session exists in cache
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
@@ -1216,7 +1216,7 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NoError(t, err)
 
 	var captured map[string]string
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
 		captured = make(map[string]string, len(headers))
 		for k, v := range headers {
 			captured[k] = v
@@ -1275,10 +1275,13 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NotContains(t, captured, ":authority", "pseudo-header must not be forwarded")
 	require.NotContains(t, captured, ":path", "pseudo-header must not be forwarded")
 	require.NotContains(t, captured, "mcp-session-id", "gateway session id must not be forwarded")
-	require.NotContains(t, captured, "mcp-init-host", "router-internal header must not leak from client input")
-	require.NotContains(t, captured, RoutingKey, "router-internal header must not leak from client input")
 	require.NotContains(t, captured, "x-mcp-authorized", "broker-only filtering header must not reach upstream")
 	require.NotContains(t, captured, "x-mcp-virtualserver", "broker-only filtering header must not reach upstream")
+
+	// router-key and mcp-init-host must be set by the router (not from client input)
+	require.Contains(t, captured, RoutingKey, "router must set the routing key")
+	require.NotEqual(t, "attacker-supplied-key", captured[RoutingKey], "client-supplied router-key must be overwritten")
+	require.Equal(t, "backend.example.com", captured["mcp-init-host"], "mcp-init-host must be set to the server hostname, not client-supplied value")
 
 	// custom headers and authorization are passed through
 	require.Equal(t, "custom-value", captured["x-custom-header"])
@@ -1440,7 +1443,7 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, sessionAdded)
 
-	mockInitForClient := func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
 
@@ -1543,7 +1546,7 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 		JWTManager:   jwtManager,
 		Logger:       logger,
 		SessionCache: cache,
-		InitForClient: func(_ context.Context, _, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *http.Client) (*client.Client, error) {
+		InitForClient: func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
 			return nil, fmt.Errorf("should not be called")
 		},
 		Broker:              newMockBroker(serverConfigs, toolMap),
