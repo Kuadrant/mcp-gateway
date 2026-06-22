@@ -169,6 +169,37 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(res.Content).NotTo(BeEmpty())
 	})
 
+	It("[Happy] should register mcp server with non-default spec.path", func() {
+		By("Registering an MCP server with a non-default path")
+		registration := NewTestResources("non-default-path", k8sClient).
+			ForInternalService("mcp-custom-path-server", 8080).
+			WithPrefix("custompath_").
+			WithPath("/v1/special/mcp").
+			Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools are accessible")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("custompath_", toolsList)).To(BeTrue())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		By("Calling a tool to verify the broker connected via the non-default path")
+		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "custompath_path_info"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).NotTo(BeNil())
+		Expect(res.Content).NotTo(BeEmpty())
+	})
+
 	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
 		cred := BuildCredentialSecret("mcp-credential", "test-api-key-secret-toke")
 		registration := NewMCPServerResourcesWithDefaults("credentials", k8sClient).
