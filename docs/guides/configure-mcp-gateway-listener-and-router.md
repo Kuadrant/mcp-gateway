@@ -11,12 +11,12 @@ This guide covers adding the required MCP listeners to your existing Gateway. Th
 
 ## Step 1: Add MCP Listeners to Gateway
 
-MCP Gateway requires two listeners on your Gateway:
+### HTTP (multiple listeners)
+
+With HTTP, you can use two listeners on the same port — one for client traffic and one for backend server routing:
 
 - **`mcp`**: the public-facing listener for MCP client traffic. The hostname must resolve to your Gateway's external address.
 - **`mcps`**: an internal listener used for routing to registered MCP servers. MCPServerRegistration HTTPRoutes attach to this listener. The hostname is a wildcard that does not need to be publicly resolvable.
-
-Patch your Gateway to add both listeners:
 
 ```bash
 kubectl patch gateway your-gateway-name -n your-gateway-namespace --type merge -p '
@@ -56,6 +56,47 @@ kubectl get gateway your-gateway-name -n your-gateway-namespace -o jsonpath='{.s
 ```
 
 You should see both `mcp` and `mcps` in the output.
+
+### HTTPS (single listener)
+
+With HTTPS, use a **single listener** for both client traffic and backend server routing. Envoy uses TLS SNI to select filter chains, and each HTTPS listener gets its own isolated filter chain with its own route table. When the router handles a `tools/call`, it re-routes the request to the backend by changing the `:authority` header — but this can only reach routes within the same filter chain. A backend HTTPRoute on a separate HTTPS listener is unreachable from the client's filter chain.
+
+```bash
+kubectl patch gateway your-gateway-name -n your-gateway-namespace --type merge -p '
+spec:
+  listeners:
+  - name: mcp-tls
+    hostname: "*.mcp-gateway.example.com"
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          name: mcp-gateway-tls-cert
+    allowedRoutes:
+      namespaces:
+        from: All
+'
+```
+
+Use a wildcard hostname so both the public MCP endpoint and backend server HTTPRoutes can attach to the same listener. For example, with `*.mcp-gateway.example.com`, client traffic arrives at `mcp.mcp-gateway.example.com` and backend server routes use hostnames like `server1.mcp-gateway.example.com`.
+
+> **Note:** The patch above replaces all listeners. To preserve existing listeners, use a JSON patch or edit the Gateway directly with `kubectl edit gateway your-gateway-name -n your-gateway-namespace`.
+
+Verify the listener was added:
+
+```bash
+kubectl get gateway your-gateway-name -n your-gateway-namespace -o jsonpath='{.spec.listeners[*].name}'
+```
+
+You should see `mcp-tls` in the output.
+
+> **Important:** If you installed MCP Gateway using Helm, ensure the `gateway.publicHost` value in your Helm values matches the hostname above. For example:
+> ```bash
+> helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+>   --set gateway.publicHost=mcp.127-0-0-1.sslip.io
+> ```
 
 ## Step 2: HTTPRoute (Automatic)
 

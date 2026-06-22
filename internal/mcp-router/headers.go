@@ -3,6 +3,7 @@ package mcprouter
 import (
 	"fmt"
 
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
@@ -22,11 +23,16 @@ const (
 	// broker-only filtering headers that must not reach upstream servers
 	mcpAuthorizedHeader    = "x-mcp-authorized"
 	mcpVirtualServerHeader = "x-mcp-virtualserver"
+
+	// mcpVerifiedSubHeader carries the JWT sub the router verified via AuthPolicy.
+	// Injected by the router; stripped from any client-supplied value so the
+	// broker can trust it without re-parsing the raw JWT.
+	mcpVerifiedSubHeader = sharedheaders.VerifiedSubHeader
 )
 
 // internalOnlyHeaders are headers used internally by the gateway for filtering
 // and routing that must be stripped before forwarding to upstream MCP servers.
-var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader}
+var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader, mcpVerifiedSubHeader}
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {
@@ -173,6 +179,19 @@ func (hb *HeadersBuilder) WithPath(path string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      ":path",
 			RawValue: []byte(path),
+		},
+	})
+	return hb
+}
+
+// WithVerifiedSub sets the x-mcp-verified-sub header to the JWT sub claim
+// extracted by the router after AuthPolicy verification. The broker reads this
+// instead of decoding the raw JWT, so identity binding is always verified.
+func (hb *HeadersBuilder) WithVerifiedSub(sub string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      mcpVerifiedSubHeader,
+			RawValue: []byte(sub),
 		},
 	})
 	return hb

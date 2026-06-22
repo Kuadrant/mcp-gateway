@@ -219,7 +219,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 	virtualServerID := headerValues[0]
 	broker.logger.Debug("applying virtual server filter", "virtualServer", virtualServerID)
 
-	vs, err := broker.GetVirtualSeverByHeader(virtualServerID)
+	vs, err := broker.GetVirtualServerByHeader(virtualServerID)
 	if err != nil {
 		broker.logger.Error("failed to get virtual server", "error", err)
 		return tools

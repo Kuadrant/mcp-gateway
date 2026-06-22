@@ -13,7 +13,7 @@ import (
 	"net/http"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
-	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 )
 
 //go:embed templates/*.html
@@ -209,24 +209,12 @@ func renderTemplate(name string, data any) string {
 	return buf.String()
 }
 
-// extractRequestSub extracts the sub claim from the request identity.
-// Checks Authorization header first, then falls back to the "jwt" cookie.
+// extractRequestSub returns the verified JWT sub injected by the router after
+// AuthPolicy validation. Returns "" if the header is absent, which causes the
+// caller to reject the request — ensuring identity binding is never based on a
+// raw, unverified JWT decoded inside the broker.
 func extractRequestSub(r *http.Request) string {
-	sub, _ := internaljwt.ExtractSubClaim(r.Header.Get("Authorization"))
-	if sub != "" {
-		return sub
-	}
-	c, err := r.Cookie("jwt")
-	if err != nil {
-		return ""
-	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if internaljwt.DecodePayload(c.Value, &claims) {
-		return claims.Sub
-	}
-	return ""
+	return r.Header.Get(sharedheaders.VerifiedSubHeader)
 }
 
 func generateCSRFToken() (string, error) {

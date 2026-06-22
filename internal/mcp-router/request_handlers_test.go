@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -1275,10 +1275,13 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NotContains(t, captured, ":authority", "pseudo-header must not be forwarded")
 	require.NotContains(t, captured, ":path", "pseudo-header must not be forwarded")
 	require.NotContains(t, captured, "mcp-session-id", "gateway session id must not be forwarded")
-	require.NotContains(t, captured, "mcp-init-host", "router-internal header must not leak from client input")
-	require.NotContains(t, captured, RoutingKey, "router-internal header must not leak from client input")
 	require.NotContains(t, captured, "x-mcp-authorized", "broker-only filtering header must not reach upstream")
 	require.NotContains(t, captured, "x-mcp-virtualserver", "broker-only filtering header must not reach upstream")
+
+	// router-key and mcp-init-host must be set by the router (not from client input)
+	require.Contains(t, captured, RoutingKey, "router must set the routing key")
+	require.NotEqual(t, "attacker-supplied-key", captured[RoutingKey], "client-supplied router-key must be overwritten")
+	require.Equal(t, "backend.example.com", captured["mcp-init-host"], "mcp-init-host must be set to the server hostname, not client-supplied value")
 
 	// custom headers and authorization are passed through
 	require.Equal(t, "custom-value", captured["x-custom-header"])
@@ -1293,17 +1296,42 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 func TestHandleRequestHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
+	// helper: build a minimal unsigned JWT payload with the given sub
+	makeBearer := func(sub string) string {
+		hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
+		return "Bearer " + hdr + "." + payload + ".sig"
+	}
+
 	testCases := []struct {
-		Name            string
-		GatewayHostname string
+		Name              string
+		GatewayHostname   string
+		AuthHeader        string
+		wantVerifiedSub   string // "" means header must NOT appear in SetHeaders
+		wantSetHeadersLen int
 	}{
 		{
-			Name:            "sets authority header to gateway hostname",
-			GatewayHostname: "mcp.example.com",
+			Name:              "sets authority — no Authorization header",
+			GatewayHostname:   "mcp.example.com",
+			wantSetHeadersLen: 1, // only :authority
 		},
 		{
-			Name:            "handles wildcard gateway hostname",
-			GatewayHostname: "*.mcp.local",
+			Name:              "handles wildcard gateway hostname",
+			GatewayHostname:   "*.mcp.local",
+			wantSetHeadersLen: 1,
+		},
+		{
+			Name:              "injects x-mcp-verified-sub when Authorization has JWT with sub",
+			GatewayHostname:   "mcp.example.com",
+			AuthHeader:        makeBearer("alice"),
+			wantVerifiedSub:   "alice",
+			wantSetHeadersLen: 2, // :authority + x-mcp-verified-sub
+		},
+		{
+			Name:              "does not inject x-mcp-verified-sub when JWT has no sub",
+			GatewayHostname:   "mcp.example.com",
+			AuthHeader:        "Bearer " + base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`)) + "." + base64.RawURLEncoding.EncodeToString([]byte(`{}`)) + ".sig",
+			wantSetHeadersLen: 1,
 		},
 	}
 
@@ -1317,33 +1345,56 @@ func TestHandleRequestHeaders(t *testing.T) {
 				Broker: newMockBroker(nil, map[string]string{}),
 			}
 
+			incomingHeaders := []*corev3.HeaderValue{
+				{Key: ":authority", RawValue: []byte("original.host.com")},
+			}
+			if tc.AuthHeader != "" {
+				incomingHeaders = append(incomingHeaders, &corev3.HeaderValue{
+					Key:      "authorization",
+					RawValue: []byte(tc.AuthHeader),
+				})
+			}
+			// simulate a client trying to forge x-mcp-verified-sub
+			incomingHeaders = append(incomingHeaders, &corev3.HeaderValue{
+				Key:      "x-mcp-verified-sub",
+				RawValue: []byte("forged"),
+			})
+
 			headers := &eppb.HttpHeaders{
-				Headers: &corev3.HeaderMap{
-					Headers: []*corev3.HeaderValue{
-						{
-							Key:      ":authority",
-							RawValue: []byte("original.host.com"),
-						},
-					},
-				},
+				Headers: &corev3.HeaderMap{Headers: incomingHeaders},
 			}
 
 			responses, err := server.HandleRequestHeaders(context.Background(), headers)
 
 			require.NoError(t, err)
 			require.Len(t, responses, 1)
-
-			// should be a request headers response
 			require.IsType(t, &eppb.ProcessingResponse_RequestHeaders{}, responses[0].Response)
 			rh := responses[0].Response.(*eppb.ProcessingResponse_RequestHeaders)
-			require.NotNil(t, rh.RequestHeaders)
-
-			// verify authority header was set
 			headerMutation := rh.RequestHeaders.Response.HeaderMutation
 			require.NotNil(t, headerMutation)
-			require.Len(t, headerMutation.SetHeaders, 1)
-			require.Equal(t, ":authority", headerMutation.SetHeaders[0].Header.Key)
-			require.Equal(t, tc.GatewayHostname, string(headerMutation.SetHeaders[0].Header.RawValue))
+
+			require.Len(t, headerMutation.SetHeaders, tc.wantSetHeadersLen)
+			var authorityVal string
+			for _, h := range headerMutation.SetHeaders {
+				if h.Header.Key == ":authority" {
+					authorityVal = string(h.Header.RawValue)
+				}
+			}
+			require.Equal(t, tc.GatewayHostname, authorityVal, ":authority header not found or wrong value")
+
+			if tc.wantVerifiedSub != "" {
+				found := ""
+				for _, h := range headerMutation.SetHeaders {
+					if h.Header.Key == "x-mcp-verified-sub" {
+						found = string(h.Header.RawValue)
+					}
+				}
+				require.Equal(t, tc.wantVerifiedSub, found, "x-mcp-verified-sub mismatch")
+			}
+
+			// x-mcp-verified-sub must always be in RemoveHeaders (strips client forgery)
+			require.Contains(t, headerMutation.RemoveHeaders, "x-mcp-verified-sub",
+				"x-mcp-verified-sub must be stripped from client requests")
 		})
 	}
 }

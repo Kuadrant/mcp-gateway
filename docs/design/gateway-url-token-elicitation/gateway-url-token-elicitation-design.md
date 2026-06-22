@@ -365,11 +365,11 @@ If the upstream MCP server shares the same identity provider as the gateway, onl
 
 | Approach | When to Use |
 |----------|-------------|
-| **credentialRef** (static secret) | Broker-only token for tool discovery and caching |
-| **Header-based token replacement** ([guide](../../guides/external-mcp-server-with-token-replacement.md)) | Client supports custom headers, simple setup |
-| **Vault token exchange** ([guide](../../guides/vault-token-exchange.md)) | Centralized token management, admin-provisioned per-user secrets |
-| **URL elicitation + broker page** (this design) | Self-service per-user tokens, no client configuration, no external infrastructure |
-| **URL elicitation + external UI** (this design) | Self-service per-user tokens with existing token infrastructure (e.g., Vault), AuthPolicy handles injection |
+| **credentialRef** (static secret) | Broker-only credential for tool discovery and caching |
+| **Header-based token replacement** | Client supports custom headers, simple setup |
+| **Vault token exchange** ([guide](../../guides/vault-token-exchange.md)) | Centralized credential management, admin-provisioned per-user secrets |
+| **URL elicitation + broker page** (this design) | Self-service per-user credentials, no client configuration, no external infrastructure |
+| **URL elicitation + external UI** (this design) | Self-service per-user credentials with existing credential infrastructure (e.g., Vault), AuthPolicy handles injection |
 
 ## Future Considerations
 

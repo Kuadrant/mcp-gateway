@@ -298,6 +298,11 @@
 - When an MCPServerRegistration has a `caCertSecretRef` pointing to a CA certificate that did NOT sign the upstream server's certificate, the broker should fail the TLS handshake and the MCPServerRegistration should be in a not-ready state. No tools with the server's prefix should appear in the tools list.
 - **Runs on PR CI** — same dependencies as the happy path test above.
 
+### [HTTPS] [Happy] broker connects to TLS upstream and tools/call works via hairpin SNI
+
+- When a plain HTTP backend is registered on an HTTPS listener with a server-specific hostname, `tools/list` should discover tools and `tools/call` should succeed. The hairpin initialize request must use the server's hostname as TLS SNI so the gateway selects the correct filter chain and route table for that server.
+- **Runs on PR CI.** Skips if cert-manager or the TLS test server are absent.
+
 ### [HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS
 
 - Registers the GitHub MCP server (`api.githubcopilot.com`) as an external hostname backend with a PAT credential. Verifies the broker connects over HTTPS, discovers at least one tool, and the config contains an `https://` URL.
@@ -308,6 +313,11 @@
 - Registers an internal MCP server and verifies tools/list works end-to-end when the gateway is fronted by a real publicly-trusted TLS certificate. Connects via the HTTPS gateway URL and confirms tools with the expected prefix are discoverable.
 - **Cannot run on Kind.** Requires a cluster with a TLS-terminating load balancer and a publicly trusted wildcard certificate (e.g. OpenShift with Let's Encrypt). Previously manually verified on OpenShift 4.20 (see #450).
 - **Skips unless** `E2E_HTTPS_REAL_CERTS=true` and `E2E_SCHEME=https`.
+
+### [HTTPS] [Happy] tools/call to internal TLS backend fails without DestinationRule, succeeds with it
+
+- When an MCPServerRegistration with `caCertSecretRef` targets an internal TLS backend, `tools/list` should succeed because the broker connects directly. However, `tools/call` should fail because the gateway forwards plain HTTP to the TLS backend after terminating the client's TLS. After creating a DestinationRule with TLS origination for the same service, `tools/call` should succeed because the gateway re-encrypts traffic to the backend.
+- **Runs on PR CI.** Skips if cert-manager or the TLS test server are absent.
 
 Both external tests are tagged `[HTTPS_EXTERNAL]` and skip on PR CI. Run them manually for sanity checks (e.g. before releases):
 
@@ -329,7 +339,8 @@ make test-e2e-https
 
 | Test | PR CI | Manual / release sanity |
 |------|-------|-------------------------|
-| Private CA (happy + negative) | Yes | Yes |
+| Private CA + hairpin SNI (happy + negative) | Yes | Yes |
+| DestinationRule TLS origination | Yes | Yes |
 | GitHub external | Skipped | Yes (needs `GITHUB_MCP_PAT`) |
 | Real public certs | Skipped | Yes (needs real TLS cluster) |
 

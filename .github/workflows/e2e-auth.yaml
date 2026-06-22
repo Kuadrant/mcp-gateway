@@ -11,6 +11,9 @@ jobs:
   e2e-auth-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout
@@ -21,10 +24,38 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # probe the baked CI node image (content-hash of version pins); on a
+      # miss fall back to stock kindest/node via the default in kind.mk
+      - name: Probe baked CI node image
+        id: ci-node
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          hit=false
+          if image="$(make -s print-ci-node-image 2>/dev/null)"; then
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              hit=true
+            fi
+          else
+            image=""
+            echo "could not compute baked CI node image ref, using stock kindest/node"
+          fi
+          {
+            echo "hit=$hit"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+          echo "baked CI node image: $image (hit=$hit)"
+
       # create with the pinned bin/kind and node image so the make load
       # targets (same bin/kind) can always load into the node's containerd
       - name: Create Kind cluster
-        run: make kind-create-cluster-ci
+        run: |
+          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
+          else
+            make kind-create-cluster-ci
+          fi
 
       - name: Setup CI environment
         run: make ci-setup

@@ -732,8 +732,8 @@ func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	return nil, fmt.Errorf("failed to get server %q for tool %q", svrName, tool)
 }
 
-// GetVirtualSeverByHeader implements broker.MCPBroker.
-func (m *mockBrokerImpl) GetVirtualSeverByHeader(_ string) (config.VirtualServer, error) {
+// GetVirtualServerByHeader implements broker.MCPBroker.
+func (m *mockBrokerImpl) GetVirtualServerByHeader(_ string) (config.VirtualServer, error) {
 	panic("unimplemented")
 }
 

@@ -129,7 +129,7 @@ jobs:
         with:
           context: .
           file: ./${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/s390x
           push: ${{ github.event_name != 'pull_request' }}
           provenance: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -197,7 +197,7 @@ jobs:
         with:
           context: .
           file: ./bundle.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/s390x
           push: true
           provenance: false
           tags: |
@@ -251,7 +251,7 @@ jobs:
         with:
           context: ./catalog
           file: ./catalog/mcp-gateway-catalog.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/s390x
           push: true
           provenance: false
           tags: |

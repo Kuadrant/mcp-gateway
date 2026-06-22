@@ -228,8 +228,19 @@ func gatewaySessionTTL(gatewaySessionID string) time.Duration {
 	return ttl
 }
 
+// sensitiveForwardHeaders are client headers that must never be forwarded to
+// upstream MCP servers. cookie and proxy-authorization are scoped to the
+// gateway origin/hop, not the upstream, so forwarding them would leak
+// gateway-scoped credentials to every user-specific upstream queried.
+var sensitiveForwardHeaders = map[string]struct{}{
+	"cookie":              {},
+	"proxy-authorization": {},
+}
+
 // filterUserHeaders returns user headers suitable for forwarding to upstream,
-// stripping internal gateway headers.
+// stripping internal gateway headers and gateway-scoped credentials. the
+// client's Authorization header is intentionally preserved: user-specific
+// servers rely on it to return a per-user tool list.
 func filterUserHeaders(h http.Header) map[string]string {
 	headers := make(map[string]string, len(h))
 	for key, vals := range h {
@@ -238,6 +249,9 @@ func filterUserHeaders(h http.Header) map[string]string {
 			continue
 		}
 		if strings.HasPrefix(lower, "x-mcp-") {
+			continue
+		}
+		if _, sensitive := sensitiveForwardHeaders[lower]; sensitive {
 			continue
 		}
 		if len(vals) > 0 {

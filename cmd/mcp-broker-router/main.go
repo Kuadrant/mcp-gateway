@@ -81,7 +81,7 @@ type app struct {
 	jwtMgr         *session.JWTManager
 	elicitMap      idmap.Map
 	tokenElicitMap elicitation.Map
-	hairpinClient  *http.Client
+	hairpinPool    *clients.HairpinClientPool
 	mcpBroker      broker.MCPBroker
 	tokenHandler   http.Handler
 	elicitHandler  http.Handler
@@ -252,15 +252,15 @@ func (a *app) setupSessionInfra(ctx context.Context) {
 }
 
 func (a *app) buildHairpinClient() {
-	hc, err := clients.BuildHairpinHTTPClient(
+	pool, err := clients.BuildHairpinHTTPClientPool(
 		a.brokerCfg.privateHost,
 		a.brokerCfg.publicHost,
 		a.brokerCfg.gatewayCACert,
 	)
 	if err != nil {
-		panic("failed to build hairpin HTTP client: " + err.Error())
+		panic("failed to build hairpin HTTP client pool: " + err.Error())
 	}
-	a.hairpinClient = hc
+	a.hairpinPool = pool
 }
 
 func (a *app) registerObservers() {

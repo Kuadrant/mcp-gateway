@@ -44,7 +44,7 @@ To provide auth integration, the MCP gateway uses [Kuadrant](https://kuadrant.io
 
 The MCP gateway exposes a single endpoint via the Ingress gateway that acts as an MCP server to MCP clients. It is this host and path the client will connect to. To enforce authenticated access, the gateway `HTTPRoute` exposing the MCP gateway to clients, uses a Kuadrant AuthPolicy resource. This resource can define what authentication must be met and also enforce authorization requirements:
 
-[Example AuthPolicy](./../../config/mcp-system/authpolicy.yaml)
+[Example AuthPolicy](./../../config/samples/remote-github/authpolicy.yaml)
 
 
 With this policy in place any unauthenticated request not going to the /.well-known endpoints will get a 401 and WWW-Authenticate header with a resource_metadata url specified. It is then up to the client to leverage this information to retrieve the resource metadata to know how to authenticate to access the resource. 
@@ -95,7 +95,7 @@ example response:
 
 ### Authenticated MCP Gateway Calls
 
-Once a client has obtained a token, it can then make requests to the MCP Gateway. When a request comes to the gateway, the Kuadrant WASM plugin intercepts this request and based on configuration, will decide whether or not to call to the Authorino component. With the [Example AuthPolicy](./../../config/mcp-system/authpolicy.yaml), Authorino will receive the request and then validate the token with the configured auth server before allowing the request to continue.
+Once a client has obtained a token, it can then make requests to the MCP Gateway. When a request comes to the gateway, the Kuadrant WASM plugin intercepts this request and based on configuration, will decide whether or not to call to the Authorino component. With the [Example AuthPolicy](./../../config/samples/remote-github/authpolicy.yaml), Authorino will receive the request and then validate the token with the configured auth server before allowing the request to continue.
 
 ### Token Exchange for Legacy API Keys
 
@@ -108,7 +108,7 @@ When the router receives a tools/call, it sets some headers for use by other com
 `x-mcp-toolname:` used to indicate what tool (including prefix) is being accessed
 `x-mcp-method:` used to indicate the json RPC method being called
 
-There is an [example second AuthPolicy](../../config/mcp-system/tool-call-auth.yaml) that targets a second listener in the Gateway that is dedicated to routing MCP server requests. This AuthPolicy, via Authorino, fetches metadata that defines an ACL. This is a simplistic example to illustrate how data can be fetched dynamically to make these decisions. It then uses this data in the authorization phase to allow or deny access.
+There is an [example second AuthPolicy](../../config/samples/oauth-token-exchange/tools-call-auth.yaml) that targets a second listener in the Gateway that is dedicated to routing MCP server requests. This AuthPolicy, via Authorino, fetches metadata that defines an ACL. This is a simplistic example to illustrate how data can be fetched dynamically to make these decisions. It then uses this data in the authorization phase to allow or deny access.
 In addition to this simplistic ACL, we will also provide an example that uses the Keycloak resource roles feature to define access to tools.
 
 AuthPolicy here uses 3 key phases

@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
+	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -58,7 +58,7 @@ type ExtProcServer struct {
 	ElicitationMap      idmap.Map
 	TokenElicitationMap elicitation.Map
 	MaxRequestBodySize  int
-	HairpinHTTPClient   *http.Client
+	HairpinClientPool   *clients.HairpinClientPool
 	ElicitationEnabled  bool
 	//TODO this should not be needed
 	Broker broker.MCPBroker

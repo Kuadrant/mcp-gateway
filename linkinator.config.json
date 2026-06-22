@@ -1,0 +1,12 @@
+{
+    "skip": [
+        "^https?://localhost:(3000|6274|8080|8200|8888|15000)",
+        "sslip\\.io",
+        "api\\.githubcopilot\\.com",
+        "example\\.com",
+        "your-cluster"
+    ],
+    "recurse": true,
+    "directoryListing": true,
+    "markdown": true
+}
