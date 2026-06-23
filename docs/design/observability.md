@@ -24,6 +24,30 @@ The MCP Gateway leverages [OpenTelemetry](https://opentelemetry.io/) throughout 
 
 All components instrument their operations using OpenTelemetry, ensuring consistent observability data that can be collected and exported to various backends (e.g., Jaeger, Prometheus, Grafana, etc.).
 
+### Current Implementation Status
+
+Tracing and structured log export are implemented across the router and broker (see the [OpenTelemetry guide](../guides/opentelemetry.md)). Metrics export was added incrementally and currently covers an **operational** slice of the data path — instrumentation that helps operators reason about gateway health and capacity — rather than the per-tool-call analytics described in Journey 2 below.
+
+Implemented metrics (exported via OTLP when a metrics endpoint is configured):
+
+| Metric | Instrument | Component | Purpose |
+|--------|-----------|-----------|---------|
+| `mcp.router.stream.active` | UpDownCounter | router | active ext_proc gRPC streams |
+| `mcp.router.session.lookups` (`result=hit\|miss`) | Counter | router | session-cache hit/miss rate |
+| `mcp.router.session.inits` | Counter | router | backend session initializations on cache miss |
+| `mcp.session.op.duration` | Histogram | session | Redis session-store operation latency |
+| `mcp.broker.upstream.connections` (`mcp.server`) | UpDownCounter | broker | active upstream connections |
+| `mcp.broker.upstream.tool_fetch.duration` (`mcp.server`) | Histogram | broker | upstream tool-fetch latency |
+| `mcp.broker.config.reloads` | Counter | broker | config reload events |
+
+Still planned (not yet implemented):
+
+- Tool-call analytics metrics (`mcp_tool_calls_total`, `mcp_tool_call_duration_seconds`, `mcp_requests_total` by tool/server/status) — see Journey 2.
+- Component-level 404/error attribution metrics — see Journey 1.
+- Tool Call Graph signals — see Journey 3.
+
+The metric names in the journeys below are illustrative targets, not the names of the currently exported instruments. The user-facing reference for the implemented metrics lives in the [OpenTelemetry guide](../guides/opentelemetry.md).
+
 ### User Journeys
 
 #### Journey 1: Debugging 404 Errors ("What Went Wrong")
@@ -71,6 +95,8 @@ The trace flow will be more complex when statefulness comes into play with elici
 - Tool call patterns over time
 
 **Solution Requirements:**
+
+> **Note:** The tool-call metrics in this journey are **not yet implemented**. The current metrics export covers operational signals only (see Current Implementation Status above). The names below are proposed targets.
 
 - Metrics exported via OpenTelemetry metrics API
 - Key metrics:
