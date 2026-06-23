@@ -37,10 +37,18 @@ func GetTestHeaderPublicKey() string {
 // CreateAuthorizedCapabilitiesJWT creates a signed JWT for the x-mcp-authorized header
 // allowedTools is a map of server namespace/name to list of tool names
 func CreateAuthorizedCapabilitiesJWT(allowedTools map[string][]string) (string, error) {
+	return createCapabilitiesJWT(map[string]map[string][]string{"tools": allowedTools})
+}
+
+// CreateAuthorizedPromptsJWT creates a signed JWT for the x-mcp-authorized header
+// allowedPrompts is a map of server namespace/name to list of unprefixed prompt
+// names; the broker re-applies the server prefix when filtering prompts/list
+func CreateAuthorizedPromptsJWT(allowedPrompts map[string][]string) (string, error) {
+	return createCapabilitiesJWT(map[string]map[string][]string{"prompts": allowedPrompts})
+}
+
+func createCapabilitiesJWT(capabilities map[string]map[string][]string) (string, error) {
 	keyBytes := []byte(testHeaderSigningKey)
-	capabilities := map[string]map[string][]string{
-		"tools": allowedTools,
-	}
 	claimPayload, err := json.Marshal(capabilities)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal allowed capabilities: %w", err)
