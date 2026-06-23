@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testSigningKey = "test-signing-key-must-be-at-least-32-bytes"
+
 func TestMCPRequestValid(t *testing.T) {
 
 	testCases := []struct {
@@ -169,7 +171,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create JWT manager for test
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 
 	// Generate a valid JWT token
@@ -471,7 +473,7 @@ func TestValidateSession(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 
 	validToken := jwtManager.Generate()
@@ -761,7 +763,7 @@ func TestHandleElicitationResponse(t *testing.T) {
 		cache, err := session.NewCache()
 		require.NoError(t, err)
 
-		jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
 
 		validToken := jwtManager.Generate()
@@ -845,7 +847,7 @@ func TestHandleElicitationResponse(t *testing.T) {
 		cache, err := session.NewCache()
 		require.NoError(t, err)
 
-		jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
 
 		validToken := jwtManager.Generate()
@@ -880,7 +882,7 @@ func TestHandleElicitationResponse(t *testing.T) {
 		cache, err := session.NewCache()
 		require.NoError(t, err)
 
-		jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
 
 		validToken := jwtManager.Generate()
@@ -921,7 +923,7 @@ func TestHandleElicitationResponse(t *testing.T) {
 		cache, err := session.NewCache()
 		require.NoError(t, err)
 
-		jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
 
 		validToken := jwtManager.Generate()
@@ -978,7 +980,7 @@ func TestHandleElicitationResponse_ViaRouteMCPRequest(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 
 	validToken := jwtManager.Generate()
@@ -1054,7 +1056,7 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 		t.Helper()
 		cache, err := session.NewCache()
 		require.NoError(t, err)
-		jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+		jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 		require.NoError(t, err)
 		return &ExtProcServer{
 			RoutingConfig: &config.MCPServersConfig{},
@@ -1212,7 +1214,7 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 
 	cache, err := session.NewCache()
 	require.NoError(t, err)
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 
 	var captured map[string]string
@@ -1431,7 +1433,7 @@ func TestHandlePromptGet(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 
 	validToken := jwtManager.Generate()
@@ -1525,7 +1527,7 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cache, err := session.NewCache()
 	require.NoError(t, err)
-	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
 	require.NoError(t, err)
 	validToken := jwtManager.Generate()
 

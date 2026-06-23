@@ -487,7 +487,7 @@ func TestDeriveEncryptionKey_ShortKeyRejected(t *testing.T) {
 }
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
-	key, err := DeriveEncryptionKey([]byte("test-signing-key-for-encryption"))
+	key, err := DeriveEncryptionKey([]byte("test-signing-key-for-encryption-32"))
 	require.NoError(t, err)
 
 	plaintext := "ghp_secrettoken123"
@@ -502,8 +502,8 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestDecryptWithWrongKey(t *testing.T) {
-	key1, _ := DeriveEncryptionKey([]byte("key-one-long-enough"))
-	key2, _ := DeriveEncryptionKey([]byte("key-two-long-enough"))
+	key1, _ := DeriveEncryptionKey([]byte("key-one-long-enough-for-32-bytes"))
+	key2, _ := DeriveEncryptionKey([]byte("key-two-long-enough-for-32-bytes"))
 
 	ciphertext, _ := encrypt(key1, "secret")
 	_, err := decrypt(key2, ciphertext)
