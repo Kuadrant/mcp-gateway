@@ -1,9 +1,9 @@
 # Istio
 
 ARCH ?= $(shell uname -m)
-SAIL_VERSION ?= 1.27.0
+SAIL_VERSION ?= 1.30.0
 ISTIO_NAMESPACE ?= istio-system
-ISTIO_VERSION ?= 1.27.0
+ISTIO_VERSION ?= 1.30.0
 
 # istioctl tool
 ISTIOCTL = bin/istioctl
