@@ -115,26 +115,13 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *StatusHandler) handleSingleServerByName(_ context.Context, w http.ResponseWriter, serverName string) {
-	//TODO(craig) this should not need to call validate all servers
-	statusResponse := h.broker.ValidateAllServers()
-
-	var serverStatus *upstream.ServerValidationStatus
-
-	// Only support exact match (full namespace/route format)
-	for _, server := range statusResponse.Servers {
-		if server.Name == serverName {
-			serverStatus = &server
-			break
-		}
-	}
-
-	if serverStatus == nil {
+	status, ok := h.broker.ValidateSingleServer(serverName)
+	if !ok {
 		h.sendErrorResponse(w, http.StatusNotFound, fmt.Sprintf("Server '%s' not found. Use format 'namespace/route-name' or check available servers at /status", serverName))
 		return
 	}
-
 	h.logger.Info("Retrieved status for specific server", "serverName", serverName)
-	h.sendJSONResponse(w, http.StatusOK, serverStatus)
+	h.sendJSONResponse(w, http.StatusOK, status)
 }
 
 func (h *StatusHandler) sendJSONResponse(w http.ResponseWriter, statusCode int, data any) {
