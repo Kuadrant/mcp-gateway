@@ -6,7 +6,7 @@ metadata:
   labels:
     app: mcp-controller
     component: controller
-    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/name: mcp-gateway-controller
     app.kubernetes.io/component: controller
 spec:
   replicas: 1
@@ -19,7 +19,7 @@ spec:
       labels:
         app: mcp-controller
         component: controller
-        app.kubernetes.io/name: mcp-gateway
+        app.kubernetes.io/name: mcp-gateway-controller
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: mcp-controller
