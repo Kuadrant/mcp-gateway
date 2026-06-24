@@ -29,7 +29,7 @@ patches:
       group: gateway.networking.k8s.io
       version: v1
       kind: HTTPRoute
-      name: mcp-route
+      name: mcp-gateway-route
     patch: |-
       - op: replace
         path: /spec/hostnames/0
