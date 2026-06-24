@@ -57,7 +57,7 @@ Every pull request must reference an open issue. PRs opened without a linked iss
 
 ### Inactivity policy
 
-Pull requests with no activity (no commits, comments, or review responses) for **14 days** will be closed. If you need more time, leave a comment on the PR to reset the inactivity window. Closed PRs can be reopened once the work is ready to continue.
+If a maintainer leaves a review comment or requests changes and the author has not responded within **14 days**, the PR will be closed. The clock starts when a team member posts feedback — not when the PR is opened. PRs that have not yet received a review, or where the author has responded and is awaiting re-review, will not be closed for inactivity. Closed PRs can be reopened once the work is ready to continue.
 
 ## Development Environment
 
