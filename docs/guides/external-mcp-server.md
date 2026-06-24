@@ -179,7 +179,7 @@ After connecting, the broker should list the available tools from the external M
 
 ## Next Steps
 
-- [Configure authentication](../authentication.md)
+- [Configure authentication](./authentication.md)
 - [Register additional MCP servers](./register-mcp-servers.md)
 - [Manage tool access and revocation](./tool-revocation.md)
 
