@@ -221,7 +221,7 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			expectChanged: true,
 		},
 		{
-			name: "URL changed does not trigger change",
+			name: "URL change triggers config change",
 			current: &MCPServer{
 				Name:       "server1",
 				URL:        "http://new-url/mcp",
@@ -236,7 +236,7 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 				Hostname:   "server1.local",
 				Credential: "CRED_VAR",
 			},
-			expectChanged: false,
+			expectChanged: true,
 		},
 		{
 			name: "enabled changed does not trigger change",
