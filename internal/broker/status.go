@@ -120,7 +120,7 @@ func (h *StatusHandler) handleSingleServerByName(_ context.Context, w http.Respo
 		h.sendErrorResponse(w, http.StatusNotFound, fmt.Sprintf("Server '%s' not found. Use format 'namespace/route-name' or check available servers at /status", serverName))
 		return
 	}
-	h.logger.Info("Retrieved status for specific server", "serverName", serverName)
+	h.logger.Debug("Retrieved status for specific server", "serverName", serverName)
 	h.sendJSONResponse(w, http.StatusOK, status)
 }
 
