@@ -13,7 +13,7 @@ Branch: `URL-Elicitation-User-Credentials`
 ### Client elicitation capability flow (already implemented)
 1. **Parsed**: `MCPRequest.clientSupportsElicitation()` (`request_handlers.go:134-149`) — checks `capabilities.elicitation` in initialize params
 2. **Stored**: `HandleResponseHeaders` (`response_handlers.go:26-35`) — on initialize response, calls `SessionCache.SetClientElicitation(ctx, sessionID)` to persist the flag
-3. **Read**: `initializeMCPSeverSession` (`request_handlers.go:537-544`) — reads `SessionCache.GetClientElicitation()` and sets `mcpReq.clientElicitation`
+3. **Read**: `initializeMCPServerSession` (`request_handlers.go:537-544`) — reads `SessionCache.GetClientElicitation()` and sets `mcpReq.clientElicitation`
 4. **Forwarded**: `clients.Initialize()` (`internal/clients/clients.go:40-42`) — if client declared elicitation, gateway declares it to backend too via `mcp.ElicitationCapability{}`
 5. **Cache impl**: `internal/session/cache.go:96-120` — stores as `clientelicitation:<sessionID>` key
 

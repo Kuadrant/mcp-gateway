@@ -9,3 +9,4 @@ When adding new upstream/broker features:
 - Update config types in `internal/config/types.go` if new config fields needed
 - Add unit tests alongside the implementation
 - Add e2e test in `tests/e2e/`
+- Add manual test scenarios not sufficiently covered by tests to `tests/manual-testcases/<upcoming-release>.md` (see `manual-test-cases.md` for criteria)

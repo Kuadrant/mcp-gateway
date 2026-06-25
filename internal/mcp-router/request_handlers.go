@@ -225,11 +225,22 @@ func (mr *MCPRequest) ToBytes() ([]byte, error) {
 }
 
 // HandleRequestHeaders handles request headers minimally.
-func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, _ *eppb.HttpHeaders) ([]*eppb.ProcessingResponse, error) {
+func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *eppb.HttpHeaders) ([]*eppb.ProcessingResponse, error) {
 	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
 	requestHeaders := NewHeaders()
 	response := NewResponse()
 	requestHeaders.WithAuthority(s.RoutingConfig.MCPGatewayExternalHostname)
+	// Trust model: ExtractSubClaim only decodes the JWT payload, it does NOT
+	// verify the signature. That is safe here because AuthPolicy validates the
+	// Authorization JWT before the request reaches ext_proc, so by this point
+	// the token is already trusted. We surface the verified sub as the internal
+	// x-mcp-verified-sub header so the broker can bind token submissions to an
+	// identity without re-parsing the raw token. The header is in
+	// internalOnlyHeaders, so any client-supplied value is stripped first.
+	authHeader := getSingleValueHeader(headers.GetHeaders(), authorizationHeader)
+	if sub, _ := internaljwt.ExtractSubClaim(authHeader); sub != "" {
+		requestHeaders.WithVerifiedSub(sub)
+	}
 	return response.WithRequestHeadersResponse(requestHeaders.Build(), internalOnlyHeaders...).Build(), nil
 }
 
@@ -267,7 +278,7 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 	}
 	isInvalid, err := s.JWTManager.Validate(sessionID)
 	if err != nil || isInvalid {
-		return NewRouterError(404, fmt.Errorf("session no longer valid"))
+		return NewRouterError(401, fmt.Errorf("session no longer valid"))
 	}
 	return nil
 }
@@ -521,13 +532,13 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 			return calculatedResponse.Build()
 		}
 	}
-	var remoteMCPSeverSession string
+	var remoteMCPServerSession string
 	if id, ok := exists[mcpReq.serverName]; ok {
 		s.Logger.DebugContext(ctx, "found session in cache", "session id", mcpReq.GetSessionID(), "for server", serverInfo.Name, "remote session", id)
-		remoteMCPSeverSession = id
+		remoteMCPServerSession = id
 	}
-	if remoteMCPSeverSession == "" {
-		id, err := s.initializeMCPSeverSession(ctx, mcpReq)
+	if remoteMCPServerSession == "" {
+		id, err := s.initializeMCPServerSession(ctx, mcpReq)
 		if err != nil {
 			var routerErr *RouterError
 			if errors.As(err, &routerErr) {
@@ -540,11 +551,11 @@ func (s *ExtProcServer) routeToUpstream(ctx context.Context, span trace.Span, mc
 			span.SetAttributes(attribute.String("error.type", "session_init_error"))
 			return calculatedResponse.Build()
 		}
-		remoteMCPSeverSession = id
+		remoteMCPServerSession = id
 	}
-	mcpReq.backendSessionID = remoteMCPSeverSession
+	mcpReq.backendSessionID = remoteMCPServerSession
 
-	headers.WithMCPSession(remoteMCPSeverSession)
+	headers.WithMCPSession(remoteMCPServerSession)
 	headers.WithAuthority(serverInfo.Hostname)
 	body, err := mcpReq.ToBytes()
 	if err != nil {
@@ -659,10 +670,10 @@ func (s *ExtProcServer) HandleElicitationResponse(
 	return response.Build()
 }
 
-// initializeMCPSeverSession will create a new session and connection with the backend MCP server
+// initializeMCPServerSession will create a new session and connection with the backend MCP server
 // This connection is kept open for the life of the gateway session to ensure the backend session is not closed/invalidated.
 // TODO when we receive a 404 from a backend MCP Server we should have a way to close the connection at that point also currently when we receive a 404 we remove the session from cache and will open a new connection. They will all be closed once the gateway session expires or the client sends a delete but it is a source of potential leaks
-func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
+func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *MCPRequest) (string, error) {
 	ctx, initSpan := tracer().Start(ctx, "mcp-router.session-init",
 		trace.WithAttributes(
 			componentAttr,
@@ -696,11 +707,10 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		if mcpReq.Headers != nil {
 			// We don't want to pass through any pseudo routing headers (:authority,
 			// :path, etc.), the gateway-bound mcp-session-id, or the router-internal
-			// headers (mcp-init-host, router-key) which we set ourselves below via
-			// clients.Initialize. Dropping the router-internal headers here is
-			// defense-in-depth so a client-supplied value can never reach the
-			// hairpin request even if the override in clients.Initialize is later
-			// refactored. Everything else is passed through for custom headers.
+			// headers (mcp-init-host, router-key) which we set ourselves below.
+			// Dropping the router-internal headers here is defense-in-depth so a
+			// client-supplied value can never reach the hairpin request.
+			// Everything else is passed through for custom headers.
 			for _, h := range mcpReq.Headers.Headers {
 				key := strings.ToLower(h.Key)
 				if strings.HasPrefix(key, ":") ||
@@ -753,7 +763,9 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			mcpotel.SpanError(initSpan, err, "failed to generate backend-init token")
 			return "", NewRouterErrorf(500, "failed to generate backend-init token: %w", err)
 		}
-		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, initToken, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation)
+		passThroughHeaders[RoutingKey] = initToken
+		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
+		clientHandle, err := s.InitForClient(ctx, s.RoutingConfig.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool)
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
@@ -777,7 +789,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 			// this err would be caused by an invalid token so force a re-initialize
 			s.Logger.ErrorContext(ctx, "failed to get expires in value. Forcing session reset", "err", err)
 			sessionCloser()
-			return "", NewRouterError(404, fmt.Errorf("invalid session"))
+			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
 		// compute once: reuse for both the Redis TTL and the cleanup timer so they
 		// are always in sync, and guard against a near-zero/negative value which
@@ -786,7 +798,7 @@ func (s *ExtProcServer) initializeMCPSeverSession(ctx context.Context, mcpReq *M
 		if ttl <= 0 {
 			s.Logger.ErrorContext(ctx, "session already expired, forcing reset", "session", mcpReq.GetSessionID())
 			sessionCloser()
-			return "", NewRouterError(404, fmt.Errorf("invalid session"))
+			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
 		remoteSessionID := clientHandle.GetSessionId()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)

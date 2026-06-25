@@ -24,6 +24,10 @@ GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY := $(shell git diff --quiet 2>/dev/null && echo "" || echo "-dirty")
 LDFLAGS := -X main.version=$(VERSION) -X main.gitSHA=$(GIT_SHA) -X main.dirty=$(GIT_DIRTY)
 
+.PHONY: print-ldflags
+print-ldflags: # print Go LDFLAGS so CI image build steps use the same values as build-image
+	@echo $(LDFLAGS)
+
 # Image tag and bundle version derivation (matches kuadrant-operator pattern)
 DEFAULT_IMAGE_TAG = latest
 is_semantic_version = $(shell echo "$(1)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' && echo "true")
@@ -341,7 +345,7 @@ build-conformance-server: ## Build conformance server Docker image locally
 	cd tests/servers/conformance-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-conformance-server:latest .
 
 # Load test server images into Kind cluster
-kind-load-test-servers: kind build-test-servers ## Load test server images into Kind cluster
+kind-load-test-servers: kind build-test-servers ## Build test server images locally and load them into Kind
 	@echo "Loading test server images into Kind cluster..."
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-server1:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-server2:latest)
@@ -353,6 +357,38 @@ kind-load-test-servers: kind build-test-servers ## Load test server images into 
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
+
+# TEST_SERVER_IMAGE_REPO/TAG and TEST_SERVER_IMAGES live in build/ci-node.mk
+# so the baked CI node image tag hashes them
+
+# pull pre-built images straight into containerd on the kind node, in parallel,
+# avoiding both the local rebuild and the docker save + kind load tax.
+# each image gets one retry to ride out transient registry hiccups.
+define pull-images-into-kind
+	@set -e; pids=""; \
+	for img in $(1); do \
+		ref="$(TEST_SERVER_IMAGE_REPO)/$$img:$(TEST_SERVER_IMAGE_TAG)"; \
+		echo "Pulling $$ref into Kind node..."; \
+		( $(CONTAINER_ENGINE) exec $(KIND_CLUSTER_NAME)-control-plane \
+			ctr -n k8s.io images pull "$$ref" >/dev/null \
+			|| { echo "Retrying pull of $$ref..."; sleep 2; \
+				$(CONTAINER_ENGINE) exec $(KIND_CLUSTER_NAME)-control-plane \
+					ctr -n k8s.io images pull "$$ref" >/dev/null; } ) & \
+		pids="$$pids $$!"; \
+	done; \
+	rc=0; \
+	for pid in $$pids; do wait "$$pid" || rc=1; done; \
+	if [ "$$rc" -ne 0 ]; then echo "ERROR: failed to pull one or more test server images"; exit 1; fi
+endef
+
+.PHONY: kind-pull-test-servers
+kind-pull-test-servers: ## Pull pre-built test server images from ghcr.io into Kind
+	$(call pull-images-into-kind,$(TEST_SERVER_IMAGES))
+	@echo "Test server images pulled"
+
+.PHONY: kind-pull-tls-server
+kind-pull-tls-server: ## Pull pre-built TLS test server image from ghcr.io into Kind
+	$(call pull-images-into-kind,test-tls-server)
 
 # Load everything server image into Kind cluster
 kind-load-everything-server: kind build-everything-server ## Load everything server image into Kind cluster
@@ -373,17 +409,42 @@ build-tls-server: ## Build TLS test server Docker image locally
 
 # Load TLS test server image into Kind cluster
 .PHONY: kind-load-tls-server
-kind-load-tls-server: kind build-tls-server ## Load TLS test server image into Kind cluster
+kind-load-tls-server: kind build-tls-server ## Build TLS test server image locally and load it into Kind
 	@echo "Loading TLS test server image into Kind cluster..."
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-tls-server:latest)
 
+# How test server images reach the Kind cluster: "build" (default) builds them
+# locally and loads via kind load, "pull" fetches the pre-built images published
+# to ghcr.io on merges to main, "baked" skips loading entirely because the
+# cluster was created from the baked CI node image (build/ci-node/Dockerfile)
+# that already carries them. CI uses pull or baked unless the change touches
+# tests/servers/** or internal/tests/**, which are not published from PRs.
+TEST_SERVER_IMAGE_SOURCE ?= build
+
+.PHONY: load-test-servers load-tls-server
+ifeq ($(TEST_SERVER_IMAGE_SOURCE),pull)
+load-test-servers: kind-pull-test-servers
+load-tls-server: kind-pull-tls-server
+else ifeq ($(TEST_SERVER_IMAGE_SOURCE),build)
+load-test-servers: kind-load-test-servers
+load-tls-server: kind-load-tls-server
+else ifeq ($(TEST_SERVER_IMAGE_SOURCE),baked)
+load-test-servers:
+	@echo "Test server images pre-seeded in the baked CI node image, skipping load"
+load-tls-server:
+	@echo "TLS test server image pre-seeded in the baked CI node image, skipping load"
+else
+$(error TEST_SERVER_IMAGE_SOURCE must be "build", "pull" or "baked", got "$(TEST_SERVER_IMAGE_SOURCE)")
+endif
+
 # Deploy TLS test server with cert-manager CA chain
 .PHONY: deploy-tls-test-server
-deploy-tls-test-server: kind-load-tls-server cert-manager-install ## Deploy TLS test server with cert-manager certificates
+deploy-tls-test-server: load-tls-server cert-manager-install ## Deploy TLS test server with cert-manager certificates
 	@echo "Setting up cert-manager CA and issuing TLS certificate..."
 	$(KUBECTL) apply -f config/test-servers/namespace.yaml
 	$(KUBECTL) apply -f config/test-servers/tls-server-cert-manager.yaml
 	@$(KUBECTL) wait --for=condition=Ready certificate/private-ca -n cert-manager --timeout=60s
+	@$(KUBECTL) wait --for=condition=Ready certificate/mcp-gateway-tls-cert -n gateway-system --timeout=60s
 	@$(KUBECTL) wait --for=condition=Ready certificate/tls-test-server-cert -n mcp-test --timeout=60s
 	@echo "Deploying TLS test server..."
 	$(KUBECTL) apply -f config/test-servers/tls-server-deployment.yaml

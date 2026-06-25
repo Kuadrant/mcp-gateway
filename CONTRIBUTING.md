@@ -1,15 +1,31 @@
 # Contributing to this project
 
-Greetings! We are grateful for your interest in joining the Kuadrant community and making a positive impact. Whether you're raising issues, enhancing documentation, fixing bugs, or developing new features, your contributions are essential to our success.
+Thanks for your interest in contributing. Read this document before opening issues or pull requests.
 
-To get started, kindly read through this document and familiarize yourself with our code of conduct. 
+## Submitting Pull Requests
 
-We can't wait to collaborate with you!
+Feature, planned or speculative work must reference an existing GitHub issue. PRs for such work without a linked issue will be closed.
+
+Bugfixes and security patches are exempt: open a PR directly, no issue required. If in doubt, file an issue first.
+
+The issue-first workflow:
+
+1. Check existing issues. If one covers your change, comment on it.
+2. If no issue exists, file one. Describe the feature or proposed change. Wait for discussion before starting work.
+3. Once the issue is accepted, implement your change and open a PR referencing the issue (e.g. `Fixes #123` or `Relates to #123`).
+
+Such PRs that arrive without an associated issue skip the design and prioritisation discussion that protects both contributors and maintainers from wasted effort. File the issue first.
+
+Additional PR guidance (aligned with [Kuadrant upstream contributing rules](https://kuadrant.io/contributing/#submitting-pull-requests)):
+
+- One open PR per project at a time. Getting one change reviewed and merged is worth more than several open in parallel.
+- Squash into a single commit where possible. If not, each commit should be a logical, independently reviewable unit.
+- If your PR is not getting review, post in the public Slack channel or mailing list. Do not message maintainers directly.
+- If you used AI tools, review the [AI tools guidance](https://kuadrant.io/contributing/#ai-tools) before submitting. You are responsible for understanding, testing, and verifying any generated code.
 
 ## Issues
 
-Please feel free to report an issue for bugs, and any other problems you
-encounter with the MCP Gateway project.
+Report bugs and any other problems via GitHub issues.
 
 ### Process
 
@@ -45,9 +61,21 @@ is centered around milestones:
 2. When issues have a milestone: they are considered `triage/accepted`, and
    need a priority. The priority will default to `priority/normal`.
 
+Do not begin implementation work on an issue until it has been assigned to a milestone. An issue without a milestone has not been accepted or prioritised — starting work on it risks the effort being rejected or superseded. Wait for a maintainer to triage the issue before opening a PR against it.
+
 ### Code of conduct
 
 Participation in the Kuadrant community is governed by the [Kuadrant Community Code of Conduct](https://github.com/Kuadrant/governance/blob/main/CODE_OF_CONDUCT.md).
+
+## Pull Requests
+
+### Linked issue requirement
+
+Every pull request must reference an open issue. PRs opened without a linked issue will be closed. If no issue exists yet, please open one first so the work can be triaged and prioritised before a PR is submitted.
+
+### Inactivity policy
+
+If a maintainer leaves a review comment or requests changes and the author has not responded within **14 days**, the PR will be closed. The clock starts when a team member posts feedback — not when the PR is opened. PRs that have not yet received a review, or where the author has responded and is awaiting re-review, will not be closed for inactivity. Closed PRs can be reopened once the work is ready to continue.
 
 ## Development Environment
 

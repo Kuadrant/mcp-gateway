@@ -13,4 +13,6 @@ COPY *.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /oidc-server
 
+FROM alpine:latest
+COPY --from=builder /oidc-server /oidc-server
 CMD ["/oidc-server"]

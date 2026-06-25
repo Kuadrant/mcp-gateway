@@ -103,8 +103,8 @@ func TestOnConfigChange(t *testing.T) {
 		t.Fatalf("expected server 1 to be registered")
 	}
 
-	vs, err := b.GetVirtualSeverByHeader("test/test")
-	require.Nil(t, err, "error should be nil from GetVirtualSeverByHeader")
+	vs, err := b.GetVirtualServerByHeader("test/test")
+	require.Nil(t, err, "error should be nil from GetVirtualServerByHeader")
 	if vs.Name != "test/test" {
 		t.Fatalf("expected virtual server to have same name")
 	}
@@ -134,19 +134,19 @@ func TestOnConfigChange_VirtualServerRemoval(t *testing.T) {
 	conf.VirtualServers = []*config.VirtualServer{vs1, vs2}
 	b.OnConfigChange(context.TODO(), conf)
 
-	_, err := b.GetVirtualSeverByHeader("ns/vs-one")
+	_, err := b.GetVirtualServerByHeader("ns/vs-one")
 	require.NoError(t, err, "vs-one should be present after first config")
-	_, err = b.GetVirtualSeverByHeader("ns/vs-two")
+	_, err = b.GetVirtualServerByHeader("ns/vs-two")
 	require.NoError(t, err, "vs-two should be present after first config")
 
 	// remove vs-one from the config (simulates MCPVirtualServer deletion)
 	conf.VirtualServers = []*config.VirtualServer{vs2}
 	b.OnConfigChange(context.TODO(), conf)
 
-	_, err = b.GetVirtualSeverByHeader("ns/vs-one")
+	_, err = b.GetVirtualServerByHeader("ns/vs-one")
 	require.Error(t, err, "vs-one should be removed after config update")
 
-	remaining, err := b.GetVirtualSeverByHeader("ns/vs-two")
+	remaining, err := b.GetVirtualServerByHeader("ns/vs-two")
 	require.NoError(t, err, "vs-two should still be present")
 	require.Equal(t, "ns/vs-two", remaining.Name)
 
@@ -154,7 +154,7 @@ func TestOnConfigChange_VirtualServerRemoval(t *testing.T) {
 	conf.VirtualServers = []*config.VirtualServer{}
 	b.OnConfigChange(context.TODO(), conf)
 
-	_, err = b.GetVirtualSeverByHeader("ns/vs-two")
+	_, err = b.GetVirtualServerByHeader("ns/vs-two")
 	require.Error(t, err, "vs-two should be removed after empty config")
 }
 

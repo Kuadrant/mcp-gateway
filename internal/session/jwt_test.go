@@ -1,14 +1,32 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 )
+
+const testSigningKey = "test-signing-key-must-be-at-least-32-bytes"
+
+// blockingDeleter blocks DeleteSessions until the supplied context is canceled
+// or its deadline elapses, then returns ctx.Err().
+type blockingDeleter struct {
+	called chan struct{}
+}
+
+func (b *blockingDeleter) DeleteSessions(ctx context.Context, _ ...string) error {
+	if b.called != nil {
+		close(b.called)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -16,7 +34,7 @@ func testLogger() *slog.Logger {
 
 func TestNewJWTManager(t *testing.T) {
 	t.Run("with custom key", func(t *testing.T) {
-		key := "test-signing-key"
+		key := testSigningKey
 		manager, err := NewJWTManager(key, 0, testLogger(), nil)
 
 		if err != nil {
@@ -34,7 +52,7 @@ func TestNewJWTManager(t *testing.T) {
 	})
 
 	t.Run("with custom session duration", func(t *testing.T) {
-		key := "test-signing-key"
+		key := testSigningKey
 		manager, err := NewJWTManager(key, 48, testLogger(), nil)
 
 		if err != nil {
@@ -56,10 +74,30 @@ func TestNewJWTManager(t *testing.T) {
 			t.Error("expected nil manager for empty key")
 		}
 	})
+
+	t.Run("with 31-byte key returns error", func(t *testing.T) {
+		manager, err := NewJWTManager(strings.Repeat("a", 31), 0, testLogger(), nil)
+		if err == nil {
+			t.Error("expected error for 31-byte signing key")
+		}
+		if manager != nil {
+			t.Error("expected nil manager")
+		}
+	})
+
+	t.Run("with 32-byte key returns success", func(t *testing.T) {
+		manager, err := NewJWTManager(strings.Repeat("a", 32), 0, testLogger(), nil)
+		if err != nil {
+			t.Fatalf("unexpected error for 32-byte signing key: %v", err)
+		}
+		if manager == nil {
+			t.Fatal("expected manager to be created")
+		}
+	})
 }
 
 func TestGenerate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("generates valid JWT", func(t *testing.T) {
 		token := manager.Generate()
@@ -110,7 +148,7 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("validates correct token", func(t *testing.T) {
 		token := manager.Generate()
@@ -125,7 +163,7 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("rejects token with wrong signing key", func(t *testing.T) {
-		otherManager, _ := NewJWTManager("different-key", 0, testLogger(), nil)
+		otherManager, _ := NewJWTManager("different-key-must-be-at-least-32-bytes", 0, testLogger(), nil)
 		token := otherManager.Generate()
 
 		isNotAllowed, err := manager.Validate(token)
@@ -149,7 +187,7 @@ func TestValidate(t *testing.T) {
 
 	t.Run("rejects expired token", func(t *testing.T) {
 		// create a manager with very short duration
-		shortManager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+		shortManager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 		shortManager.duration = 1 * time.Nanosecond
 
 		token := shortManager.Generate()
@@ -185,7 +223,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestBackendInitToken(t *testing.T) {
-	manager, err := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, err := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,7 +269,7 @@ func TestBackendInitToken(t *testing.T) {
 	})
 
 	t.Run("rejects token signed with different key", func(t *testing.T) {
-		other, _ := NewJWTManager("different-key", 0, testLogger(), nil)
+		other, _ := NewJWTManager("different-key-must-be-at-least-32-bytes", 0, testLogger(), nil)
 		token, err := other.GenerateBackendInitToken("backend.example.com")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -313,7 +351,7 @@ func TestBackendInitToken(t *testing.T) {
 }
 
 func TestValidate_RejectsTokenWithWrongIssuer(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -334,7 +372,7 @@ func TestValidate_RejectsTokenWithWrongIssuer(t *testing.T) {
 }
 
 func TestValidate_RejectsTokenWithWrongAudience(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -355,7 +393,7 @@ func TestValidate_RejectsTokenWithWrongAudience(t *testing.T) {
 }
 
 func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	// craft a token with no exp claim
 	claims := Claims{
@@ -366,7 +404,7 @@ func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte("test-key"))
+	tokenString, err := token.SignedString([]byte(testSigningKey))
 	if err != nil {
 		t.Fatalf("failed to sign token: %v", err)
 	}
@@ -381,7 +419,7 @@ func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
 }
 
 func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -391,7 +429,7 @@ func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte("test-key"))
+	tokenString, err := token.SignedString([]byte(testSigningKey))
 	if err != nil {
 		t.Fatalf("failed to sign token: %v", err)
 	}
@@ -403,7 +441,7 @@ func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
 }
 
 func TestTerminate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("terminate returns no error", func(t *testing.T) {
 		token := manager.Generate()
@@ -414,6 +452,38 @@ func TestTerminate(t *testing.T) {
 		}
 		if isNotAllowed {
 			t.Error("expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("terminate bounds a stalled deleter via context deadline", func(t *testing.T) {
+		// Wire a deleter whose DeleteSessions blocks until the passed context
+		// is canceled. Without the WithTimeout fix, Terminate would block
+		// indefinitely; with it, Terminate must return within ~terminateTimeout.
+		deleter := &blockingDeleter{called: make(chan struct{})}
+		manager, err := NewJWTManager(testSigningKey, 0, testLogger(), deleter)
+		if err != nil {
+			t.Fatalf("unexpected error constructing manager: %v", err)
+		}
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := manager.Terminate("session-id")
+			errCh <- err
+		}()
+
+		select {
+		case <-deleter.called:
+		case <-time.After(2 * time.Second):
+			t.Fatal("DeleteSessions was not invoked")
+		}
+
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+			}
+		case <-time.After(terminateTimeout + 2*time.Second):
+			t.Fatalf("Terminate did not return within %v of the configured deadline", terminateTimeout)
 		}
 	})
 }

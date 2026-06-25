@@ -37,7 +37,7 @@ nodes:
   - containerPort: 30080
     hostPort: 8001
     protocol: TCP
-  - containerPort: 30089
+  - containerPort: 30081
     hostPort: 8002
     protocol: TCP
 EOF

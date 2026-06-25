@@ -111,7 +111,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilterForPrompts(headers http.Hea
 	}
 
 	virtualServerID := headerValues[0]
-	vs, err := broker.GetVirtualSeverByHeader(virtualServerID)
+	vs, err := broker.GetVirtualServerByHeader(virtualServerID)
 	if err != nil {
 		broker.logger.Error("failed to get virtual server for prompt filtering", "error", err)
 		return prompts

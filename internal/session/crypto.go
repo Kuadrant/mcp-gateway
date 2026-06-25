@@ -16,8 +16,8 @@ import (
 
 // DeriveEncryptionKey derives a 32-byte AES-256 key from the session signing key using HKDF.
 func DeriveEncryptionKey(signingKey []byte) ([]byte, error) {
-	if len(signingKey) < 16 {
-		return nil, fmt.Errorf("signing key too short: need at least 16 bytes")
+	if len(signingKey) < 32 {
+		return nil, fmt.Errorf("signing key too short: need at least 32 bytes")
 	}
 	r := hkdf.New(sha256.New, signingKey, nil, []byte("mcp-gateway-user-token-encryption"))
 	key := make([]byte, 32)

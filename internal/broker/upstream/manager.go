@@ -60,17 +60,27 @@ const (
 
 // ServerValidationStatus contains the validation results for an upstream MCP server
 type ServerValidationStatus struct {
-	ID                string              `json:"id"`
-	Name              string              `json:"name"`
-	LastValidated     time.Time           `json:"lastValidated"`
-	Message           string              `json:"message"`
-	Ready             bool                `json:"ready"`
-	TotalTools        int                 `json:"totalTools"`
-	TotalPrompts      int                 `json:"totalPrompts"`
-	InvalidTools      int                 `json:"invalidTools"`
-	InvalidToolList   []InvalidToolInfo   `json:"invalidToolList,omitempty"`
-	InvalidPrompts    int                 `json:"invalidPrompts"`
-	InvalidPromptList []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
+	ID                 string              `json:"id"`
+	Name               string              `json:"name"`
+	LastValidated      time.Time           `json:"lastValidated"`
+	Message            string              `json:"message"`
+	Ready              bool                `json:"ready"`
+	TotalTools         int                 `json:"totalTools"`
+	TotalPrompts       int                 `json:"totalPrompts"`
+	InvalidTools       int                 `json:"invalidTools"`
+	InvalidToolList    []InvalidToolInfo   `json:"invalidToolList,omitempty"`
+	InvalidPrompts     int                 `json:"invalidPrompts"`
+	InvalidPromptList  []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
+	ProtocolValidation ProtocolValidation  `json:"protocolValidation"`
+}
+
+// ProtocolValidation reports the MCP protocol version negotiated with the upstream.
+// supportedVersion is the version the upstream replied with during initialize;
+// expectedVersion is the version the broker proposed (always the latest the broker knows).
+type ProtocolValidation struct {
+	IsValid          bool   `json:"isValid"`
+	SupportedVersion string `json:"supportedVersion"`
+	ExpectedVersion  string `json:"expectedVersion"`
 }
 
 // MCP defines the interface for the manager to interact with an MCP server
@@ -91,6 +101,8 @@ type MCP interface {
 	Ping(context.Context) error
 	// IsEnabled returns true if the server should be connected to and have its tools registered.
 	IsEnabled() bool
+	// ProtocolInfo returns the initialize result (including the negotiated protocol version), or nil if not yet connected.
+	ProtocolInfo() *mcp.InitializeResult
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only
@@ -519,6 +531,12 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
+	// always report the version we expect; fill in the negotiated version once it is known
+	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: mcp.LATEST_PROTOCOL_VERSION}
+	if info := man.mcp.ProtocolInfo(); info != nil {
+		man.status.ProtocolValidation.IsValid = true
+		man.status.ProtocolValidation.SupportedVersion = info.ProtocolVersion
+	}
 }
 
 func (man *MCPManager) resetBackoff() {

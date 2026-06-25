@@ -40,29 +40,22 @@ test-e2e-cleanup: ## Clean up e2e test resources
 test-e2e-watch: test-e2e-deps ## Run e2e tests in watch mode for development
 	$(GINKGO) watch -v --tags=e2e ./tests/e2e
 
-# CI-specific target that assumes cluster exists
+# CI-specific target that assumes cluster exists.
+# Debug logging is baked into config/mcp-gateway/overlays/ci/, no post-deploy patch needed.
 .PHONY: test-e2e-ci
-test-e2e-ci: test-e2e-deps enable-debug-logging ## Run PR-gate e2e tests in CI (excludes slow tier 2 suites, fail fast)
+test-e2e-ci: test-e2e-deps ## Run PR-gate e2e tests in CI (excludes slow tier 2 suites, fail fast)
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast $(E2E_GINKGO_SKIP_TIER2) ./tests/e2e
 
 .PHONY: test-e2e-ci-full
-test-e2e-ci-full: test-e2e-deps enable-debug-logging ## Run all e2e tests in CI (tier 1 + 2, full run reports every failure)
+test-e2e-ci-full: test-e2e-deps ## Run all e2e tests in CI (tier 1 + 2, full run reports every failure)
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) ./tests/e2e
 
 # run only auth-focused tests (CI runs this after ci-auth-setup)
 .PHONY: test-e2e-auth-ci
-test-e2e-auth-ci: test-e2e-deps enable-debug-logging ## Run auth e2e tests only (requires ci-auth-setup)
+test-e2e-auth-ci: test-e2e-deps ## Run auth e2e tests only (requires ci-auth-setup)
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast --focus="AuthPolicy" ./tests/e2e
 
 .PHONY: test-e2e-https
-test-e2e-https: test-e2e-deps enable-debug-logging ## Run HTTPS-focused E2E tests (requires cert-manager + MCP_PAT)
+test-e2e-https: test-e2e-deps ## Run HTTPS-focused E2E tests (requires cert-manager + MCP_PAT)
 	@echo "Running HTTPS MCP backend E2E tests..."
 	$(GINKGO) -v --tags=e2e --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[HTTPS\]" ./tests/e2e
-
-.PHONY: enable-debug-logging
-enable-debug-logging: ## Enable debug logging on controller and wait for restart
-	@echo "Enabling debug logging on mcp-gateway-controller..."
-	kubectl patch deployment mcp-gateway-controller -n mcp-system --type='json' \
-		-p='[{"op": "replace", "path": "/spec/template/spec/containers/0/command", "value": ["./mcp_controller", "--log-level=-4"]}]'
-	@echo "Waiting for controller rollout..."
-	kubectl rollout status deployment/mcp-gateway-controller -n mcp-system --timeout=120s

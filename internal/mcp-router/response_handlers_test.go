@@ -379,7 +379,7 @@ func TestHandleResponseHeaders_StoresElicitationForDirectInit(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
-	jwtManager, err := session.NewJWTManager("test-signing-key", 0, logger, cache)
+	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
 	require.NoError(t, err)
 	brokerSessionID := jwtManager.Generate()
 
@@ -732,8 +732,8 @@ func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	return nil, fmt.Errorf("failed to get server %q for tool %q", svrName, tool)
 }
 
-// GetVirtualSeverByHeader implements broker.MCPBroker.
-func (m *mockBrokerImpl) GetVirtualSeverByHeader(_ string) (config.VirtualServer, error) {
+// GetVirtualServerByHeader implements broker.MCPBroker.
+func (m *mockBrokerImpl) GetVirtualServerByHeader(_ string) (config.VirtualServer, error) {
 	panic("unimplemented")
 }
 

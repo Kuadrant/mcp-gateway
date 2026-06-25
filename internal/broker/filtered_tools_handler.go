@@ -192,7 +192,7 @@ func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]st
 		}
 		tools := upstream.GetManagedTools()
 		if tools == nil {
-			broker.logger.Debug("no tools registered for upstream server", "server", upstream.MCPName)
+			broker.logger.Debug("no tools registered for upstream server", "server", upstream.MCPName())
 			continue
 		}
 
@@ -219,7 +219,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 	virtualServerID := headerValues[0]
 	broker.logger.Debug("applying virtual server filter", "virtualServer", virtualServerID)
 
-	vs, err := broker.GetVirtualSeverByHeader(virtualServerID)
+	vs, err := broker.GetVirtualServerByHeader(virtualServerID)
 	if err != nil {
 		broker.logger.Error("failed to get virtual server", "error", err)
 		return tools

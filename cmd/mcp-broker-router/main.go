@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
+	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
@@ -45,17 +46,18 @@ type commonConfig struct {
 	privateHost           string
 	configFile            string
 	enableURLElicitation  bool
+	gatewayCACert         string
 }
 
 type routerConfig struct {
-	// commonConfig is to be considered imutable
+	// commonConfig is to be considered immutable
 	commonConfig
 	addr               string
 	maxRequestBodySize int
 }
 
 type brokerConfig struct {
-	// commonConfig is to be considered imutable
+	// commonConfig is to be considered immutable
 	commonConfig
 	addr                       string
 	writeTimeoutSecs           int64
@@ -64,6 +66,7 @@ type brokerConfig struct {
 	invalidToolPolicy          string
 	discoveryToolsEnabled      bool
 	discoveryToolThreshold     int
+	enablePprof                bool
 }
 
 type app struct {
@@ -78,6 +81,7 @@ type app struct {
 	jwtMgr         *session.JWTManager
 	elicitMap      idmap.Map
 	tokenElicitMap elicitation.Map
+	hairpinPool    *clients.HairpinClientPool
 	mcpBroker      broker.MCPBroker
 	tokenHandler   http.Handler
 	elicitHandler  http.Handler
@@ -93,6 +97,7 @@ func main() {
 	logOpts, jsonLog := a.setupLogger()
 	a.setupTelemetry(ctx, logOpts, jsonLog)
 	a.setupSessionInfra(ctx)
+	a.buildHairpinClient()
 	a.createBroker()
 	a.createRouter()
 	a.registerObservers()
@@ -120,6 +125,8 @@ func parseFlags() *app {
 	flag.StringVar(&bc.configFile, "mcp-gateway-config", "./config/samples/config.yaml", "where to locate the mcp server config")
 	flag.Int64Var(&bc.sessionDurationMins, "session-length", 60*24, "default session length with the gateway in minutes. Default 24h")
 	flag.BoolVar(&bc.enableURLElicitation, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
+	flag.StringVar(&bc.gatewayCACert, "gateway-ca-cert", "",
+		"path to a PEM CA certificate for the gateway's TLS listener (private CA support for hairpin requests)")
 
 	gatewaySigningKeyDef := goenv.GetDefault("GATEWAY_SIGNING_KEY", "")
 	if gatewaySigningKeyDef == "" {
@@ -145,6 +152,7 @@ func parseFlags() *app {
 		"enable discover_tools and select_tools meta-tools for progressive tool discovery")
 	flag.IntVar(&bc.discoveryToolThreshold, "discovery-tool-threshold", 0,
 		"tool count above which real tools are hidden and only meta-tools are shown. 0 means never hide.")
+	flag.BoolVar(&bc.enablePprof, "enable-pprof", false, "enable pprof profiling server on localhost:6060")
 
 	// router-specific flags
 	flag.StringVar(&rc.addr, "mcp-router-address", "0.0.0.0:50051", "The address for MCP router")
@@ -243,6 +251,18 @@ func (a *app) setupSessionInfra(ctx context.Context) {
 	}
 }
 
+func (a *app) buildHairpinClient() {
+	pool, err := clients.BuildHairpinHTTPClientPool(
+		a.brokerCfg.privateHost,
+		a.brokerCfg.publicHost,
+		a.brokerCfg.gatewayCACert,
+	)
+	if err != nil {
+		panic("failed to build hairpin HTTP client pool: " + err.Error())
+	}
+	a.hairpinPool = pool
+}
+
 func (a *app) registerObservers() {
 	a.mcpConfig.RegisterObserver(a.router)
 	a.mcpConfig.RegisterObserver(a.mcpBroker)
@@ -281,19 +301,19 @@ func (a *app) run(ctx context.Context) {
 		a.logger.Error("grpc listen error", "error", err)
 		stop <- os.Interrupt
 	}
-
-	go func() {
-		pprofAddr := "0.0.0.0:6060"
-		a.logger.Info("[pprof] starting profiling server", "listening", pprofAddr)
-		pprofSrv := &http.Server{
-			Addr:              pprofAddr,
-			Handler:           nil,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
-		if err := pprofSrv.ListenAndServe(); err != nil {
-			a.logger.Error("pprof server error", "error", err)
-		}
-	}()
+	if a.brokerCfg.enablePprof {
+		go func() {
+			pprofAddr := "localhost:6060"
+			a.logger.Info("[pprof] starting profiling server", "listening", pprofAddr)
+			pprofSrv := &http.Server{
+				Addr:              pprofAddr,
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			if err := pprofSrv.ListenAndServe(); err != nil {
+				a.logger.Error("pprof server error", "error", err)
+			}
+		}()
+	}
 
 	go func() {
 		a.logger.Info("[grpc] starting MCP Router", "listening", a.routerCfg.addr)

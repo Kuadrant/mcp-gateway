@@ -41,8 +41,8 @@ type MCPBroker interface {
 	//RegisteredServers returns the map of registered servers
 	RegisteredMCPServers() map[config.UpstreamMCPID]upstream.ActiveMCPServer
 
-	// GetVirtualSeverByHeader returns a virtual server definition based on a header where the header is the namespaced/name of the virtual server resource
-	GetVirtualSeverByHeader(namespaceName string) (config.VirtualServer, error)
+	// GetVirtualServerByHeader returns a virtual server definition based on a header where the header is the namespaced/name of the virtual server resource
+	GetVirtualServerByHeader(namespaceName string) (config.VirtualServer, error)
 
 	// ValidateAllServers performs comprehensive validation of all registered servers and returns status
 	ValidateAllServers() StatusResponse
@@ -357,7 +357,7 @@ func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]upstream
 	return m.mcpServers
 }
 
-func (m *mcpBrokerImpl) GetVirtualSeverByHeader(namespaceName string) (config.VirtualServer, error) {
+func (m *mcpBrokerImpl) GetVirtualServerByHeader(namespaceName string) (config.VirtualServer, error) {
 	m.vsLock.RLock()
 	defer m.vsLock.RUnlock()
 	for _, vs := range m.virtualServers {

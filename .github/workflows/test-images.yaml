@@ -118,4 +118,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ignore-error: cache export is an optimisation; transient GHA cache
+          # errors (error writing layer blob: not_found) should not fail the build
+          cache-to: type=gha,mode=max,ignore-error=true

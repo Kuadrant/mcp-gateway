@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 )
 
 type stubTokenCache struct {
@@ -261,7 +262,7 @@ func TestTokenHandler_POST_SubMatch(t *testing.T) {
 	csrf := getCSRFToken(t, handler, id)
 
 	req := postTokenForm(id, "ghp_secret", csrf)
-	req.Header.Set("Authorization", buildBearerJWT("user123"))
+	req.Header.Set(sharedheaders.VerifiedSubHeader, "user123")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -281,7 +282,7 @@ func TestTokenHandler_POST_SubMismatch(t *testing.T) {
 	csrf := getCSRFToken(t, handler, id)
 
 	req := postTokenForm(id, "ghp_secret", csrf)
-	req.Header.Set("Authorization", buildBearerJWT("attacker"))
+	req.Header.Set(sharedheaders.VerifiedSubHeader, "attacker")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -324,56 +325,32 @@ func TestTokenHandler_POST_SubRequiredButNoIdentity(t *testing.T) {
 	}
 }
 
-func TestTokenHandler_POST_SubMatchViaCookie(t *testing.T) {
-	handler, eMap, cache := setupHandler(t)
-	ctx := context.Background()
-	id, _ := eMap.Store(ctx, "sess1", "github", "user123")
-	csrf := getCSRFToken(t, handler, id)
+// TestTokenHandler_POST_RawJWTNoLongerGrantsIdentity verifies that sending a
+// raw Bearer JWT or jwt cookie does NOT satisfy the identity check — only the
+// router-injected x-mcp-verified-sub header is trusted. This is the attack
+// surface fixed by issue #1083.
+func TestTokenHandler_POST_RawJWTNoLongerGrantsIdentity(t *testing.T) {
+	for _, name := range []string{"bearer_only", "cookie_only"} {
+		t.Run(name, func(t *testing.T) {
+			handler, eMap, _ := setupHandler(t)
+			id, _ := eMap.Store(context.Background(), "sess1", "github", "user123")
+			csrf := getCSRFToken(t, handler, id)
 
-	req := postTokenForm(id, "ghp_secret", csrf)
-	req.AddCookie(&http.Cookie{Name: "jwt", Value: buildRawJWT("user123")})
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
+			req := postTokenForm(id, "ghp_secret", csrf)
+			switch name {
+			case "bearer_only":
+				req.Header.Set("Authorization", buildBearerJWT("user123"))
+			case "cookie_only":
+				req.AddCookie(&http.Cookie{Name: "jwt", Value: buildRawJWT("user123")})
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	token, ok := cache.GetUserToken(ctx, "sess1", "github")
-	if !ok || token != "ghp_secret" {
-		t.Fatal("expected token stored after cookie sub match")
-	}
-}
-
-func TestTokenHandler_POST_SubMismatchViaCookie(t *testing.T) {
-	handler, eMap, _ := setupHandler(t)
-	id, _ := eMap.Store(context.Background(), "sess1", "github", "user123")
-	csrf := getCSRFToken(t, handler, id)
-
-	req := postTokenForm(id, "ghp_secret", csrf)
-	req.AddCookie(&http.Cookie{Name: "jwt", Value: buildRawJWT("attacker")})
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", w.Code)
-	}
-}
-
-func TestTokenHandler_POST_IgnoresNonJWTCookies(t *testing.T) {
-	handler, eMap, _ := setupHandler(t)
-	id, _ := eMap.Store(context.Background(), "sess1", "github", "user123")
-	csrf := getCSRFToken(t, handler, id)
-
-	req := postTokenForm(id, "ghp_secret", csrf)
-	// non-JWT cookie with a sub-like value should be ignored
-	req.AddCookie(&http.Cookie{Name: "other", Value: "not-a-jwt"})
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	// no valid identity found → 403
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+			// without x-mcp-verified-sub the broker has no verified identity → 403
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d — raw JWT must not grant identity", w.Code)
+			}
+		})
 	}
 }
 

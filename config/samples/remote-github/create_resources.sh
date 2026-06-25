@@ -25,8 +25,26 @@ if [[ ! "$GITHUB_PAT" =~ ^ghp_ ]]; then
   fi
 fi
 
+echo ""
+echo "==> Ensuring namespace exists..."
+kubectl create namespace mcp-test --dry-run=client -o yaml | kubectl apply -f -
+
+echo ""
+echo "==> Checking required CRDs..."
+
+if ! kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
+  echo "Error: AuthPolicy CRD not found."
+  echo ""
+  echo "Kuadrant is required for this example."
+  echo "Please install Kuadrant before running this script."
+  echo ""
+  echo "Refer: https://kuadrant.io/"
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+echo ""
 echo "==> Step 1: Creating ServiceEntry for GitHub MCP API..."
 kubectl apply -f "$SCRIPT_DIR/serviceentry.yaml"
 

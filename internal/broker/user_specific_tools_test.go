@@ -75,6 +75,17 @@ func TestFilterUserHeaders(t *testing.T) {
 				"Accept": "text/html",
 			},
 		},
+		{
+			name: "strips cookie and proxy-authorization, preserves authorization",
+			input: http.Header{
+				"Cookie":              []string{"session=secret"},
+				"Proxy-Authorization": []string{"Basic abc"},
+				"Authorization":       []string{"Bearer user-token"},
+			},
+			expected: map[string]string{
+				"Authorization": "Bearer user-token",
+			},
+		},
 	}
 
 	for _, tc := range tests {

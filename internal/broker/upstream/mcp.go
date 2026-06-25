@@ -7,12 +7,23 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+// Transport-level timeouts for upstream HTTP clients. We bound connection
+// establishment and response-header reads instead of setting http.Client.Timeout,
+// because the streamable HTTP client reuses the same client for the long-lived
+// SSE listen stream, which must not be capped.
+var (
+	defaultTLSHandshakeTimeout   = 10 * time.Second
+	defaultResponseHeaderTimeout = 30 * time.Second
+	defaultExpectContinueTimeout = 1 * time.Second
 )
 
 // MCPServer represents a connection to an upstream MCP server. It wraps the
@@ -43,26 +54,29 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 	return up
 }
 
-// buildHTTPClient creates a custom HTTP client with the configured CA certificate
-// appended to the system root pool. Returns nil if no CACert is configured.
+// buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
+// server. The transport always has handshake and response-header timeouts so a
+// hung or unresponsive upstream cannot block the broker indefinitely. When a
+// CACert is configured, that CA is appended to the system root pool and used
+// for TLS verification.
 func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
-	if up.CACert == "" {
-		return nil, nil //nolint:nilnil // nil client signals caller to use default transport
-	}
-
-	rootCAs, err := x509.SystemCertPool()
-	if err != nil {
-		rootCAs = x509.NewCertPool()
-	}
-
-	if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-		return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
-	}
-
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    rootCAs,
+	transport.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
+	transport.ResponseHeaderTimeout = defaultResponseHeaderTimeout
+	transport.ExpectContinueTimeout = defaultExpectContinueTimeout
+
+	if up.CACert != "" {
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
+			return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+		}
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    rootCAs,
+		}
 	}
 
 	return &http.Client{Transport: transport}, nil
@@ -144,13 +158,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		transport.WithHTTPHeaders(up.headers),
 	}
 
-	customClient, err := up.buildHTTPClient()
+	httpC, err := up.buildHTTPClient()
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
-	if customClient != nil {
-		options = append(options, transport.WithHTTPBasicClient(customClient))
-	}
+	options = append(options, transport.WithHTTPBasicClient(httpC))
 
 	httpClient, err := client.NewStreamableHttpClient(up.URL, options...)
 	if err != nil {
