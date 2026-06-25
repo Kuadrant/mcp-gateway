@@ -23,6 +23,11 @@ type InvalidToolPolicy string
 // +kubebuilder:validation:Enum=Enabled;Disabled
 type URLElicitationPolicy string
 
+// LogLevel controls the broker-router log verbosity. It maps to the broker's
+// --log-level flag using Go's slog level convention: debug=-4, info=0, warn=4, error=8.
+// +kubebuilder:validation:Enum=debug;info;warn;error
+type LogLevel string
+
 const (
 	// ConditionTypeReady signals if a resource is ready
 	ConditionTypeReady = "Ready"
@@ -58,6 +63,15 @@ const (
 	URLElicitationEnabled URLElicitationPolicy = "Enabled"
 	// URLElicitationDisabled disables URL-based token elicitation (default)
 	URLElicitationDisabled URLElicitationPolicy = "Disabled"
+
+	// LogLevelDebug sets the broker-router --log-level flag to -4
+	LogLevelDebug LogLevel = "debug"
+	// LogLevelInfo sets the broker-router --log-level flag to 0
+	LogLevelInfo LogLevel = "info"
+	// LogLevelWarn sets the broker-router --log-level flag to 4
+	LogLevelWarn LogLevel = "warn"
+	// LogLevelError sets the broker-router --log-level flag to 8
+	LogLevelError LogLevel = "error"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -99,6 +113,12 @@ type MCPGatewayExtensionSpec struct {
 	// +optional
 	// +default="Enabled"
 	HTTPRouteManagement HTTPRouteManagementPolicy `json:"httpRouteManagement,omitempty"`
+
+	// logLevel controls the broker-router log verbosity.
+	// Maps to the broker's --log-level flag: debug=-4, info=0, warn=4, error=8.
+	// When unset, the operator-wide BROKER_ROUTER_LOG_LEVEL default (if configured) is used.
+	// +optional
+	LogLevel LogLevel `json:"logLevel,omitempty"`
 
 	// sessionStore references a secret for redis-based session storage.
 	// The secret must exist in the MCPGatewayExtension namespace and contain a CACHE_CONNECTION_STRING key.

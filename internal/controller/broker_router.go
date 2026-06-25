@@ -71,6 +71,16 @@ var managedEnvVarNames = []string{
 	"OAUTH_SCOPES_SUPPORTED",
 }
 
+// logLevelFlagValues maps spec.logLevel to the numeric value expected by the
+// broker-router's --log-level flag, following Go's slog level convention
+// (debug=-4, info=0, warn=4, error=8).
+var logLevelFlagValues = map[mcpv1alpha1.LogLevel]string{
+	mcpv1alpha1.LogLevelDebug: "-4",
+	mcpv1alpha1.LogLevelInfo:  "0",
+	mcpv1alpha1.LogLevelWarn:  "4",
+	mcpv1alpha1.LogLevelError: "8",
+}
+
 func brokerRouterLabels() map[string]string {
 	return map[string]string{
 		labelAppName:   brokerRouterName,
@@ -93,7 +103,9 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	if mcpExt.Spec.URLElicitation == mcpv1alpha1.URLElicitationEnabled {
 		command = append(command, "--enable-url-elicitation")
 	}
-	if r.BrokerRouterLogLevel != "" {
+	if v, ok := logLevelFlagValues[mcpExt.Spec.LogLevel]; ok {
+		command = append(command, "--log-level="+v)
+	} else if r.BrokerRouterLogLevel != "" {
 		command = append(command, "--log-level="+r.BrokerRouterLogLevel)
 	}
 
