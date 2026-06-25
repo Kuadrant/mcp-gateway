@@ -45,3 +45,5 @@ jobs:
       - name: Run make unit test
         run: |
           make test-unit
+      - name: Verify e2e tests compile
+        run: go build -tags e2e ./tests/e2e/...
