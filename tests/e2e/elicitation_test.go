@@ -68,7 +68,7 @@ var _ = Describe("Elicitation", func() {
 		testResources = nil
 	})
 
-	It("[Elicitation] should accept elicitation and return user-provided information", func() {
+	It("[Elicitation] should accept elicitation and return user-provided information", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := &acceptHandler{
@@ -113,7 +113,7 @@ var _ = Describe("Elicitation", func() {
 		Expect(responseText).To(ContainSubstring("User provided the requested information"))
 	})
 
-	It("[Elicitation] should decline elicitation", func() {
+	It("[Elicitation] should decline elicitation", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := &declineHandler{}
@@ -154,7 +154,7 @@ var _ = Describe("Elicitation", func() {
 		Expect(responseText).To(ContainSubstring("User declined"))
 	})
 
-	It("[Full][Elicitation] should error when calling elicitation tool without handler", func() {
+	It("[Full][Elicitation] should error when calling elicitation tool without handler", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		By("Creating a standard client without elicitation handler")

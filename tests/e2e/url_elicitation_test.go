@@ -63,7 +63,7 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		testResources = nil
 	})
 
-	It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client; server without tokenURLElicitation is unaffected", func() {
+	It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client; server without tokenURLElicitation is unaffected", Label("url-elicitation", "pr"), func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Registering a second server WITHOUT tokenURLElicitation or credentialRef")
@@ -120,7 +120,7 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		Expect(directContent[0].Text).To(ContainSubstring("Hi direct"))
 	})
 
-	It("[Happy,URLElicitation] Full round-trip: token page submit then retry succeeds", func() {
+	It("[Happy,URLElicitation] Full round-trip: token page submit then retry succeeds", Label("url-elicitation", "pr"), func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing with elicitation capability")
@@ -195,7 +195,7 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 
 	// nightly-only: the 401-invalidation spec covers cached-token reuse
 	// transitively (its setup call succeeds with the cached token)
-	It("[Full][URLElicitation] Cached token reused across multiple tool calls", func() {
+	It("[Full][URLElicitation] Cached token reused across multiple tool calls", Label("url-elicitation"), func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing, triggering -32042, and submitting token")
@@ -262,7 +262,7 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		Expect(content2[0].Text).To(ContainSubstring("Hello"))
 	})
 
-	It("[URLElicitation] Non-elicitation-capable client gets standard error on missing token", func() {
+	It("[URLElicitation] Non-elicitation-capable client gets standard error on missing token", Label("url-elicitation"), func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing WITHOUT elicitation capability")
@@ -291,7 +291,7 @@ var _ = Describe("URL Elicitation", Ordered, ContinueOnFailure, func() {
 		Expect(body).NotTo(ContainSubstring("-32042"))
 	})
 
-	It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", func() {
+	It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", Label("url-elicitation", "pr"), func() {
 		toolName := fmt.Sprintf("%shello_world", prefix)
 
 		By("Initializing with elicitation capability")

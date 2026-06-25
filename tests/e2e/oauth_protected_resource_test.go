@@ -30,7 +30,7 @@ var _ = Describe("OAuth Protected Resource via CRD", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[Happy] serves oauth-protected-resource metadata from CRD config and reverts to defaults after removal", func() {
+	It("[Happy] serves oauth-protected-resource metadata from CRD config and reverts to defaults after removal", Label("core", "pr"), func() {
 		By("Capturing deployment generation before patching")
 		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, deploymentName)
 		Expect(err).NotTo(HaveOccurred())
