@@ -458,8 +458,13 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request, req rpcReq
 		flusher.Flush()
 	}
 
-	// initial task event, then three working updates, then terminal state
+	// initial task event, a raw SSE keepalive comment, then three working
+	// updates and a terminal state. the keepalive (a non-data: line) must pass
+	// through the gateway's data:-only rewriter untouched without being parsed
+	// as JSON.
 	send(t)
+	fmt.Fprint(w, ": ping\n\n")
+	flusher.Flush()
 	for i := 0; i < 3; i++ {
 		time.Sleep(s.streamDelay)
 		send(statusUpdateEvent{
