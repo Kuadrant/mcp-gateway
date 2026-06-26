@@ -11,11 +11,17 @@
 //
 // Every completed task carries an "echo" artifact with the message text
 // and a "request-info" artifact with the received HTTP headers so tests
-// can assert on what the server actually saw.
+// can assert on what the server actually saw. Text containing "large" (or
+// "image") additionally attaches a FilePart artifact with a deterministic
+// base64 payload of ARTIFACT_BYTES bytes (default 1 MiB); on message/stream
+// it is delivered as chunked artifact-update events (append/lastChunk) so the
+// gateway's SSE passthrough is exercised on a heavy multi-modal payload it must
+// forward without decoding.
 package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -66,6 +72,13 @@ type part struct {
 	Kind string         `json:"kind"`
 	Text string         `json:"text,omitempty"`
 	Data map[string]any `json:"data,omitempty"`
+	File *fileContent   `json:"file,omitempty"`
+}
+
+type fileContent struct {
+	Name     string `json:"name,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+	Bytes    string `json:"bytes,omitempty"` // base64-encoded
 }
 
 type message struct {
@@ -102,6 +115,15 @@ type statusUpdateEvent struct {
 	Status    taskStatus `json:"status"`
 	Final     bool       `json:"final"`
 	Kind      string     `json:"kind"`
+}
+
+type artifactUpdateEvent struct {
+	TaskID    string   `json:"taskId"`
+	ContextID string   `json:"contextId"`
+	Artifact  artifact `json:"artifact"`
+	Append    bool     `json:"append"`
+	LastChunk bool     `json:"lastChunk"`
+	Kind      string   `json:"kind"`
 }
 
 // json-rpc envelope
@@ -325,7 +347,7 @@ func (s *server) createTask(r *http.Request, msg message) *task {
 func (s *server) buildArtifacts(taskID, text string, r *http.Request) []artifact {
 	info := headersData(r)
 	info["taskId"] = taskID
-	return []artifact{
+	arts := []artifact{
 		{
 			ArtifactID: newID("a2a-artifact-"),
 			Name:       "echo",
@@ -336,6 +358,50 @@ func (s *server) buildArtifacts(taskID, text string, r *http.Request) []artifact
 			Name:       "request-info",
 			Parts:      []part{{Kind: "data", Data: info}},
 		},
+	}
+	// heavy multi-modal payload as a single large FilePart, so the non-streaming
+	// (buffered) rewrite path is exercised on a big base64 blob.
+	if wantsFile(text) {
+		arts = append(arts, fileArtifact(deterministicB64(fileArtifactBytes())))
+	}
+	return arts
+}
+
+func wantsFile(text string) bool {
+	return strings.Contains(text, "large") || strings.Contains(text, "image")
+}
+
+// fileArtifactBytes is the decoded size of the FilePart payload, configurable
+// via ARTIFACT_BYTES (default 1 MiB). Size it past a naive buffer limit so a
+// passthrough that streams survives where one that buffers/decodes would not.
+func fileArtifactBytes() int {
+	if v := os.Getenv("ARTIFACT_BYTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1 << 20
+}
+
+// deterministicB64 returns the base64 of n deterministic bytes, so an e2e test
+// can regenerate the exact payload and assert the gateway forwarded it
+// byte-for-byte without decoding it.
+func deterministicB64(n int) string {
+	raw := make([]byte, n)
+	for i := range raw {
+		raw[i] = byte(i % 251) // 251 is prime, avoids byte-alignment patterns
+	}
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func fileArtifact(b64 string) artifact {
+	return artifact{
+		ArtifactID: newID("a2a-artifact-"),
+		Name:       "payload",
+		Parts: []part{{
+			Kind: "file",
+			File: &fileContent{Name: "payload.bin", MimeType: "application/octet-stream", Bytes: b64},
+		}},
 	}
 }
 
@@ -415,6 +481,15 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request, req rpcReq
 		t.Artifacts = s.buildArtifacts(t.ID, text, r)
 	}
 	s.mu.Unlock()
+
+	// stream the heavy FilePart as chunked artifact-update events so the gateway
+	// rewrites the task ID in each event envelope while the base64 passes through
+	// untouched (chunks split mid-base64 on purpose: a decoder would choke, a
+	// passthrough won't).
+	if final == stateCompleted && wantsFile(text) {
+		streamFileArtifact(send, t, deterministicB64(fileArtifactBytes()))
+	}
+
 	send(statusUpdateEvent{
 		TaskID:    t.ID,
 		ContextID: t.ContextID,
@@ -422,6 +497,34 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request, req rpcReq
 		Final:     true,
 		Kind:      "status-update",
 	})
+}
+
+func streamFileArtifact(send func(any), t *task, b64 string) {
+	const chunks = 3
+	artID := newID("a2a-artifact-")
+	size := (len(b64) + chunks - 1) / chunks
+	for i := 0; i < chunks; i++ {
+		start := i * size
+		end := start + size
+		if end > len(b64) {
+			end = len(b64)
+		}
+		send(artifactUpdateEvent{
+			TaskID:    t.ID,
+			ContextID: t.ContextID,
+			Artifact: artifact{
+				ArtifactID: artID,
+				Name:       "payload",
+				Parts: []part{{
+					Kind: "file",
+					File: &fileContent{Name: "payload.bin", MimeType: "application/octet-stream", Bytes: b64[start:end]},
+				}},
+			},
+			Append:    i > 0,
+			LastChunk: i == chunks-1,
+			Kind:      "artifact-update",
+		})
+	}
 }
 
 func (s *server) handleGet(w http.ResponseWriter, req rpcRequest) {
