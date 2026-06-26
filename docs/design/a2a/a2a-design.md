@@ -53,8 +53,9 @@ All existing MCP behaviour is unchanged. A2A support is entirely additive.
   is the longer-term architectural direction.
 - Webhook-based push notifications for async task completion callbacks. Polling via `tasks/get` is
   in scope; push is not.
-- Skill-level JWT filtering (the A2A analog of `x-mcp-authorized` capability filtering). The
-  architecture supports this as a future addition; it is not in scope for this term.
+- Skill-level JWT filtering (`x-a2a-authorized`) as an enforced capability in the PoC. The mechanism
+  is designed in [Policy Enforcement](#policy-enforcement) and deferred to post-PoC; note it is a
+  discovery/visibility control, not an access boundary — the enforceable unit is the agent.
 - Supporting A2A spec versions other than v0.3.0.
 
 ## Job Stories
@@ -448,6 +449,96 @@ webhook is required. **[OPEN: flat `/a2a/{prefix}` vs namespace-qualified `/a2a/
 — recommend the latter; pending mentor confirm. Related: the cross-namespace `targetRef` issue filed
 against MCP core, which this design must not inherit.]**
 
+## Policy Enforcement
+
+A2A's primary justification is that inter-agent traffic flows through the same Kuadrant policy plane as
+MCP — authentication, authorization, rate limiting, observability — instead of agent-to-agent calls
+bypassing the gateway. All A2A traffic transits the `/a2a` HTTPRoute, so every Kuadrant policy that
+attaches to a Gateway listener or HTTPRoute applies unchanged. Enforcement needs **no gateway code** —
+it is Kubernetes resource configuration.
+
+### Authentication and per-agent authorization (AuthPolicy)
+
+An operator attaches an `AuthPolicy` as for MCP (`config/e2e/auth/mcps-auth-policy.yaml`).
+Authentication validates the OAuth2/OIDC bearer; authorization enforces **per-agent** RBAC using the
+router-set `x-a2a-agent` header, analogous to MCP's per-tool check on `x-mcp-toolname`:
+
+```yaml
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: a2a-auth-policy
+  namespace: gateway-system
+spec:
+  targetRef:                      # target the named `a2a` rule to scope strictly to A2A traffic
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-gateway-route
+    sectionName: a2a
+  rules:
+    authentication:
+      keycloak:
+        jwt:
+          issuerUrl: https://keycloak.example.com/realms/agents
+    authorization:
+      agent-access-check:
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-a2a-agent')"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('agent:' + request.headers['x-a2a-agent']) in
+                (has(auth.identity.resource_access) ? auth.identity.resource_access['a2a'].roles : [])
+```
+
+**Filter ordering.** ext_proc runs before Authorino (the EnvoyFilter inserts ext_proc `INSERT_FIRST`),
+so the router sets `x-a2a-agent` at the `RequestHeaders` phase — from the immutable `:path`, before the
+body is read — and Authorino reads it for the per-agent decision (the same ordering MCP relies on for
+`x-mcp-toolname`, see `docs/design/security-architecture.md`). `x-a2a-agent` is router-derived and
+stripped from client input (HTTPRoute `RequestHeaderModifier` + `internalOnlyHeaders`), so a client
+cannot forge it to reach an unauthorized agent. Token exchange (RFC 8693) is available identically to
+MCP. Per-agent policies can also attach to each agent's own HTTPRoute (`targetRef`), enforced on the
+`:authority`-rewritten second hop — mirroring MCP's per-server AuthPolicy.
+
+### Skill-level filtering (`x-a2a-authorized`) — visibility, not authorization
+
+Mirroring MCP's `x-mcp-authorized` tool filtering (`internal/broker/filtered_tools_handler.go`),
+Authorino can sign an `x-a2a-authorized` JWT whose `allowed-capabilities` claim carries a `skills` map,
+and the broker filters the served Agent Card's `skills[]` to the allowed set (the A2A analog of the MCP
+`tools` shape):
+
+```jsonc
+{ "skills": { "weather": ["get_forecast", "get_alerts"] } }
+```
+
+The broker verifies the ES256 signature with the trusted-headers public key (reusing `validateJWTHeader`)
+and, in `ServeAgentCard()`, drops any skill not listed for that agent before rewriting the card `url`.
+
+> **This is a discovery/visibility control, NOT an access-control boundary.** A2A `message/send` carries
+> **no skill** (v0.3.0 §7.1.1) — the client sends message parts and the agent decides what to do — so
+> there is no per-skill invocation for the gateway to authorize. A client authorized to reach an agent
+> (per the AuthPolicy above) can request any work that agent performs, regardless of which skills the
+> card advertised. This is the same property already documented for MCP (`MCPVirtualServer` hides tools
+> from listing but does not prevent calling — `docs/design/security-architecture.md`), and it is sharper
+> for A2A because skills are never named in the protocol. **The enforceable unit for A2A is the agent,
+> not the skill.** Therefore skill filtering in A2A is strictly a visibility/discovery concern, not an
+> access-control mechanism; the enforceable authorization boundary for A2A remains at the agent level
+> (`/a2a/{prefix}`) via Kuadrant AuthPolicy. Skill filtering itself is a post-PoC discovery convenience.
+
+### RateLimitPolicy
+
+A `RateLimitPolicy` on the `/a2a` route throttles abuse with no gateway code (Limitador enforces before
+ext_proc). Useful dimensions: the `x-a2a-method` header (rate `message/stream`/`tasks/resubscribe` —
+long-lived streams — more strictly than `tasks/get` polls) and the authenticated principal (counter
+qualifier on `auth.identity.sub`).
+
+### Observability
+
+A2A routing emits OpenTelemetry spans on the same tracer as MCP — a router span per request
+(`x-a2a-method`, agent prefix, gateway task ID), a broker span on agent-card fetch/refresh, and
+task-store operations — while Authorino and Limitador export their own auth/rate-limit decision metrics.
+A2A-specific Prometheus metrics are in [Future Considerations](#future-considerations).
+
 ## Relationship to Existing Approaches
 
 A2A support is entirely additive. The `/mcp` path, all MCP request handling, all existing
@@ -471,10 +562,9 @@ Redis A2A task entries expire naturally via their TTLs.
 
 ## Future Considerations
 
-**Skill-level JWT filtering.** The `x-mcp-authorized` JWT filtering pattern in
-`filtered_tools_handler.go` extends naturally to A2A: an `x-a2a-authorized` header with an
-`allowed-capabilities` claim containing a `skills` key. `ServeAgentCard()` would filter the
-returned skills to only those the client is authorized to invoke.
+**Skill-level JWT filtering.** Designed in [Policy Enforcement](#policy-enforcement) (`x-a2a-authorized`
+with `allowed-capabilities.skills`, filtered by `ServeAgentCard()`); deferred to post-PoC. Reminder:
+it is visibility-only — the agent, not the skill, is the access boundary.
 
 **A2A-specific Prometheus metrics.** Following the OTel metrics pattern from PR #1044:
 `a2a.router.task.routing` (counter), `a2a.broker.agent_card.fetch.duration` (histogram),

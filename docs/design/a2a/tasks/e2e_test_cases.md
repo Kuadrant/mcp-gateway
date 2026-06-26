@@ -96,6 +96,25 @@ the `:path` prefix, not on the injected header.
 
 ---
 
+### [A2ASecurity] AuthPolicy denies a client lacking the agent role
+
+When an AuthPolicy with per-agent RBAC is attached to the `/a2a` route and a client presents a valid
+bearer whose `resource_access['a2a'].roles` does not include `agent:{prefix}`, Authorino should return
+403 (using the router-set `x-a2a-agent` header) before the request reaches the upstream agent. A client
+whose token includes the role is routed normally.
+
+---
+
+### [A2A] Agent Card skills are filtered by x-a2a-authorized (visibility, not enforcement)
+
+When Authorino signs an `x-a2a-authorized` header with `allowed-capabilities.skills` listing a subset
+of an agent's skills, `GET /a2a/{prefix}/.well-known/agent-card.json` returns a card containing only the
+listed skills. With no `x-a2a-authorized` header (enforcement off), the full card is returned; a
+tampered/unsigned header is rejected (fail closed). Note this controls card visibility only — it does
+not block `message/send` to the agent.
+
+---
+
 ### [A2A] MCP tools/list and tools/call are unaffected by A2A changes
 
 When A2A support is fully deployed (agents registered, broker serving `/.well-known/api-catalog`,
