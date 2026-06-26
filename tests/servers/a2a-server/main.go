@@ -17,6 +17,11 @@
 // it is delivered as chunked artifact-update events (append/lastChunk) so the
 // gateway's SSE passthrough is exercised on a heavy multi-modal payload it must
 // forward without decoding.
+//
+// AUTH_MODE makes the card auth-aware and enforces it: "apikey" declares an
+// apiKey scheme and requires X-API-Key (API_KEY) on the card fetch and /a2a;
+// "bearer" declares an oauth2 scheme and requires Authorization: Bearer on /a2a;
+// "none" (default) leaves the agent open.
 package main
 
 import (
@@ -45,16 +50,18 @@ const (
 // a2a protocol types, subset of the v0.3.0 spec
 
 type agentCard struct {
-	ProtocolVersion    string            `json:"protocolVersion"`
-	Name               string            `json:"name"`
-	Description        string            `json:"description"`
-	URL                string            `json:"url"`
-	PreferredTransport string            `json:"preferredTransport"`
-	Version            string            `json:"version"`
-	Capabilities       agentCapabilities `json:"capabilities"`
-	DefaultInputModes  []string          `json:"defaultInputModes"`
-	DefaultOutputModes []string          `json:"defaultOutputModes"`
-	Skills             []agentSkill      `json:"skills"`
+	ProtocolVersion    string                    `json:"protocolVersion"`
+	Name               string                    `json:"name"`
+	Description        string                    `json:"description"`
+	URL                string                    `json:"url"`
+	PreferredTransport string                    `json:"preferredTransport"`
+	Version            string                    `json:"version"`
+	Capabilities       agentCapabilities         `json:"capabilities"`
+	DefaultInputModes  []string                  `json:"defaultInputModes"`
+	DefaultOutputModes []string                  `json:"defaultOutputModes"`
+	Skills             []agentSkill              `json:"skills"`
+	Security           []map[string][]string     `json:"security,omitempty"`
+	SecuritySchemes    map[string]securityScheme `json:"securitySchemes,omitempty"`
 }
 
 type agentCapabilities struct {
@@ -66,6 +73,22 @@ type agentSkill struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`
+}
+
+type securityScheme struct {
+	Type  string      `json:"type"`           // "apiKey" | "oauth2"
+	In    string      `json:"in,omitempty"`   // apiKey: "header"
+	Name  string      `json:"name,omitempty"` // apiKey: header name
+	Flows *oauthFlows `json:"flows,omitempty"`
+}
+
+type oauthFlows struct {
+	ClientCredentials *oauthFlow `json:"clientCredentials,omitempty"`
+}
+
+type oauthFlow struct {
+	TokenURL string            `json:"tokenUrl,omitempty"`
+	Scopes   map[string]string `json:"scopes,omitempty"`
 }
 
 type part struct {
@@ -202,7 +225,7 @@ func buildCard() agentCard {
 			Tags:        []string{"test"},
 		})
 	}
-	return agentCard{
+	card := agentCard{
 		ProtocolVersion:    "0.3.0",
 		Name:               envDefault("AGENT_NAME", "a2a-test-agent"),
 		Description:        envDefault("AGENT_DESCRIPTION", "A2A test agent for e2e tests"),
@@ -214,6 +237,25 @@ func buildCard() agentCard {
 		DefaultOutputModes: []string{"text/plain"},
 		Skills:             skills,
 	}
+	// AUTH_MODE makes the card self-describing; the same mode is enforced at the
+	// endpoints, so a card that declares auth actually rejects unauthenticated
+	// requests (otherwise the gateway's auth brokering would go untested).
+	switch authMode() {
+	case "apikey":
+		card.SecuritySchemes = map[string]securityScheme{
+			"apiKey": {Type: "apiKey", In: "header", Name: "X-API-Key"},
+		}
+		card.Security = []map[string][]string{{"apiKey": {}}}
+	case "bearer", "oauth2":
+		card.SecuritySchemes = map[string]securityScheme{
+			"oauth2": {Type: "oauth2", Flows: &oauthFlows{ClientCredentials: &oauthFlow{
+				TokenURL: envDefault("OAUTH_TOKEN_URL", "https://issuer.example.com/token"),
+				Scopes:   map[string]string{"a2a": "invoke A2A tasks"},
+			}}},
+		}
+		card.Security = []map[string][]string{{"oauth2": {"a2a"}}}
+	}
+	return card
 }
 
 func messageText(m message) string {
@@ -238,9 +280,40 @@ func now() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+func authMode() string { return strings.ToLower(envDefault("AUTH_MODE", "none")) }
+
+func apiKey() string { return envDefault("API_KEY", "test-api-key") }
+
+// authorized enforces transport-level auth on /a2a per AUTH_MODE.
+func authorized(r *http.Request) bool {
+	switch authMode() {
+	case "apikey":
+		return r.Header.Get("X-API-Key") == apiKey()
+	case "bearer", "oauth2":
+		return strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+	default:
+		return true
+	}
+}
+
+func writeUnauthorized(w http.ResponseWriter) {
+	scheme := "Bearer"
+	if authMode() == "apikey" {
+		scheme = "ApiKey"
+	}
+	w.Header().Set("WWW-Authenticate", scheme)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
 func (s *server) serveCard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// apikey agents protect the card fetch too, so the broker must present its
+	// credentialRef to discover the card (the only place credentialRef is testable).
+	if authMode() == "apikey" && r.Header.Get("X-API-Key") != apiKey() {
+		writeUnauthorized(w)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -265,6 +338,10 @@ func writeRPCError(w http.ResponseWriter, id any, code int, msg string) {
 func (s *server) handleA2A(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !authorized(r) {
+		writeUnauthorized(w)
 		return
 	}
 	var req rpcRequest
