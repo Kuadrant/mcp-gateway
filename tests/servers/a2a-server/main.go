@@ -454,7 +454,6 @@ func (s *server) createTask(r *http.Request, msg message) *task {
 		t.Status.State = stateFailed
 	case strings.Contains(text, "slow"):
 		t.Status.State = stateWorking
-		go s.completeLater(t.ID, text, r)
 	default:
 		t.Artifacts = s.buildArtifacts(t.ID, text, r)
 	}
@@ -462,6 +461,11 @@ func (s *server) createTask(r *http.Request, msg message) *task {
 	s.mu.Lock()
 	s.tasks[t.ID] = t
 	s.mu.Unlock()
+	// spawn background completion only after the task is in the map, so the
+	// goroutine's lookup can't race ahead of the insert and drop the task.
+	if t.Status.State == stateWorking {
+		go s.completeLater(t.ID, text, r)
+	}
 	return t
 }
 
