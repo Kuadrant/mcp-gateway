@@ -217,6 +217,14 @@ func (s *server) sweep() {
 	s.mu.Unlock()
 }
 
+// snapshot returns a copy of the task taken under the lock, so a handler can
+// encode it without racing concurrent mutation (e.g. completeLater).
+func (s *server) snapshot(t *task) task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return *t
+}
+
 func newID(prefix string) string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -409,21 +417,23 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request, req rpcReque
 	if params.Message.TaskID != "" {
 		s.mu.Lock()
 		t, ok := s.tasks[params.Message.TaskID]
+		var snap task
 		if ok {
 			params.Message.ContextID = t.ContextID
 			t.History = append(t.History, params.Message)
+			snap = *t
 		}
 		s.mu.Unlock()
 		if !ok {
 			writeRPCError(w, req.ID, -32001, "task not found")
 			return
 		}
-		writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: t})
+		writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: snap})
 		return
 	}
 
 	t := s.createTask(r, params.Message)
-	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: t})
+	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: s.snapshot(t)})
 }
 
 func (s *server) createTask(r *http.Request, msg message) *task {
@@ -574,7 +584,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request, req rpcReq
 	// updates and a terminal state. the keepalive (a non-data: line) must pass
 	// through the gateway's data:-only rewriter untouched without being parsed
 	// as JSON.
-	send(t)
+	send(s.snapshot(t))
 	fmt.Fprint(w, ": ping\n\n")
 	flusher.Flush()
 	for i := 0; i < 3; i++ {
@@ -677,23 +687,22 @@ func (s *server) handleResubscribe(w http.ResponseWriter, req rpcRequest) {
 		flusher.Flush()
 	}
 
-	// reconnect: replay the current task state. tasks/resubscribe is a streaming
-	// method, so an already-terminal task still gets an SSE final event, not a
-	// buffered response. a still-working task gets a couple of working updates
-	// and then the terminal event; the loop is bounded so it cannot hang if the
-	// background completion never fires.
-	send(t)
-	s.mu.Lock()
-	working := !isTerminal(t.Status.State)
-	s.mu.Unlock()
-	for i := 0; working && i < 2; i++ {
-		time.Sleep(s.streamDelay)
+	// reconnect: replay the current task state, then observe the task to its
+	// terminal state (driven by completeLater) and replay the final event.
+	// tasks/resubscribe is a streaming method, so even an already-terminal task
+	// gets an SSE final event rather than a buffered response. resubscribe only
+	// observes — it never mutates the task — so it cannot suppress the artifacts
+	// completeLater attaches; the poll is bounded so it cannot hang.
+	send(s.snapshot(t))
+	var state string
+	for i := 0; i < 30; i++ {
 		s.mu.Lock()
-		working = !isTerminal(t.Status.State)
+		state = t.Status.State
 		s.mu.Unlock()
-		if !working {
+		if isTerminal(state) {
 			break
 		}
+		time.Sleep(s.streamDelay)
 		send(statusUpdateEvent{
 			TaskID:    t.ID,
 			ContextID: t.ContextID,
@@ -702,16 +711,13 @@ func (s *server) handleResubscribe(w http.ResponseWriter, req rpcRequest) {
 		})
 	}
 	s.mu.Lock()
-	if !isTerminal(t.Status.State) {
-		t.Status = taskStatus{State: stateCompleted, Timestamp: now()}
-	}
-	finalState := t.Status.State
+	state = t.Status.State
 	s.mu.Unlock()
 	send(statusUpdateEvent{
 		TaskID:    t.ID,
 		ContextID: t.ContextID,
-		Status:    taskStatus{State: finalState, Timestamp: now()},
-		Final:     true,
+		Status:    taskStatus{State: state, Timestamp: now()},
+		Final:     isTerminal(state),
 		Kind:      "status-update",
 	})
 }
@@ -724,12 +730,16 @@ func (s *server) handleGet(w http.ResponseWriter, req rpcRequest) {
 	}
 	s.mu.Lock()
 	t, ok := s.tasks[params.ID]
+	var snap task
+	if ok {
+		snap = *t
+	}
 	s.mu.Unlock()
 	if !ok {
 		writeRPCError(w, req.ID, -32001, "task not found")
 		return
 	}
-	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: t})
+	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: snap})
 }
 
 func isTerminal(state string) bool {
@@ -755,12 +765,16 @@ func (s *server) handleCancel(w http.ResponseWriter, req rpcRequest) {
 		writeRPCError(w, req.ID, -32002, "task cannot be canceled")
 		return
 	}
+	var snap task
+	if ok {
+		snap = *t
+	}
 	s.mu.Unlock()
 	if !ok {
 		writeRPCError(w, req.ID, -32001, "task not found")
 		return
 	}
-	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: t})
+	writeRPC(w, http.StatusOK, rpcResponse{ID: req.ID, Result: snap})
 }
 
 func main() {
