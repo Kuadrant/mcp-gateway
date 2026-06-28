@@ -668,6 +668,7 @@ func (man *MCPManager) recordBackendError(span trace.Span, err error) {
 		attribute.String("mcp.server", man.mcp.GetName()),
 	)
 }
+
 // SetStatusForTesting sets the status directly for testing purposes.
 // This bypasses the normal status update flow and should only be used in tests.
 func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
