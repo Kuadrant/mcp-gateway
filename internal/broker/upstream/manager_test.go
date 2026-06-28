@@ -1109,8 +1109,8 @@ func TestServerToolsManagement(t *testing.T) {
 			// Verify serverTools
 			manager.toolsLock.RLock()
 			serverToolNames := make([]string, len(manager.tools.serverItems))
-			for i, st := range manager.tools.serverItems {
-				serverToolNames[i] = st.Tool.Name
+			for i := range manager.tools.serverItems {
+				serverToolNames[i] = manager.tools.serverItems[i].Tool.Name
 			}
 			manager.toolsLock.RUnlock()
 
