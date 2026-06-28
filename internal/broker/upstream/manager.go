@@ -533,6 +533,11 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.InvalidToolList = invalidTools
 	man.status.InvalidPrompts = len(invalidPrompts)
 	man.status.InvalidPromptList = invalidPrompts
+	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: mcp.LATEST_PROTOCOL_VERSION}
+	if info := man.mcp.ProtocolInfo(); info != nil {
+		man.status.ProtocolValidation.IsValid = true
+		man.status.ProtocolValidation.SupportedVersion = info.ProtocolVersion
+	}
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
@@ -542,12 +547,6 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
-	// always report the version we expect; fill in the negotiated version once it is known
-	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: mcp.LATEST_PROTOCOL_VERSION}
-	if info := man.mcp.ProtocolInfo(); info != nil {
-		man.status.ProtocolValidation.IsValid = true
-		man.status.ProtocolValidation.SupportedVersion = info.ProtocolVersion
-	}
 }
 
 func (man *MCPManager) resetBackoff() {
