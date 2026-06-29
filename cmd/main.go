@@ -136,10 +136,11 @@ func main() {
 	}
 
 	if err = (&controller.MCPVirtualServerReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		DirectAPIReader:    mgr.GetAPIReader(),
-		ConfigReaderWriter: &configReaderWriter,
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		DirectAPIReader:       mgr.GetAPIReader(),
+		ConfigReaderWriter:    &configReaderWriter,
+		MCPExtNamespaceLister: mcpExtFinderValidator,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
