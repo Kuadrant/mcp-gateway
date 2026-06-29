@@ -55,21 +55,12 @@ func init() {
 func main() {
 	var loglevel int
 	var logFormat string
-	flag.IntVar(&loglevel, "log-level", int(slog.LevelInfo), "log level: 0=info, 8=error, -4=debug")
+	flag.IntVar(&loglevel, "log-level", int(slog.LevelInfo), "log level: 0=info, 4=warn, 8=error, -4=debug")
 	flag.StringVar(&logFormat, "log-format", "txt", "log format: txt or json")
 	flag.Parse()
 
-	loggerOpts := &slog.HandlerOptions{}
-	switch loglevel {
-	case 0:
-		loggerOpts.Level = slog.LevelInfo
-	case 8:
-		loggerOpts.Level = slog.LevelError
-	case -4:
-		loggerOpts.Level = slog.LevelDebug
-	default:
-		loggerOpts.Level = slog.LevelDebug
-	}
+	// flag value is a raw slog.Level (info=0, warn=4, error=8, debug=-4)
+	loggerOpts := &slog.HandlerOptions{Level: slog.Level(loglevel)}
 
 	var slogger *slog.Logger
 	if logFormat == "json" {

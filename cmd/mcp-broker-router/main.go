@@ -172,16 +172,8 @@ func parseFlags() *app {
 
 func (a *app) setupLogger() (*slog.HandlerOptions, bool) {
 	opts := &slog.HandlerOptions{}
-	switch a.brokerCfg.logLevel {
-	case 0:
-		opts.Level = slog.LevelInfo
-	case 8:
-		opts.Level = slog.LevelError
-	case -4:
-		opts.Level = slog.LevelDebug
-	default:
-		opts.Level = slog.LevelDebug
-	}
+	// flag value is a raw slog.Level (info=0, warn=4, error=8, debug=-4)
+	opts.Level = slog.Level(a.brokerCfg.logLevel)
 
 	jsonFormat := a.brokerCfg.logFormat == "json"
 	a.logger = mcpotel.NewTracingLogger(os.Stdout, opts, jsonFormat, nil)
