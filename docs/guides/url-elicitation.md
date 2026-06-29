@@ -142,7 +142,7 @@ JWT tokens are also checked for expiry before use — an expired JWT is treated 
 - **CSRF protection**: The token page uses a cookie-based CSRF token. The GET response sets a `csrf` cookie and includes a matching hidden form field. The POST handler validates that the cookie and form values match, preventing cross-site form submissions.
 - **Single-use entries**: Each elicitation ID can only be claimed once — submitting the form consumes the entry, providing anti-replay protection.
 
-> **Note:** The MCP specification includes a [phishing warning](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/elicitation) about URL elicitation. Ensure your users understand they should only enter tokens on URLs they trust.
+> **Note:** The MCP specification includes a [phishing warning](https://modelcontextprotocol.io/specification/draft/client/elicitation) about URL elicitation. Ensure your users understand they should only enter tokens on URLs they trust.
 
 ## Next Steps
 
