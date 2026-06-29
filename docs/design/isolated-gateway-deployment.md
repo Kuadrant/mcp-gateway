@@ -33,7 +33,7 @@ To support this deployment model and inform the controller of the expected state
 
 This resource signals to the controller that any MCP configuration built from MCPServerRegistrations targeting HTTPRoutes attached to that gateway should be placed in the well-known secret within the same namespace as the MCPGatewayExtension resource.
 
-The MCPGatewayExtension can target Gateway API `Gateway` resources in any namespace. To ensure cross-namespace targeting is authorized, the requirement of a [ReferenceGrant](https://gateway-api.sigs.k8s.io/api-types/referencegrant/) in the targeted gateway's namespace will be enforced unless the MCPGatewayExtension resource is in the same namespace as the Gateway (see diagram below).
+The MCPGatewayExtension can target Gateway API `Gateway` resources in any namespace. To ensure cross-namespace targeting is authorized, the requirement of a [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) in the targeted gateway's namespace will be enforced unless the MCPGatewayExtension resource is in the same namespace as the Gateway (see diagram below).
 
 **Example Resources:**
 
