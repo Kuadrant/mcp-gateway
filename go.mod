@@ -8,6 +8,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-logr/logr v1.4.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.53.0
 	github.com/onsi/ginkgo/v2 v2.28.1
@@ -29,7 +30,7 @@ require (
 	golang.org/x/sync v0.20.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
-	istio.io/api v1.29.0
+	istio.io/api v1.30.2
 	istio.io/client-go v1.29.0
 	k8s.io/api v0.35.2
 	k8s.io/apimachinery v0.35.2
@@ -69,7 +70,6 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
