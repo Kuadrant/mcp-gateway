@@ -50,6 +50,19 @@ impact and time-sensitivity:
 [GitHub milestones]:https://github.com/Kuadrant/mcp-gateway/milestones
 [GitHub project boards]:https://github.com/orgs/Kuadrant/projects/27/views/1
 
+### Limits for non-maintainer contributors
+
+To keep the issue backlog manageable, contributors who are not maintainers are
+subject to the following limits:
+
+**Issues:** At most 2 open, untriaged issues at any time. You may open
+additional issues once an existing one is closed or has been triaged (assigned
+to a milestone) by the team.
+
+**Pull requests:** At most 1 open PR and 1 open draft PR at any time. PRs
+beyond this limit will be closed. Please prioritise and submit only your most
+important work.
+
 ### Triage
 
 We have some light automation and process around triaging issues. This process
