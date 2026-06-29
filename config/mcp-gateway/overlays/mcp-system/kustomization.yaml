@@ -23,14 +23,3 @@ patches:
       - op: replace
         path: /subjects/0/namespace
         value: mcp-system
-
-  # patch HTTPRoute with correct hostname
-  - target:
-      group: gateway.networking.k8s.io
-      version: v1
-      kind: HTTPRoute
-      name: mcp-gateway-route
-    patch: |-
-      - op: replace
-        path: /spec/hostnames/0
-        value: mcp.127-0-0-1.sslip.io
