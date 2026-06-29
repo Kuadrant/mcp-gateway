@@ -58,11 +58,11 @@ var managedEnvVarNames = []string{
 
 func brokerRouterLabels() map[string]string {
 	return map[string]string{
-		labelAppName:   brokerRouterName,
-		labelManagedBy: labelManagedByValue,
+		labelAppName:                  brokerRouterName,
+		labelManagedBy:                labelManagedByValue,
+		"app.kubernetes.io/component": "broker",
 	}
 }
-
 func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost, internalHost string) *appsv1.Deployment {
 	labels := brokerRouterLabels()
 	replicas := int32(1)
