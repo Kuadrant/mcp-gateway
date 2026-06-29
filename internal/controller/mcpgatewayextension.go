@@ -115,6 +115,24 @@ type MCPGatewayExtensionFinderValidator interface {
 	FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1alpha1.MCPGatewayExtension, error)
 }
 
+// ListMCPGatewayExtensionNamespaces returns the namespace of every active MCPGatewayExtension.
+// VirtualServer config must be written to all of them so every gateway instance receives the
+// full virtual server list regardless of which namespace the MCPVirtualServer lives in.
+func (r *MCPGatewayExtensionValidator) ListMCPGatewayExtensionNamespaces(ctx context.Context) ([]string, error) {
+	list := &mcpv1alpha1.MCPGatewayExtensionList{}
+	if err := r.List(ctx, list); err != nil {
+		return nil, fmt.Errorf("failed to list MCPGatewayExtensions: %w", err)
+	}
+	namespaces := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		namespaces = append(namespaces, list.Items[i].Namespace)
+	}
+	return namespaces, nil
+}
+
 // httpRouteAttachesToListener checks whether an HTTPRoute is attached to the listener
 // targeted by an MCPGatewayExtension. An HTTPRoute attaches to a listener if:
 //  1. The HTTPRoute parentRef has a sectionName that resolves to a listener sharing

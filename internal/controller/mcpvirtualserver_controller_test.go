@@ -16,17 +16,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// mockVirtualServerConfigReaderWriter records WriteVirtualServerConfig calls.
-type mockVirtualServerConfigReaderWriter struct {
-	writtenConfigs [][]config.VirtualServerConfig
+// fakeVSConfigWriter records WriteVirtualServerConfig calls for assertion.
+type fakeVSConfigWriter struct {
+	calls []vsWriteCall
 }
 
-func (m *mockVirtualServerConfigReaderWriter) WriteVirtualServerConfig(_ context.Context, virtualServers []config.VirtualServerConfig, _ types.NamespacedName) error {
-	m.writtenConfigs = append(m.writtenConfigs, virtualServers)
+type vsWriteCall struct {
+	namespaceName types.NamespacedName
+	configs       []config.VirtualServerConfig
+}
+
+func (f *fakeVSConfigWriter) WriteVirtualServerConfig(_ context.Context, virtualServers []config.VirtualServerConfig, nn types.NamespacedName) error {
+	f.calls = append(f.calls, vsWriteCall{namespaceName: nn, configs: virtualServers})
 	return nil
 }
 
-func newVirtualServerReconciler(mock *mockVirtualServerConfigReaderWriter, objs ...client.Object) *MCPVirtualServerReconciler {
+// fakeMCPExtLister returns a fixed set of MCPGatewayExtension namespaces.
+type fakeMCPExtLister struct {
+	namespaces []string
+}
+
+func (f *fakeMCPExtLister) ListMCPGatewayExtensionNamespaces(_ context.Context) ([]string, error) {
+	return f.namespaces, nil
+}
+
+func newVirtualServerReconciler(writer *fakeVSConfigWriter, lister *fakeMCPExtLister, objs ...client.Object) *MCPVirtualServerReconciler {
 	scheme := runtime.NewScheme()
 	_ = mcpv1alpha1.AddToScheme(scheme)
 
@@ -36,9 +50,59 @@ func newVirtualServerReconciler(mock *mockVirtualServerConfigReaderWriter, objs 
 		Build()
 
 	return &MCPVirtualServerReconciler{
-		Client:             fakeClient,
-		Scheme:             scheme,
-		ConfigReaderWriter: mock,
+		Client:                fakeClient,
+		Scheme:                scheme,
+		ConfigReaderWriter:    writer,
+		MCPExtNamespaceLister: lister,
+	}
+}
+
+func TestMCPVirtualServerReconciler_writesConfigToAllExtensionNamespaces(t *testing.T) {
+	writer := &fakeVSConfigWriter{}
+	lister := &fakeMCPExtLister{namespaces: []string{"team-a", "team-b"}}
+
+	r := &MCPVirtualServerReconciler{
+		ConfigReaderWriter:    writer,
+		MCPExtNamespaceLister: lister,
+	}
+
+	if err := r.writeVirtualServerConfig(context.Background(), nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(writer.calls) != 2 {
+		t.Fatalf("expected 2 writes, got %d", len(writer.calls))
+	}
+
+	namespaces := map[string]bool{}
+	for _, c := range writer.calls {
+		namespaces[c.namespaceName.Namespace] = true
+	}
+	if !namespaces["team-a"] {
+		t.Error("expected write to team-a namespace")
+	}
+	if !namespaces["team-b"] {
+		t.Error("expected write to team-b namespace")
+	}
+}
+
+func TestMCPVirtualServerReconciler_doesNotWriteToDefaultNamespace(t *testing.T) {
+	writer := &fakeVSConfigWriter{}
+	lister := &fakeMCPExtLister{namespaces: []string{"team-a"}}
+
+	r := &MCPVirtualServerReconciler{
+		ConfigReaderWriter:    writer,
+		MCPExtNamespaceLister: lister,
+	}
+
+	if err := r.writeVirtualServerConfig(context.Background(), nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range writer.calls {
+		if c.namespaceName == config.DefaultNamespaceName {
+			t.Errorf("wrote to hardcoded default namespace %v, should only write to MCPGatewayExtension namespaces", config.DefaultNamespaceName)
+		}
 	}
 }
 
@@ -47,7 +111,6 @@ func newVirtualServerReconciler(mock *mockVirtualServerConfigReaderWriter, objs 
 func TestReconcile_VirtualServerDeletion_WritesConfig(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
-	// the virtual server being deleted — has DeletionTimestamp and the finalizer
 	deleting := &mcpv1alpha1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "vs-deleting",
@@ -60,7 +123,6 @@ func TestReconcile_VirtualServerDeletion_WritesConfig(t *testing.T) {
 		},
 	}
 
-	// a second virtual server that should remain
 	remaining := &mcpv1alpha1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "vs-remaining",
@@ -71,25 +133,22 @@ func TestReconcile_VirtualServerDeletion_WritesConfig(t *testing.T) {
 		},
 	}
 
-	mock := &mockVirtualServerConfigReaderWriter{}
-	r := newVirtualServerReconciler(mock, deleting, remaining)
+	writer := &fakeVSConfigWriter{}
+	lister := &fakeMCPExtLister{namespaces: []string{"mcp-system"}}
+	r := newVirtualServerReconciler(writer, lister, deleting, remaining)
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "vs-deleting", Namespace: "ns"},
 	})
 	require.NoError(t, err)
 
-	// WriteVirtualServerConfig must have been called exactly once during deletion
-	require.Len(t, mock.writtenConfigs, 1, "expected WriteVirtualServerConfig to be called once during deletion")
+	require.Len(t, writer.calls, 1, "expected WriteVirtualServerConfig to be called once during deletion")
 
-	written := mock.writtenConfigs[0]
-
-	// the written config must not contain the deleted virtual server
+	written := writer.calls[0].configs
 	for _, vs := range written {
 		require.NotEqual(t, "ns/vs-deleting", vs.Name, "deleted virtual server must not appear in written config")
 	}
 
-	// the written config must still contain the surviving virtual server
 	found := false
 	for _, vs := range written {
 		if vs.Name == "ns/vs-remaining" {
@@ -117,14 +176,15 @@ func TestReconcile_VirtualServerDeletion_EmptyConfigWhenLast(t *testing.T) {
 		},
 	}
 
-	mock := &mockVirtualServerConfigReaderWriter{}
-	r := newVirtualServerReconciler(mock, last)
+	writer := &fakeVSConfigWriter{}
+	lister := &fakeMCPExtLister{namespaces: []string{"mcp-system"}}
+	r := newVirtualServerReconciler(writer, lister, last)
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "vs-last", Namespace: "ns"},
 	})
 	require.NoError(t, err)
 
-	require.Len(t, mock.writtenConfigs, 1, "expected WriteVirtualServerConfig to be called once during deletion")
-	require.Empty(t, mock.writtenConfigs[0], "config must be empty when the last virtual server is deleted")
+	require.Len(t, writer.calls, 1, "expected WriteVirtualServerConfig to be called once during deletion")
+	require.Empty(t, writer.calls[0].configs, "config must be empty when the last virtual server is deleted")
 }
