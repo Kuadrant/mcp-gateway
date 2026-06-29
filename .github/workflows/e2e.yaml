@@ -19,6 +19,8 @@ on:
       - 'examples/**'
       - 'LICENSE'
       - 'charts/**'
+  schedule:
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -26,12 +28,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e-tests:
+  # determine which suites to run based on labels and changed files
+  route:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # packages: read lets the baked CI node image probe see GITHUB_TOKEN-
-    # published ghcr packages, which default to private; pull-requests: read
-    # keeps the PR changed-files lookup in the detection step working
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    outputs:
+      suites: ${{ steps.router.outputs.suites }}
+      make_target: ${{ steps.router.outputs.make_target }}
+      suggestions: ${{ steps.router.outputs.suggestions }}
+      is_full: ${{ steps.router.outputs.is_full }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect PR labels
+        id: labels
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name).join(',');
+            core.setOutput('labels', labels);
+
+      - name: Collect changed files
+        id: changes
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const names = files.map(f => f.filename).join('\n');
+            core.setOutput('files', names);
+
+      - name: Route suites
+        id: router
+        env:
+          EVENT_TYPE: ${{ github.event_name }}
+          PR_LABELS: ${{ steps.labels.outputs.labels || '' }}
+          CHANGED_FILES: ${{ steps.changes.outputs.files || '' }}
+        run: bash build/suite-router.sh
+
+  e2e-tests:
+    needs: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: read
@@ -46,9 +93,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # test-images.yaml publishes test-server images to ghcr.io on merges to
-      # main but not from PRs, so runs with modified test-server sources must
-      # build the images locally instead of pulling stale ones
       - name: Determine test-server image source
         id: test-server-images
         env:
@@ -57,7 +101,6 @@ jobs:
           source=pull
           case "${{ github.event_name }}" in
             pull_request)
-              # previous_filename covers renames out of the watched paths
               if ! files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
                 echo "could not list PR files, building test servers locally"
                 source=build
@@ -85,20 +128,12 @@ jobs:
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "test-server image source: $source"
 
-      # ci-node-image.yaml bakes the e2e infra and test-server images into a
-      # kindest/node image tagged with a content hash of the version pins
-      # (utils/ci-node-image-hash.sh). on a hit the cluster boots from it and
-      # the test-server pulls are skipped; on a miss or probe failure this run
-      # uses stock kindest/node and the standard pull path. a locally-built
-      # test-server source always wins so PR changes are never masked.
       - name: Probe baked CI node image
         id: ci-node
         env:
           DETECTED_TEST_SERVER_SOURCE: ${{ steps.test-server-images.outputs.source }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
-          # any probe failure (including the hash computation) must fall back
-          # to stock kindest/node rather than fail the run
           hit=false
           if image="$(make -s print-ci-node-image 2>/dev/null)"; then
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
@@ -148,10 +183,6 @@ jobs:
           cache-from: type=gha,scope=controller-image
           cache-to: type=gha,mode=max,scope=controller-image
 
-      # create with the pinned bin/kind and node image so the make load
-      # targets (same bin/kind) can always load into the node's containerd;
-      # the runner-preinstalled kind's default node moved to a containerd
-      # config version the pinned bin/kind cannot load into
       - name: Create Kind cluster
         run: |
           if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
@@ -164,10 +195,120 @@ jobs:
         run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.ci-node.outputs.test-server-source }}
 
       - name: Run E2E tests
-        run: make test-e2e-ci
+        env:
+          E2E_MAKE_TARGET: ${{ needs.route.outputs.make_target }}
+          E2E_SUITES: ${{ needs.route.outputs.suites }}
+          E2E_IS_FULL: ${{ needs.route.outputs.is_full }}
+        run: |
+          echo "router decision: target=$E2E_MAKE_TARGET suites=$E2E_SUITES full=$E2E_IS_FULL"
+          if [ "$E2E_MAKE_TARGET" = "test-e2e-suite" ]; then
+            # run pr suite first, then each requested suite
+            make test-e2e-pr
+            for suite in $(echo "$E2E_SUITES" | tr -d '[]"' | tr ',' '\n'); do
+              [ "$suite" = "pr" ] && continue
+              [ -z "$suite" ] && continue
+              echo "--- running suite: $suite ---"
+              if [ "$suite" = "pr-extended" ]; then
+                make test-e2e-pr-extended
+              else
+                make test-e2e-suite SUITE="$suite"
+              fi
+            done
+          else
+            make "$E2E_MAKE_TARGET"
+          fi
 
       - name: Collect logs on failure
         if: failure()
         run: |
-          make ci-debug-logs
-          make ci-debug-test-servers-logs
+          make ci-debug-logs || true
+          make ci-debug-test-servers-logs || true
+
+  # post/update idempotent bot comment on PRs
+  bot-comment:
+    needs: [route, e2e-tests]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout (for known-suites.txt)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: build/known-suites.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Read known suites
+        id: known
+        run: |
+          list=$(sed 's/.*/`&`/' build/known-suites.txt | paste -sd, - | sed 's/,/, /g')
+          echo "suites=$list" >> "$GITHUB_OUTPUT"
+
+      - name: Post e2e suite comment
+        uses: actions/github-script@v7
+        env:
+          SUITES_RAN: ${{ needs.route.outputs.suites }}
+          SUGGESTIONS: ${{ needs.route.outputs.suggestions }}
+          E2E_RESULT: ${{ needs.e2e-tests.result }}
+          KNOWN_SUITES: ${{ steps.known.outputs.suites }}
+        with:
+          script: |
+            const marker = '<!-- e2e-suite-bot -->';
+            const suitesRan = process.env.SUITES_RAN || '["pr"]';
+            const suggestions = (process.env.SUGGESTIONS || '').split(',').filter(Boolean);
+            const result = process.env.E2E_RESULT || 'unknown';
+            const icon = result === 'success' ? ':white_check_mark:' : result === 'failure' ? ':x:' : ':hourglass:';
+            const knownSuites = process.env.KNOWN_SUITES;
+
+            let body = `${marker}\n### E2E suites\n\n`;
+            body += `${icon} The PR gate ran suites: \`${suitesRan}\` (${result})\n\n`;
+
+            if (suggestions.length > 0) {
+              body += `**Suggested additional suites** (based on changed files):\n`;
+              for (const s of suggestions) {
+                body += `- \`${s}\`\n`;
+              }
+              body += '\n';
+            }
+
+            body += `**Request additional coverage:**\n`;
+            body += '```\n';
+            body += '/test-e2e <suite>      # run a named suite\n';
+            body += '/test-e2e pr-extended   # broader coverage (~61 specs)\n';
+            body += '/test-e2e full          # all suites\n';
+            body += '```\n\n';
+
+            body += `**Available suites:** ${knownSuites}\n\n`;
+
+            body += `**Or apply labels:** \`e2e/<suite>\`, \`e2e/pr-extended\`, \`e2e/full\`\n\n`;
+
+            body += `> Some suites need extra infra (auth-policy, tls, multi-gateway) and are maintainer-triggered.\n`;
+
+            // find and update existing comment, or create new one
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+              });
+
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body,
+                });
+              }
+            } catch (err) {
+              core.info(`skipping bot comment on fork PR (insufficient permissions): ${err.message}`);
+            }

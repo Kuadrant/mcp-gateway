@@ -1,35 +1,24 @@
 # E2E Tests
 
-## Test tiers (PR gate vs nightly)
+## Functional Suites
 
-Specs carry bracket tags in their Ginkgo `It` titles. The PR gate (`make test-e2e-ci`) runs the
-whole suite **except** the slow tier 2 suites tagged `[Full]` (e.g. Redis persistence across pod
-restarts) and `[multi-gateway]` (deploys multiple gateways). The full suite runs via
-`make test-e2e-ci-full` from the nightly workflow and the `/test-e2e full` on-demand comment.
+Specs use Ginkgo `Label()` for suite membership. See [docs/ci.md](../../docs/ci.md) for the full suite reference, Make targets, CI commands, and labelling instructions.
 
-Untagged specs run on the PR gate by default; only tag a spec `[Full]` or `[multi-gateway]` to
-defer a genuinely slow or heavy suite to nightly. For a quick local happy-path run use
-`make test-e2e-happy`.
+## Test Patterns
 
-Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[Elicitation]`,
-`[Negative]`, `[URLElicitation]`, `[UserSpecificList]`, `[Security]`. Tags can combine, e.g.
-`[Happy,URLElicitation]`.
-
-## E2E Test Reliability
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)
 - Port-forwards target deployments directly: `deployment/mcp-gateway`
 - Tests clean up existing resources before creating to avoid conflicts
 - Structured JSON responses provide better debugging when tests fail
+- Test servers live in `tests/servers/` -- create new ones for specific scenarios
+- Test server images are built and pushed in `.github/workflows/test-images.yaml`
 
 ## Conformance Tests
-MCP conformance tests verify that the gateway correctly implements the Model Context Protocol specification. These tests are sourced from the official `@modelcontextprotocol/conformance` npm package maintained by Anthropic.
 
-## Useful test servers for inspecting responses
-
-Server1 and Server2 both offer tools for inspecting headers, which is useful for validating what was passed through to the backend MCP.
+MCP conformance tests verify the gateway correctly implements the Model Context Protocol specification. Tests are sourced from the official `@modelcontextprotocol/conformance` npm package maintained by Anthropic.
 
 **Test scenarios currently run in CI** (`.github/workflows/conformance.yaml`):
-- `server-initialize`: Server initialization handshake
+- `server-initialize`: Server initialisation handshake
 - `tools-list`: Tool listing and discovery
 - `tools-call-simple-text`: Simple text tool responses
 - `tools-call-image`: Image content in tool responses
@@ -58,7 +47,12 @@ npx @modelcontextprotocol/conformance server \
 2. Add new scenario blocks to `.github/workflows/conformance.yaml` under the "Run MCP conformance tests" step
 3. Each scenario runs as a separate `npx @modelcontextprotocol/conformance server --url ... --scenario <name>` command
 
+## Useful Test Servers
+
+Server1 and Server2 both offer tools for inspecting headers, which is useful for validating what was passed through to the backend MCP.
+
 ## Known Issues: Flaky E2E Tests
+
 **Problem**: Tests timeout waiting for broker to register servers due to:
 - ConfigMap volume mount sync delays (60-120s in Kubernetes)
 - Log-based checks becoming unreliable

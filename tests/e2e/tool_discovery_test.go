@@ -60,7 +60,7 @@ var _ = Describe("Tool Discovery", func() {
 			newGatewayClient()
 		})
 
-		It("returns correct metadata for registered servers with category and hint", func() {
+		It("returns correct metadata for registered servers with category and hint", Label("discovery"), func() {
 			By("registering a server with category and hint")
 			reg := NewMCPServerResourcesWithDefaults("discover-metadata", k8sClient).
 				WithPrefix("disc_meta_").
@@ -104,7 +104,7 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("filters servers by category: case-insensitive match, multi-category match by either value, no match for unknown category", func() {
+		It("filters servers by category: case-insensitive match, multi-category match by either value, no match for unknown category", Label("discovery"), func() {
 			By("registering a multi-category server and a messaging server")
 			regMulti := NewMCPServerResourcesWithDefaults("multi-cat", k8sClient).
 				WithPrefix("multicat_").
@@ -170,7 +170,7 @@ var _ = Describe("Tool Discovery", func() {
 
 		// nightly-only: discover_tools shares applyAuthorizedCapabilitiesFilter
 		// with tools/list, which the PR-gate JWT filtering spec exercises
-		It("[Full] respects auth filtering in discover_tools", func() {
+		It("[Full] respects auth filtering in discover_tools", Label("discovery"), func() {
 			SetupTrustedHeadersAuth(ctx, k8sClient)
 
 			By("registering a server")
@@ -217,7 +217,7 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("respects MCPVirtualServer scoping in discover_tools", func() {
+		It("respects MCPVirtualServer scoping in discover_tools", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("disc-vs", k8sClient).
 				WithPrefix("discvs_").
@@ -262,7 +262,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("select_tools", func() {
-		It("scopes tools/list to the selection, replaces the scope on re-select, and resets on empty list", func() {
+		It("scopes tools/list to the selection, replaces the scope on re-select, and resets on empty list", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("select-scope", k8sClient).
 				WithPrefix("selscope_").
@@ -350,7 +350,7 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("returns error for invalid tool name (all-or-nothing)", func() {
+		It("returns error for invalid tool name (all-or-nothing)", Label("discovery"), func() {
 			By("establishing a raw session")
 			sessionID, err := mcpInitialize(ctx, gatewayURL, nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -364,7 +364,7 @@ var _ = Describe("Tool Discovery", func() {
 			Expect(content[0].Text).To(ContainSubstring("not available"))
 		})
 
-		It("fails entirely when partial valid list contains one invalid tool", func() {
+		It("fails entirely when partial valid list contains one invalid tool", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("select-partial", k8sClient).
 				WithPrefix("selpart_").
@@ -405,7 +405,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("notifications", func() {
-		It("delivers notifications/tools/list_changed over SSE after select_tools", func() {
+		It("delivers notifications/tools/list_changed over SSE after select_tools", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("notif-select", k8sClient).
 				WithPrefix("notifsel_").
@@ -442,7 +442,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("flags", func() {
-		It("[Full] hides meta-tools when discovery-tools-enabled=false", func() {
+		It("[Full] hides meta-tools when discovery-tools-enabled=false", Label("discovery"), func() {
 			deploymentName := "mcp-gateway"
 
 			By("adding --discovery-tools-enabled=false flag to deployment")
@@ -483,7 +483,7 @@ var _ = Describe("Tool Discovery", func() {
 			_ = rawBody // the tool should not exist, so the response will be an error
 		})
 
-		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
+		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", Label("discovery"), func() {
 			// threshold defaults to 0, so all real tools plus meta-tools should be visible
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("thresh-zero", k8sClient).
@@ -519,7 +519,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("threshold", func() {
-		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", func() {
+		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", Label("discovery"), func() {
 			deploymentName := "mcp-gateway"
 
 			By("registering a server so we have tools to count")
@@ -586,7 +586,7 @@ var _ = Describe("Tool Discovery", func() {
 	})
 
 	Context("isolation and concurrency", func() {
-		It("session scope does not leak across sessions", func() {
+		It("session scope does not leak across sessions", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("iso-test", k8sClient).
 				WithPrefix("iso_").
@@ -640,7 +640,7 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("concurrent select_tools calls on same session do not corrupt state", func() {
+		It("concurrent select_tools calls on same session do not corrupt state", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewMCPServerResourcesWithDefaults("conc-test", k8sClient).
 				WithPrefix("conc_").
@@ -716,7 +716,7 @@ var _ = Describe("Tool Discovery", func() {
 			newGatewayClient()
 		})
 
-		It("[Full] controller re-reconciles when category and hint are updated", func() {
+		It("[Full] controller re-reconciles when category and hint are updated", Label("discovery"), func() {
 			By("registering a server with initial category and hint")
 			reg := NewMCPServerResourcesWithDefaults("reconfig-test", k8sClient).
 				WithPrefix("reconf_").
