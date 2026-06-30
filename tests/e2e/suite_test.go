@@ -197,8 +197,22 @@ var _ = BeforeSuite(func() {
 		`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
 		`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
 		`]`
+	prevGen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+	Expect(err).NotTo(HaveOccurred())
 	Expect(PatchDeploymentJSON(ctx, SystemNamespace, "mcp-gateway", combinedPatch)).To(Succeed())
-	Expect(WaitForDeploymentReady(ctx, SystemNamespace, "mcp-gateway")).To(Succeed())
+	Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, prevGen)).To(Succeed())
+
+	By("waiting for old pods to terminate after rollout")
+	Eventually(func(g Gomega) {
+		pods := &corev1.PodList{}
+		listErr := k8sClient.List(ctx, pods,
+			client.InNamespace(SystemNamespace),
+			client.MatchingLabels{"app.kubernetes.io/name": "mcp-gateway"})
+		g.Expect(listErr).NotTo(HaveOccurred())
+		// only the new pod should remain; old terminating pods must be gone
+		g.Expect(pods.Items).To(HaveLen(1), "expected exactly 1 mcp-gateway pod after rollout")
+		g.Expect(pods.Items[0].DeletionTimestamp).To(BeNil(), "remaining pod should not be terminating")
+	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 })
 

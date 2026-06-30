@@ -18,36 +18,22 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// ToolsAdderDeleter defines the interface for interacting with the gateway directly
-type ToolsAdderDeleter interface {
-	// AddToolsFunc is a callback function for adding tools to the gateway server
-	AddTools(tools ...server.ServerTool)
-
-	// RemoveToolsFunc is a callback function for removing tools from the gateway server by name
-	DeleteTools(tools ...string)
-
-	// ListTools will list all tools currently registered with the gateway
-	ListTools() map[string]*server.ServerTool
-}
-
-// PromptsAdderDeleter defines the interface for managing prompts on the gateway server
-type PromptsAdderDeleter interface {
-	AddPrompts(prompts ...server.ServerPrompt)
-	DeletePrompts(names ...string)
-	ListPrompts() map[string]*server.ServerPrompt
-}
-
 const (
 	notificationToolsListChanged   = "notifications/tools/list_changed"
 	notificationPromptsListChanged = "notifications/prompts/list_changed"
 	gatewayServerID                = "kuadrant/id"
+
+	// expectedProtocolVersion is the version the broker proposes in its
+	// legacy initialize to upstreams (the SDK client's fallback proposal),
+	// reported as /status expectedVersion exactly as mark3labs' constant
+	// was. drift on SDK bumps is caught by TestExpectedVersionMatchesSDKProposal.
+	expectedProtocolVersion = "2025-11-25"
 )
 
 type eventType int
@@ -92,17 +78,19 @@ type MCP interface {
 	GetPrefix() string
 	Connect(context.Context, func()) error
 	Disconnect() error
-	ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
-	ListPrompts(context.Context, mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error)
+	ListTools(context.Context) (*mcp.ListToolsResult, error)
+	ListPrompts(context.Context) (*mcp.ListPromptsResult, error)
 	SupportsPrompts() bool
 	SupportsPromptsListChanged() bool
-	OnNotification(func(notification mcp.JSONRPCNotification))
+	OnNotification(func(method string))
 	OnConnectionLost(func(err error))
 	Ping(context.Context) error
 	// IsEnabled returns true if the server should be connected to and have its tools registered.
 	IsEnabled() bool
 	// ProtocolInfo returns the initialize result (including the negotiated protocol version), or nil if not yet connected.
 	ProtocolInfo() *mcp.InitializeResult
+	// GetToolHints returns raw annotation hints for a served (prefixed) tool name.
+	GetToolHints(served string) (ToolHints, bool)
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only
@@ -113,6 +101,7 @@ type ActiveMCPServer interface {
 	GetStatus() ServerValidationStatus
 	GetManagedTools() []mcp.Tool
 	GetServedManagedTool(toolName string) *mcp.Tool
+	GetToolHints(toolName string) (ToolHints, bool)
 	GetManagedPrompts() []mcp.Prompt
 	GetServedManagedPrompt(promptName string) *mcp.Prompt
 	Config() config.MCPServer
@@ -131,7 +120,7 @@ type MCPManager struct {
 	baseBackoff   wait.Backoff
 	gatewayServer ToolsAdderDeleter
 	// serverTools is an internal copy that contains the managed MCP's tools with prefixed names. It is these that are externally available via the gateway
-	serverTools []server.ServerTool
+	serverTools []GatewayTool
 	// tools is the original set from MCP server with no prefix
 	tools          []mcp.Tool
 	toolsMap       map[string]*mcp.Tool
@@ -139,7 +128,7 @@ type MCPManager struct {
 
 	promptsServer PromptsAdderDeleter
 	// serverPrompts is an internal copy with prefixed names
-	serverPrompts []server.ServerPrompt
+	serverPrompts []GatewayPrompt
 	// prompts is the original set from MCP server with no prefix
 	prompts          []mcp.Prompt
 	promptsMap       map[string]*mcp.Prompt
@@ -200,10 +189,10 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		done:              make(chan struct{}),
 		toolsMap:          map[string]*mcp.Tool{},
 		servedToolsMap:    map[string]*mcp.Tool{},
-		serverTools:       []server.ServerTool{},
+		serverTools:       []GatewayTool{},
 		promptsMap:        map[string]*mcp.Prompt{},
 		servedPromptsMap:  map[string]*mcp.Prompt{},
-		serverPrompts:     []server.ServerPrompt{},
+		serverPrompts:     []GatewayPrompt{},
 	}, nil
 }
 
@@ -265,6 +254,10 @@ func (a *activeMCP) GetManagedTools() []mcp.Tool       { return a.manager.GetMan
 func (a *activeMCP) GetServedManagedTool(t string) *mcp.Tool {
 	return a.manager.GetServedManagedTool(t)
 }
+
+func (a *activeMCP) GetToolHints(t string) (ToolHints, bool) {
+	return a.manager.mcp.GetToolHints(t)
+}
 func (a *activeMCP) GetManagedPrompts() []mcp.Prompt { return a.manager.GetManagedPrompts() }
 func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
@@ -273,24 +266,26 @@ func (a *activeMCP) Config() config.MCPServer { return a.manager.mcp.GetConfig()
 
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())
-	return func() {
-		man.mcp.OnNotification(func(notification mcp.JSONRPCNotification) {
-			switch notification.Method {
-			case notificationToolsListChanged:
-				man.logger.Debug("received notification", "upstream mcp server", man.mcp.ID(), "notification", notification.Method)
-				select {
-				case man.toolEvents <- struct{}{}:
-				default:
-				}
-			case notificationPromptsListChanged:
-				man.logger.Debug("received notification", "upstream mcp server", man.mcp.ID(), "notification", notification.Method)
-				select {
-				case man.promptEvents <- struct{}{}:
-				default:
-				}
+	// the notification handler registers before Connect so it is wired into
+	// the client ahead of the session handshake; nothing sent immediately
+	// after connect can slip past it
+	man.mcp.OnNotification(func(method string) {
+		switch method {
+		case notificationToolsListChanged:
+			man.logger.Debug("received notification", "upstream mcp server", man.mcp.ID(), "notification", method)
+			select {
+			case man.toolEvents <- struct{}{}:
+			default:
 			}
-		})
-
+		case notificationPromptsListChanged:
+			man.logger.Debug("received notification", "upstream mcp server", man.mcp.ID(), "notification", method)
+			select {
+			case man.promptEvents <- struct{}{}:
+			default:
+			}
+		}
+	})
+	return func() {
 		man.mcp.OnConnectionLost(func(err error) {
 			// just logging for visibility as will be re-connected on next tick
 			man.logger.Error("connection lost", "upstream mcp server", man.mcp.ID(), "error", err)
@@ -408,7 +403,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 						toolName := prefixedName(man.mcp.GetPrefix(), fetched[i].Name)
 						man.servedToolsMap[toolName] = &fetched[i]
 					}
-					man.serverTools = slices.DeleteFunc(man.serverTools, func(tool server.ServerTool) bool {
+					man.serverTools = slices.DeleteFunc(man.serverTools, func(tool GatewayTool) bool {
 						return slices.Contains(toRemove, tool.Tool.Name)
 					})
 					man.serverTools = append(man.serverTools, toAdd...)
@@ -462,7 +457,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					promptName := prefixedName(man.mcp.GetPrefix(), fetchedPrompts[i].Name)
 					man.servedPromptsMap[promptName] = &fetchedPrompts[i]
 				}
-				man.serverPrompts = slices.DeleteFunc(man.serverPrompts, func(prompt server.ServerPrompt) bool {
+				man.serverPrompts = slices.DeleteFunc(man.serverPrompts, func(prompt GatewayPrompt) bool {
 					return slices.Contains(toRemovePrompts, prompt.Prompt.Name)
 				})
 				man.serverPrompts = append(man.serverPrompts, toAddPrompts...)
@@ -532,7 +527,7 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
 	// always report the version we expect; fill in the negotiated version once it is known
-	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: mcp.LATEST_PROTOCOL_VERSION}
+	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: expectedProtocolVersion}
 	if info := man.mcp.ProtocolInfo(); info != nil {
 		man.status.ProtocolValidation.IsValid = true
 		man.status.ProtocolValidation.SupportedVersion = info.ProtocolVersion
@@ -559,17 +554,17 @@ func (man *MCPManager) recordBackendError(span trace.Span, err error) {
 	)
 }
 
-func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
+func (man *MCPManager) findToolConflicts(mcpTools []GatewayTool) error {
 	gatewayServerTools := man.gatewayServer.ListTools()
 	var conflictingToolNames []string
 	for _, tool := range mcpTools {
 		for existingToolName, existingToolInfo := range gatewayServerTools {
 			existingTool := existingToolInfo.Tool
-			if existingTool.Meta == nil || existingTool.Meta.AdditionalFields == nil {
+			if existingTool.Meta == nil {
 				man.logger.Debug("skipping conflict check, tool meta is nil", "upstream mcp server", man.mcp.ID(), "tool", existingToolName)
 				continue
 			}
-			existingToolID, ok := existingTool.Meta.AdditionalFields[gatewayServerID]
+			existingToolID, ok := existingTool.Meta[gatewayServerID]
 			if !ok {
 				man.logger.Debug("skipping conflict check, tool id is missing", "upstream mcp server", man.mcp.ID(), "tool", existingToolName)
 				continue
@@ -580,9 +575,9 @@ func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
 				continue
 			}
 
-			if existingToolName == tool.Tool.GetName() && toolID != string(man.mcp.ID()) {
-				man.logger.Debug("tool name conflict found", "upstream mcp server", man.mcp.ID(), "existing", existingToolName, "new", tool.Tool.GetName(), "conflicting server", toolID)
-				conflictingToolNames = append(conflictingToolNames, tool.Tool.GetName())
+			if existingToolName == tool.Tool.Name && toolID != string(man.mcp.ID()) {
+				man.logger.Debug("tool name conflict found", "upstream mcp server", man.mcp.ID(), "existing", existingToolName, "new", tool.Tool.Name, "conflicting server", toolID)
+				conflictingToolNames = append(conflictingToolNames, tool.Tool.Name)
 			}
 
 		}
@@ -598,11 +593,19 @@ func (man *MCPManager) findToolConflicts(mcpTools []server.ServerTool) error {
 func (man *MCPManager) getTools(ctx context.Context) ([]mcp.Tool, []mcp.Tool, error) {
 	tools := make([]mcp.Tool, len(man.tools))
 	copy(tools, man.tools)
-	res, err := man.mcp.ListTools(ctx, mcp.ListToolsRequest{})
+	res, err := man.mcp.ListTools(ctx)
 	if err != nil {
 		return tools, tools, fmt.Errorf("failed to get tools: %w", err)
 	}
-	return tools, res.Tools, nil
+	fetched := make([]mcp.Tool, 0, len(res.Tools))
+	for _, t := range res.Tools {
+		if t == nil {
+			man.logger.Debug("skipping nil tool from upstream", "server", man.mcp.ID())
+			continue
+		}
+		fetched = append(fetched, *t)
+	}
+	return tools, fetched, nil
 }
 
 // GetManagedTools returns a copy of all tools discovered from the upstream server.
@@ -659,7 +662,7 @@ func (man *MCPManager) removeAllTools() {
 		man.logger.Debug("removing tool from server ", "upstream mcp server", man.mcp.ID(), "tool", tool.Tool.Name)
 		toolsToRemove = append(toolsToRemove, tool.Tool.Name)
 	}
-	man.serverTools = []server.ServerTool{}
+	man.serverTools = []GatewayTool{}
 	man.tools = []mcp.Tool{}
 	man.toolsMap = map[string]*mcp.Tool{}
 	man.servedToolsMap = map[string]*mcp.Tool{}
@@ -677,7 +680,7 @@ func (man *MCPManager) removeAllPrompts() {
 	for _, prompt := range man.serverPrompts {
 		promptsToRemove = append(promptsToRemove, prompt.Prompt.Name)
 	}
-	man.serverPrompts = []server.ServerPrompt{}
+	man.serverPrompts = []GatewayPrompt{}
 	man.prompts = []mcp.Prompt{}
 	man.promptsMap = map[string]*mcp.Prompt{}
 	man.servedPromptsMap = map[string]*mcp.Prompt{}
@@ -685,20 +688,18 @@ func (man *MCPManager) removeAllPrompts() {
 	man.promptsServer.DeletePrompts(promptsToRemove...)
 }
 
-func (man *MCPManager) toolToServerTool(newTool mcp.Tool) server.ServerTool {
+func (man *MCPManager) toolToServerTool(newTool mcp.Tool) GatewayTool {
 	newTool.Name = prefixedName(man.mcp.GetPrefix(), newTool.Name)
-	newTool.Meta = mcp.NewMetaFromMap(map[string]any{
+	newTool.Meta = mcp.Meta{
 		gatewayServerID: string(man.mcp.ID()),
-	})
-	return server.ServerTool{
-		Tool: newTool,
-		Handler: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultError("Kagenti MCP Broker doesn't forward tool calls"), nil
-		},
+	}
+	return GatewayTool{
+		Tool:    newTool,
+		Handler: NoopToolHandler,
 	}
 }
 
-func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]server.ServerTool, []string) {
+func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]GatewayTool, []string) {
 	oldToolMap := make(map[string]mcp.Tool)
 	for _, oldTool := range oldTools {
 		oldToolMap[oldTool.Name] = oldTool
@@ -709,7 +710,7 @@ func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]server.Server
 		newToolMap[newTool.Name] = newTool
 	}
 
-	addedTools := make([]server.ServerTool, 0)
+	addedTools := make([]GatewayTool, 0)
 	for _, newTool := range newToolMap {
 		_, ok := oldToolMap[newTool.Name]
 		if !ok {
@@ -735,20 +736,18 @@ func prefixedName(prefix, tool string) string {
 	return fmt.Sprintf("%s%s", prefix, tool)
 }
 
-func (man *MCPManager) promptToServerPrompt(newPrompt mcp.Prompt) server.ServerPrompt {
+func (man *MCPManager) promptToServerPrompt(newPrompt mcp.Prompt) GatewayPrompt {
 	newPrompt.Name = prefixedName(man.mcp.GetPrefix(), newPrompt.Name)
-	newPrompt.Meta = mcp.NewMetaFromMap(map[string]any{
+	newPrompt.Meta = mcp.Meta{
 		gatewayServerID: string(man.mcp.ID()),
-	})
-	return server.ServerPrompt{
-		Prompt: newPrompt,
-		Handler: func(_ context.Context, _ mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-			return &mcp.GetPromptResult{}, nil
-		},
+	}
+	return GatewayPrompt{
+		Prompt:  newPrompt,
+		Handler: NoopPromptHandler,
 	}
 }
 
-func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]server.ServerPrompt, []string) {
+func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]GatewayPrompt, []string) {
 	oldPromptMap := make(map[string]mcp.Prompt)
 	for _, p := range oldPrompts {
 		oldPromptMap[p.Name] = p
@@ -759,7 +758,7 @@ func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]serve
 		newPromptMap[p.Name] = p
 	}
 
-	addedPrompts := make([]server.ServerPrompt, 0)
+	addedPrompts := make([]GatewayPrompt, 0)
 	for _, newPrompt := range newPromptMap {
 		if _, ok := oldPromptMap[newPrompt.Name]; !ok {
 			addedPrompts = append(addedPrompts, man.promptToServerPrompt(newPrompt))
@@ -780,14 +779,22 @@ func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]serve
 func (man *MCPManager) getPrompts(ctx context.Context) ([]mcp.Prompt, []mcp.Prompt, error) {
 	prompts := make([]mcp.Prompt, len(man.prompts))
 	copy(prompts, man.prompts)
-	res, err := man.mcp.ListPrompts(ctx, mcp.ListPromptsRequest{})
+	res, err := man.mcp.ListPrompts(ctx)
 	if err != nil {
 		return prompts, prompts, fmt.Errorf("failed to get prompts: %w", err)
 	}
-	return prompts, res.Prompts, nil
+	fetched := make([]mcp.Prompt, 0, len(res.Prompts))
+	for _, p := range res.Prompts {
+		if p == nil {
+			man.logger.Debug("skipping nil prompt from upstream", "server", man.mcp.ID())
+			continue
+		}
+		fetched = append(fetched, *p)
+	}
+	return prompts, fetched, nil
 }
 
-func (man *MCPManager) findPromptConflicts(mcpPrompts []server.ServerPrompt) error {
+func (man *MCPManager) findPromptConflicts(mcpPrompts []GatewayPrompt) error {
 	if man.promptsServer == nil {
 		return nil
 	}
@@ -796,11 +803,11 @@ func (man *MCPManager) findPromptConflicts(mcpPrompts []server.ServerPrompt) err
 	for _, prompt := range mcpPrompts {
 		for existingPromptName, existingPromptInfo := range gatewayServerPrompts {
 			existingPrompt := existingPromptInfo.Prompt
-			if existingPrompt.Meta == nil || existingPrompt.Meta.AdditionalFields == nil {
+			if existingPrompt.Meta == nil {
 				man.logger.Debug("skipping conflict check, prompt meta is nil", "upstream mcp server", man.mcp.ID(), "prompt", existingPromptName)
 				continue
 			}
-			existingPromptID, ok := existingPrompt.Meta.AdditionalFields[gatewayServerID]
+			existingPromptID, ok := existingPrompt.Meta[gatewayServerID]
 			if !ok {
 				man.logger.Debug("skipping conflict check, prompt id is missing", "upstream mcp server", man.mcp.ID(), "prompt", existingPromptName)
 				continue

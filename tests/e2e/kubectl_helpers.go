@@ -141,7 +141,34 @@ func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName,
 }
 
 // AddGatewayHTTPSListener patches a Gateway to add an HTTPS listener with TLS termination.
+// Idempotent: if the listener already exists, it is removed and re-added.
 func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listenerName, hostname, certSecretName string, port int) error {
+	// check if listener already exists and remove it first
+	checkCmd := exec.CommandContext(ctx, "kubectl", "get", "gateway", gatewayName,
+		"-n", namespace, "-o", fmt.Sprintf("jsonpath={.spec.listeners[?(@.name==\"%s\")].name}", listenerName))
+	checkOut, _ := checkCmd.CombinedOutput()
+	if strings.TrimSpace(string(checkOut)) == listenerName {
+		// find the index and remove it
+		idxCmd := exec.CommandContext(ctx, "kubectl", "get", "gateway", gatewayName,
+			"-n", namespace, "-o", "jsonpath={range .spec.listeners[*]}{.name}{\"\\n\"}{end}")
+		idxOut, err := idxCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to list listeners: %s: %w", string(idxOut), err)
+		}
+		for i, name := range strings.Split(strings.TrimSpace(string(idxOut)), "\n") {
+			if name == listenerName {
+				rmPatch := fmt.Sprintf(`[{"op":"remove","path":"/spec/listeners/%d"}]`, i)
+				rmCmd := exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
+					"-n", namespace, "--type=json", "-p", rmPatch)
+				rmOut, rmErr := rmCmd.CombinedOutput()
+				if rmErr != nil {
+					return fmt.Errorf("failed to remove existing listener %s: %s: %w", listenerName, string(rmOut), rmErr)
+				}
+				break
+			}
+		}
+	}
+
 	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/listeners/-","value":{`+
 		`"name":"%s","hostname":"%s","port":%d,"protocol":"HTTPS",`+
 		`"tls":{"mode":"Terminate","certificateRefs":[{"kind":"Secret","name":"%s"}]},`+

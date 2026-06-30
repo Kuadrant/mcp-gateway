@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,7 +13,7 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +23,7 @@ func TestStatusHandlerNotGet(t *testing.T) {
 	sh := NewStatusHandler(mcpBroker, *logger)
 
 	w := httptest.NewRecorder()
-	sh.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/status", nil))
+	sh.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/status", nil))
 	res := w.Result()
 	require.Equal(t, 405, res.StatusCode)
 }
@@ -51,7 +52,7 @@ func TestStatusHandlerGetSingleServer(t *testing.T) {
 
 	// At first, no server known for this name
 	w := httptest.NewRecorder()
-	sh.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status/dummyServer", nil))
+	sh.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/status/dummyServer", nil))
 	res := w.Result()
 	require.Equal(t, 404, res.StatusCode)
 
@@ -64,7 +65,7 @@ func TestStatusHandlerGetSingleServer(t *testing.T) {
 	))
 
 	w = httptest.NewRecorder()
-	sh.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status/dummyServer", nil))
+	sh.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/status/dummyServer", nil))
 	res = w.Result()
 	require.Equal(t, 200, res.StatusCode)
 }
@@ -83,7 +84,7 @@ func TestStatusHandlerGetAll(t *testing.T) {
 	))
 
 	w := httptest.NewRecorder()
-	sh.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status", nil))
+	sh.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/status", nil))
 	res := w.Result()
 	require.Equal(t, 200, res.StatusCode)
 	data, err := io.ReadAll(res.Body)

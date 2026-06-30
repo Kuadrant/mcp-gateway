@@ -2,7 +2,9 @@
 package jwt
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -24,6 +26,24 @@ func DecodePayload(token string, claims any) bool {
 		return false
 	}
 	return true
+}
+
+// LogSafeSessionID returns a log-safe identifier for a session ID. gateway
+// session IDs are bearer JWTs, so the raw value must never appear in logs
+// or span attributes. returns the jti claim when decodable, otherwise a
+// truncated hash. deterministic, so log lines remain correlatable.
+func LogSafeSessionID(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	var claims struct {
+		JTI string `json:"jti"`
+	}
+	if DecodePayload(sessionID, &claims) && claims.JTI != "" {
+		return "jti:" + claims.JTI
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	return "sha256:" + hex.EncodeToString(sum[:6])
 }
 
 // ExtractSubClaim parses a Bearer JWT from the Authorization header value and

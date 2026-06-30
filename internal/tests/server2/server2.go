@@ -1,5 +1,3 @@
-// Based on sample https://github.com/mark3labs/mcp-go/blob/93935261086dda133e3e4b6447304e24deb56a21/www/docs/pages/servers/basics.mdx
-
 // Package server2 implements a simple MCP server that implements a few tools
 // - The "hello_world" tool from the library sample
 // - A "time" tool that returns the current time
@@ -9,15 +7,17 @@ package server2
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/utils/ptr"
 )
 
 // StartupFunc is used for functions that will start a server and block until it is finished
@@ -26,142 +26,166 @@ type StartupFunc func() error
 // ShutdownFunc is used for functions that stop running servers
 type ShutdownFunc func() error
 
+type testTool struct {
+	tool    mcp.Tool
+	handler mcp.ToolHandler
+}
+
 var (
-	testTools = map[string]server.ServerTool{
+	testTools = map[string]testTool{
 		"hello_world": {
-			Tool: mcp.NewTool("hello_world",
-				mcp.WithDescription("Say hello to someone"),
-				mcp.WithString("name",
-					mcp.Required(),
-					mcp.Description("Name of the person to greet"),
-				),
-				mcp.WithTitleAnnotation("greeter tool"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-			),
-			Handler: helloHandler,
+			tool: mcp.Tool{
+				Name:        "hello_world",
+				Description: "Say hello to someone",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{
+							"type":        "string",
+							"description": "Name of the person to greet",
+						},
+					},
+					"required": []string{"name"},
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "greeter tool",
+					ReadOnlyHint:    true,
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: helloHandler,
 		},
 		"time": {
-			Tool: mcp.NewTool("time",
-				mcp.WithDescription("Get the current time"),
-				mcp.WithTitleAnnotation("Clock"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-			),
-			Handler: timeHandler,
+			tool: mcp.Tool{
+				Name:        "time",
+				Description: "Get the current time",
+				InputSchema: map[string]any{
+					"type": "object",
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "Clock",
+					ReadOnlyHint:    true,
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: timeHandler,
 		},
 		"headers": {
-			Tool: mcp.NewTool("headers",
-				mcp.WithDescription("get HTTP headers"),
-				mcp.WithTitleAnnotation("header inspector"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-			),
-			Handler: headersToolHandler,
+			tool: mcp.Tool{
+				Name:        "headers",
+				Description: "get HTTP headers",
+				InputSchema: map[string]any{
+					"type": "object",
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "header inspector",
+					ReadOnlyHint:    true,
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: headersToolHandler,
 		},
 		"auth1234": {
-			Tool: mcp.NewTool("auth1234",
-				mcp.WithDescription("check authorization header"),
-				mcp.WithTitleAnnotation("auth header verifier"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-			),
-			Handler: auth1234ToolHandler,
+			tool: mcp.Tool{
+				Name:        "auth1234",
+				Description: "check authorization header",
+				InputSchema: map[string]any{
+					"type": "object",
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "auth header verifier",
+					ReadOnlyHint:    true,
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: auth1234ToolHandler,
 		},
 		"slow": {
-			Tool: mcp.NewTool("slow",
-				mcp.WithDescription("Delay for N seconds"),
-				mcp.WithTitleAnnotation("delay tool"),
-				mcp.WithReadOnlyHintAnnotation(true),
-				mcp.WithDestructiveHintAnnotation(false),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithString("seconds",
-					mcp.Required(),
-					mcp.Description("number of seconds to wait"),
-				)),
-			Handler: slowHandler,
+			tool: mcp.Tool{
+				Name:        "slow",
+				Description: "Delay for N seconds",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"seconds": map[string]any{
+							"type":        "string",
+							"description": "number of seconds to wait",
+						},
+					},
+					"required": []string{"seconds"},
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "delay tool",
+					ReadOnlyHint:    true,
+					DestructiveHint: ptr.To(false),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: slowHandler,
 		},
 		"set_time": {
-			Tool: mcp.NewTool("set_time",
-				mcp.WithDescription("Set the clock"),
-				mcp.WithTitleAnnotation("set time tool"),
-				mcp.WithReadOnlyHintAnnotation(false),
-				mcp.WithDestructiveHintAnnotation(true),
-				mcp.WithIdempotentHintAnnotation(true),
-				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithString("time",
-					mcp.Required(),
-					mcp.Description("new time"),
-				)),
-			Handler: setTimeHandler,
+			tool: mcp.Tool{
+				Name:        "set_time",
+				Description: "Set the clock",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"time": map[string]any{
+							"type":        "string",
+							"description": "new time",
+						},
+					},
+					"required": []string{"time"},
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "set time tool",
+					DestructiveHint: ptr.To(true),
+					IdempotentHint:  true,
+					OpenWorldHint:   ptr.To(false),
+				},
+			},
+			handler: setTimeHandler,
 		},
 		"pour_chocolate_into_mold": {
-			Tool: mcp.NewTool("pour_chocolate_into_mold",
-				mcp.WithDescription("Pour chocolate into mold"),
-				mcp.WithTitleAnnotation("chocolate fill tool"),
-				mcp.WithReadOnlyHintAnnotation(false),
-				mcp.WithDestructiveHintAnnotation(true),
-				mcp.WithIdempotentHintAnnotation(false),
-				mcp.WithOpenWorldHintAnnotation(true),
-				mcp.WithString("quantity",
-					mcp.Required(),
-					mcp.Description("milliliters"),
-				)),
-			Handler: pourChocolateHandler,
+			tool: mcp.Tool{
+				Name:        "pour_chocolate_into_mold",
+				Description: "Pour chocolate into mold",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"quantity": map[string]any{
+							"type":        "string",
+							"description": "milliliters",
+						},
+					},
+					"required": []string{"quantity"},
+				},
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "chocolate fill tool",
+					DestructiveHint: ptr.To(true),
+					OpenWorldHint:   ptr.To(true),
+				},
+			},
+			handler: pourChocolateHandler,
 		},
 	}
 )
 
-// RunServer create a server that can be started and stopped
-func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption) (StartupFunc, ShutdownFunc, error) {
+// RunServer creates a server that can be started and stopped
+func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "Demo rocket", Version: "1.0.0"}, &mcp.ServerOptions{})
 
-	hooks := &server.Hooks{}
-
-	// Note that AddOnRegisterSession is for GET, not POST, for a session.
-	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
-		log.Printf("Client %s connected", session.SessionID())
-	})
-
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		log.Printf("Client %s disconnected", session.SessionID())
-	})
-
-	hooks.AddBeforeAny(func(ctx context.Context, _ any, method mcp.MCPMethod, _ any) {
-		sessionID := "-"
-		if s := server.ClientSessionFromContext(ctx); s != nil {
-			sessionID = s.SessionID()
-		}
-		log.Printf("Processing %s session=%s", method, sessionID)
-	})
-
-	hooks.AddOnSuccess(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, _ any) {
-		log.Printf("Completed %s", method)
-	})
-
-	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
-		log.Printf("Error in %s: %v", method, err)
-	})
-
-	// Create a new MCP server
-	s := server.NewMCPServer(
-		"Demo rocket",
-		"1.0.0",
-		server.WithHooks(hooks),
-		server.WithToolCapabilities(true),
-	)
-
-	for _, tool := range testTools {
-		s.AddTools(tool)
+	for _, tt := range testTools {
+		s.AddTool(&tt.tool, tt.handler)
 	}
 
 	if port == "" {
@@ -170,7 +194,6 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 
 	switch transport {
 	case "http":
-		// Define the HTTP server with interceptor to record HTTP headers
 		mux := http.NewServeMux()
 		httpServer := &http.Server{
 			Addr:              ":" + port,
@@ -178,47 +201,30 @@ func RunServer(transport, port string, streamOpts ...server.StreamableHTTPOption
 			ReadHeaderTimeout: 3 * time.Second,
 		}
 
-		streamOpts = append(streamOpts, server.WithStreamableHTTPServer(httpServer))
-		streamableHTTPServer := server.NewStreamableHTTPServer(
-			s,
-			streamOpts...,
-		)
-		mux.Handle("/mcp", logResponse(streamableHTTPServer))
+		handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{
+			DisableLocalhostProtection: true,
+		})
+		mux.Handle("/mcp", logResponse(handler))
 
-		// For testing session ID invalidation
 		mux.HandleFunc("/admin/forget", forgetFuncFactory(s))
 		mux.HandleFunc("/admin/deleteTool", deleteToolFactory(s))
 		mux.HandleFunc("/admin/addTool", addToolFactory(s))
 
 		return func() error {
 				fmt.Printf("Serving HTTPStreamable on http://localhost:%s/mcp\n", port)
-
-				return streamableHTTPServer.Start(":" + port)
+				return httpServer.ListenAndServe()
 			}, func() error {
-				// We use a timeout because the MCP inspector holds the port open
 				shutdownCtx, shutdownRelease := context.WithTimeout(
 					context.Background(),
 					1*time.Second,
 				)
 				defer shutdownRelease()
-				return streamableHTTPServer.Shutdown(shutdownCtx)
+				return httpServer.Shutdown(shutdownCtx)
 			}, nil
 	case "sse":
-		fmt.Printf("Serving SSE on http://localhost:%s\n", port)
-		sseServer := server.NewSSEServer(s)
-
-		return func() error {
-				return sseServer.Start(":" + port)
-			}, func() error {
-				return sseServer.Shutdown(context.TODO())
-			}, nil
+		return nil, nil, fmt.Errorf("sse transport not supported with official SDK")
 	default:
-		fmt.Print("Serving on stdio")
-		return func() error {
-				return server.ServeStdio(s)
-			}, func() error {
-				return nil
-			}, nil
+		return nil, nil, fmt.Errorf("stdio transport not supported with official SDK")
 	}
 }
 
@@ -230,6 +236,19 @@ type responseRecorder struct {
 func (r *responseRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer's Flush;
+// without it SSE headers sit in the server buffer and clients hang.
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+// Flush forwards to the underlying writer for direct http.Flusher assertions.
+func (r *responseRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func logResponse(next http.Handler) http.Handler {
@@ -248,62 +267,110 @@ func logResponse(next http.Handler) http.Handler {
 		if clientID == "" {
 			clientID = "-"
 		}
-		log.Printf("%s %s %d req-session=%s resp-session=%s x-client-id=%s", r.Method, r.URL.Path, rec.status, reqSession, respSession, clientID)
+		// quoting attacker-controllable header values prevents log forging
+		log.Printf("%q %q %d req-session=%q resp-session=%q x-client-id=%q", r.Method, r.URL.Path, rec.status, reqSession, respSession, clientID)
 	})
 }
 
-func helloHandler(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	name, err := request.RequireString("name")
+func helloHandler(_ context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]any
+	if err := json.Unmarshal(request.Params.Arguments, &args); err != nil {
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // mcp tool errors go in result
+	}
+	name, err := requireStringArg(args, "name")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // mcp tool errors go in result
 	}
 
-	return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Hello, %s!", name)}}}, nil
 }
 
-func timeHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(time.Now().String()), nil
+func timeHandler(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: time.Now().String()}}}, nil
 }
 
-func headersToolHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func headersToolHandler(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var headers http.Header
+	if req.Extra != nil {
+		headers = req.Extra.Header
+	}
+
 	content := make([]mcp.Content, 0)
-	for k, v := range req.Header {
+	for k, v := range headers {
 		content = append(content, &mcp.TextContent{
-			Type: "text",
 			Text: fmt.Sprintf("%s: %v", k, v),
 		})
 	}
 
-	return &mcp.CallToolResult{
-		Content: content}, nil
+	return &mcp.CallToolResult{Content: content}, nil
 }
 
-func auth1234ToolHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func auth1234ToolHandler(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var headers http.Header
+	if req.Extra != nil {
+		headers = req.Extra.Header
+	}
 
-	auth := strings.ToLower(req.Header.Get("Authorization"))
+	auth := strings.ToLower(headers.Get("Authorization"))
 	if auth != "bearer 1234" {
 		return nil, fmt.Errorf("requires Authorization: bearer 1234, got %q", auth)
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			mcp.TextContent{
+			&mcp.TextContent{
 				Text: "Success!",
 			},
 		},
 	}, nil
 }
 
-func slowHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	seconds, err := request.RequireInt("seconds")
+// requireStringArg parses an argument with mark3labs RequireString
+// semantics: any string passes, including empty.
+func requireStringArg(args map[string]any, key string) (string, error) {
+	val, ok := args[key]
+	if !ok {
+		return "", fmt.Errorf("required argument %q not found", key)
+	}
+	if str, ok := val.(string); ok {
+		return str, nil
+	}
+	return "", fmt.Errorf("argument %q is not a string", key)
+}
+
+// requireIntArg parses an argument with mark3labs RequireInt semantics:
+// numbers and numeric strings both convert.
+func requireIntArg(args map[string]any, key string) (int, error) {
+	val, ok := args[key]
+	if !ok {
+		return 0, fmt.Errorf("required argument %q not found", key)
+	}
+	switch v := val.(type) {
+	case int:
+		return v, nil
+	case float64:
+		return int(v), nil
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i, nil
+		}
+		return 0, fmt.Errorf("argument %q cannot be converted to int", key)
+	default:
+		return 0, fmt.Errorf("argument %q is not an int", key)
+	}
+}
+
+func slowHandler(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]any
+	if err := json.Unmarshal(request.Params.Arguments, &args); err != nil {
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // mcp tool errors go in result
+	}
+	seconds, err := requireIntArg(args, "seconds")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // mcp tool errors go in result
 	}
-	var progressToken mcp.ProgressToken
-	if request.Params.Meta != nil {
-		progressToken = request.Params.Meta.ProgressToken
-	}
-	server := server.ServerFromContext(ctx)
+
+	progressToken := request.Params.GetProgressToken()
 
 	startTime := time.Now()
 	fmt.Printf("Slow tool will wait for %d seconds\n", seconds)
@@ -315,11 +382,10 @@ func slowHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 
 		if progressToken != nil {
 			fmt.Printf("Notify client that we have waited %d seconds\n", waited)
-			msg := fmt.Sprintf("Waited %d seconds...", waited)
-			err := server.SendNotificationToClient(ctx, "notifications/progress", map[string]any{
-				"progress":      waited,
-				"progressToken": progressToken,
-				"message":       msg,
+			err := request.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+				ProgressToken: progressToken,
+				Progress:      float64(waited),
+				Message:       fmt.Sprintf("Waited %d seconds...", waited),
 			})
 			if err != nil {
 				fmt.Printf("NotifyProgress error: %v\n", err)
@@ -329,15 +395,14 @@ func slowHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 		time.Sleep(1 * time.Second)
 	}
 
-	return mcp.NewToolResultText("done"), nil
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "done"}}}, nil
 }
 
 // setTimeHandler demonstrates a tool that is "destructive"
-func setTimeHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func setTimeHandler(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
+			&mcp.TextContent{
 				Text: "Error: setting of time unimplemented",
 			},
 		},
@@ -346,12 +411,10 @@ func setTimeHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResu
 }
 
 // pourChocolateHandler demonstrates a tool that is NOT idempotent
-// (pouring chocolate twice will overflow the mold)
-func pourChocolateHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func pourChocolateHandler(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
+			&mcp.TextContent{
 				Text: "Error: out of chocolate",
 			},
 		},
@@ -359,7 +422,10 @@ func pourChocolateHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallTo
 	}, nil
 }
 
-func forgetFuncFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *http.Request) {
+// forgetFuncFactory closes the server session with the posted ID, so the
+// server genuinely forgets it (subsequent requests 404), matching the
+// mark3labs UnregisterSession behaviour.
+func forgetFuncFactory(mcpServer *mcp.Server) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -377,14 +443,20 @@ func forgetFuncFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *h
 		}
 
 		sessionID := string(body)
-
-		// We can't check if the client exists
-		log.Printf("Client %s will be forcibly disconnected (if it exists)", sessionID)
-		mcpServer.UnregisterSession(req.Context(), sessionID)
+		forgotten := false
+		for ss := range mcpServer.Sessions() {
+			if ss.ID() == sessionID {
+				if err := ss.Close(); err != nil {
+					log.Printf("/admin/forget close failed for %s: %v", sessionID, err)
+				}
+				forgotten = true
+			}
+		}
+		log.Printf("Client %s forget requested (forgotten=%v)", sessionID, forgotten)
 	}
 }
 
-func addToolFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *http.Request) {
+func addToolFactory(mcpServer *mcp.Server) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -398,21 +470,21 @@ func addToolFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *http
 		}
 		err = req.Body.Close()
 		if err != nil {
-			log.Printf("/admin/forget failed to close: %v\n", err)
+			log.Printf("/admin/addTool failed to close: %v\n", err)
 		}
 
-		tool, ok := testTools[string(body)]
+		tt, ok := testTools[string(body)]
 		if !ok {
 			http.Error(w, fmt.Sprintf("Unknown tool %q", body), http.StatusNotFound)
 			return
 		}
 
 		log.Printf("Adding tool %q\n", body)
-		mcpServer.AddTools(tool)
+		mcpServer.AddTool(&tt.tool, tt.handler)
 	}
 }
 
-func deleteToolFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *http.Request) {
+func deleteToolFactory(mcpServer *mcp.Server) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -430,7 +502,7 @@ func deleteToolFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *h
 		}
 		err = req.Body.Close()
 		if err != nil {
-			log.Printf("/admin/forget failed to close: %v\n", err)
+			log.Printf("/admin/deleteTool failed to close: %v\n", err)
 		}
 
 		toolName := string(body)
@@ -440,9 +512,7 @@ func deleteToolFactory(mcpServer *server.MCPServer) func(http.ResponseWriter, *h
 			return
 		}
 
-		// mcpServer does not return an error or let us check if a tool doesn't exist,
-		// so we always return OK
 		log.Printf("Deleting tool %q\n", toolName)
-		mcpServer.DeleteTools(toolName)
+		mcpServer.RemoveTools(toolName)
 	}
 }

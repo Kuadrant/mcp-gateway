@@ -15,9 +15,8 @@ import (
 	"sync"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/Kuadrant/mcp-gateway/internal/transport"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // HairpinClientPool manages *http.Client instances for hairpin requests,
@@ -83,10 +82,10 @@ func buildHairpinURL(gatewayHost, mcpPath string) string {
 	return "http://" + gatewayHost + mcpPath
 }
 
-// Initialize will create a new initialize and initialized request and return the associated http client for connection management.
+// Initialize will create a new initialize and initialized request and return the associated client session.
 // This method makes a request back through the gateway to ensure any AuthPolicy is triggered.
 // The caller must set the routing key and mcp-init-host headers in passThroughHeaders before calling.
-func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *HairpinClientPool) (*client.Client, error) {
+func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *HairpinClientPool) (*mcp.ClientSession, error) {
 	mcpPath, err := conf.Path()
 	if err != nil {
 		return nil, err
@@ -96,34 +95,50 @@ func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer,
 	hairpinHTTPClient := hairpinClientPool.Get(conf.Hostname)
 	passThroughHeaders["x-client-id"] = "lazyinit"
 
-	httpClient, err := client.NewStreamableHttpClient(url,
-		transport.WithHTTPHeaders(passThroughHeaders),
-		transport.WithHTTPBasicClient(hairpinHTTPClient),
-	)
-	if err != nil {
-		return nil, err
+	base := hairpinHTTPClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
 	}
-	if err := httpClient.Start(ctx); err != nil {
-		return nil, err
-	}
-	caps := mcp.ClientCapabilities{}
-	if clientElicitation {
-		caps.Elicitation = &mcp.ElicitationCapability{}
-	}
-	if _, err := httpClient.Initialize(ctx, mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			Capabilities:    caps,
-			ClientInfo: mcp.Implementation{
-				Name:    "mcp-gateway",
-				Version: "0.0.1",
+	httpClient := &http.Client{
+		// the discover short circuit answers the SDK's server/discover
+		// probe in-process; the hairpin costs exactly the requests it did
+		// on mark3labs (initialize + notifications/initialized)
+		Transport: &transport.DiscoverShortCircuit{
+			Base: &transport.HeaderRoundTripper{
+				Base:    base,
+				Headers: passThroughHeaders,
 			},
 		},
-	}); err != nil {
+	}
+
+	streamTransport := &mcp.StreamableClientTransport{
+		Endpoint:   url,
+		HTTPClient: httpClient,
+		// the router only reads ID() and Close() from this session; nothing
+		// consumes server-initiated messages, so skip the standalone SSE GET
+		// the SDK otherwise performs synchronously inside Connect. saves a
+		// full gateway round trip on every lazy backend init (hot path).
+		DisableStandaloneSSE: true,
+	}
+
+	caps := &mcp.ClientCapabilities{}
+	if clientElicitation {
+		caps.Elicitation = &mcp.ElicitationCapabilities{}
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-gateway",
+		Version: "0.0.1",
+	}, &mcp.ClientOptions{
+		Capabilities: caps,
+	})
+
+	session, err := client.Connect(ctx, streamTransport, nil)
+	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
-	return httpClient, nil
+	return session, nil
 }
 
 // BuildHairpinHTTPClientPool returns a HairpinClientPool for hairpin requests.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
@@ -283,6 +284,29 @@ func (s *ExtProcServer) validateSession(sessionID string) *RouterError {
 	return nil
 }
 
+// annotationHintsHeader renders the x-mcp-annotation-hints value with
+// mark3labs semantics: every hint present, *bool nil rendering as
+// unspecified (e.g. readOnly=true,destructive=false,idempotent=unspecified,openWorld=unspecified).
+func annotationHintsHeader(hints upstream.ToolHints) string {
+	var parts []string
+	push := func(key string, val *bool) {
+		if val == nil {
+			parts = append(parts, fmt.Sprintf("%s=unspecified", key))
+		} else if *val {
+			parts = append(parts, fmt.Sprintf("%s=true", key))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=false", key))
+		}
+	}
+
+	push("readOnly", hints.ReadOnly)
+	push("destructive", hints.Destructive)
+	push("idempotent", hints.Idempotent)
+	push("openWorld", hints.OpenWorld)
+
+	return strings.Join(parts, ",")
+}
+
 // HandleToolCall will handle an MCP Tool Call
 func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) []*eppb.ProcessingResponse {
 	toolName := mcpReq.ToolName()
@@ -360,26 +384,8 @@ func (s *ExtProcServer) HandleToolCall(ctx context.Context, mcpReq *MCPRequest) 
 		attribute.String("mcp.server", serverInfo.Name),
 		attribute.String("mcp.server.hostname", serverInfo.Hostname),
 	)
-	if annotations, hasAnnotations := s.Broker.ToolAnnotations(serverInfo.ID(), toolName); hasAnnotations {
-		// build header value (e.g. readOnly=true,destructive=false,openWorld=true)
-		var parts []string
-		push := func(key string, val *bool) {
-			if val == nil {
-				parts = append(parts, fmt.Sprintf("%s=unspecified", key))
-			} else if *val {
-				parts = append(parts, fmt.Sprintf("%s=true", key))
-			} else {
-				parts = append(parts, fmt.Sprintf("%s=false", key))
-			}
-		}
-
-		push("readOnly", annotations.ReadOnlyHint)
-		push("destructive", annotations.DestructiveHint)
-		push("idempotent", annotations.IdempotentHint)
-		push("openWorld", annotations.OpenWorldHint)
-
-		hintsHeader := strings.Join(parts, ",")
-		headers.WithToolAnnotations(hintsHeader)
+	if hints, hasAnnotations := s.Broker.ToolHints(serverInfo.ID(), toolName); hasAnnotations {
+		headers.WithToolAnnotations(annotationHintsHeader(hints))
 	}
 
 	headers.WithMCPMethod(mcpReq.Method)
@@ -802,7 +808,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 			sessionCloser()
 			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
-		remoteSessionID := clientHandle.GetSessionId()
+		remoteSessionID := clientHandle.ID()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
 		{
 			_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",

@@ -5,15 +5,17 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"testing"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,7 +80,7 @@ func TestFilteredTools(t *testing.T) {
 	}{
 		{
 			Name: "test filters tools as expected",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test_tool"},
 				{Name: "test_tool2"},
 			}},
@@ -99,7 +101,7 @@ func TestFilteredTools(t *testing.T) {
 		},
 		{
 			Name: "test filters tools with same tool name as expected",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test2_tool"},
 			}},
@@ -127,7 +129,7 @@ func TestFilteredTools(t *testing.T) {
 		},
 		{
 			Name: "test filters tools returns no tools if none allowed",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test2_tool"},
 			}},
@@ -149,7 +151,7 @@ func TestFilteredTools(t *testing.T) {
 		},
 		{
 			Name: "test filters tools returns all tools enforce tool filter set to false",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
@@ -187,7 +189,7 @@ func TestFilteredTools(t *testing.T) {
 	}{
 		{
 			Name: "prompts-only JWT returns all tools when enforce is false",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
@@ -207,7 +209,7 @@ func TestFilteredTools(t *testing.T) {
 		},
 		{
 			Name: "prompts-only JWT returns empty tools when enforce is true",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
@@ -224,7 +226,7 @@ func TestFilteredTools(t *testing.T) {
 		},
 		{
 			Name: "tools and prompts JWT filters tools only, prompts ignored",
-			FullToolList: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
 				{Name: "test1_tool2"},
 			}},
@@ -252,12 +254,10 @@ func TestFilteredTools(t *testing.T) {
 				mcpServers:              tc.RegisteredMCPServers,
 			}
 
-			request := &mcp.ListToolsRequest{
-				Header: http.Header{
-					authorizedCapabilitiesHeader: {tc.jwtOverride},
-				},
+			headers := http.Header{
+				authorizedCapabilitiesHeader: {tc.jwtOverride},
 			}
-			mcpBroker.FilterTools(context.TODO(), 1, request, tc.FullToolList)
+			mcpBroker.FilterTools(context.TODO(), headers, "", tc.FullToolList)
 
 			if len(tc.ExpectedTools) != len(tc.FullToolList.Tools) {
 				t.Fatalf("expected %d tools but got %d: %v", len(tc.ExpectedTools), len(tc.FullToolList.Tools), tc.FullToolList.Tools)
@@ -287,14 +287,12 @@ func TestFilteredTools(t *testing.T) {
 				mcpServers:              tc.RegisteredMCPServers,
 			}
 
-			request := &mcp.ListToolsRequest{}
+			headers := http.Header{}
 			if tc.AllowedToolsList != nil {
 				headerValue := createTestJWT(t, tc.AllowedToolsList)
-				request.Header = http.Header{
-					authorizedCapabilitiesHeader: {headerValue},
-				}
+				headers[authorizedCapabilitiesHeader] = []string{headerValue}
 			}
-			mcpBroker.FilterTools(context.TODO(), 1, request, tc.FullToolList)
+			mcpBroker.FilterTools(context.TODO(), headers, "", tc.FullToolList)
 
 			if len(tc.ExpectedTools) != len(tc.FullToolList.Tools) {
 				t.Fatalf("expected %d tools but got %d: %v", len(tc.ExpectedTools), len(tc.FullToolList.Tools), tc.FullToolList.Tools)
@@ -326,7 +324,7 @@ func TestVirtualServerFiltering(t *testing.T) {
 	}{
 		{
 			Name: "filters tools to virtual server subset",
-			InputTools: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			InputTools: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "server1_tool1"},
 				{Name: "server1_tool2"},
 				{Name: "server2_tool1"},
@@ -342,7 +340,7 @@ func TestVirtualServerFiltering(t *testing.T) {
 		},
 		{
 			Name: "returns empty when virtual server has no matching tools",
-			InputTools: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			InputTools: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "server1_tool1"},
 				{Name: "server1_tool2"},
 			}},
@@ -357,7 +355,7 @@ func TestVirtualServerFiltering(t *testing.T) {
 		},
 		{
 			Name: "returns all tools when virtual server not found",
-			InputTools: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			InputTools: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "server1_tool1"},
 			}},
 			VirtualServers:  map[string]*config.VirtualServer{},
@@ -366,7 +364,7 @@ func TestVirtualServerFiltering(t *testing.T) {
 		},
 		{
 			Name: "returns all tools when no virtual server header",
-			InputTools: &mcp.ListToolsResult{Tools: []mcp.Tool{
+			InputTools: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "server1_tool1"},
 				{Name: "server1_tool2"},
 			}},
@@ -389,12 +387,12 @@ func TestVirtualServerFiltering(t *testing.T) {
 				logger:                  slog.Default(),
 			}
 
-			request := &mcp.ListToolsRequest{Header: http.Header{}}
+			headers := http.Header{}
 			if tc.VirtualServerID != "" {
-				request.Header[virtualMCPHeader] = []string{tc.VirtualServerID}
+				headers[virtualMCPHeader] = []string{tc.VirtualServerID}
 			}
 
-			mcpBroker.FilterTools(context.TODO(), 1, request, tc.InputTools)
+			mcpBroker.FilterTools(context.TODO(), headers, "", tc.InputTools)
 
 			if len(tc.ExpectedTools) != len(tc.InputTools.Tools) {
 				t.Fatalf("expected %d tools but got %d: %v", len(tc.ExpectedTools), len(tc.InputTools.Tools), tc.InputTools.Tools)
@@ -424,9 +422,9 @@ func TestFilterToolsSerializesAsEmptyArray(t *testing.T) {
 
 	// nil tools input
 	result := &mcp.ListToolsResult{Tools: nil}
-	request := &mcp.ListToolsRequest{Header: http.Header{}}
+	headers := http.Header{}
 
-	mcpBroker.FilterTools(context.TODO(), 1, request, result)
+	mcpBroker.FilterTools(context.TODO(), headers, "", result)
 
 	// tools should be non-nil empty slice
 	if result.Tools == nil {
@@ -568,24 +566,24 @@ func TestCombinedAuthorizedToolsAndVirtualServer(t *testing.T) {
 			}
 
 			// build input tools from all registered servers
-			inputTools := &mcp.ListToolsResult{Tools: []mcp.Tool{}}
+			inputTools := &mcp.ListToolsResult{Tools: []*mcp.Tool{}}
 			for _, manager := range tc.MCPServers {
 				for _, tool := range manager.GetManagedTools() {
-					inputTools.Tools = append(inputTools.Tools, mcp.Tool{
+					inputTools.Tools = append(inputTools.Tools, &mcp.Tool{
 						Name: manager.Config().Prefix + tool.Name,
 					})
 				}
 			}
 
-			request := &mcp.ListToolsRequest{Header: http.Header{}}
+			headers := http.Header{}
 			if tc.AllowedToolsList != nil {
-				request.Header[authorizedCapabilitiesHeader] = []string{createTestJWT(t, tc.AllowedToolsList)}
+				headers[authorizedCapabilitiesHeader] = []string{createTestJWT(t, tc.AllowedToolsList)}
 			}
 			if tc.VirtualServerID != "" {
-				request.Header[virtualMCPHeader] = []string{tc.VirtualServerID}
+				headers[virtualMCPHeader] = []string{tc.VirtualServerID}
 			}
 
-			mcpBroker.FilterTools(context.TODO(), 1, request, inputTools)
+			mcpBroker.FilterTools(context.TODO(), headers, "", inputTools)
 
 			if len(tc.ExpectedTools) != len(inputTools.Tools) {
 				t.Fatalf("expected %d tools but got %d: %v", len(tc.ExpectedTools), len(inputTools.Tools), inputTools.Tools)
@@ -616,27 +614,83 @@ func TestFilterToolsWithDiscoveryMetaToolsOnly(t *testing.T) {
 
 	// build a tools list containing only the broker meta-tools,
 	// exactly as handleListTools would return after upstream removal
-	serverTools := b.listeningMCPServer.ListTools()
-	var tools []mcp.Tool
+	serverTools := b.gatewayServer.ListTools()
+	var tools []*mcp.Tool
 	for _, st := range serverTools {
-		tools = append(tools, st.Tool)
+		tool := st.Tool
+		tools = append(tools, &tool)
 	}
 	require.NotEmpty(t, tools, "should have discovery tools registered")
 
-	session := &mockSession{id: "sess-1", init: true}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
 	result := &mcp.ListToolsResult{Tools: tools}
-	request := &mcp.ListToolsRequest{Header: http.Header{}}
+	headers := http.Header{}
 
 	// must not panic
-	b.FilterTools(ctx, 1, request, result)
+	b.FilterTools(context.Background(), headers, "", result)
 
 	// meta-tool markers should be stripped from the response
 	for _, tool := range result.Tools {
 		if tool.Meta != nil {
-			_, hasBrokerKey := tool.Meta.AdditionalFields[brokerToolMetaKey]
+			_, hasBrokerKey := tool.Meta[brokerToolMetaKey]
 			require.False(t, hasBrokerKey, "broker meta key should be stripped from %s", tool.Name)
 		}
+	}
+}
+
+// regression for the SDK migration: the SDK's tools/list result holds
+// pointers to the server's stored Tool objects (mark3labs returned fresh
+// values). mutating Meta on those shared objects permanently stripped
+// kuadrant/id after the first list, breaking findToolConflicts and
+// IsBrokerTool detection.
+func TestRemoveGatewayMeta_DoesNotMutateSharedTools(t *testing.T) {
+	b := &mcpBrokerImpl{logger: slog.Default()}
+
+	stored := &mcp.Tool{
+		Name: "srv_tool",
+		Meta: mcp.Meta{"kuadrant/id": "ns/server", brokerToolMetaKey: true, "keep": "me"},
+	}
+
+	// two list responses sharing the stored pointer, as the SDK produces
+	for range 2 {
+		res := []*mcp.Tool{stored}
+		cleaned := b.removeGatewayMeta(res)
+
+		require.Len(t, cleaned, 1)
+		require.NotContains(t, cleaned[0].Meta, "kuadrant/id")
+		require.NotContains(t, cleaned[0].Meta, brokerToolMetaKey)
+		require.Equal(t, "me", cleaned[0].Meta["keep"])
+
+		// stored object must keep its gateway meta for conflict detection
+		require.Equal(t, "ns/server", stored.Meta["kuadrant/id"])
+		require.Equal(t, true, stored.Meta[brokerToolMetaKey])
+	}
+}
+
+// concurrent lists share the stored Tool pointers; cleaning must not race.
+func TestRemoveGatewayMeta_ConcurrentLists(t *testing.T) {
+	b := &mcpBrokerImpl{logger: slog.Default()}
+
+	stored := make([]*mcp.Tool, 0, 10)
+	for i := range 10 {
+		stored = append(stored, &mcp.Tool{
+			Name: fmt.Sprintf("tool_%d", i),
+			Meta: mcp.Meta{"kuadrant/id": "ns/server"},
+		})
+	}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := make([]*mcp.Tool, len(stored))
+			copy(res, stored)
+			b.removeGatewayMeta(res)
+		}()
+	}
+	wg.Wait()
+
+	for _, tool := range stored {
+		require.Equal(t, "ns/server", tool.Meta["kuadrant/id"])
 	}
 }

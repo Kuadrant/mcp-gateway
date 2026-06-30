@@ -24,7 +24,6 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	goenv "github.com/caitlinelfring/go-env-default"
 	"github.com/fsnotify/fsnotify"
-	"github.com/mark3labs/mcp-go/server"
 	redis "github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
@@ -86,7 +85,6 @@ type app struct {
 	tokenHandler   http.Handler
 	elicitHandler  http.Handler
 	brokerServer   *http.Server
-	mcpServer      *server.StreamableHTTPServer
 	grpcServer     *grpc.Server
 	router         *mcpRouter.ExtProcServer
 }
@@ -338,8 +336,8 @@ func (a *app) run(ctx context.Context) {
 	if err := a.brokerServer.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("HTTP shutdown error", "error", err)
 	}
-	if err := a.mcpServer.Shutdown(shutdownCtx); err != nil {
-		a.logger.Warn("MCP shutdown error, ignoring", "error", err)
+	if err := a.mcpBroker.Shutdown(shutdownCtx); err != nil {
+		a.logger.Error("broker shutdown error", "error", err)
 	}
 
 	a.grpcServer.GracefulStop()
