@@ -8,7 +8,7 @@ The official `github.com/modelcontextprotocol/go-sdk` (v1.6.1) is a Tier 1 SDK m
 
 ## Summary
 
-Full replacement of `github.com/mark3labs/mcp-go` with `github.com/modelcontextprotocol/go-sdk/mcp` across broker, router, upstream client, and test servers. No coexistence period. The migration is structured in three phases: types and constants, server/broker, client/upstream. Performance must not regress in the broker's tool/call serving and tools/list aggregation paths.
+Full replacement of `github.com/mark3labs/mcp-go` with `github.com/modelcontextprotocol/go-sdk/mcp` across broker, router, upstream client, and test servers. The migration is structured in two phases: broker first (server, upstream client, hooks→middleware, test servers), then router. The broker is the highest-risk component — it touches every request path — so it migrates first to surface integration issues early. The router migration follows once the broker is stable. Performance must not regress in the broker's tool/call serving and tools/list aggregation paths.
 
 ## Goals
 
@@ -20,18 +20,11 @@ Full replacement of `github.com/mark3labs/mcp-go` with `github.com/modelcontextp
 
 ## Non-Goals
 
-- Adopting `2026-07-28` protocol features in this work
+- Adopting `2026-07-28` protocol features in this work (covered by another proposal)
 - Changing the broker's architecture or component boundaries
-- Adopting the official SDK's generic `AddTool[In, Out]` for the broker's dynamic tool registration — upstream-discovered tools have schemas that arrive at runtime via `tools/list`; there are no compile-time Go types to parameterize.
-- Migrating to the official SDK's OAuth support
+- Migrating to the official SDK's OAuth support, Auth will remain an AuthPolicy concern
 
 ## Design
-
-### Package structure difference
-
-mark3labs splits across four packages (`mcp`, `server`, `client`, `client/transport`). The official SDK consolidates everything into a single `mcp` package. All imports collapse to one import path: `github.com/modelcontextprotocol/go-sdk/mcp`.
-
-This simplifies imports but means type names share a namespace — the official SDK disambiguates with naming conventions (e.g. `Server` vs `Client`, `ServerSession` vs `ClientSession`, `ServerRequest` vs `ClientRequest`).
 
 ### Hooks → Middleware
 
@@ -65,7 +58,7 @@ func filteringMiddleware(broker *mcpBrokerImpl) mcp.Middleware {
 }
 ```
 
-**Header access.** The filtering handlers need HTTP headers (`x-mcp-authorized`, `x-mcp-virtualserver`) from the incoming request. In mark3labs, headers are on `req.Header`. In the official SDK, headers are on `req.Extra.Header` (`http.Header`), populated by the transport layer for every request including notifications. This affects all filter functions: `applyAuthorizedCapabilitiesFilter`, `applyVirtualServerFilter`, `applyAuthorizedCapabilitiesFilterForPrompts`, `applyVirtualServerFilterForPrompts`, and `applyScopeFilter`.
+**Header access.** The filtering handlers need HTTP headers (`x-mcp-authorized`, `x-mcp-virtualserver`) from the incoming request. In the official SDK, headers are on `req.Extra.Header` (`http.Header`), populated by the transport layer for every request including notifications. This affects all filter functions: `applyAuthorizedCapabilitiesFilter`, `applyVirtualServerFilter`, `applyAuthorizedCapabilitiesFilterForPrompts`, `applyVirtualServerFilterForPrompts`, and `applyScopeFilter`.
 
 **Session lifecycle.** mark3labs `OnRegisterSession`/`OnUnregisterSession` hooks don't map to method-level middleware since they fire on connection events, not method calls. Options: `ServerOptions.InitializedHandler` for session registration, or wrapping the `StreamableHTTPHandler` at the HTTP layer. This needs investigation during implementation.
 
@@ -77,7 +70,7 @@ The broker creates an MCP server, registers tools/prompts dynamically, and serve
 
 **Dynamic tool registration** uses the low-level `Server.AddTool(tool, handler)` — not the generic `AddTool[In, Out]`. The low-level API does no schema validation on tool calls ("unmarshaling and validating are the caller's responsibility"), which is correct for pass-through tools where validation is the upstream's responsibility.
 
-**InputSchema requirement.** The official SDK panics if `Server.AddTool` receives a tool with nil `InputSchema`. Tools from upstreams should carry schemas from `tools/list`, but if any upstream omits the schema, the broker must provide a default `{"type": "object"}`.
+**InputSchema requirement.** The official SDK panics if `Server.AddTool` receives a tool with nil `InputSchema`. Tools from upstreams should carry schemas from `tools/list`. If an upstream omits the schema, the broker must skip the tool and log a warning — registering a schema-less tool masks a broken upstream.
 
 **HTTP server.** The official SDK's `StreamableHTTPHandler` is an `http.Handler`, not a server — the broker manages its own `http.Server` externally. This is cleaner than mark3labs' `StreamableHTTPServer` which wraps the HTTP server.
 
@@ -140,8 +133,3 @@ Test servers in `tests/servers/` and `internal/tests/` use the full mark3labs se
 
 - **[router-2026-07-28-design.md](../router-2026-07-28/router-2026-07-28-design.md):** The router's `RoutingTable` and `Router` interfaces are SDK-agnostic. Migration impact on the router is limited to type imports in the `2025-11-25` code path.
 - **[mcp-2026-07-28-impact.md](../mcp-2026-07-28-impact.md):** Identifies the SDK dependency as a `2026-07-28` blocker. This migration resolves it.
-
-## Execution
-
-See:
-- [tasks/tasks.md](tasks/tasks.md) for the implementation plan (includes detailed type mapping reference)
