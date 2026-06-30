@@ -198,6 +198,16 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "pod template labels changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Labels = map[string]string{
+					"app.kubernetes.io/name":      "mcp-gateway",
+					"app.kubernetes.io/component": "broker",
+				}
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
