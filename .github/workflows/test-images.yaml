@@ -73,6 +73,14 @@ jobs:
             context: tests/servers/conformance-server
             dockerfile: Dockerfile
             image-name: test-conformance-server
+          - server: tls-server
+            context: tests/servers/tls-server
+            dockerfile: Dockerfile
+            image-name: test-tls-server
+          - server: user-specific-server
+            context: .
+            dockerfile: tests/servers/user-specific-server/Dockerfile
+            image-name: test-user-specific-server
 
     steps:
       - name: Check out code
@@ -110,4 +118,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ignore-error: cache export is an optimisation; transient GHA cache
+          # errors (error writing layer blob: not_found) should not fail the build
+          cache-to: type=gha,mode=max,ignore-error=true

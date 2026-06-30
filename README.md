@@ -61,7 +61,7 @@ Also sets up an Istio Gateway API Gateway with the everything test server behind
 ```bash
 make local-env-setup
 
-# Or with custom ports (defaults: 8001->30080->8080 for MCP Broker/Gateway, 8002->30089->8002 for Keycloak)
+# Or with custom ports (defaults: 8001->30080->8080 for MCP Broker/Gateway, 8002->30081->8002 for Keycloak)
 KIND_HOST_PORT_MCP_GATEWAY=8090 KIND_HOST_PORT_KEYCLOAK=8453 make local-env-setup
 ```
 
@@ -141,12 +141,12 @@ servers:
     url: http://weather.example.com:8080
     hostname: weather.example.com
     enabled: true
-    toolPrefix: "weather_"
+    prefix: "weather_"
   - name: calendar-service
     url: http://calendar.example.com:8080
     hostname: calendar.example.com
     enabled: true
-    toolPrefix: "cal_"
+    prefix: "cal_"
 ```
 
 ### Kubernetes Configuration
@@ -157,7 +157,7 @@ The `MCPServer` is a Kubernetes Custom Resource that defines an MCP (Model Conte
 
 Each `MCPServer` resource:
 - References a single HTTPRoute that points to a backend MCP service
-- Configures a tool prefix to avoid naming conflicts when federating tools
+- Configures a prefix to avoid naming conflicts when federating tools
 - Enables the controller to automatically discover and configure the broker with available MCP servers
 - Maintains status conditions to indicate whether the server is successfully discovered, valid and ready
 
@@ -173,7 +173,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: weather-route
-  toolPrefix: weather_
+  prefix: weather_
 ---
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
@@ -184,7 +184,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: calendar-route
-  toolPrefix: cal_
+  prefix: cal_
 ```
 
 ## Command Line Flags
@@ -198,25 +198,18 @@ spec:
 
 ### OAuth Configuration
 
-The mcp-broker supports configurable OAuth protected resource discovery through environment variables. When configured, the broker serves OAuth discovery information at `/.well-known/oauth-protected-resource`.
-
-| Environment Variable | Description | Default | Example |
-|---------------------|-------------|---------|---------|
-| `OAUTH_RESOURCE_NAME` | Human-readable name for the protected resource | `"MCP Server"` | `"My MCP Gateway"` |
-| `OAUTH_RESOURCE` | URL of the protected MCP endpoint | `"/mcp"` | `"http://mcp.example.com/mcp"` |
-| `OAUTH_AUTHORIZATION_SERVERS` | Comma-separated list of authorization server URLs | `[]` (empty) | `"http://keycloak.example.com/realms/mcp,http://auth.example.com"` |
-| `OAUTH_BEARER_METHODS_SUPPORTED` | Comma-separated list of bearer token methods | `["header"]` | `"header,query"` |
-| `OAUTH_SCOPES_SUPPORTED` | Comma-separated list of supported scopes | `["basic"]` | `"basic,read,write"` |
-
-**Example configuration:**
+The broker serves OAuth protected resource discovery at `/.well-known/oauth-protected-resource`. In controller-managed deployments, configure this via the `oauthProtectedResource` field on `MCPGatewayExtension`:
 
 ```bash
-export OAUTH_RESOURCE_NAME="Production MCP Server"
-export OAUTH_RESOURCE="https://mcp.example.com/mcp"
-export OAUTH_AUTHORIZATION_SERVERS="https://keycloak.example.com/realms/mcp"
-export OAUTH_BEARER_METHODS_SUPPORTED="header"
-export OAUTH_SCOPES_SUPPORTED="basic,read,write,groups"
+kubectl patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type='merge' \
+  -p='{"spec":{"oauthProtectedResource":{"authorizationServers":["https://keycloak.example.com/realms/mcp"],"scopesSupported":["basic","read","write","groups"]}}}'
 ```
+
+Only `authorizationServers` is required. Defaults: `resourceName` = `"MCP Server"`, `resource` = `https://<publicHost>/mcp`, `bearerMethodsSupported` = `["header"]`, `scopesSupported` = `["basic"]`.
+
+See the [authentication guide](docs/guides/authentication.md) and [MCPGatewayExtension reference](docs/reference/mcpgatewayextension.md) for full details.
+
+For standalone (non-Kubernetes) usage, the broker reads `OAUTH_RESOURCE_NAME`, `OAUTH_RESOURCE`, `OAUTH_AUTHORIZATION_SERVERS`, `OAUTH_BEARER_METHODS_SUPPORTED`, and `OAUTH_SCOPES_SUPPORTED` environment variables directly.
 
 **Response Format:**
 
@@ -224,7 +217,7 @@ The endpoint returns a JSON response following the OAuth Protected Resource disc
 
 ```json
 {
-  "resource_name": "Production MCP Server",
+  "resource_name": "MCP Server",
   "resource": "https://mcp.example.com/mcp",
   "authorization_servers": [
     "https://keycloak.example.com/realms/mcp"

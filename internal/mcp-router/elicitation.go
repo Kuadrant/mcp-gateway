@@ -58,12 +58,19 @@ func (w *sseRewriter) Process(ctx context.Context, chunk []byte) []byte {
 
 // Flush flushes the buffer and cleans up any gatewayIDs created by the rewriter
 // This allows us to deal with orphaned elicitation id mappings
+// Safe to call multiple times; subsequent calls are no-ops
 func (w *sseRewriter) Flush(ctx context.Context) []byte {
 	remaining := w.buf
 	w.buf = nil
+	if len(remaining) > 0 {
+		if bytes.HasPrefix(bytes.TrimSpace(remaining), dataPrefix) {
+			remaining = w.maybeRewriteElicitation(ctx, remaining)
+		}
+	}
 	for _, id := range w.gatewayIDs {
 		w.idMap.Remove(ctx, id) // tool request + response finished, no need to hold onto the mappings any more
 	}
+	w.gatewayIDs = nil
 	return remaining
 }
 

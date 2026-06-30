@@ -16,7 +16,7 @@ import (
 type ServerValidationStatus struct {
 	ID                     string                 `json:"id"`
 	Name                   string                 `json:"name"`
-	ToolPrefix             string                 `json:"toolPrefix"`
+	Prefix                 string                 `json:"prefix"`
 	ConnectionStatus       ConnectionStatus       `json:"connectionStatus"`
 	ProtocolValidation     ProtocolValidation     `json:"protocolValidation"`
 	CapabilitiesValidation CapabilitiesValidation `json:"capabilitiesValidation"`
@@ -62,6 +62,7 @@ type StatusResponse struct {
 	UnHealthyServers int                               `json:"unHealthyServers"`
 	ToolConflicts    int                               `json:"toolConflicts"`
 	Timestamp        time.Time                         `json:"timestamp"`
+	ScopedSessions   int                               `json:"scopedSessions"`
 }
 
 // StatusHandler handles HTTP requests to the status endpoint

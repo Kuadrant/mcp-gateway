@@ -19,6 +19,10 @@ type KeyGenerationPolicy string
 // +kubebuilder:validation:Enum=FilterOut;RejectServer
 type InvalidToolPolicy string
 
+// URLElicitationPolicy controls whether URL-based token elicitation is enabled
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type URLElicitationPolicy string
+
 const (
 	// ConditionTypeReady signals if a resource is ready
 	ConditionTypeReady = "Ready"
@@ -49,6 +53,11 @@ const (
 	InvalidToolPolicyFilterOut InvalidToolPolicy = "FilterOut"
 	// InvalidToolPolicyRejectServer rejects all tools from a server if any are invalid
 	InvalidToolPolicyRejectServer InvalidToolPolicy = "RejectServer"
+
+	// URLElicitationEnabled enables URL-based token elicitation and creates a /tokens HTTPRoute
+	URLElicitationEnabled URLElicitationPolicy = "Enabled"
+	// URLElicitationDisabled disables URL-based token elicitation (default)
+	URLElicitationDisabled URLElicitationPolicy = "Disabled"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -64,7 +73,11 @@ type MCPGatewayExtensionSpec struct {
 	PublicHost string `json:"publicHost,omitempty"`
 
 	// privateHost overrides the internal host used for hair-pinning requests
-	// back through the gateway. Defaults to <gateway>-istio.<ns>.svc.cluster.local:<port>.
+	// back through the gateway. Defaults to
+	// <gateway>-istio.<ns>.svc.cluster.local:<port>, with an https:// scheme
+	// prefix when the targeted Gateway listener uses the HTTPS protocol. The
+	// value supplied here is honoured verbatim, so an operator can include a
+	// scheme (e.g. "https://my-gw:443") or pin to a different port.
 	// +optional
 	PrivateHost string `json:"privateHost,omitempty"`
 
@@ -93,6 +106,57 @@ type MCPGatewayExtensionSpec struct {
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// urlElicitation controls whether URL-based token elicitation is enabled.
+	// Enabled: creates a separate /tokens HTTPRoute and passes --enable-url-elicitation to the broker.
+	// Disabled: no /tokens route is created (default).
+	// +optional
+	// +default="Disabled"
+	URLElicitation URLElicitationPolicy `json:"urlElicitation,omitempty"`
+
+	// oauthProtectedResource configures the OAuth protected resource metadata
+	// served at /.well-known/oauth-protected-resource. When set, the controller
+	// injects the corresponding OAUTH_* env vars into the broker-router deployment.
+	// +optional
+	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
+}
+
+// OAuthProtectedResource configures the OAuth protected resource metadata
+// served at /.well-known/oauth-protected-resource.
+type OAuthProtectedResource struct {
+	// authorizationServers lists the OAuth authorization server URLs.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:Pattern=`^https?://[^,]+$`
+	// +listType=atomic
+	AuthorizationServers []string `json:"authorizationServers,omitempty"`
+
+	// resourceName is the human-readable name for this resource.
+	// Defaults to "MCP Server".
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// resource is the URI of the protected resource.
+	// Defaults to https://<publicHost>/mcp.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	Resource string `json:"resource,omitempty"`
+
+	// bearerMethodsSupported lists the supported bearer token methods.
+	// Defaults to ["header"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=atomic
+	BearerMethodsSupported []string `json:"bearerMethodsSupported,omitempty"`
+
+	// scopesSupported lists the supported OAuth scopes.
+	// Defaults to ["basic"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=atomic
+	ScopesSupported []string `json:"scopesSupported,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
@@ -257,4 +321,8 @@ type ListenerConfig struct {
 	Hostname string `json:"hostname,omitempty"`
 	// name is the listener name (sectionName)
 	Name string `json:"name,omitempty"`
+	// protocol is the Gateway listener protocol (e.g. HTTP, HTTPS).
+	// Used to determine whether the broker-router hairpin URL should use
+	// http:// or https://.
+	Protocol string `json:"protocol,omitempty"`
 }

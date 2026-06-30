@@ -109,6 +109,9 @@ type MCPGatewayExtensionReconciler struct {
 	ConfigWriterDeleter   ConfigWriterDeleter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 	BrokerRouterImage     string
+	// BrokerRouterLogLevel, when non-empty, is passed to the broker-router
+	// as --log-level (sourced from the BROKER_ROUTER_LOG_LEVEL env var)
+	BrokerRouterLogLevel string
 }
 
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch;update
@@ -339,6 +342,7 @@ func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*
 				Port:     port,
 				Hostname: hostname,
 				Name:     sectionName,
+				Protocol: string(listener.Protocol),
 			}, nil
 		}
 	}
@@ -731,7 +735,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 			"processing_mode": map[string]any{
 				"request_header_mode":   "SEND",
 				"response_header_mode":  "SEND",
-				"request_body_mode":     "STREAMED",
+				"request_body_mode":     "BUFFERED",
 				"response_body_mode":    "NONE",
 				"request_trailer_mode":  "SKIP",
 				"response_trailer_mode": "SKIP",

@@ -27,12 +27,6 @@ labels: release-testing
 
 - [ ] E2E tests completed (run against Kind environment with RC images)
 
-## Gevals integration tests
-
-- [ ] Gevals integration tests completed (run against Kind environment with RC images)
-
-See [evals/README.md](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/evals/README.md) for configuration and usage. Ref: [#601](https://github.com/Kuadrant/mcp-gateway/issues/601).
-
 ## MCP Conformance tests
 
 - [ ] MCP Conformance tests completed (run against Kind environment with RC images)

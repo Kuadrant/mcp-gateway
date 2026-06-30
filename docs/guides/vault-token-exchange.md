@@ -152,7 +152,7 @@ EOF
 
 The `vault-login` step authenticates to Vault using the user's JWT (cached per user for 5 minutes). The `vault` step fetches the secret at `secret/data/mcp-gateway/<sub>`. The authorization rule verifies the secret contains a `github_pat` field, and the response injects it into the request headers.
 
-> **Note:** The MCPServerRegistration `credentialRef` provides a static PAT for broker tool discovery. The AuthPolicy above injects the per-user PAT at request time. Both are needed -- see the [external MCP server guide](./external-mcp-server.md#step-4-create-secret-with-authentication).
+> **Note:** The MCPServerRegistration `credentialRef` provides a static PAT for broker tool discovery. The AuthPolicy above injects the per-user PAT at request time. Both are needed -- see the [external MCP server tutorial](../tutorials/external-mcp-server.md#create-secret).
 
 If requests return 403 after applying this policy, check Authorino logs for vault-login errors (audience mismatch, expired tokens, unreachable Vault).
 
@@ -175,7 +175,7 @@ Connect to the gateway using the [MCP Inspector](https://modelcontextprotocol.io
 kubectl delete authpolicy github-vault-policy -n mcp-test
 ```
 
-To remove the GitHub MCP server resources, see the [cleanup section](./external-mcp-server.md#cleanup) in the external MCP server guide. You may also want to remove the Vault policy, role, and stored secrets created in Steps 1 and 2.
+To remove the GitHub MCP server resources, see the [cleanup section](../tutorials/external-mcp-server.md#cleanup) in the external MCP server guide. You may also want to remove the Vault policy, role, and stored secrets created in Steps 1 and 2.
 
 ## Next Steps
 

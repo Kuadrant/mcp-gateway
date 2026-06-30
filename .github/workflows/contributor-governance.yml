@@ -1,0 +1,12 @@
+name: Contributor Governance
+
+on:
+  issues:
+    types: [opened, labeled, unlabeled]
+  pull_request_target:
+    types: [opened, reopened]
+
+jobs:
+  governance:
+    uses: Kuadrant/.github/.github/workflows/contributor-governance.yml@main
+    secrets: inherit

@@ -5,4 +5,3 @@ kind: Kustomization
 # base resources - controller deploys broker-router when MCPGatewayExtension is reconciled
 resources:
   - mcpgatewayextension.yaml
-  - httproute.yaml

@@ -3,7 +3,7 @@
 // all VUs spawn at once, run for a fixed duration, measure latency overhead.
 //
 // usage:
-//   TARGET_URL=http://localhost:8001/mcp TOOL_PREFIX=mock_ USERS=512 DURATION=5m \
+//   TARGET_URL=http://localhost:8001/mcp PREFIX=mock_ USERS=512 DURATION=5m \
 //     ./bin/k6 run tests/perf/k6/concurrency-levels.js
 
 import mcp from 'k6/x/infobip_mcp';
@@ -11,7 +11,7 @@ import { check, sleep } from 'k6';
 import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
 
 const TARGET_URL = __ENV.TARGET_URL || 'http://localhost:8001/mcp';
-const TOOL_PREFIX = __ENV.TOOL_PREFIX || 'mock_';
+const PREFIX = __ENV.PREFIX || 'mock_';
 const USERS = parseInt(__ENV.USERS || '64');
 const DURATION = __ENV.DURATION || '5m';
 const TIMEOUT = parseInt(__ENV.TIMEOUT || '10');
@@ -71,7 +71,7 @@ export default function () {
 
     try {
         for (let i = 0; i < 100; i++) {
-            const toolName = `${TOOL_PREFIX}${TOOLS[i % TOOLS.length]}`;
+            const toolName = `${PREFIX}${TOOLS[i % TOOLS.length]}`;
             const start = Date.now();
             try {
                 const result = client.callTool(toolName, { input: 'test' });

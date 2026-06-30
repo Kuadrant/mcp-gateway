@@ -1,6 +1,6 @@
 module github.com/Kuadrant/mcp-gateway/tests/servers/oidc-server
 
-go 1.25.5
+go 1.25.9
 
 require (
 	github.com/coreos/go-oidc/v3 v3.16.0

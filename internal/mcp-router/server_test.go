@@ -253,6 +253,7 @@ func TestProcess_EndOfStream(t *testing.T) {
 									SetHeaders: []*corev3.HeaderValueOption{
 										{Header: &corev3.HeaderValue{Key: ":authority"}},
 									},
+									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 								},
 							},
 						},
@@ -334,7 +335,8 @@ func TestProcessSpanEnded(t *testing.T) {
 	for _, s := range spans {
 		if s.Name == "mcp-router.process" {
 			found = true
-			require.True(t, s.EndTime.After(s.StartTime), "span should be ended")
+			require.False(t, s.EndTime.IsZero(), "span should have end time set")
+			require.False(t, s.EndTime.Before(s.StartTime), "span end should not precede start (sync tracer may use equal timestamps)")
 		}
 	}
 	require.True(t, found, "expected mcp-router.process span to be recorded")
@@ -533,11 +535,11 @@ func newTestServer(t *testing.T) *ExtProcServer {
 		RoutingConfig: &config.MCPServersConfig{
 			Servers: []*config.MCPServer{
 				{
-					Name:       "dummy",
-					URL:        "http://localhost:9090",
-					ToolPrefix: "",
-					Enabled:    true,
-					Hostname:   "dummy",
+					Name:     "dummy",
+					URL:      "http://localhost:9090",
+					Prefix:   "",
+					State:    "Enabled",
+					Hostname: "dummy",
 				},
 			},
 		},
@@ -551,7 +553,9 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 			Request: &extProcV3.ProcessingRequest_RequestHeaders{
 				RequestHeaders: &extProcV3.HttpHeaders{
 					Headers: &corev3.HeaderMap{
-						Headers: []*corev3.HeaderValue{},
+						Headers: []*corev3.HeaderValue{
+							{Key: "content-type", RawValue: []byte("application/json")},
+						},
 					},
 				},
 			},
@@ -565,6 +569,7 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 								SetHeaders: []*corev3.HeaderValueOption{
 									{Header: &corev3.HeaderValue{Key: ":authority"}},
 								},
+								RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 							},
 						},
 					},
@@ -605,6 +610,11 @@ func immediateResponse(code typev3.StatusCode) *extProcV3.ProcessingResponse {
 			ImmediateResponse: &extProcV3.ImmediateResponse{
 				Body:   []byte("dummy"),
 				Status: &typev3.HttpStatus{Code: code},
+				Headers: &extProcV3.HeaderMutation{
+					SetHeaders: []*corev3.HeaderValueOption{
+						{Header: &corev3.HeaderValue{Key: "content-type", RawValue: []byte("text/plain")}},
+					},
+				},
 			},
 		},
 	}

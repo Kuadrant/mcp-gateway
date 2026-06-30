@@ -52,7 +52,7 @@ metadata:
   name: local-dev-server
   namespace: mcp-system
 spec:
-  toolPrefix: "local_"
+  prefix: "local_"
   path: "/mcp"
   targetRef:
     group: "gateway.networking.k8s.io"

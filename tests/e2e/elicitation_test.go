@@ -44,16 +44,16 @@ func (h *declineHandler) Elicit(_ context.Context, req mcp.ElicitationRequest) (
 var _ = Describe("Elicitation", func() {
 	var (
 		testResources []client.Object
-		toolPrefix    string
+		prefix        string
 	)
 
 	BeforeEach(func() {
 		By("Registering an MCPServerRegistration pointing to the everything-server")
-		registration := NewMCPServerResources("elicitation", "everything-server.mcp.local", "everything-server", 9090, k8sClient).
-			WithToolPrefix("es_").Build()
+		registration := NewMCPServerResources("elicitation", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
+			WithPrefix("es_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
-		toolPrefix = registeredServer.Spec.ToolPrefix
+		prefix = registeredServer.Spec.Prefix
 
 		By("Waiting for the server to become ready")
 		Eventually(func(g Gomega) {
@@ -69,7 +69,7 @@ var _ = Describe("Elicitation", func() {
 	})
 
 	It("[Elicitation] should accept elicitation and return user-provided information", func() {
-		toolName := fmt.Sprintf("%strigger-elicitation-request", toolPrefix)
+		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := &acceptHandler{
 			content: map[string]any{
@@ -83,7 +83,7 @@ var _ = Describe("Elicitation", func() {
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, gatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer elicitClient.Close()
+		defer func() { _ = elicitClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
@@ -114,7 +114,7 @@ var _ = Describe("Elicitation", func() {
 	})
 
 	It("[Elicitation] should decline elicitation", func() {
-		toolName := fmt.Sprintf("%strigger-elicitation-request", toolPrefix)
+		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := &declineHandler{}
 
@@ -124,7 +124,7 @@ var _ = Describe("Elicitation", func() {
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, gatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer elicitClient.Close()
+		defer func() { _ = elicitClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
@@ -154,8 +154,8 @@ var _ = Describe("Elicitation", func() {
 		Expect(responseText).To(ContainSubstring("User declined"))
 	})
 
-	It("[Elicitation] should error when calling elicitation tool without handler", func() {
-		toolName := fmt.Sprintf("%strigger-elicitation-request", toolPrefix)
+	It("[Full][Elicitation] should error when calling elicitation tool without handler", func() {
+		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		By("Creating a standard client without elicitation handler")
 		var standardClient *mcpclient.Client
@@ -164,7 +164,7 @@ var _ = Describe("Elicitation", func() {
 			standardClient, err = NewMCPGatewayClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		defer standardClient.Close()
+		defer func() { _ = standardClient.Close() }()
 
 		By("Verifying the trigger-elicitation-request tool is visible in tools/list")
 		toolFound := false

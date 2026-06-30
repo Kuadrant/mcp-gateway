@@ -8,7 +8,6 @@ on:
       - 'docs/**'
       - 'examples/**'
       - 'LICENSE'
-      - 'evals/**'
       - '.coderabbit.yaml'
       - '.gitignore'
   merge_group:
@@ -39,8 +38,7 @@ jobs:
 
       - name: Run lint checks
         run: |
-          npm install -g cspell@9.4.0
-          make lint
+          make lint-go
 
       - name: Check generated resources are synchronized
         run: |

@@ -39,7 +39,7 @@ sequenceDiagram
 
   Note over Controller: Watch MCPServerRegistration resources
   Controller->>ConfigMap: Write aggregated config
-  Note right of ConfigMap: Config includes:<br/>- Server URL<br/>- Hostname<br/>- Tool Prefix<br/>- Credentials
+  Note right of ConfigMap: Config includes:<br/>- Server URL<br/>- Hostname<br/>- Prefix<br/>- Credentials
   
   ConfigMap->>Broker: Config change notification
   Broker->>Broker: OnConfigChange()
@@ -112,10 +112,10 @@ Retries are handled in background routines to avoid blocking the main broker ope
 
 ### Status and Health
 
-The broker exposes status information about registered servers:
+The broker exposes status information about registered servers via its `/status` endpoint:
 - Connection status
 - Last successful discovery time
 - Tool count
 - Error messages (if any)
 
-This information is available via the `/status` endpoint for debugging and monitoring.
+This information is for debugging and monitoring only. It is not surfaced in the MCPServerRegistration CRD status. The controller considers a registration ready once the config secret has been written successfully.

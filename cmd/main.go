@@ -22,6 +22,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/go-logr/logr"
 
@@ -54,21 +55,12 @@ func init() {
 func main() {
 	var loglevel int
 	var logFormat string
-	flag.IntVar(&loglevel, "log-level", int(slog.LevelInfo), "log level: 0=info, 8=error, -4=debug")
+	flag.IntVar(&loglevel, "log-level", int(slog.LevelInfo), "log level: 0=info, 4=warn, 8=error, -4=debug")
 	flag.StringVar(&logFormat, "log-format", "txt", "log format: txt or json")
 	flag.Parse()
 
-	loggerOpts := &slog.HandlerOptions{}
-	switch loglevel {
-	case 0:
-		loggerOpts.Level = slog.LevelInfo
-	case 8:
-		loggerOpts.Level = slog.LevelError
-	case -4:
-		loggerOpts.Level = slog.LevelDebug
-	default:
-		loggerOpts.Level = slog.LevelDebug
-	}
+	// flag value is a raw slog.Level (info=0, warn=4, error=8, debug=-4)
+	loggerOpts := &slog.HandlerOptions{Level: slog.Level(loglevel)}
 
 	var slogger *slog.Logger
 	if logFormat == "json" {
@@ -122,6 +114,14 @@ func main() {
 	}
 
 	brokerRouterImage := goenv.GetDefault("RELATED_IMAGE_ROUTER_BROKER", controller.DefaultBrokerRouterImage)
+	brokerRouterLogLevel := goenv.GetDefault("BROKER_ROUTER_LOG_LEVEL", "")
+	// the broker parses --log-level as an integer, so a bad value here would
+	// crash-loop the data plane rather than the controller; fail fast instead
+	if brokerRouterLogLevel != "" {
+		if _, err := strconv.Atoi(brokerRouterLogLevel); err != nil {
+			panic("invalid BROKER_ROUTER_LOG_LEVEL " + strconv.Quote(brokerRouterLogLevel) + " : must be an integer")
+		}
+	}
 
 	if err = (&controller.MCPGatewayExtensionReconciler{
 		Client:                mgr.GetClient(),
@@ -130,15 +130,17 @@ func main() {
 		ConfigWriterDeleter:   &configReaderWriter,
 		MCPExtFinderValidator: mcpExtFinderValidator,
 		BrokerRouterImage:     brokerRouterImage,
+		BrokerRouterLogLevel:  brokerRouterLogLevel,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
 
 	if err = (&controller.MCPVirtualServerReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		DirectAPIReader:    mgr.GetAPIReader(),
-		ConfigReaderWriter: &configReaderWriter,
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		DirectAPIReader:       mgr.GetAPIReader(),
+		ConfigReaderWriter:    &configReaderWriter,
+		MCPExtNamespaceLister: mcpExtFinderValidator,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}

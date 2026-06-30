@@ -169,6 +169,12 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 		for i, existing := range existingConfig.Servers {
 
 			if existing.Name == server.Name {
+				if !server.ConfigChanged(existing) {
+					// config unchanged, skip write to avoid unnecessary secret updates
+					// that trigger broker config reloads
+					srw.Logger.Info("SecretReaderWriter UpsertMCPServer config unchanged, skipping write", "name", server.Name)
+					return nil
+				}
 				existingConfig.Servers[i] = server
 				found = true
 				break

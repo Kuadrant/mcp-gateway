@@ -6,9 +6,20 @@ import (
 	"log/slog"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// BrokerTracerName is the OpenTelemetry tracer name for the broker component.
+const BrokerTracerName = "mcp-broker"
+
+// SpanError records an error on the span and sets its status to error.
+func SpanError(span trace.Span, err error, msg string) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, msg)
+}
 
 // SetupOTelSDK initializes the OpenTelemetry SDK with tracing and logs support
 func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *slog.Logger) (shutdown func(context.Context) error, loggerProvider *sdklog.LoggerProvider, err error) {

@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"slices"
@@ -27,6 +25,7 @@ const (
 	// broker-router deployment constants
 	brokerRouterName     = "mcp-gateway"
 	gatewayHTTPRouteName = "mcp-gateway-route"
+	tokensHTTPRouteName  = "mcp-gateway-tokens-route" //nolint:gosec // not a credential
 
 	// DefaultBrokerRouterImage is the default image for the broker-router deployment
 	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
@@ -39,6 +38,9 @@ const (
 
 // managedCommandFlags are the flags the controller owns and reconciles.
 // Any flag not in this list is user-managed and preserved as-is.
+// `--mcp-router-key` is kept in the list (without being generated) so that
+// existing deployments running an old controller image have the now-removed
+// flag stripped on the next reconcile rather than preserved as a "user flag".
 var managedCommandFlags = []string{
 	"--mcp-broker-public-address",
 	"--mcp-gateway-private-host",
@@ -46,6 +48,14 @@ var managedCommandFlags = []string{
 	"--mcp-check-interval",
 	"--mcp-gateway-public-host",
 	"--mcp-router-key",
+	"--enable-url-elicitation",
+	"--log-level",
+}
+
+// managedVolumeNames are the volume names the controller owns and reconciles.
+// Any volume not in this list is user-managed and preserved as-is.
+var managedVolumeNames = []string{
+	"config-volume",
 }
 
 // managedEnvVarNames are the env var names the controller owns and reconciles.
@@ -54,6 +64,11 @@ var managedEnvVarNames = []string{
 	"TRUSTED_HEADER_PUBLIC_KEY",
 	"CACHE_CONNECTION_STRING",
 	sessionSigningKeyEnvVar,
+	"OAUTH_RESOURCE_NAME",
+	"OAUTH_RESOURCE",
+	"OAUTH_AUTHORIZATION_SERVERS",
+	"OAUTH_BEARER_METHODS_SUPPORTED",
+	"OAUTH_SCOPES_SUPPORTED",
 }
 
 func brokerRouterLabels() map[string]string {
@@ -75,7 +90,12 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		command = append(command, fmt.Sprintf("--mcp-check-interval=%d", *mcpExt.Spec.BackendPingIntervalSeconds))
 	}
 	command = append(command, "--mcp-gateway-public-host="+publicHost)
-	command = append(command, "--mcp-router-key="+routerKey(mcpExt))
+	if mcpExt.Spec.URLElicitation == mcpv1alpha1.URLElicitationEnabled {
+		command = append(command, "--enable-url-elicitation")
+	}
+	if r.BrokerRouterLogLevel != "" {
+		command = append(command, "--log-level="+r.BrokerRouterLogLevel)
+	}
 
 	envVars := []corev1.EnvVar{
 		{
@@ -115,6 +135,31 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 				},
 			},
 		})
+	}
+	if opr := mcpExt.Spec.OAuthProtectedResource; opr != nil {
+		resourceName := "MCP Server"
+		if opr.ResourceName != "" {
+			resourceName = opr.ResourceName
+		}
+		resource := "https://" + publicHost + "/mcp"
+		if opr.Resource != "" {
+			resource = opr.Resource
+		}
+		bearerMethods := []string{"header"}
+		if len(opr.BearerMethodsSupported) > 0 {
+			bearerMethods = opr.BearerMethodsSupported
+		}
+		scopes := []string{"basic"}
+		if len(opr.ScopesSupported) > 0 {
+			scopes = opr.ScopesSupported
+		}
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "OAUTH_RESOURCE_NAME", Value: resourceName},
+			corev1.EnvVar{Name: "OAUTH_RESOURCE", Value: resource},
+			corev1.EnvVar{Name: "OAUTH_AUTHORIZATION_SERVERS", Value: strings.Join(opr.AuthorizationServers, ",")},
+			corev1.EnvVar{Name: "OAUTH_BEARER_METHODS_SUPPORTED", Value: strings.Join(bearerMethods, ",")},
+			corev1.EnvVar{Name: "OAUTH_SCOPES_SUPPORTED", Value: strings.Join(scopes, ",")},
+		)
 	}
 
 	return &appsv1.Deployment{
@@ -165,6 +210,20 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 									MountPath: "/config",
 									ReadOnly:  true,
 								},
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path:   "/readyz",
+										Port:   intstr.FromString("http"),
+										Scheme: corev1.URISchemeHTTP,
+									},
+								},
+								InitialDelaySeconds: 5,
+								TimeoutSeconds:      1,
+								PeriodSeconds:       10,
+								SuccessThreshold:    1,
+								FailureThreshold:    3,
 							},
 						},
 					},
@@ -228,12 +287,6 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1al
 	}
 }
 
-// routerKey generates a deterministic key for hair-pinning requests based on the extension's UID
-func routerKey(mcpExt *mcpv1alpha1.MCPGatewayExtension) string {
-	hash := sha256.Sum256([]byte(mcpExt.UID))
-	return hex.EncodeToString(hash[:16])
-}
-
 // stripPort removes port suffix from a host string (e.g. "example.com:8001" -> "example.com")
 func stripPort(host string) string {
 	h, _, err := net.SplitHostPort(host)
@@ -271,13 +324,32 @@ func derivePublicHost(listenerConfig *mcpv1alpha1.ListenerConfig, annotationOver
 	return hostname, nil
 }
 
+// derivePrivateHost returns the value passed to --mcp-gateway-private-host,
+// which the broker uses when hairpinning the internal initialize request back
+// through the gateway. When the user explicitly sets spec.privateHost, that
+// value is honoured verbatim (so an operator can override scheme, host, and
+// port). Otherwise the host is computed from the targetRef and listener port,
+// and an https:// scheme prefix is added when the listener is HTTPS so the
+// broker hairpin doesn't send plain HTTP to a TLS-only port (issue #917).
+func derivePrivateHost(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig) string {
+	if mcpExt.Spec.PrivateHost != "" {
+		return mcpExt.Spec.PrivateHost
+	}
+	host := mcpExt.InternalHost(listenerConfig.Port)
+	// listener.Protocol is the Gateway API protocol string, e.g. "HTTPS".
+	if strings.EqualFold(listenerConfig.Protocol, "HTTPS") {
+		return "https://" + host
+	}
+	return host
+}
+
 func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig) (bool, error) {
 	// derive values from listener config before building resources
 	publicHost, err := derivePublicHost(listenerConfig, mcpExt.Spec.PublicHost)
 	if err != nil {
 		return false, newValidationError(mcpv1alpha1.ConditionReasonInvalid, err.Error())
 	}
-	internalHost := mcpExt.InternalHost(listenerConfig.Port)
+	internalHost := derivePrivateHost(mcpExt, listenerConfig)
 
 	// reconcile service account (must exist before deployment)
 	serviceAccount := r.buildBrokerRouterServiceAccount(mcpExt)
@@ -330,7 +402,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingContainer.Image = desiredContainer.Image
 		existingContainer.Ports = desiredContainer.Ports
 		existingContainer.Env = mergeEnvVars(desiredContainer.Env, existingContainer.Env)
-		existingContainer.VolumeMounts = desiredContainer.VolumeMounts
+		existingContainer.VolumeMounts = mergeVolumeMounts(desiredContainer.VolumeMounts, existingContainer.VolumeMounts)
+		existingContainer.ReadinessProbe = desiredContainer.ReadinessProbe
 		existingDeployment.Spec.Template.Spec.Containers[0] = existingContainer
 		existingDeployment.Spec.Template.Spec.Volumes = deployment.Spec.Template.Spec.Volumes
 		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
@@ -393,6 +466,13 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		}
 	}
 
+	// reconcile tokens HTTPRoute for URL elicitation (unless route management is disabled)
+	if !mcpExt.HTTPRouteDisabled() {
+		if err := r.reconcileTokensHTTPRoute(ctx, mcpExt, publicHost); err != nil {
+			return false, err
+		}
+	}
+
 	// check deployment readiness
 	deploymentReady := existingDeployment.Status.ReadyReplicas > 0 &&
 		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
@@ -443,11 +523,19 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	if !equality.Semantic.DeepEqual(desiredContainer.Ports, existingContainer.Ports) {
 		return true, fmt.Sprintf("ports changed: %+v -> %+v", existingContainer.Ports, desiredContainer.Ports)
 	}
-	if !equality.Semantic.DeepEqual(desiredContainer.VolumeMounts, existingContainer.VolumeMounts) {
-		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingContainer.VolumeMounts, desiredContainer.VolumeMounts)
+	// only compare volumes/mounts the controller manages; user-added ones are preserved
+	desiredMounts := filterManagedVolumeMounts(desiredContainer.VolumeMounts)
+	existingMounts := filterManagedVolumeMounts(existingContainer.VolumeMounts)
+	if !equality.Semantic.DeepEqual(desiredMounts, existingMounts) {
+		return true, fmt.Sprintf("volumeMounts changed: %+v -> %+v", existingMounts, desiredMounts)
 	}
-	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.Volumes, existing.Spec.Template.Spec.Volumes) {
-		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existing.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes)
+	if !equality.Semantic.DeepEqual(desiredContainer.ReadinessProbe, existingContainer.ReadinessProbe) {
+		return true, fmt.Sprintf("readinessProbe changed: %+v -> %+v", existingContainer.ReadinessProbe, desiredContainer.ReadinessProbe)
+	}
+	desiredVolumes := filterManagedVolumes(desired.Spec.Template.Spec.Volumes)
+	existingVolumes := filterManagedVolumes(existing.Spec.Template.Spec.Volumes)
+	if !equality.Semantic.DeepEqual(desiredVolumes, existingVolumes) {
+		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existingVolumes, desiredVolumes)
 	}
 	// only compare env vars the controller manages; user-added env vars are preserved
 	desiredEnv := filterManagedEnvVars(desiredContainer.Env)
@@ -521,13 +609,125 @@ func mergeEnvVars(desired, existing []corev1.EnvVar) []corev1.EnvVar {
 	return slices.Concat(desired, userEnvVars)
 }
 
+// filterManagedVolumes returns only volumes the controller manages.
+func filterManagedVolumes(volumes []corev1.Volume) []corev1.Volume {
+	var out []corev1.Volume
+	for _, v := range volumes {
+		if slices.Contains(managedVolumeNames, v.Name) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// mergeVolumes preserves user-added volumes while updating controller-managed ones.
+func mergeVolumes(desired, existing []corev1.Volume) []corev1.Volume {
+	var userVolumes []corev1.Volume
+	for _, v := range existing {
+		if !slices.Contains(managedVolumeNames, v.Name) {
+			userVolumes = append(userVolumes, v)
+		}
+	}
+	return slices.Concat(desired, userVolumes)
+}
+
+// filterManagedVolumeMounts returns only volume mounts the controller manages.
+func filterManagedVolumeMounts(mounts []corev1.VolumeMount) []corev1.VolumeMount {
+	var out []corev1.VolumeMount
+	for _, m := range mounts {
+		if slices.Contains(managedVolumeNames, m.Name) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// mergeVolumeMounts preserves user-added volume mounts while updating controller-managed ones.
+func mergeVolumeMounts(desired, existing []corev1.VolumeMount) []corev1.VolumeMount {
+	var userMounts []corev1.VolumeMount
+	for _, m := range existing {
+		if !slices.Contains(managedVolumeNames, m.Name) {
+			userMounts = append(userMounts, m)
+		}
+	}
+	return slices.Concat(desired, userMounts)
+}
+
 func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
-	pathValue := "/mcp"
+	mcpPath := "/mcp"
+	wellKnownPath := "/.well-known/oauth-protected-resource"
+	statusPath := "/status"
 	port := gatewayv1.PortNumber(brokerHTTPPort)
 	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
 	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
+
+	stripRouterHeaders := []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterRequestHeaderModifier,
+			RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Remove: []string{"mcp-init-host", "router-key"},
+			},
+		},
+	}
+
+	// set Group, Kind, and Weight explicitly to match API server defaults,
+	// otherwise DeepEqual sees nil vs defaulted values on every reconcile
+	weight := int32(1)
+	backendRefs := []gatewayv1.HTTPBackendRef{
+		{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Group: ptr.To(gatewayv1.Group("")),
+					Kind:  ptr.To(gatewayv1.Kind("Service")),
+					Name:  gatewayv1.ObjectName(brokerRouterName),
+					Port:  &port,
+				},
+				Weight: &weight,
+			},
+		},
+	}
+
+	rules := []gatewayv1.HTTPRouteRule{
+		{
+			Name: ptr.To(gatewayv1.SectionName("mcp")),
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &mcpPath,
+					},
+				},
+			},
+			Filters:     stripRouterHeaders,
+			BackendRefs: backendRefs,
+		},
+		{
+			Name: ptr.To(gatewayv1.SectionName("well-known")),
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &wellKnownPath,
+					},
+				},
+			},
+			BackendRefs: backendRefs,
+		},
+		{
+			Name: ptr.To(gatewayv1.SectionName("status")),
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &statusPath,
+					},
+				},
+			},
+			BackendRefs: backendRefs,
+		},
+	}
 
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -550,28 +750,7 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha
 			Hostnames: []gatewayv1.Hostname{
 				gatewayv1.Hostname(publicHost),
 			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: &pathValue,
-							},
-						},
-					},
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name: gatewayv1.ObjectName(brokerRouterName),
-									Port: &port,
-								},
-							},
-						},
-					},
-				},
-			},
+			Rules: rules,
 		},
 	}
 }
@@ -588,4 +767,110 @@ func httpRouteNeedsUpdate(desired, existing *gatewayv1.HTTPRoute) (bool, string)
 		return true, "rules changed"
 	}
 	return false, ""
+}
+
+func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
+	labels := brokerRouterLabels()
+	pathType := gatewayv1.PathMatchPathPrefix
+	tokensPath := "/tokens"
+	port := gatewayv1.PortNumber(brokerHTTPPort)
+	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
+	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
+
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tokensHTTPRouteName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{
+						Group:       ptr.To(gatewayv1.Group("gateway.networking.k8s.io")),
+						Kind:        ptr.To(gatewayv1.Kind("Gateway")),
+						Name:        gatewayv1.ObjectName(mcpExt.Spec.TargetRef.Name),
+						Namespace:   &gatewayNamespace,
+						SectionName: &sectionName,
+					},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{
+				gatewayv1.Hostname(publicHost),
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Name: ptr.To(gatewayv1.SectionName("tokens")),
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{
+							Path: &gatewayv1.HTTPPathMatch{
+								Type:  &pathType,
+								Value: &tokensPath,
+							},
+						},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Group: ptr.To(gatewayv1.Group("")),
+									Kind:  ptr.To(gatewayv1.Kind("Service")),
+									Name:  gatewayv1.ObjectName(brokerRouterName),
+									Port:  &port,
+								},
+								Weight: ptr.To(int32(1)),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) error {
+	key := client.ObjectKey{Name: tokensHTTPRouteName, Namespace: mcpExt.Namespace}
+	existing := &gatewayv1.HTTPRoute{}
+	exists := true
+	if err := r.Get(ctx, key, existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			exists = false
+		} else {
+			return fmt.Errorf("failed to get tokens httproute: %w", err)
+		}
+	}
+
+	if mcpExt.Spec.URLElicitation != mcpv1alpha1.URLElicitationEnabled {
+		if exists {
+			r.log.Info("deleting tokens httproute (url elicitation disabled)", "namespace", mcpExt.Namespace)
+			if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete tokens httproute: %w", err)
+			}
+		}
+		return nil
+	}
+
+	desired := r.buildTokensHTTPRoute(mcpExt, publicHost)
+	if err := controllerutil.SetControllerReference(mcpExt, desired, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on tokens httproute: %w", err)
+	}
+
+	if !exists {
+		r.log.Info("creating tokens httproute", "namespace", mcpExt.Namespace)
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("failed to create tokens httproute: %w", err)
+		}
+		return nil
+	}
+
+	if needsUpdate, reason := httpRouteNeedsUpdate(desired, existing); needsUpdate {
+		r.log.Info("updating tokens httproute", "namespace", mcpExt.Namespace, "reason", reason)
+		existing.Spec.ParentRefs = desired.Spec.ParentRefs
+		existing.Spec.Hostnames = desired.Spec.Hostnames
+		existing.Spec.Rules = desired.Spec.Rules
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("failed to update tokens httproute: %w", err)
+		}
+	}
+	return nil
 }

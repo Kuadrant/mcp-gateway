@@ -2,7 +2,7 @@
 set -e
 
 GITHUB_ORG=${MCP_GATEWAY_ORG:-Kuadrant}
-VERSION=${MCP_GATEWAY_VERSION:-0.5.1}
+VERSION=${MCP_GATEWAY_VERSION:-0.7.1}
 GIT_REF="v${VERSION}"
 REPO="https://github.com/${GITHUB_ORG}/mcp-gateway"
 RAW="https://raw.githubusercontent.com/${GITHUB_ORG}/mcp-gateway/${GIT_REF}"
@@ -66,6 +66,8 @@ nodes:
   - containerPort: 30080
     hostPort: 8001
     protocol: TCP
+  # 30089 matches the pinned VERSION's release manifests; becomes 30081 once
+  # the default VERSION includes the nodeport renumbering
   - containerPort: 30089 # keycloak
     hostPort: 8002
     protocol: TCP

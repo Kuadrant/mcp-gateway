@@ -1,0 +1,158 @@
+name: Performance Benchmark
+
+# Fulfills sub-issue #807: manually triggered CI job for benchmarking.
+#
+# Trigger: workflow_dispatch only (manual from Actions tab).
+#
+# The workflow:
+#   1. Provisions a Kind cluster identical to the e2e CI cluster
+#   2. Deploys the full gateway stack via `make ci-setup`
+#   3. Deploys the perf mock server + k6 ConfigMap via `make perf-ci-setup`
+#   4. Runs the benchmark as an in-cluster Kubernetes Job
+#   5. Extracts the k6 summary JSON from the completed pod
+#   6. Converts it to customSmallerIsBetter format and feeds it to
+#      benchmark-action for historical tracking and regression detection
+#
+# Regression gate: the workflow fails (blocking merge/release) if any metric
+# exceeds 130 % of the stored baseline (i.e. a > 30 % performance degradation).
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      # Required by benchmark-action to push results to gh-pages and post PR comments
+      contents: write
+      pull-requests: write
+      # Required to probe the baked CI node image on ghcr.io
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version: '1.24'
+
+      # probe the baked CI node image (content-hash of version pins); on a
+      # miss fall back to stock kindest/node via the default in kind.mk
+      - name: Probe baked CI node image
+        id: ci-node
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          hit=false
+          if image="$(make -s print-ci-node-image 2>/dev/null)"; then
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              hit=true
+            fi
+          else
+            image=""
+            echo "could not compute baked CI node image ref, using stock kindest/node"
+          fi
+          {
+            echo "hit=$hit"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+          echo "baked CI node image: $image (hit=$hit)"
+
+      # create with the pinned bin/kind and node image so the make load
+      # targets (same bin/kind) can always load into the node's containerd
+      - name: Create Kind cluster
+        run: |
+          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
+          else
+            make kind-create-cluster-ci
+          fi
+
+      # Full gateway stack: Istio, gateway, controller, test servers
+      - name: Setup CI environment
+        run: make ci-setup
+
+      # Deploy perf mock server + create k6-ci-scenarios ConfigMap
+      - name: Setup performance test environment
+        run: make perf-ci-setup
+
+      # Run the in-cluster k6 Job, extract the JSON via pod logs, and convert to benchmark format
+      - name: Run and extract benchmark
+        run: make perf-ci-run
+
+      # Track results over time and gate on regression
+      # Note: auto-push requires a gh-pages branch and GitHub Pages to be enabled.
+      # See: https://github.com/benchmark-action/github-action-benchmark#readme
+      - name: ensure gh-pages branch exists
+        run: |
+          if ! git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then
+            git switch --orphan gh-pages
+            git commit --allow-empty -m "initialise gh-pages for benchmark data"
+            git push origin gh-pages
+            git switch -
+          fi
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: performance-report
+          path: out/perf/mcp-report.html
+          retention-days: 30
+
+      - name: Store and compare benchmark results
+        uses: benchmark-action/github-action-benchmark@5bbce78ef18edf5b96cb2d23e8d240b485f9dc4a  # v1.16.2
+        with:
+          name: MCP Gateway Performance
+          tool: customSmallerIsBetter
+          output-file-path: out/perf/benchmark-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          # Fail the workflow if any metric degrades by more than 30 %
+          fail-on-alert: true
+          alert-threshold: '130%'
+          comment-on-alert: true
+          # Post a summary comment on every PR (not just regressions)
+          summary-always: true
+
+      - name: Publish HTML report to gh-pages
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages
+          git worktree add /tmp/gh-pages gh-pages
+          mkdir -p /tmp/gh-pages/perf
+          cp out/perf/mcp-report.html /tmp/gh-pages/perf/index.html
+          cd /tmp/gh-pages
+          git add perf/index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "update performance report"
+          git push origin gh-pages
+          cd -
+          git worktree remove /tmp/gh-pages
+
+      # Collect debug information on failure for easier diagnosis
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== k6 Job status ==="
+          kubectl describe job/mcp-gateway-benchmark -n mcp-test || true
+          echo "=== k6 pod logs ==="
+          kubectl logs \
+            -n mcp-test \
+            -l app=mcp-gateway-benchmark \
+            --tail=200 || true
+          make ci-debug-logs || true

@@ -14,5 +14,6 @@ COPY tests/servers/server2/ tests/servers/server2/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /mcp-test-server ./tests/servers/server2/
 
-# CMD ["/mcp-test-server", "--http", "0.0.0.0:9090"]
+FROM alpine:latest
+COPY --from=builder /mcp-test-server /mcp-test-server
 CMD ["/mcp-test-server"]

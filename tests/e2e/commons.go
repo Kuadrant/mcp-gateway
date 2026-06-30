@@ -16,21 +16,19 @@ import (
 
 // Test timeouts and intervals
 const (
-	TestTimeoutMedium     = time.Second * 60
-	TestTimeoutLong       = time.Minute * 3
+	TestTimeoutMedium     = time.Second * 90
+	TestTimeoutShort      = time.Second * 45
+	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6
-	TestRetryInterval     = time.Second * 5
+	TestRetryInterval     = time.Second * 1
 )
 
-// Namespace constants
+// Namespace and resource name constants
 const (
-	SystemNamespace     = "mcp-system"
 	ConfigMapName       = "mcp-gateway-config"
-	GatewayNamespace    = "gateway-system"
 	GatewayName         = "mcp-gateway"
-	GatewayListenerName = "mcp" // listener name on mcp-gateway
-	MCPExtensionName    = "mcp-gateway"
-	TestServerNameSpace = "mcp-test"
+	GatewayListenerName = "mcp-tls" // primary HTTPS listener
+	MCPExtensionName    = "mcp-gateway-extension"
 	ReferenceGrantName  = "allow-mcp-gateway"
 )
 
@@ -60,13 +58,21 @@ const defaultE2EDomain = "127-0-0-1.sslip.io"
 
 // e2e environment configuration
 var (
-	e2eDomain = goenv.GetDefault("E2E_DOMAIN", defaultE2EDomain)
-	e2eScheme = goenv.GetDefault("E2E_SCHEME", "http")
+	e2eDomain        = goenv.GetDefault("E2E_DOMAIN", defaultE2EDomain)
+	e2eScheme        = goenv.GetDefault("E2E_SCHEME", "http")
+	gatewayClassName = goenv.GetDefault("GATEWAY_CLASS_NAME", "istio")
+)
+
+// namespace configuration - configurable via environment variables
+var (
+	SystemNamespace     = goenv.GetDefault("MCP_GATEWAY_NAMESPACE", "mcp-system")
+	GatewayNamespace    = goenv.GetDefault("GATEWAY_NAMESPACE", "gateway-system")
+	TestServerNameSpace = goenv.GetDefault("TEST_SERVER_NAMESPACE", "mcp-test")
 )
 
 // public hosts - derived from E2E_DOMAIN
 var (
-	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp."+e2eDomain)
+	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp.mcp-gateway.local")
 	E2E1PublicHost    = goenv.GetDefault("E2E1_PUBLIC_HOST", "e2e-1."+e2eDomain)
 	TeamAPublicHost   = goenv.GetDefault("TEAM_A_PUBLIC_HOST", "team-a."+e2eDomain)
 	TeamBPublicHost   = goenv.GetDefault("TEAM_B_PUBLIC_HOST", "team-b."+e2eDomain)
@@ -74,7 +80,7 @@ var (
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
 var (
-	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "http://localhost:8001/mcp"))
+	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8009/mcp"))
 	E2E1GatewayURL  = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
 	TeamAGatewayURL = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
 	TeamBGatewayURL = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))
@@ -137,6 +143,11 @@ type MCPToolsLister interface {
 	ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
 }
 
+// MCPPromptsLister interface for clients that can list prompts
+type MCPPromptsLister interface {
+	ListPrompts(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error)
+}
+
 // WaitForToolsWithPrefix waits for tools with the given prefix to be present
 func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix string) {
 	Eventually(func(g Gomega) {
@@ -145,6 +156,17 @@ func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix s
 		g.Expect(toolsList).NotTo(BeNil())
 		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeTrue(),
 			"tools with prefix %q should exist", prefix)
+	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+}
+
+// WaitForPromptsWithPrefix waits for prompts with the given prefix to be present
+func WaitForPromptsWithPrefix(ctx context.Context, client MCPPromptsLister, prefix string) {
+	Eventually(func(g Gomega) {
+		promptsList, err := client.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(promptsList).NotTo(BeNil())
+		g.Expect(PromptsListHasPrefix(promptsList, prefix)).To(BeTrue(),
+			"prompts with prefix %q should exist", prefix)
 	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 }
 

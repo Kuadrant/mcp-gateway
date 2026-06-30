@@ -1,0 +1,33 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-tokens-oidc
+  namespace: mcp-system
+spec:
+  overrides:
+    strategy: merge
+    rules:
+      authentication:
+        oidc:
+          credentials:
+            cookie:
+              name: jwt
+          jwt:
+            issuerUrl: "{{ ISSUER_URL }}"
+          priority: 0
+      response:
+        success: {}
+        unauthenticated:
+          code: 302
+          headers:
+            location:
+              expression: >-
+                "{{ ISSUER_URL }}/protocol/openid-connect/auth?client_id={{ CLIENT_ID }}&redirect_uri={{ REDIRECT_URI_ENCODED }}&response_type=code&scope=openid"
+            # {{ COOKIE_SECURE }} is "Secure; " for HTTPS, empty for HTTP — browsers silently drop Secure cookies over plain HTTP
+            set-cookie:
+              expression: >-
+                "target=" + request.path + "; domain={{ EXTERNAL_HOST }}; HttpOnly; SameSite=Lax; {{ COOKIE_SECURE }}Path=/auth/callback; Max-Age=300"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-gateway-tokens-route

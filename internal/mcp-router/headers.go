@@ -3,6 +3,7 @@ package mcprouter
 import (
 	"fmt"
 
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
@@ -10,6 +11,7 @@ const (
 	mcpServerNameHeader   = "x-mcp-servername"
 	toolAnnotationsHeader = "x-mcp-annotation-hints"
 	toolHeader            = "x-mcp-toolname"
+	promptHeader          = "x-mcp-promptname"
 	methodHeader          = "x-mcp-method"
 	sessionHeader         = "mcp-session-id"
 	authorityHeader       = ":authority"
@@ -17,7 +19,20 @@ const (
 	mcpTarget             = "mcp-target"
 	// RoutingKey is an internal header used to authenticate a request from the router
 	RoutingKey = "router-key"
+
+	// broker-only filtering headers that must not reach upstream servers
+	mcpAuthorizedHeader    = "x-mcp-authorized"
+	mcpVirtualServerHeader = "x-mcp-virtualserver"
+
+	// mcpVerifiedSubHeader carries the JWT sub the router verified via AuthPolicy.
+	// Injected by the router; stripped from any client-supplied value so the
+	// broker can trust it without re-parsing the raw JWT.
+	mcpVerifiedSubHeader = sharedheaders.VerifiedSubHeader
 )
+
+// internalOnlyHeaders are headers used internally by the gateway for filtering
+// and routing that must be stripped before forwarding to upstream MCP servers.
+var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader, mcpVerifiedSubHeader}
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {
@@ -136,6 +151,17 @@ func (hb *HeadersBuilder) WithToolAnnotations(annotations string) *HeadersBuilde
 	return hb
 }
 
+// WithMCPPromptName will set the x-mcp-promptname header
+func (hb *HeadersBuilder) WithMCPPromptName(promptName string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      promptHeader,
+			RawValue: []byte(promptName),
+		},
+	})
+	return hb
+}
+
 // WithCustomHeader will set key with value in the headers
 func (hb *HeadersBuilder) WithCustomHeader(key, value string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
@@ -153,6 +179,19 @@ func (hb *HeadersBuilder) WithPath(path string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      ":path",
 			RawValue: []byte(path),
+		},
+	})
+	return hb
+}
+
+// WithVerifiedSub sets the x-mcp-verified-sub header to the JWT sub claim
+// extracted by the router after AuthPolicy verification. The broker reads this
+// instead of decoding the raw JWT, so identity binding is always verified.
+func (hb *HeadersBuilder) WithVerifiedSub(sub string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      mcpVerifiedSubHeader,
+			RawValue: []byte(sub),
 		},
 	})
 	return hb

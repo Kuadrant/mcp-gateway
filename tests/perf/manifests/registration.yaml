@@ -7,7 +7,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
-  toolPrefix: mock_
+  prefix: mock_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute

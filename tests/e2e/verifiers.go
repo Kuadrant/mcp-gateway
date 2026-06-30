@@ -67,24 +67,6 @@ func (v *Verifier) MCPServerRegistrationReady(name, namespace string) error {
 	return fmt.Errorf("MCPServerRegistration %s/%s not ready", namespace, name)
 }
 
-// MCPServerRegistrationReadyWithToolsCount checks Ready=True and expected tool count
-func (v *Verifier) MCPServerRegistrationReadyWithToolsCount(name, namespace string, expectedCount int32) error {
-	mcpServer, err := v.getMCPServerRegistration(name, namespace)
-	if err != nil {
-		return err
-	}
-
-	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
-			if mcpServer.Status.DiscoveredTools != expectedCount {
-				return fmt.Errorf("expected %d tools, got %d", expectedCount, mcpServer.Status.DiscoveredTools)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("MCPServerRegistration %s/%s not ready", namespace, name)
-}
-
 // MCPServerRegistrationNotReadyWithReason checks Ready=False with expected reason in message
 func (v *Verifier) MCPServerRegistrationNotReadyWithReason(name, namespace, expectedReason string) error {
 	mcpServer, err := v.getMCPServerRegistration(name, namespace)
@@ -253,13 +235,10 @@ func (v *Verifier) HTTPRouteNotFound(name, namespace string) error {
 
 // Legacy function wrappers for backwards compatibility during migration
 // TODO: Remove these after updating all tests to use Verifier
+//revive:disable:exported
 
 func VerifyMCPServerRegistrationReady(ctx context.Context, k8sClient client.Client, name, namespace string) error {
 	return NewVerifier(ctx, k8sClient).MCPServerRegistrationReady(name, namespace)
-}
-
-func VerifyMCPServerRegistrationReadyWithToolsCount(ctx context.Context, k8sClient client.Client, name, namespace string, toolsCount int32) error {
-	return NewVerifier(ctx, k8sClient).MCPServerRegistrationReadyWithToolsCount(name, namespace, toolsCount)
 }
 
 func VerifyMCPServerRegistrationNotReadyWithReason(ctx context.Context, k8sClient client.Client, name, namespace, expectedReason string) error {
@@ -282,15 +261,32 @@ func VerifyHTTPRouteNoProgrammedCondition(ctx context.Context, k8sClient client.
 	return NewVerifier(ctx, k8sClient).HTTPRouteNoProgrammedCondition(name, namespace)
 }
 
-// extractBackendSessionID returns the Mcp-Session-Id value from a tool call response
-func extractBackendSessionID(res *mcp.CallToolResult) string {
-	for _, cont := range res.Content {
-		textContent, ok := cont.(mcp.TextContent)
-		if ok && strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
-			return textContent.Text
+//revive:enable:exported
+
+// PromptsListHasPrefix checks if any prompt in the list has the given prefix
+func PromptsListHasPrefix(promptsList *mcp.ListPromptsResult, prefix string) bool {
+	return promptsListMatches(promptsList, func(name string) bool {
+		return strings.HasPrefix(name, prefix)
+	})
+}
+
+// PromptsListHasPrompt checks if the prompts list contains a prompt with the exact name
+func PromptsListHasPrompt(promptsList *mcp.ListPromptsResult, promptName string) bool {
+	return promptsListMatches(promptsList, func(name string) bool {
+		return name == promptName
+	})
+}
+
+func promptsListMatches(promptsList *mcp.ListPromptsResult, matcher func(string) bool) bool {
+	if promptsList == nil {
+		return false
+	}
+	for _, p := range promptsList.Prompts {
+		if matcher(p.Name) {
+			return true
 		}
 	}
-	return ""
+	return false
 }
 
 // Legacy unexported functions for backwards compatibility
@@ -382,6 +378,7 @@ func (v *Verifier) MCPGatewayExtensionStatusMessage(name, namespace string) (str
 }
 
 // Legacy function wrappers for MCPGatewayExtension
+//revive:disable:exported
 
 func VerifyMCPGatewayExtensionReady(ctx context.Context, k8sClient client.Client, name, namespace string) error {
 	return NewVerifier(ctx, k8sClient).MCPGatewayExtensionReady(name, namespace)
@@ -398,6 +395,8 @@ func VerifyMCPGatewayExtensionNotReadyWithReason(ctx context.Context, k8sClient 
 func GetMCPGatewayExtensionStatusMessage(ctx context.Context, k8sClient client.Client, name, namespace string) (string, error) {
 	return NewVerifier(ctx, k8sClient).MCPGatewayExtensionStatusMessage(name, namespace)
 }
+
+//revive:enable:exported
 
 // getGateway fetches a Gateway by name and namespace
 func (v *Verifier) getGateway(name, namespace string) (*gatewayapiv1.Gateway, error) {
@@ -471,6 +470,7 @@ func (v *Verifier) GatewayListenerMCPConditionMessage(gatewayName, gatewayNamesp
 }
 
 // Legacy function wrappers for Gateway listener status
+//revive:disable:exported
 
 func VerifyGatewayListenerHasMCPCondition(ctx context.Context, k8sClient client.Client, gatewayName, gatewayNamespace, listenerName string) error {
 	return NewVerifier(ctx, k8sClient).GatewayListenerHasMCPCondition(gatewayName, gatewayNamespace, listenerName)
@@ -483,3 +483,5 @@ func VerifyGatewayListenerNoMCPCondition(ctx context.Context, k8sClient client.C
 func GetGatewayListenerMCPConditionMessage(ctx context.Context, k8sClient client.Client, gatewayName, gatewayNamespace, listenerName string) (string, error) {
 	return NewVerifier(ctx, k8sClient).GatewayListenerMCPConditionMessage(gatewayName, gatewayNamespace, listenerName)
 }
+
+//revive:enable:exported

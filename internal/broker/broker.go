@@ -7,14 +7,18 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var _ config.Observer = &mcpBrokerImpl{}
@@ -28,20 +32,32 @@ type MCPBroker interface {
 	// Returns server info for a given tool name
 	GetServerInfo(tool string) (*config.MCPServer, error)
 
+	// Returns server info for a given prompt name
+	GetServerInfoByPrompt(prompt string) (*config.MCPServer, error)
+
 	// MCPServer gets an MCP server that federates the upstreams known to this MCPBroker
 	MCPServer() *server.MCPServer
 
 	//RegisteredServers returns the map of registered servers
-	RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager
+	RegisteredMCPServers() map[config.UpstreamMCPID]upstream.ActiveMCPServer
 
-	// GetVirtualSeverByHeader returns a virtual server definition based on a header where the header is the namespaced/name of the virtual server resource
-	GetVirtualSeverByHeader(namespaceName string) (config.VirtualServer, error)
+	// GetVirtualServerByHeader returns a virtual server definition based on a header where the header is the namespaced/name of the virtual server resource
+	GetVirtualServerByHeader(namespaceName string) (config.VirtualServer, error)
 
 	// ValidateAllServers performs comprehensive validation of all registered servers and returns status
 	ValidateAllServers() StatusResponse
 
+	// IsReady reports whether the broker can serve traffic.
+	// Returns true when no upstream servers are configured (empty tool list is valid),
+	// or when at least one configured upstream is healthy.
+	// Returns false only when servers are configured but none have connected yet.
+	IsReady() bool
+
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
+
+	// IsBrokerToolName returns true if the given tool name is a broker-internal meta-tool
+	IsBrokerToolName(name string) bool
 
 	// Shutdown closes any resources associated with this Broker
 	Shutdown(ctx context.Context) error
@@ -55,7 +71,7 @@ type mcpBrokerImpl struct {
 	vsLock         sync.RWMutex //vsLock is for managing access to the virtual servers
 
 	// mcpServers tracks the known servers
-	mcpServers map[config.UpstreamMCPID]*upstream.MCPManager
+	mcpServers map[config.UpstreamMCPID]upstream.ActiveMCPServer
 	// protects mcpServers
 	mcpLock sync.RWMutex
 
@@ -64,8 +80,8 @@ type mcpBrokerImpl struct {
 
 	logger *slog.Logger
 
-	// enforceToolFilter if set will ensure only a filtered list of tools is returned this list is based on the x-authorized-tools trusted header
-	enforceToolFilter bool
+	// enforceCapabilityFilter if set will ensure only filtered capabilities are returned based on the x-mcp-authorized trusted header
+	enforceCapabilityFilter bool
 
 	// trustedHeadersPublicKey this is the key to verify that a trusted header came from the trusted source (the owner of the private key)
 	trustedHeadersPublicKey string
@@ -75,6 +91,27 @@ type mcpBrokerImpl struct {
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+
+	// elicitationEnabled gates URL elicitation credential collection
+	elicitationEnabled bool
+
+	// discovery holds config for the discover_tools / select_tools feature
+	discovery discoveryConfig
+
+	// scopeStore manages per-session tool scoping
+	scopeStore *scopeStore
+
+	// sessionCache stores upstream MCP session IDs per gateway session
+	sessionCache *session.Cache
+
+	// userSpecificFetchTimeout is the per-server timeout for user-specific tool fetches
+	userSpecificFetchTimeout time.Duration
+
+	// userSpecificServers is precomputed in OnConfigChange to avoid per-request iteration
+	userSpecificServers []userSpecificServer
+
+	// tagsToolsRegistered tracks whether list_tags/filter_tools_by_tags are currently registered
+	tagsToolsRegistered atomic.Bool
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -83,10 +120,10 @@ var _ MCPBroker = &mcpBrokerImpl{}
 // Option configures a broker instance
 type Option func(mb *mcpBrokerImpl)
 
-// WithEnforceToolFilter defines enforceToolFilter setting and is intended for use with the NewBroker function
-func WithEnforceToolFilter(enforce bool) Option {
+// WithEnforceCapabilityFilter defines enforceCapabilityFilter setting and is intended for use with the NewBroker function
+func WithEnforceCapabilityFilter(enforce bool) Option {
 	return func(mb *mcpBrokerImpl) {
-		mb.enforceToolFilter = enforce
+		mb.enforceCapabilityFilter = enforce
 	}
 }
 
@@ -111,66 +148,151 @@ func WithInvalidToolPolicy(policy mcpv1alpha1.InvalidToolPolicy) Option {
 	}
 }
 
-// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceToolFilter
+// WithElicitationEnabled enables URL elicitation credential collection
+func WithElicitationEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.elicitationEnabled = enabled
+	}
+}
+
+// WithDiscoveryToolsEnabled enables or disables the discover_tools and select_tools meta-tools
+func WithDiscoveryToolsEnabled(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discovery.enabled = enabled
+	}
+}
+
+// WithDiscoveryToolThreshold sets the tool count above which only meta-tools are shown
+func WithDiscoveryToolThreshold(threshold int) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.discovery.threshold = threshold
+	}
+}
+
+// WithSessionCache sets the session cache used for user-specific tool fetches
+func WithSessionCache(cache *session.Cache) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.sessionCache = cache
+	}
+}
+
+// WithUserSpecificFetchTimeout sets the per-server timeout for user-specific tool fetches
+func WithUserSpecificFetchTimeout(timeout time.Duration) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.userSpecificFetchTimeout = timeout
+	}
+}
+
+// NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
-		mcpServers:            map[config.UpstreamMCPID]*upstream.MCPManager{},
-		logger:                logger,
-		virtualServers:        map[string]*config.VirtualServer{},
-		managerTickerInterval: time.Second * 60,
+		mcpServers:               map[config.UpstreamMCPID]upstream.ActiveMCPServer{},
+		logger:                   logger,
+		virtualServers:           map[string]*config.VirtualServer{},
+		managerTickerInterval:    time.Second * 60,
+		discovery:                discoveryConfig{enabled: true},
+		userSpecificFetchTimeout: 30 * time.Second,
 	}
 
 	for _, option := range opts {
 		option(mcpBkr)
 	}
 
+	if mcpBkr.discovery.enabled {
+		mcpBkr.scopeStore = newScopeStore(defaultScopeTTL, defaultScopeMaxSize)
+	}
+
 	hooks := &server.Hooks{}
+	spanTracker := newRequestSpanTracker()
 
-	// Enhanced session registration to log gateway session assignment
-	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
-		// Note that AddOnRegisterSession is for GET, not POST, for a session.
-		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
-		mcpBkr.logger.Debug("gateway client session connected", "gatewaySessionID", session.SessionID())
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+		mcpBkr.logger.DebugContext(ctx, "gateway client session connected", "gatewaySessionID", session.SessionID())
 	})
 
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		mcpBkr.logger.Debug("gateway client session unregistered", "gatewaySessionID", session.SessionID())
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+		mcpBkr.logger.DebugContext(ctx, "gateway client session unregistered", "gatewaySessionID", session.SessionID())
+		if mcpBkr.scopeStore != nil {
+			mcpBkr.scopeStore.deleteScope(session.SessionID())
+		}
 	})
 
-	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
-		mcpBkr.logger.Debug("processing request", "method", method)
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, _ any) {
+		attrs := []attribute.KeyValue{
+			brokerComponentAttr,
+			attribute.String("mcp.method", string(method)),
+		}
+		if sid := sessionIDFromContext(ctx); sid != "" {
+			attrs = append(attrs, attribute.String("mcp.session.id", sid))
+		}
+		spanTracker.start(ctx, id, "mcp-broker.handle-request", attrs...)
+		mcpBkr.logger.DebugContext(ctx, "processing request", "method", method)
 	})
 
-	hooks.AddOnError(func(_ context.Context, _ any, method mcp.MCPMethod, _ any, err error) {
-		mcpBkr.logger.Error("mcp server error", "method", method, "error", err)
+	hooks.AddOnSuccess(func(_ context.Context, id any, _ mcp.MCPMethod, _ any, _ any) {
+		if span, ok := spanTracker.remove(id); ok {
+			span.End()
+		}
+	})
+
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, _ any, err error) {
+		mcpBkr.logger.ErrorContext(ctx, "mcp server error", "method", method, "error", err)
+		span, ok := spanTracker.remove(id)
+		if ok {
+			recordBrokerError(span, err)
+			span.SetAttributes(attribute.String("mcp.method", string(method)))
+			span.End()
+		}
 	})
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		mcpBkr.FetchUserSpecificTools(ctx, id, message, result)
 		mcpBkr.FilterTools(ctx, id, message, result)
 	})
+
+	hooks.AddAfterListPrompts(func(ctx context.Context, id any, message *mcp.ListPromptsRequest, result *mcp.ListPromptsResult) {
+		mcpBkr.FilterPrompts(ctx, id, message, result)
+	})
+
+	serverOpts := []server.ServerOption{
+		server.WithHooks(hooks),
+		server.WithToolCapabilities(true),
+		server.WithPromptCapabilities(true),
+	}
+	if mcpBkr.discovery.enabled {
+		serverOpts = append(serverOpts, server.WithInstructions(gatewayInstructions))
+	}
 
 	mcpBkr.listeningMCPServer = server.NewMCPServer(
 		"Kuadrant MCP Gateway",
 		"0.0.1",
-		server.WithHooks(hooks),
-		server.WithToolCapabilities(true),
+		serverOpts...,
 	)
+
+	if mcpBkr.discovery.enabled {
+		mcpBkr.registerDiscoveryTools()
+	}
+
 	return mcpBkr
 }
 
 func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServersConfig) {
-	m.logger.Debug("Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+	// Take a consistent snapshot before acquiring mcpLock; LoadConfig may be
+	// concurrently replacing conf.Servers/VirtualServers under its own write lock.
+	servers := conf.ListServers()
+	virtualServers := conf.ListVirtualServers()
+
+	m.logger.DebugContext(ctx, "Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
 	// unregister decommissioned servers
 	m.mcpLock.Lock()
 	defer m.mcpLock.Unlock()
 
 	for serverID := range m.mcpServers {
-		if !slices.ContainsFunc(conf.Servers, func(s *config.MCPServer) bool {
+		if !slices.ContainsFunc(servers, func(s *config.MCPServer) bool {
 			return serverID == s.ID()
 		}) {
-			m.logger.Info("un-register upstream server", "server id", serverID)
+			m.logger.InfoContext(ctx, "un-register upstream server", "server id", serverID)
 			if man, ok := m.mcpServers[serverID]; ok {
-				m.logger.Info("stopping manager for unregistered server", "server id", serverID)
+				m.logger.InfoContext(ctx, "stopping manager for unregistered server", "server id", serverID)
 				man.Stop()
 				delete(m.mcpServers, serverID)
 			}
@@ -178,45 +300,64 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	}
 	// ensure new servers registered
 
-	for _, mcpServer := range conf.Servers {
+	for _, mcpServer := range servers {
 		man, ok := m.mcpServers[mcpServer.ID()]
 		if ok {
-			m.logger.Info("Server is registered", "mcpID", mcpServer.ID())
+			m.logger.InfoContext(ctx, "Server is registered", "mcpID", mcpServer.ID())
 			// already have a manger
-			if mcpServer.ConfigChanged(man.MCP.GetConfig()) {
+			if mcpServer.ConfigChanged(man.Config()) {
 				// todo prob could look at just updating the config
-				m.logger.Info("Server Config Changed removing manager", "mcpID", mcpServer.ID())
+				m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 				man.Stop()
 				delete(m.mcpServers, mcpServer.ID())
 			}
 		}
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
-			m.logger.Info("starting new manager", "server id", mcpServer.ID())
-			manager := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
-			m.mcpServers[mcpServer.ID()] = manager
-			go func() {
-				m.logger.Info("Starting manager for", "mcpID", mcpServer.ID())
-				manager.Start(ctx)
-			}()
+			m.logger.InfoContext(ctx, "starting new manager", "server id", mcpServer.ID())
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			if err != nil {
+				m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
+				continue
+			}
+			m.logger.InfoContext(ctx, "Starting manager for", "mcpID", mcpServer.ID())
+			m.mcpServers[mcpServer.ID()] = manager.Start(ctx)
 		}
 	}
+	// replace virtual servers with the new snapshot so deleted entries are removed
+	m.syncTagsTools(ctx, servers)
+
+	// precompute userSpecificList servers for FetchUserSpecificTools
+	m.userSpecificServers = nil
+	for _, srv := range servers {
+		if srv.UserSpecificList {
+			m.userSpecificServers = append(m.userSpecificServers, userSpecificServer{
+				id:     srv.ID(),
+				name:   srv.Name,
+				url:    srv.URL,
+				prefix: srv.Prefix,
+			})
+		}
+	}
+
 	// register virtual servers
 	m.vsLock.Lock()
-	for _, vs := range conf.VirtualServers {
-		m.virtualServers[vs.Name] = vs
+	next := make(map[string]*config.VirtualServer, len(virtualServers))
+	for _, vs := range virtualServers {
+		next[vs.Name] = vs
 	}
+	m.virtualServers = next
 	m.vsLock.Unlock()
-	m.logger.Debug("Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(conf.Servers))
+	m.logger.DebugContext(ctx, "Broker OnConfigChange done", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
 }
 
-func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
+func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]upstream.ActiveMCPServer {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 	return m.mcpServers
 }
 
-func (m *mcpBrokerImpl) GetVirtualSeverByHeader(namespaceName string) (config.VirtualServer, error) {
+func (m *mcpBrokerImpl) GetVirtualServerByHeader(namespaceName string) (config.VirtualServer, error) {
 	m.vsLock.RLock()
 	defer m.vsLock.RUnlock()
 	for _, vs := range m.virtualServers {
@@ -254,14 +395,68 @@ func (m *mcpBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 		if t != nil {
 			m.logger.Debug("found matching server",
 				"toolName", tool,
-				"serverPrefix", upstream.MCP.GetPrefix(),
-				"serverName", upstream.MCP.GetName())
-			retval := upstream.MCP.GetConfig()
+				"serverPrefix", upstream.Config().Prefix,
+				"serverName", upstream.MCPName())
+			retval := upstream.Config()
 			return &retval, nil
 		}
 	}
 
+	// userSpecificList servers don't cache tools, so match by longest prefix
+	var bestMatch config.MCPServer
+	var found bool
+	for _, upstream := range m.mcpServers {
+		cfg := upstream.Config()
+		if cfg.UserSpecificList && cfg.Prefix != "" && strings.HasPrefix(tool, cfg.Prefix) {
+			if !found || len(cfg.Prefix) > len(bestMatch.Prefix) {
+				bestMatch = cfg
+				found = true
+			}
+		}
+	}
+	if found {
+		m.logger.Debug("matched user-specific server by prefix",
+			"toolName", tool,
+			"serverPrefix", bestMatch.Prefix,
+			"serverName", bestMatch.Name)
+		return &bestMatch, nil
+	}
+
 	return nil, fmt.Errorf("tool name %q doesn't match any configured server", tool)
+}
+
+// GetServerInfoByPrompt implements MCPBroker by providing a lookup of the server that implements a prompt.
+func (m *mcpBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer, error) {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+
+	for _, upstream := range m.mcpServers {
+		p := upstream.GetServedManagedPrompt(prompt)
+		if p != nil {
+			cfg := upstream.Config()
+			m.logger.Debug("found matching server for prompt",
+				"promptName", prompt,
+				"serverPrefix", cfg.Prefix,
+				"serverName", upstream.MCPName())
+			retval := cfg
+			return &retval, nil
+		}
+	}
+
+	return nil, fmt.Errorf("prompt name %q doesn't match any configured server", prompt)
+}
+
+// IsBrokerToolName returns true if the given tool name belongs to a broker-internal
+// meta-tool. The router uses this to decide whether to pass a tools/call through
+// to the broker instead of looking for an upstream server.
+func (m *mcpBrokerImpl) IsBrokerToolName(name string) bool {
+	if m.tagsToolsRegistered.Load() && (name == listTagsName || name == filterToolsByTagsName) {
+		return true
+	}
+	if !m.discovery.enabled {
+		return false
+	}
+	return name == discoverToolsName || name == selectToolsName
 }
 
 func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
@@ -269,11 +464,13 @@ func (m *mcpBrokerImpl) Shutdown(_ context.Context) error {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
-	// Close the long-running notification channel
 	for _, mcpServer := range m.mcpServers {
 		if mcpServer != nil {
 			mcpServer.Stop()
 		}
+	}
+	if m.scopeStore != nil {
+		m.scopeStore.stop()
 	}
 	return nil
 }
@@ -295,6 +492,11 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
+	scopedSessions := 0
+	if m.scopeStore != nil {
+		scopedSessions = m.scopeStore.size()
+	}
+
 	response := StatusResponse{
 		Servers:          make([]upstream.ServerValidationStatus, 0),
 		OverallValid:     true,
@@ -302,12 +504,17 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		HealthyServers:   0,
 		UnHealthyServers: 0,
 		ToolConflicts:    0,
+		ScopedSessions:   scopedSessions,
 		Timestamp:        time.Now(),
 	}
 
 	m.logger.Debug("ValidateAllServers: checking servers", "# servers", len(m.mcpServers))
 
-	for _, upstream := range m.RegisteredMCPServers() {
+	// access m.mcpServers directly; RLock is already held.
+	// Calling RegisteredMCPServers() here would attempt a second RLock on the same
+	// goroutine. Go's sync.RWMutex blocks new readers when a writer is waiting, so a
+	// concurrent OnConfigChange() Lock() causes both goroutines to deadlock.
+	for _, upstream := range m.mcpServers {
 		status := upstream.GetStatus()
 		response.Servers = append(response.Servers, status)
 
@@ -326,4 +533,21 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 		"overallValid", response.OverallValid)
 
 	return response
+}
+
+// IsReady reports whether the broker can serve traffic.
+// Accesses m.mcpServers directly (lock already not held here) rather than
+// calling RegisteredMCPServers to avoid nested RLock under a pending writer.
+func (m *mcpBrokerImpl) IsReady() bool {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	if len(m.mcpServers) == 0 {
+		return true
+	}
+	for _, mgr := range m.mcpServers {
+		if mgr.GetStatus().Ready {
+			return true
+		}
+	}
+	return false
 }

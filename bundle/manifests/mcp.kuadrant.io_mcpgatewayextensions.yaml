@@ -75,10 +75,63 @@ spec:
                 - Enabled
                 - Disabled
                 type: string
+              oauthProtectedResource:
+                description: |-
+                  oauthProtectedResource configures the OAuth protected resource metadata
+                  served at /.well-known/oauth-protected-resource. When set, the controller
+                  injects the corresponding OAUTH_* env vars into the broker-router deployment.
+                properties:
+                  authorizationServers:
+                    description: authorizationServers lists the OAuth authorization
+                      server URLs.
+                    items:
+                      pattern: ^https?://[^,]+$
+                      type: string
+                    maxItems: 10
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  bearerMethodsSupported:
+                    description: |-
+                      bearerMethodsSupported lists the supported bearer token methods.
+                      Defaults to ["header"].
+                    items:
+                      type: string
+                    maxItems: 10
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  resource:
+                    description: |-
+                      resource is the URI of the protected resource.
+                      Defaults to https://<publicHost>/mcp.
+                    maxLength: 2048
+                    type: string
+                  resourceName:
+                    description: |-
+                      resourceName is the human-readable name for this resource.
+                      Defaults to "MCP Server".
+                    maxLength: 253
+                    type: string
+                  scopesSupported:
+                    description: |-
+                      scopesSupported lists the supported OAuth scopes.
+                      Defaults to ["basic"].
+                    items:
+                      type: string
+                    maxItems: 50
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - authorizationServers
+                type: object
               privateHost:
                 description: |-
                   privateHost overrides the internal host used for hair-pinning requests
-                  back through the gateway. Defaults to <gateway>-istio.<ns>.svc.cluster.local:<port>.
+                  back through the gateway. Defaults to
+                  <gateway>-istio.<ns>.svc.cluster.local:<port>, with an https:// scheme
+                  prefix when the targeted Gateway listener uses the HTTPS protocol. The
+                  value supplied here is honoured verbatim, so an operator can include a
+                  scheme (e.g. "https://my-gw:443") or pin to a different port.
                 type: string
               publicHost:
                 description: |-
@@ -170,6 +223,16 @@ spec:
                 required:
                 - secretName
                 type: object
+              urlElicitation:
+                default: Disabled
+                description: |-
+                  urlElicitation controls whether URL-based token elicitation is enabled.
+                  Enabled: creates a separate /tokens HTTPRoute and passes --enable-url-elicitation to the broker.
+                  Disabled: no /tokens route is created (default).
+                enum:
+                - Enabled
+                - Disabled
+                type: string
             required:
             - targetRef
             type: object

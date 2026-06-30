@@ -5,14 +5,26 @@ Creating a GitHub release with a `vX.Y.Z` tag triggers automated workflows that:
 2. Build and push OLM bundle and catalog images to `ghcr.io/kuadrant/`
 3. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
 
-## Release Steps
+## Using the `/release` command
+
+The recommended way to cut a release is through the Claude Code `/release` slash command, which automates the version bump, bundle regeneration, and walks you through push, PR, and GitHub release creation interactively.
+
+```
+/release 0.7.0-rc1
+```
+
+See [`.claude/commands/release.md`](.claude/commands/release.md) for details.
+
+## Manual Release Steps
+
+The steps below document the same process manually, for reference or environments without Claude Code.
 
 ### 1. Create Release Branch and Update Version
 
 ```bash
 git checkout main
 git pull
-git checkout -b release-X.Y.Z
+git checkout -b release-X.Y
 ```
 
 Run the version update script with the full version including any RC suffix:
@@ -44,17 +56,17 @@ Commit and push:
 ```bash
 git add -u config/ charts/ docs/ bundle/
 git commit -s -m "Update version to X.Y.Z-rcN"
-git push -u origin release-X.Y.Z
+git push -u origin release-X.Y
 ```
 
 ### 2. Create GitHub Release
 
-Release branches use the full three-component format `release-X.Y.Z` (e.g. `release-0.6.0`), and all links, tags, and examples must use this format.
+Release branches use the minor-level format `release-X.Y` (e.g. `release-0.7`). One branch per minor version — all patches are tagged on the same branch.
 
 1. Go to [Releases](https://github.com/Kuadrant/mcp-gateway/releases)
 2. Click **Draft a new release**
 3. Click **Choose a tag** and create a new tag (e.g. `vX.Y.Z-rc1` or `vX.Y.Z`)
-4. Set **Target** to your `release-X.Y.Z` branch
+4. Set **Target** to your `release-X.Y` branch
 5. Set the release title (e.g. `vX.Y.Z-rc1` or `vX.Y.Z`)
 6. Click **Generate release notes**
 7. For release candidates: check **Set as a pre-release** (do not mark as latest)
@@ -90,7 +102,7 @@ After verifying all artifacts are published, create a test matrix issue to track
 1. Go to [New Issue](https://github.com/Kuadrant/mcp-gateway/issues/new/choose)
 2. Select the **RC Test Matrix** template
 3. Replace `vX.Y.Z-rcN` with the actual RC version in the title and body
-4. Replace `release-X.Y.Z` with the actual release branch name in all links
+4. Replace `release-X.Y` with the actual release branch name in all links
 5. Submit the issue and share with the team for testing
 
 Testing covers installation methods, E2E tests, integration tests, conformance tests, and documentation guide walkthroughs. See the [template](.github/ISSUE_TEMPLATE/rc-test-matrix.md) for the full checklist.

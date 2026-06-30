@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,25 +39,25 @@ func TestUpsertMCPServer(t *testing.T) {
 		{
 			name: "creates secret if not exists",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_", Enabled: true},
+				{Name: "test-server", URL: "http://test.local:8080/mcp", Prefix: "test_", State: string(mcpv1alpha1.ServerStateEnabled)},
 			},
 			expectedCount:  1,
-			expectedServer: MCPServer{Name: "test-server", URL: "http://test.local:8080/mcp", ToolPrefix: "test_"},
+			expectedServer: MCPServer{Name: "test-server", URL: "http://test.local:8080/mcp", Prefix: "test_"},
 		},
 		{
 			name: "updates existing server",
 			serversToAdd: []MCPServer{
-				{Name: "test-server", URL: "http://old.local:8080/mcp", ToolPrefix: "old_", Enabled: true},
-				{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_", Enabled: true},
+				{Name: "test-server", URL: "http://old.local:8080/mcp", Prefix: "old_", State: string(mcpv1alpha1.ServerStateEnabled)},
+				{Name: "test-server", URL: "http://new.local:8080/mcp", Prefix: "new_", State: string(mcpv1alpha1.ServerStateEnabled)},
 			},
 			expectedCount:  1,
-			expectedServer: MCPServer{Name: "test-server", URL: "http://new.local:8080/mcp", ToolPrefix: "new_"},
+			expectedServer: MCPServer{Name: "test-server", URL: "http://new.local:8080/mcp", Prefix: "new_"},
 		},
 		{
 			name: "appends new server",
 			serversToAdd: []MCPServer{
-				{Name: "server1", URL: "http://s1.local/mcp", Enabled: true},
-				{Name: "server2", URL: "http://s2.local/mcp", Enabled: true},
+				{Name: "server1", URL: "http://s1.local/mcp", State: string(mcpv1alpha1.ServerStateEnabled)},
+				{Name: "server2", URL: "http://s2.local/mcp", State: string(mcpv1alpha1.ServerStateEnabled)},
 			},
 			expectedCount: 2,
 		},
@@ -99,8 +100,8 @@ func TestUpsertMCPServer(t *testing.T) {
 				if config.Servers[0].URL != tc.expectedServer.URL {
 					t.Errorf("expected URL %q, got %q", tc.expectedServer.URL, config.Servers[0].URL)
 				}
-				if config.Servers[0].ToolPrefix != tc.expectedServer.ToolPrefix {
-					t.Errorf("expected ToolPrefix %q, got %q", tc.expectedServer.ToolPrefix, config.Servers[0].ToolPrefix)
+				if config.Servers[0].Prefix != tc.expectedServer.Prefix {
+					t.Errorf("expected Prefix %q, got %q", tc.expectedServer.Prefix, config.Servers[0].Prefix)
 				}
 			}
 		})
@@ -113,8 +114,8 @@ func TestRemoveMCPServer_RemovesFromConfig(t *testing.T) {
 	namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
 
 	// insert two servers
-	server1 := MCPServer{Name: "server1", URL: "http://s1.local/mcp", Enabled: true}
-	server2 := MCPServer{Name: "server2", URL: "http://s2.local/mcp", Enabled: true}
+	server1 := MCPServer{Name: "server1", URL: "http://s1.local/mcp", State: string(mcpv1alpha1.ServerStateEnabled)}
+	server2 := MCPServer{Name: "server2", URL: "http://s2.local/mcp", State: string(mcpv1alpha1.ServerStateEnabled)}
 	if err := srw.UpsertMCPServer(ctx, server1, namespaceName); err != nil {
 		t.Fatalf("UpsertMCPServer server1 failed: %v", err)
 	}

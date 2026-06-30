@@ -20,11 +20,9 @@ import (
 )
 
 type mockBrokerImpl struct {
-	// Servers known to this mock broker
 	svrConfigs []*config.MCPServer
-
-	// Map of tool name to server name
-	tool2svr map[string]string
+	tool2svr   map[string]string
+	prompt2svr map[string]string
 }
 
 func TestHandleResponseHeaders_ReturnsGatewaySessionID(t *testing.T) {
@@ -143,7 +141,7 @@ func TestHandleResponseHeaders_404RemovesServerSession(t *testing.T) {
 	serverName := "test-server"
 
 	// add a session to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456", 0)
 	require.NoError(t, err)
 
 	// verify session exists
@@ -255,9 +253,9 @@ func TestHandleResponseHeaders_404WithMultipleServerSessions(t *testing.T) {
 	serverName2 := "server2"
 
 	// add multiple server sessions to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName1, "upstream-session-1")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName1, "upstream-session-1", 0)
 	require.NoError(t, err)
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName2, "upstream-session-2")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName2, "upstream-session-2", 0)
 	require.NoError(t, err)
 
 	// verify both sessions exist
@@ -325,7 +323,7 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotRemoveSession(t *testing.T) {
 	serverName := "test-server"
 
 	// add a session to the cache
-	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456")
+	_, err = cache.AddSession(context.Background(), gatewaySessionID, serverName, "upstream-session-456", 0)
 	require.NoError(t, err)
 
 	// request headers with gateway session ID
@@ -381,13 +379,16 @@ func TestHandleResponseHeaders_StoresElicitationForDirectInit(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
 
+	jwtManager, err := session.NewJWTManager("test-signing-key-must-be-at-least-32-bytes", 0, logger, cache)
+	require.NoError(t, err)
+	brokerSessionID := jwtManager.Generate()
+
 	srv := &ExtProcServer{
 		Logger:       logger,
 		SessionCache: cache,
 		Broker:       newMockBroker(nil, map[string]string{}),
+		JWTManager:   jwtManager,
 	}
-
-	brokerSessionID := "broker-session-jwt-123"
 
 	// no mcp-session-id (first init), no mcp-init-host (direct client request)
 	requestHeaders := &eppb.HttpHeaders{
@@ -470,11 +471,249 @@ func TestHandleResponseHeaders_SkipsElicitationForHairpinInit(t *testing.T) {
 	require.False(t, val)
 }
 
+func TestHandleResponseHeaders_401DeletesUserToken(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	serverName := "elicit-server"
+	gatewaySessionID := "gateway-session-123"
+
+	routingConfig := &config.MCPServersConfig{
+		Servers: []*config.MCPServer{
+			{
+				Name:                serverName,
+				TokenURLElicitation: &config.TokenURLElicitationConfig{},
+			},
+		},
+	}
+
+	srv := &ExtProcServer{
+		Logger:             logger,
+		SessionCache:       cache,
+		Broker:             newMockBroker(nil, map[string]string{}),
+		RoutingConfig:      routingConfig,
+		ElicitationEnabled: true,
+	}
+
+	// store a user token in the cache
+	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "expired-token"))
+	tok, ok, err := cache.GetUserToken(context.Background(), gatewaySessionID, serverName)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "expired-token", tok)
+
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("401")},
+			},
+		},
+	}
+	mcpReq := &MCPRequest{
+		sessionID:  gatewaySessionID,
+		serverName: serverName,
+		Method:     "tools/call",
+	}
+
+	responses, err := srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+
+	// token should be deleted
+	_, ok, err = cache.GetUserToken(context.Background(), gatewaySessionID, serverName)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestHandleResponseHeaders_401SkipsTokenDeleteWhenNotApplicable(t *testing.T) {
+	tests := []struct {
+		name               string
+		serverName         string
+		elicitationConfig  *config.TokenURLElicitationConfig
+		elicitationEnabled bool
+	}{
+		{
+			name:               "no elicitation config on server",
+			serverName:         "plain-server",
+			elicitationConfig:  nil,
+			elicitationEnabled: true,
+		},
+		{
+			name:               "elicitation feature disabled",
+			serverName:         "elicit-server",
+			elicitationConfig:  &config.TokenURLElicitationConfig{},
+			elicitationEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			cache, err := session.NewCache()
+			require.NoError(t, err)
+
+			gatewaySessionID := "gateway-session-123"
+			routingConfig := &config.MCPServersConfig{
+				Servers: []*config.MCPServer{
+					{Name: tt.serverName, TokenURLElicitation: tt.elicitationConfig},
+				},
+			}
+
+			srv := &ExtProcServer{
+				Logger:             logger,
+				SessionCache:       cache,
+				Broker:             newMockBroker(nil, map[string]string{}),
+				RoutingConfig:      routingConfig,
+				ElicitationEnabled: tt.elicitationEnabled,
+			}
+
+			require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, tt.serverName, "my-token"))
+
+			requestHeaders := &eppb.HttpHeaders{
+				Headers: &corev3.HeaderMap{
+					Headers: []*corev3.HeaderValue{
+						{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+					},
+				},
+			}
+			responseHeaders := &eppb.HttpHeaders{
+				Headers: &corev3.HeaderMap{
+					Headers: []*corev3.HeaderValue{
+						{Key: ":status", RawValue: []byte("401")},
+					},
+				},
+			}
+			mcpReq := &MCPRequest{
+				sessionID:  gatewaySessionID,
+				serverName: tt.serverName,
+				Method:     "tools/call",
+			}
+
+			_, err = srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+			require.NoError(t, err)
+
+			_, ok, err := cache.GetUserToken(context.Background(), gatewaySessionID, tt.serverName)
+			require.NoError(t, err)
+			require.True(t, ok, "token should NOT be deleted")
+		})
+	}
+}
+
+func TestHandleResponseHeaders_401WithNilRequestNoAction(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:             logger,
+		SessionCache:       cache,
+		Broker:             newMockBroker(nil, map[string]string{}),
+		ElicitationEnabled: true,
+	}
+
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte("gateway-session-123")},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("401")},
+			},
+		},
+	}
+
+	responses, err := srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, nil)
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+}
+
+func TestHandleResponseHeaders_SuccessStatusDoesNotDeleteUserToken(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	serverName := "elicit-server"
+	gatewaySessionID := "gateway-session-123"
+
+	routingConfig := &config.MCPServersConfig{
+		Servers: []*config.MCPServer{
+			{
+				Name:                serverName,
+				TokenURLElicitation: &config.TokenURLElicitationConfig{},
+			},
+		},
+	}
+
+	srv := &ExtProcServer{
+		Logger:             logger,
+		SessionCache:       cache,
+		Broker:             newMockBroker(nil, map[string]string{}),
+		RoutingConfig:      routingConfig,
+		ElicitationEnabled: true,
+	}
+
+	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "valid-token"))
+
+	requestHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte(gatewaySessionID)},
+			},
+		},
+	}
+	responseHeaders := &eppb.HttpHeaders{
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: ":status", RawValue: []byte("200")},
+			},
+		},
+	}
+	mcpReq := &MCPRequest{
+		sessionID:  gatewaySessionID,
+		serverName: serverName,
+		Method:     "tools/call",
+	}
+
+	_, err = srv.HandleResponseHeaders(context.Background(), responseHeaders, requestHeaders, mcpReq)
+	require.NoError(t, err)
+
+	// token should still be present
+	_, ok, err := cache.GetUserToken(context.Background(), gatewaySessionID, serverName)
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
 func newMockBroker(svrConfigs []*config.MCPServer, tool2svr map[string]string) broker.MCPBroker {
 	return &mockBrokerImpl{
 		svrConfigs: svrConfigs,
 		tool2svr:   tool2svr,
+		prompt2svr: map[string]string{},
 	}
+}
+
+func (m *mockBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer, error) {
+	svrName, ok := m.prompt2svr[prompt]
+	if !ok {
+		return nil, fmt.Errorf("No server for prompt %q", prompt)
+	}
+	for _, svrInfo := range m.svrConfigs {
+		if svrName == svrInfo.Name {
+			return svrInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get server %q for prompt %q", svrName, prompt)
 }
 
 // GetServerInfo implements broker.MCPBroker.
@@ -493,8 +732,8 @@ func (m *mockBrokerImpl) GetServerInfo(tool string) (*config.MCPServer, error) {
 	return nil, fmt.Errorf("failed to get server %q for tool %q", svrName, tool)
 }
 
-// GetVirtualSeverByHeader implements broker.MCPBroker.
-func (m *mockBrokerImpl) GetVirtualSeverByHeader(_ string) (config.VirtualServer, error) {
+// GetVirtualServerByHeader implements broker.MCPBroker.
+func (m *mockBrokerImpl) GetVirtualServerByHeader(_ string) (config.VirtualServer, error) {
 	panic("unimplemented")
 }
 
@@ -514,7 +753,7 @@ func (m *mockBrokerImpl) OnConfigChange(_ context.Context, _ *config.MCPServersC
 }
 
 // RegisteredMCPServers implements broker.MCPBroker.
-func (m *mockBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]*upstream.MCPManager {
+func (m *mockBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]upstream.ActiveMCPServer {
 	panic("unimplemented")
 }
 
@@ -531,4 +770,14 @@ func (m *mockBrokerImpl) ToolAnnotations(_ config.UpstreamMCPID, _ string) (mcp.
 // ValidateAllServers implements broker.MCPBroker.
 func (m *mockBrokerImpl) ValidateAllServers() broker.StatusResponse {
 	panic("unimplemented")
+}
+
+// IsBrokerToolName implements broker.MCPBroker.
+func (m *mockBrokerImpl) IsBrokerToolName(_ string) bool {
+	return false
+}
+
+// IsReady implements broker.MCPBroker.
+func (m *mockBrokerImpl) IsReady() bool {
+	return true
 }

@@ -1,0 +1,97 @@
+---
+# Kubernetes Job that runs the CI benchmark scenario in-cluster.
+#
+# The scenario script is mounted from the k6-ci-scenarios ConfigMap
+# (created by `make perf-ci-setup` or `kubectl create configmap`).
+#
+# Results are printed to stdout between sentinel markers and extracted
+# via `kubectl logs` by the CI Makefile target (`perf-ci-run`).
+#
+# Apply:   kubectl apply -f tests/perf/manifests/k6-benchmark-job.yaml
+# Wait:    kubectl wait --for=condition=complete job/mcp-gateway-benchmark --timeout=180s
+# Extract: kubectl logs <pod> | sed -n '/___K6_JSON_SUMMARY___/,/___K6_JSON_SUMMARY_END___/p'
+# Clean:   kubectl delete job/mcp-gateway-benchmark
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcp-gateway-benchmark
+  namespace: mcp-test
+  labels:
+    app: mcp-gateway-benchmark
+    component: performance
+spec:
+  # Keep the completed pod alive for 5 minutes so metrics can be extracted
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: mcp-gateway-benchmark
+        component: performance
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - sh
+            - -c
+            - |
+              k6 run /scenarios/ci-benchmark.js \
+                --summary-export /results/summary.json \
+                --out csv=/results/k6.csv; \
+              K6_EXIT=$?; \
+              echo "___K6_JSON_SUMMARY___"; \
+              cat /results/summary.json; \
+              echo ""; \
+              echo "___K6_JSON_SUMMARY_END___"; \
+              echo "___K6_CSV_DATA___"; \
+              cat /results/k6.csv; \
+              echo "___K6_CSV_DATA_END___"; \
+              exit $K6_EXIT
+          env:
+            # In-cluster DNS for the Istio gateway service.
+            # Override when running in a different topology.
+            - name: TARGET_URL
+              value: "http://mcp-gateway-istio.gateway-system.svc.cluster.local:8080/mcp"
+            - name: PREFIX
+              value: "mock_"
+            - name: VUS
+              value: "10"
+            - name: DURATION
+              value: "30s"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: scenarios
+              mountPath: /scenarios
+              readOnly: true
+            - name: results
+              mountPath: /results
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scenarios
+          configMap:
+            name: k6-ci-scenarios
+        - name: results
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

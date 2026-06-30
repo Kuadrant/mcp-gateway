@@ -5,7 +5,7 @@ metadata:
   name: weather-service
   namespace: mcp-system
 spec:
-  toolPrefix: weather_
+  prefix: weather_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -18,7 +18,7 @@ metadata:
   name: calendar-service
   namespace: mcp-system
 spec:
-  toolPrefix: cal_
+  prefix: cal_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -30,7 +30,7 @@ metadata:
   name: search-service
   namespace: mcp-system
 spec:
-  toolPrefix: search_
+  prefix: search_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -42,7 +42,7 @@ metadata:
   name: knowledge-service
   namespace: mcp-system
 spec:
-  toolPrefix: kb_
+  prefix: kb_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -54,7 +54,7 @@ metadata:
   name: docs-service
   namespace: mcp-system
 spec:
-  toolPrefix: docs_
+  prefix: docs_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute

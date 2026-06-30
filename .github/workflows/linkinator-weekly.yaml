@@ -1,0 +1,24 @@
+name: Documentation Link Check (Weekly)
+
+# Weekly full-repo broken link scan.
+# Experimental: see https://github.com/Kuadrant/mcp-gateway/pull/952
+
+on:
+  schedule:
+    # Monday at 06:07 UTC
+    - cron: '7 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-link-check:
+    name: Full Documentation Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JustinBeckwith/linkinator-action@v2
+        with:
+          paths: "**/*.md"
