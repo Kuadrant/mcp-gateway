@@ -54,10 +54,10 @@ All existing MCP behavior is unchanged. A2A support is entirely additive.
 - Webhook-based push notifications for async task completion callbacks. Polling via `tasks/get` is
   in scope; push is not — but the secure **webhook-relay** architecture (so the agent can't call the
   client directly, outside the policy perimeter) is sketched in [Future Considerations](#future-considerations).
-- Skill-level JWT filtering (`x-a2a-authorized`) as an enforced capability in the PoC. The mechanism
-  is designed in [Policy Enforcement](#policy-enforcement) and deferred to post-PoC; note it is a
-  discovery/visibility control, not an access boundary — the enforceable unit is the agent.
-- Supporting A2A spec versions other than v0.3.0.
+- Skill-level filtering as a gateway capability — A2A `message/send` names no skill, so there is no
+  per-skill control surface; the enforceable unit is the agent (see [Policy Enforcement](#policy-enforcement)).
+- Supporting multiple A2A spec versions at once — the design targets a single version (v1.0; see
+  [Prerequisites](#prerequisites)) with the version-specific surface isolated so a version change is mechanical.
 
 ## Job Stories
 
@@ -114,7 +114,13 @@ cannot invoke tasks.
   and binds tasks to the principal (the router already reads `sub` via `ExtractSubClaim`). Open for
   David: does any client-facing gateway token survive the stateless cut, and is `/a2a` the same OAuth
   resource/audience as `/mcp` per RFC 8707? Prereq: AuthPolicy MUST be enforced on `/a2a`.]**
-- Upstream A2A agents are accessible from the gateway's network and implement A2A v0.3.0.
+- Upstream A2A agents are accessible from the gateway's network and implement A2A v1.0.
+  **[OPEN: Q2 — version target. This design is moving from v0.3.0 to v1.0 (v1.0.1 is the current release;
+  v0.3.0 is the last 0.x line before the v1.0 major, and the `a2a-go` SDK is v1.0-only). The routing, task
+  store, and policy design are
+  version-agnostic; the version-specific surface — method names (`SendMessage` etc.), the well-known path
+  (`/.well-known/a2a`), and the card shape (`supportedInterfaces`, named `securitySchemes`) — is isolated
+  behind one mapping. Body references to v0.3.0 below are being migrated. Pending mentor confirm.]**
 - HTTPRoutes targeting upstream A2A agents are programmed and accepted by the gateway.
 
 ### Flow
@@ -182,17 +188,16 @@ The poll is kept cheap so the interval can stay short:
 The refresh updates the broker's **in-memory** card cache (a swap under the manager's `RWMutex`); it does
 **not** write the config Secret. A 60s poll therefore never thrashes the Secret — the Secret is written
 by the controller only on reconcile events (agent add/remove, credential change) via `UpsertA2AAgent()` →
-`SetAgents()` → `Notify()`, a flow separate from card content. Where "act only on change" earns its keep
-is the controller's `discoveredSkills` status: if the controller re-fetches to refresh that count it must
-skip the status `Update` when `version`/hash is unchanged (the same no-op-on-change discipline
-`MCPServer.ConfigChanged()` already applies), or it thrashes the API server and its own reconcile loop
-every interval.
+`SetAgents()` → `Notify()`, a flow separate from card content. The controller applies the same "act only on change" discipline to
+its `Ready` status — skipping the status `Update` when nothing has changed (as `MCPServer.ConfigChanged()`
+already does) — so reconciles don't thrash the API server.
 
 **Staleness bound.** A skill added upstream appears at `GET /a2a/{prefix}/.well-known/agent-card.json`
 within ≤ one tick (default 1 min). Skills live in the **per-agent card**, not the API Catalog (which
 lists only agent *endpoints*), so a skill change is a per-agent-card refresh; agent add/remove is the
-separate, reconcile-driven path. The controller's reconcile-time fetch is only a status snapshot
-(`AgentCardDiscovered`, `discoveredSkills`) — the live serving refresh is the broker ticker.
+separate, reconcile-driven path. The controller's reconcile-time fetch validates reachability at config time but is **not** surfaced as
+discovered content in status (mirroring `MCPServerRegistration`, which no longer lists discovered tools) —
+the live serving refresh is the broker ticker.
 
 A client-supplied cache-busting query param is **not** used: A2A clients don't send one, it would not
 force an upstream re-fetch unless explicitly wired, and wiring it would let any client trigger unbounded
@@ -351,7 +356,7 @@ stateDiagram-v2
 
 | Component | Responsibility |
 |---|---|
-| Controller (`A2AReconciler`) | Watches `A2AAgentRegistration` CRDs. Resolves HTTPRoute → upstream endpoint → agent card URL. Writes `A2AAgent` config to the config Secret. Sets `Ready` and `AgentCardDiscovered` status conditions. |
+| Controller (`A2AReconciler`) | Watches `A2AAgentRegistration` CRDs. Resolves HTTPRoute → upstream endpoint → agent card URL. Writes `A2AAgent` config to the config Secret. Sets a `Ready` status condition (`Ready` = config written, mirroring `MCPServerRegistration` — no discovered-content in status). |
 | Broker (`a2a.Broker`) | Implements `config.Observer`. On config change, calls `SetAgents()`. `ServeAPICatalog()` serves `GET /.well-known/api-catalog` as an RFC 9264 Linkset (`Content-Type: application/linkset+json`, registered by RFC 9727) listing all enabled agent endpoints. `ServeAgentCard(prefix)` serves `GET /a2a/{prefix}/.well-known/agent-card.json` from a cached, ticker-refreshed copy of the upstream card (mirroring `MCPManager`; not a per-request proxy), rewriting the card's `url` field to the gateway path (`/a2a/{prefix}`) so unmodified A2A clients route back through the gateway. `GetAgentByPrefix(prefix)` resolves a path prefix to the upstream agent. |
 | Router (`ExtProcServer`) | At the `RequestHeaders` phase: detects A2A traffic by `:path` prefix; extracts the agent prefix from `:path`, calls `A2ABroker.GetAgentByPrefix()`, sets `:authority` to the resolved agent hostname and the `x-a2a-agent` header. The JSON-RPC method is not known until the body, so **all method-specific work happens at `RequestBody`**, not here. At the `RequestBody` phase: authenticates via the OAuth principal (`sub`, read with `ExtractSubClaim`); for `message/send`/`message/stream` generates the gateway task ID and sets `x-a2a-task-id`; for `tasks/get`/`tasks/cancel`/`tasks/resubscribe` calls `ResolveTaskRoute()`, verifies the principal owns the task, and rewrites the gateway task ID in the request body to the upstream task ID. At the `ResponseHeaders` phase: sets `ModeOverride ResponseBodyMode=BUFFERED` (non-streaming) or `STREAMED` (`message/stream`/`tasks/resubscribe`) when `status == 200`. At the `ResponseBody` phase: for non-streaming methods, parses the upstream task ID from `result.id`, calls `StoreTaskRoute()`, rewrites upstream→gateway task ID (a buffered full-body JSON rewrite, distinct from the line-based SSE path), and evicts the route on a body-level `-32001`. `a2aSSEPassthrough.Process()` handles streaming: on the first `kind:task` event it stores the `TaskRoute`, and on every event it rewrites task IDs across `result.id`, `result.taskId`, and `history[].taskId` — parsing only the event envelope, with `parts` (incl. base64 `FilePart` bytes) carried through as raw `json.RawMessage`, never decoded (see [SSE artifact passthrough](#sse-artifact-passthrough--envelope-only-parsing)). |
 | Config (`MCPServersConfig`) | Stores `A2AAgents []*A2AAgent` alongside `Servers`. `SetA2AAgents()`, `ListA2AAgents()` provide thread-safe access under the existing `sync.RWMutex`. `Notify()` delivers A2A agent list to observers. |
@@ -385,9 +390,7 @@ spec:
   state: Enabled             # Enabled | Disabled
 status:
   conditions:
-    - type: Ready
-    - type: AgentCardDiscovered
-  discoveredSkills: 4        # count of skills in the most recently fetched Agent Card
+    - type: Ready             # Reason 'Ready' = config written; not a promise the agent is reachable/serving
 ```
 
 **Validation markers:**
@@ -471,6 +474,17 @@ tasks can run for "seconds or days" (§6.3) and routinely outlive a 24h session,
 would evict live tasks. Primary cleanup is `DeleteTaskRoute()` on a terminal `TaskState` or a
 body-level `-32001 TaskNotFoundError`; the TTL only backstops process crashes.
 
+#### Agent card cache (pluggable backend)
+
+The broker keeps each agent card in an in-memory cache, refreshed on a ticker via conditional `GET`
+from the upstream (mirroring `MCPManager`). This card store is treated as a **backend behind an
+interface, not a fixed choice**: the in-memory poll cache is the steel-thread implementation, and a
+**shared metadata store is a first-class future option** so that, in multi-replica / multi-gateway
+deployments, every broker sees the same set of agents without each one polling independently. A registry
+that natively governs agent cards (e.g. Apicurio Registry's `AGENT_CARD` artifacts, aligned with A2A
+v1.0) is one such backend — the broker would read from the store rather than polling each upstream.
+Out of scope for the PoC; kept behind an interface so it is not locked out.
+
 #### BrokerConfig Secret
 
 The config Secret (`mcp-gateway-config`) YAML gains:
@@ -518,15 +532,14 @@ aggregated into one gateway's config (mirroring `MCPServerRegistration`, which w
 gateway-extension namespace whose listener the route attaches to), so two agents in *different*
 namespaces can both claim prefix `weather` and collide at the broker's `prefix→agent` map. A
 per-namespace listing **cannot** detect this, and on a multi-tenant gateway (`allowedRoutes` admits
-both namespaces) it is a cross-tenant traffic hijack, not just an operational clash. Resolution:
-namespace-qualify the routing path as `/a2a/{namespace}/{prefix}`, which makes cross-namespace
-collision structurally impossible (reducing uniqueness to a namespace-scoped check the reconciler can
-do correctly and providing tenant isolation by construction); or, if a flat path is required,
-gateway-listener-wide conflict detection that picks the oldest `creationTimestamp` (mirroring Gateway
-API's own tiebreak) and sets a `PrefixConflict` condition on the newer registration. No admission
-webhook is required. **[OPEN: flat `/a2a/{prefix}` vs namespace-qualified `/a2a/{namespace}/{prefix}`
-— recommend the latter; pending mentor confirm. Related: the cross-namespace `targetRef` issue filed
-against MCP core, which this design must not inherit.]**
+both namespaces) it is a cross-tenant traffic hijack, not just an operational clash. **Oldest-`creationTimestamp`-wins
+tiebreaking is rejected** — it is timing-dependent and so non-deterministic under reconcile and GitOps,
+where creation order carries no meaning. The recommended resolution is to **namespace-qualify the routing
+path as `/a2a/{namespace}/{prefix}`**, which makes collision structurally impossible (uniqueness reduces
+to a namespace-scoped check) and gives tenant isolation by construction. **[OPEN: adopting this switches
+the path form from `/a2a/{prefix}` (used throughout this doc) to `/a2a/{namespace}/{prefix}` everywhere —
+recommend the switch; pending mentor confirm.]** Cross-namespace registration is **allowed**: the
+controller honors `targetRef.namespace` (the fix tracked in #1139, from issue #1199).
 
 ## Policy Enforcement
 
@@ -535,9 +548,11 @@ MCP — authentication, authorization, rate limiting, observability — instead 
 bypassing the gateway. All A2A traffic transits the `/a2a` HTTPRoute, so every Kuadrant policy that
 attaches to a Gateway listener or HTTPRoute applies unchanged. Enforcement needs **no gateway code** —
 it is Kubernetes resource configuration. This is also why routing is path-per-agent: Kuadrant policies
-attach to HTTPRoutes, so giving each agent its own `/a2a/{prefix}` path is what makes a per-agent
-`AuthPolicy`/`RateLimitPolicy` possible — a body-level discriminator (such as A2A v1.0's `tenant` field)
-has no policy attachment point and so cannot carry per-agent enforcement.
+attach to HTTPRoutes, so giving each agent its own `/a2a/{prefix}` path lets an operator attach a
+*distinct* `AuthPolicy`/`RateLimitPolicy` per agent. A body-level discriminator (such as A2A v1.0's
+`tenant` field) can still carry per-agent *enforcement* — `ext_proc` can lift it into a request header
+for Authorino/Limitador to key on, exactly as the router exposes `x-mcp-toolname` — but it has no
+policy *attachment* point, so every agent would share one policy rather than each getting its own.
 
 ### Authentication and per-agent authorization (AuthPolicy)
 
@@ -582,30 +597,14 @@ cannot forge it to reach an unauthorized agent. Token exchange (RFC 8693) is ava
 MCP. Per-agent policies can also attach to each agent's own HTTPRoute (`targetRef`), enforced on the
 `:authority`-rewritten second hop — mirroring MCP's per-server AuthPolicy.
 
-### Skill-level filtering (`x-a2a-authorized`) — visibility, not authorization
+### Skill-level filtering — not applicable to A2A
 
-Mirroring MCP's `x-mcp-authorized` tool filtering (`internal/broker/filtered_tools_handler.go`),
-Authorino can sign an `x-a2a-authorized` JWT whose `allowed-capabilities` claim carries a `skills` map,
-and the broker filters the served Agent Card's `skills[]` to the allowed set (the A2A analog of the MCP
-`tools` shape):
-
-```jsonc
-{ "skills": { "weather": ["get_forecast", "get_alerts"] } }
-```
-
-The broker verifies the ES256 signature with the trusted-headers public key (reusing `validateJWTHeader`)
-and, in `ServeAgentCard()`, drops any skill not listed for that agent before rewriting the card `url`.
-
-> **This is a discovery/visibility control, NOT an access-control boundary.** A2A `message/send` carries
-> **no skill** (v0.3.0 §7.1.1) — the client sends message parts and the agent decides what to do — so
-> there is no per-skill invocation for the gateway to authorize. A client authorized to reach an agent
-> (per the AuthPolicy above) can request any work that agent performs, regardless of which skills the
-> card advertised. This is the same property already documented for MCP (`MCPVirtualServer` hides tools
-> from listing but does not prevent calling — `docs/design/security-architecture.md`), and it is sharper
-> for A2A because skills are never named in the protocol. **The enforceable unit for A2A is the agent,
-> not the skill.** Therefore skill filtering in A2A is strictly a visibility/discovery concern, not an
-> access-control mechanism; the enforceable authorization boundary for A2A remains at the agent level
-> (`/a2a/{prefix}`) via Kuadrant AuthPolicy. Skill filtering itself is a post-PoC discovery convenience.
+Unlike MCP's per-tool filtering, A2A has no per-skill control surface: `message/send` carries **no
+skill** (no `skill`/`skillId` in `MessageSendParams`, in both v0.3.0 and v1.0) — the client sends
+message parts and the agent decides what to do — so the gateway has no skill to authorize or filter on.
+The enforceable unit for A2A is the **agent**, not the skill: authorization is the agent-level Kuadrant
+AuthPolicy on `/a2a/{prefix}` (above). Any per-skill visibility on the served card would be cosmetic,
+not an access-control boundary, so it is out of scope.
 
 ### RateLimitPolicy
 
@@ -704,27 +703,29 @@ confused-deputy trade-off knowingly.
 | `message/send`/`tasks/*` — recommended | client | RFC 8693 token exchange (Authorino) → agent-audience token |
 | static-key / mTLS-only agent | gateway (opt-in) | per-agent static credential; client authz enforced at gateway AuthPolicy |
 
-### Card integrity (v1.0 signed cards)
+### Card integrity (signed cards)
 
-v0.3.0 cards are unsigned, so the broker rewriting a card's `url` to the gateway path
-([Component Responsibilities](#component-responsibilities)) is transparent. **A2A v1.0 adds JWS-signed
-AgentCards** — a client verifies the signature to detect tampering/spoofing, and that signature covers
-the `url` field, so **rewriting a signed card invalidates it**. This does not affect the v0.3.0 target
-but gates the v1.0 path (Q2). Three options, in preference order:
+With v1.0 the target ([Q2](#prerequisites)), signed cards are in scope. **v1.0 AgentCards carry JWS
+signatures** (over the canonicalized card), and the signature covers the interface URL(s) — so the
+broker's url-rewrite (which the flows and [Component Responsibilities](#component-responsibilities)
+describe, and which is transparent for the unsigned cards of v0.3.0) **would invalidate a v1.0
+signature**. Reconciling that rewrite is part of the v1.0 surface migration.
 
-1. **Serve the RFC 9727 catalog, not rewritten cards (preferred).** The broker already serves
-   `/.well-known/api-catalog` as a link set ([Component Responsibilities](#component-responsibilities));
-   leaning on links rather than mutating cards sidesteps the conflict entirely and is consistent with the
-   path-per-agent direction — the gateway routes by `:path` prefix regardless of the card's advertised
-   `url`.
-2. **Serve signed cards verbatim (no rewrite).** Preserves the signature, but the advertised `url` points
-   at the agent, so an unmodified client bypasses the gateway — defeating the policy perimeter for any
-   client that trusts only the signature.
-3. **Re-sign at the gateway.** The broker rewrites `url` and re-signs with a gateway key. Correct for the
-   client, but makes the gateway a **card-signing trust authority** (new key management and a trust-root
-   decision) — out of scope unless a deployment explicitly needs it.
+The direction that avoids re-signing: the gateway routes by `:path` prefix (and, in v1.0, the `tenant`
+field), **not** by the card's URL, so it can **serve the card verbatim** and let the RFC 9727 catalog
+advertise the gateway endpoint + per-agent prefix/tenant. **Open dependency:** this only routes clients
+through the gateway if they discover the endpoint from the catalog/tenant rather than from the card's own
+`supportedInterfaces[].url` (which, served verbatim, points at the agent — a bypass). Whether v1.0
+clients reliably do so needs validating before it is settled.
 
-Decide alongside Q2; option 1 needs no new mechanism.
+The alternative is **re-signing at the gateway** (rewrite the URL, re-sign with a gateway key) — correct
+for any client, but it makes the gateway a **card-signing trust authority** (key management, a trust-root
+decision), out of scope unless explicitly needed.
+
+And if a [pluggable card store](#agent-card-cache-pluggable-backend) (e.g. a registry) is the card source
+rather than the upstream agent: does the store preserve the agent's original signature or re-sign on
+publish — i.e. does the registry become the trust authority? That changes who the client verifies, and is
+the piece to settle before leaning on a registry as a source.
 
 ## Relationship to Existing Approaches
 
@@ -748,10 +749,6 @@ Catalog within one reconcile cycle. `/.well-known/api-catalog` returns an empty 
 Redis A2A task entries expire naturally via their TTLs.
 
 ## Future Considerations
-
-**Skill-level JWT filtering.** Designed in [Policy Enforcement](#policy-enforcement) (`x-a2a-authorized`
-with `allowed-capabilities.skills`, filtered by `ServeAgentCard()`); deferred to post-PoC. Reminder:
-it is visibility-only — the agent, not the skill, is the access boundary.
 
 **A2A-specific Prometheus metrics.** Following the OTel metrics pattern from PR #1044:
 `a2a.router.task.routing` (counter), `a2a.broker.agent_card.fetch.duration` (histogram),
