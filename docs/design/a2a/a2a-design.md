@@ -398,10 +398,10 @@ status:
 - `agentPrefix` pattern: `+kubebuilder:validation:Pattern=^[a-z0-9][a-z0-9_]*$`
 - `agentCardURL` format: `+kubebuilder:validation:Pattern=^https?://`
 - `targetRef` uses `omitzero` not `omitempty` (kubeapilinter requirement)
-- `targetRef` resolves in the registration's own namespace; no cross-namespace `namespace` field
-  (cross-namespace agent routes would require a `ReferenceGrant`, out of scope). This deliberately
-  avoids inheriting the cross-namespace `targetRef` inconsistency filed against MCP core
-  (`getTargetHTTPRoute` ignores `targetRef.namespace` while two sibling paths honor it).
+- `targetRef` may reference an HTTPRoute in another namespace: the controller honors
+  `targetRef.namespace`, following the same cross-namespace resolution the sibling
+  controllers use (see [Security Considerations](#security-considerations) for the
+  prefix-collision implications).
 
 #### New config types
 
