@@ -34,7 +34,7 @@ type SessionCache interface {
 	KeyExists(ctx context.Context, key string) (bool, error)
 	SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error
 	GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error)
-	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	SetUserToken(ctx context.Context, sessionID, serverName, token string, ttl time.Duration) error
 	GetUserToken(ctx context.Context, sessionID, serverName string) (string, bool, error)
 	DeleteUserToken(ctx context.Context, sessionID, serverName string) error
 }

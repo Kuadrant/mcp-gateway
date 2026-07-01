@@ -497,7 +497,7 @@ func TestHandleResponseHeaders_401DeletesUserToken(t *testing.T) {
 	srv.RoutingConfig.Store(routingConfig)
 
 	// store a user token in the cache
-	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "expired-token"))
+	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "expired-token", 0))
 	tok, ok, err := cache.GetUserToken(context.Background(), gatewaySessionID, serverName)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -575,7 +575,7 @@ func TestHandleResponseHeaders_401SkipsTokenDeleteWhenNotApplicable(t *testing.T
 			}
 			srv.RoutingConfig.Store(routingConfig)
 
-			require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, tt.serverName, "my-token"))
+			require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, tt.serverName, "my-token", 0))
 
 			requestHeaders := &eppb.HttpHeaders{
 				Headers: &corev3.HeaderMap{
@@ -664,7 +664,7 @@ func TestHandleResponseHeaders_SuccessStatusDoesNotDeleteUserToken(t *testing.T)
 	}
 	srv.RoutingConfig.Store(routingConfig)
 
-	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "valid-token"))
+	require.NoError(t, cache.SetUserToken(context.Background(), gatewaySessionID, serverName, "valid-token", 0))
 
 	requestHeaders := &eppb.HttpHeaders{
 		Headers: &corev3.HeaderMap{

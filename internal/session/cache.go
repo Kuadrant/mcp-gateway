@@ -146,7 +146,8 @@ func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID strin
 }
 
 // SetUserToken stores a per-user upstream token in the session hash.
-func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token string) error {
+// ttl sets the expiry on the Redis hash key; pass 0 for no expiry (in-memory mode ignores ttl).
+func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token string, ttl time.Duration) error {
 	field := userTokenFieldPrefix + serverName
 	if c.inmemory != nil {
 		c.innerMu.Lock()
@@ -171,7 +172,15 @@ func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token s
 		}
 		value = encrypted
 	}
-	return c.extClient.HSet(ctx, sessionID, field, value).Err()
+	pipe := c.extClient.Pipeline()
+	pipe.HSet(ctx, sessionID, field, value)
+	if ttl > 0 {
+		pipe.Expire(ctx, sessionID, ttl)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetUserToken retrieves a cached upstream token. Returns ("", false, nil) on miss.

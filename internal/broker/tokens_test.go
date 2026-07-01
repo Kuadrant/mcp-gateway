@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
@@ -21,16 +22,18 @@ import (
 type stubTokenCache struct {
 	mu     sync.Mutex
 	tokens map[string]string
+	ttls   map[string]time.Duration
 }
 
 func newStubTokenCache() *stubTokenCache {
-	return &stubTokenCache{tokens: make(map[string]string)}
+	return &stubTokenCache{tokens: make(map[string]string), ttls: make(map[string]time.Duration)}
 }
 
-func (s *stubTokenCache) SetUserToken(_ context.Context, sessionID, serverName, token string) error {
+func (s *stubTokenCache) SetUserToken(_ context.Context, sessionID, serverName, token string, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tokens[sessionID+":"+serverName] = token
+	s.ttls[sessionID+":"+serverName] = ttl
 	return nil
 }
 
@@ -39,6 +42,12 @@ func (s *stubTokenCache) GetUserToken(_ context.Context, sessionID, serverName s
 	defer s.mu.Unlock()
 	t, ok := s.tokens[sessionID+":"+serverName]
 	return t, ok
+}
+
+func (s *stubTokenCache) getTTL(_ context.Context, sessionID, serverName string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ttls[sessionID+":"+serverName]
 }
 
 func buildBearerJWT(sub string) string {
@@ -51,6 +60,14 @@ func buildBearerJWT(sub string) string {
 
 func buildRawJWT(sub string) string {
 	return strings.TrimPrefix(buildBearerJWT(sub), "Bearer ")
+}
+
+func buildSessionJWT(exp time.Time) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	claims := fmt.Sprintf(`{"exp":%d}`, exp.Unix())
+	payload := base64.RawURLEncoding.EncodeToString([]byte(claims))
+	sig := base64.RawURLEncoding.EncodeToString([]byte("fakesig"))
+	return fmt.Sprintf("%s.%s.%s", header, payload, sig)
 }
 
 func setupHandler(t *testing.T) (*TokenHandler, elicitation.Map, *stubTokenCache) {
@@ -173,7 +190,8 @@ func TestTokenHandler_GET_InvalidElicitationID(t *testing.T) {
 func TestTokenHandler_POST_StoresToken(t *testing.T) {
 	handler, eMap, cache := setupHandler(t)
 	ctx := context.Background()
-	id, _ := eMap.Store(ctx, "sess1", "github", "")
+	sessionID := buildSessionJWT(time.Now().Add(time.Hour))
+	id, _ := eMap.Store(ctx, sessionID, "github", "")
 	csrf := getCSRFToken(t, handler, id)
 
 	req := postTokenForm(id, "ghp_secret123", csrf)
@@ -184,15 +202,38 @@ func TestTokenHandler_POST_StoresToken(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	token, ok := cache.GetUserToken(ctx, "sess1", "github")
+	token, ok := cache.GetUserToken(ctx, sessionID, "github")
 	if !ok || token != "ghp_secret123" {
 		t.Fatalf("expected cached token, got ok=%v token=%q", ok, token)
+	}
+	ttl := cache.getTTL(ctx, sessionID, "github")
+	if ttl <= 50*time.Minute || ttl > time.Hour {
+		t.Fatalf("expected token ttl near 1h, got %v", ttl)
 	}
 
 	// elicitation ID should be consumed (single-use)
 	_, ok, _ = eMap.Lookup(ctx, id)
 	if ok {
 		t.Fatal("elicitation entry should have been removed after use")
+	}
+}
+
+func TestTokenHandler_POST_InvalidSessionTTL(t *testing.T) {
+	handler, eMap, cache := setupHandler(t)
+	ctx := context.Background()
+	id, _ := eMap.Store(ctx, "sess1", "github", "")
+	csrf := getCSRFToken(t, handler, id)
+
+	req := postTokenForm(id, "ghp_secret123", csrf)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	_, ok := cache.GetUserToken(ctx, "sess1", "github")
+	if ok {
+		t.Fatal("token should not be stored for invalid session")
 	}
 }
 
@@ -258,7 +299,8 @@ func TestTokenHandler_POST_InvalidTokenCharacters(t *testing.T) {
 func TestTokenHandler_POST_SubMatch(t *testing.T) {
 	handler, eMap, cache := setupHandler(t)
 	ctx := context.Background()
-	id, _ := eMap.Store(ctx, "sess1", "github", "user123")
+	sessionID := buildSessionJWT(time.Now().Add(time.Hour))
+	id, _ := eMap.Store(ctx, sessionID, "github", "user123")
 	csrf := getCSRFToken(t, handler, id)
 
 	req := postTokenForm(id, "ghp_secret", csrf)
@@ -270,7 +312,7 @@ func TestTokenHandler_POST_SubMatch(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	token, ok := cache.GetUserToken(ctx, "sess1", "github")
+	token, ok := cache.GetUserToken(ctx, sessionID, "github")
 	if !ok || token != "ghp_secret" {
 		t.Fatal("expected token stored after sub match")
 	}
@@ -294,7 +336,8 @@ func TestTokenHandler_POST_SubMismatch(t *testing.T) {
 func TestTokenHandler_POST_NoSubInEntry_SkipsCheck(t *testing.T) {
 	handler, eMap, cache := setupHandler(t)
 	ctx := context.Background()
-	id, _ := eMap.Store(ctx, "sess1", "github", "")
+	sessionID := buildSessionJWT(time.Now().Add(time.Hour))
+	id, _ := eMap.Store(ctx, sessionID, "github", "")
 	csrf := getCSRFToken(t, handler, id)
 
 	req := postTokenForm(id, "ghp_secret", csrf)
@@ -305,7 +348,7 @@ func TestTokenHandler_POST_NoSubInEntry_SkipsCheck(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	token, ok := cache.GetUserToken(ctx, "sess1", "github")
+	token, ok := cache.GetUserToken(ctx, sessionID, "github")
 	if !ok || token != "ghp_secret" {
 		t.Fatal("expected token stored when no sub in entry")
 	}

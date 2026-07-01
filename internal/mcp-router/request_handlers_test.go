@@ -1656,7 +1656,7 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 	server, validToken := setupTokenResolutionTestServer(t, serverConfigs, map[string]string{"gh_tool": "github"}, tokenMap)
 
 	// pre-populate the user token in the session cache
-	require.NoError(t, server.SessionCache.SetUserToken(context.Background(), validToken, "github", "ghp_cached_token"))
+	require.NoError(t, server.SessionCache.SetUserToken(context.Background(), validToken, "github", "ghp_cached_token", 0))
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",

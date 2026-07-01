@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
@@ -25,7 +26,7 @@ const maxTokenLength = 2048
 
 // tokenStore is the subset of UserTokenCache that the token page needs.
 type tokenStore interface {
-	SetUserToken(ctx context.Context, sessionID, serverName, token string) error
+	SetUserToken(ctx context.Context, sessionID, serverName, token string, ttl time.Duration) error
 }
 
 // TokenHandler handles HTTP requests to the /tokens endpoint
@@ -164,7 +165,12 @@ func (h *TokenHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.tokenCache.SetUserToken(ctx, entry.SessionID, entry.ServerName, token); err != nil {
+	ttl := gatewaySessionTTL(entry.SessionID)
+	if ttl <= 0 {
+		h.sendError(w, http.StatusBadRequest, "invalid or expired session")
+		return
+	}
+	if err := h.tokenCache.SetUserToken(ctx, entry.SessionID, entry.ServerName, token, ttl); err != nil {
 		h.logger.Error("failed to store user token", "error", err)
 		h.sendError(w, http.StatusInternalServerError, "failed to store token")
 		return

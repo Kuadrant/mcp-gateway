@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	redis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -411,7 +413,7 @@ func TestCache_SetGetDeleteUserToken(t *testing.T) {
 	require.False(t, ok)
 	require.Empty(t, token)
 
-	err = cache.SetUserToken(ctx, "sess1", "server1", "my-pat-token")
+	err = cache.SetUserToken(ctx, "sess1", "server1", "my-pat-token", 0)
 	require.NoError(t, err)
 
 	token, ok, err = cache.GetUserToken(ctx, "sess1", "server1")
@@ -438,7 +440,7 @@ func TestCache_OpaqueTokenNoExpiryCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	opaque := "ghp_abc123XYZ"
-	err = cache.SetUserToken(ctx, "sess1", "github", opaque)
+	err = cache.SetUserToken(ctx, "sess1", "github", opaque, 0)
 	require.NoError(t, err)
 
 	token, ok, err := cache.GetUserToken(ctx, "sess1", "github")
@@ -447,13 +449,36 @@ func TestCache_OpaqueTokenNoExpiryCheck(t *testing.T) {
 	require.Equal(t, opaque, token)
 }
 
+func TestCache_SetUserTokenRedisTTL(t *testing.T) {
+	ctx := context.Background()
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+	cache, err := NewCache(WithRedisClient(client))
+	require.NoError(t, err)
+
+	err = cache.SetUserToken(ctx, "sess1", "github", "ghp_abc123XYZ", time.Hour)
+	require.NoError(t, err)
+
+	ttl, err := client.TTL(ctx, "sess1").Result()
+	require.NoError(t, err)
+	require.Positive(t, ttl)
+
+	redisServer.FastForward(time.Hour + time.Second)
+	_, ok, err := cache.GetUserToken(ctx, "sess1", "github")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 func TestCache_ExpiredJWTDeletedOnGet(t *testing.T) {
 	ctx := context.Background()
 	cache, err := NewCache()
 	require.NoError(t, err)
 
 	expired := buildJWT(time.Now().Add(-1 * time.Hour))
-	err = cache.SetUserToken(ctx, "sess1", "server1", expired)
+	err = cache.SetUserToken(ctx, "sess1", "server1", expired, 0)
 	require.NoError(t, err)
 
 	_, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
@@ -472,7 +497,7 @@ func TestCache_ValidJWTReturned(t *testing.T) {
 	require.NoError(t, err)
 
 	valid := buildJWT(time.Now().Add(1 * time.Hour))
-	err = cache.SetUserToken(ctx, "sess1", "server1", valid)
+	err = cache.SetUserToken(ctx, "sess1", "server1", valid, 0)
 	require.NoError(t, err)
 
 	token, ok, err := cache.GetUserToken(ctx, "sess1", "server1")
