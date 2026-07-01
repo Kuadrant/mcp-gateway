@@ -305,7 +305,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		if ok {
 			m.logger.InfoContext(ctx, "Server is registered", "mcpID", mcpServer.ID())
 			// already have a manger
-			if mcpServer.ConfigChanged(man.Config()) {
+			if mcpServer.ConfigChanged(man.Config()) || man.GatewayCACertPEM() != conf.GetGatewayCACertPEM() {
 				// todo prob could look at just updating the config
 				m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 				man.Stop()
@@ -315,7 +315,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.InfoContext(ctx, "starting new manager", "server id", mcpServer.ID())
-			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer, conf.GetGatewayCACertPEM()), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			if err != nil {
 				m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
 				continue

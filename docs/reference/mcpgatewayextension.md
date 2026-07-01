@@ -28,6 +28,14 @@
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
 | `urlElicitation` | String | No | Controls URL-based token elicitation. `Enabled`: creates a separate `/tokens` HTTPRoute and passes `--enable-url-elicitation` to the broker. `Disabled` (default): no `/tokens` route is created |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
+| `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle used as the base trust pool for all upstream MCP server connections. Per-server `caCertSecretRef` on `MCPServerRegistration` appends to this pool. The Secret must have the label `mcp.kuadrant.io/secret=true` |
+
+## CACertBundleReference
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `name` | String | Yes | Name of the Secret resource |
+| `key` | String | No | Key within the Secret that contains the CA bundle PEM data. Defaults to `ca.crt` |
 
 ## MCPGatewayExtensionTargetReference
 

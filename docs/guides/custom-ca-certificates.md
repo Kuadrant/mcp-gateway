@@ -10,9 +10,54 @@ By default, the MCP Gateway broker trusts only publicly-trusted CAs when connect
 - **cert-manager with a private issuer** — common for internal PKI
 - **Self-signed certificates** — development and testing environments
 
-When the broker encounters a server using a private CA, it rejects the connection with a certificate verification error. The `caCertSecretRef` field on `MCPServerRegistration` solves this by providing a custom CA bundle that the broker adds to its trust pool.
+When the broker encounters a server using a private CA, it rejects the connection with a certificate verification error. This can be solved in two ways:
+1. **Gateway-Level CA Bundle**: Use `caCertBundleRef` on the `MCPGatewayExtension` to establish a shared trust pool for all upstream servers.
+2. **Per-Server CA**: Use `caCertSecretRef` on the `MCPServerRegistration` for a server-specific custom CA.
 
 > **Note:** This only affects the broker's connections to upstream MCP servers (tool discovery, initialization, session management). Client `tools/call` requests flow through Envoy, which has its own TLS configuration via Gateway API.
+
+## Gateway-Level CA Bundle
+
+When you have multiple upstream MCP servers sharing the same private CA (e.g. OpenShift service-serving CA), configuring the CA at the gateway level prevents duplication and reduces operational overhead.
+
+### Step 1: Create the CA Bundle Secret
+
+Create a Kubernetes Secret containing the CA bundle PEM data in the same namespace as your `MCPGatewayExtension`. The Secret must have the label `mcp.kuadrant.io/secret: "true"`.
+
+```bash
+kubectl create secret generic shared-ca-bundle \
+  --from-file=ca.crt=/path/to/ca-certificate.pem \
+  -n mcp-system
+
+kubectl label secret shared-ca-bundle \
+  mcp.kuadrant.io/secret=true \
+  -n mcp-system
+```
+
+The CA bundle Secret can be up to 256 KiB in size.
+
+### Step 2: Reference the CA Bundle in MCPGatewayExtension
+
+Add `caCertBundleRef` to your `MCPGatewayExtension` configuration:
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway
+  namespace: mcp-system
+spec:
+  targetRef:
+    name: mcp-gateway
+    sectionName: mcp
+  caCertBundleRef:
+    name: shared-ca-bundle
+    key: ca.crt # optional, defaults to ca.crt
+```
+
+Once applied, the broker will use this CA bundle as a base trust pool for all upstream MCP servers. Servers whose certificates are signed by this CA no longer need an individual `caCertSecretRef`.
+
+## Per-Server CA Configuration
 
 ## Prerequisites
 

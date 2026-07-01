@@ -90,7 +90,7 @@ func TestInitialize(t *testing.T) {
 				defaultClient: &http.Client{},
 				clients:       make(map[string]*http.Client),
 			}
-			client, err := Initialize(context.Background(), tc.gatewayHost, tc.conf, tc.passThroughHeaders, false, pool)
+			client, err := Initialize(context.Background(), tc.gatewayHost, tc.conf, tc.passThroughHeaders, false, pool, "")
 			if tc.expectedError {
 				require.Error(t, err)
 				return

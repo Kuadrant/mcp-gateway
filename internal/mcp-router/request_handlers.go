@@ -767,7 +767,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 		}
 		passThroughHeaders[RoutingKey] = initToken
 		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
-		clientHandle, err := s.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool)
+		clientHandle, err := s.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.clientElicitation, s.HairpinClientPool, routingCfg.GetGatewayCACertPEM())
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")

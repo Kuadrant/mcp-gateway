@@ -4,20 +4,30 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -190,7 +200,10 @@ func deleteTestReferenceGrant(ctx context.Context, name, namespace string) error
 }
 
 // mockConfigWriterDeleter is a mock implementation of ConfigWriterDeleter for testing
-type mockConfigWriterDeleter struct{}
+type mockConfigWriterDeleter struct {
+	lastGatewayCACertPEM string
+	lastNamespace        types.NamespacedName
+}
 
 func (m *mockConfigWriterDeleter) DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error {
 	return nil
@@ -201,6 +214,12 @@ func (m *mockConfigWriterDeleter) EnsureConfigExists(ctx context.Context, namesp
 }
 
 func (m *mockConfigWriterDeleter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
+	return nil
+}
+
+func (m *mockConfigWriterDeleter) WriteGatewayCACertPEM(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
+	m.lastGatewayCACertPEM = caCertPEM
+	m.lastNamespace = namespaceName
 	return nil
 }
 
@@ -1282,3 +1301,82 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 		})
 	})
 })
+
+func generateSelfSignedCACertPEM(t *testing.T) []byte {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(365 * 24 * time.Hour)
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	require.NoError(t, err)
+
+	template := x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               pkix.Name{Organization: []string{"Test CA"}},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+}
+
+func TestReconcileCACertBundle(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = mcpv1alpha1.AddToScheme(scheme)
+
+	validPEM := generateSelfSignedCACertPEM(t)
+
+	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gateway",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+			CACertBundleRef: &mcpv1alpha1.CACertBundleReference{
+				Name: "test-ca",
+				Key:  "ca.crt",
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ca",
+			Namespace: "default",
+			Labels:    map[string]string{ManagedSecretLabel: ManagedSecretValue},
+		},
+		Data: map[string][]byte{
+			"ca.crt": validPEM,
+		},
+	}
+
+	mockDeleter := &mockConfigWriterDeleter{}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	reconciler := &MCPGatewayExtensionReconciler{
+		Client:              client,
+		DirectAPIReader:     client,
+		ConfigWriterDeleter: mockDeleter,
+	}
+
+	err := reconciler.reconcileCACertBundle(context.TODO(), mcpExt)
+	require.NoError(t, err)
+
+	require.Equal(t, string(validPEM), mockDeleter.lastGatewayCACertPEM)
+	require.Equal(t, "default", mockDeleter.lastNamespace.Namespace)
+
+	// Test missing secret
+	mcpExt.Spec.CACertBundleRef.Name = "missing"
+	err = reconciler.reconcileCACertBundle(context.TODO(), mcpExt)
+	require.Error(t, err)
+	require.Equal(t, "", mockDeleter.lastGatewayCACertPEM) // Should clear
+}

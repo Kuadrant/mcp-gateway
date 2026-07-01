@@ -46,6 +46,10 @@ func (m *MockMCP) GetConfig() config.MCPServer {
 	return *m.cfg
 }
 
+func (m *MockMCP) GetGatewayCACertPEM() string {
+	return ""
+}
+
 func (m *MockMCP) ID() config.UpstreamMCPID {
 	return m.id
 }

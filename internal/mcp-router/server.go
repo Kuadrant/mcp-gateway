@@ -41,7 +41,7 @@ type SessionCache interface {
 
 // InitForClient defines a function for initializing an MCP server for a client.
 // The caller sets routing headers (router-key, mcp-init-host) in passThroughHeaders before calling.
-type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *clients.HairpinClientPool) (*client.Client, error)
+type InitForClient func(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *clients.HairpinClientPool, gatewayCACertPEM string) (*client.Client, error)
 
 // ExtProcServer struct boolean for streaming & Store headers for later use in body processing
 type ExtProcServer struct {

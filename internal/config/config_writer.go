@@ -295,3 +295,25 @@ func (srw *SecretReaderWriter) WriteEmptyConfig(ctx context.Context, namespaceNa
 		return srw.Client.Update(ctx, backingSecret)
 	})
 }
+
+// WriteGatewayCACertPEM updates the gatewayCACertPEM field in the config secret.
+// It preserves existing servers and virtualServers while updating only the CA bundle.
+// Uses a read-modify-write pattern with automatic retry on conflict errors.
+func (srw *SecretReaderWriter) WriteGatewayCACertPEM(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
+	srw.Logger.Debug("SecretReaderWriter WriteGatewayCACertPEM", "secret", namespaceName, "hasBundle", caCertPEM != "")
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
+		if err != nil {
+			return fmt.Errorf("write gateway ca cert failed to read config secret: %w", err)
+		}
+
+		existingConfig.GatewayCACertPEM = caCertPEM
+		updated, err := yaml.Marshal(existingConfig)
+		if err != nil {
+			return fmt.Errorf("write gateway ca cert failed to marshal config: %w", err)
+		}
+
+		backingSecret.StringData[configFileName] = string(updated)
+		return srw.Client.Update(ctx, backingSecret)
+	})
+}

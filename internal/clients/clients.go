@@ -86,7 +86,7 @@ func buildHairpinURL(gatewayHost, mcpPath string) string {
 // Initialize will create a new initialize and initialized request and return the associated http client for connection management.
 // This method makes a request back through the gateway to ensure any AuthPolicy is triggered.
 // The caller must set the routing key and mcp-init-host headers in passThroughHeaders before calling.
-func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *HairpinClientPool) (*client.Client, error) {
+func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer, passThroughHeaders map[string]string, clientElicitation bool, hairpinClientPool *HairpinClientPool, gatewayCACertPEM string) (*client.Client, error) {
 	mcpPath, err := conf.Path()
 	if err != nil {
 		return nil, err
@@ -95,6 +95,29 @@ func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer,
 	url := buildHairpinURL(gatewayHost, mcpPath)
 	hairpinHTTPClient := hairpinClientPool.Get(conf.Hostname)
 	passThroughHeaders["x-client-id"] = "lazyinit"
+
+	if gatewayCACertPEM != "" && hairpinHTTPClient != nil {
+		if tr, ok := hairpinHTTPClient.Transport.(*http.Transport); ok {
+			trClone := tr.Clone()
+			pool := trClone.TLSClientConfig.RootCAs
+			if pool == nil {
+				pool, err = x509.SystemCertPool()
+				if err != nil || pool == nil {
+					pool = x509.NewCertPool()
+				}
+			} else {
+				pool = pool.Clone()
+			}
+			if !pool.AppendCertsFromPEM([]byte(gatewayCACertPEM)) {
+				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+			}
+			trClone.TLSClientConfig.RootCAs = pool
+
+			hairpinCopy := *hairpinHTTPClient
+			hairpinCopy.Transport = trClone
+			hairpinHTTPClient = &hairpinCopy
+		}
+	}
 
 	httpClient, err := client.NewStreamableHttpClient(url,
 		transport.WithHTTPHeaders(passThroughHeaders),
