@@ -169,7 +169,22 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				return err
 			}
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
-
+			// non-JSON requests (e.g. form submissions to /tokens) pass through without
+			// JSON-RPC parsing. Decide this before buffering or enforcing the JSON
+			// inspection size limit, so passthrough traffic is neither size-limited
+			// by MaxRequestBodySize nor accumulated in bodyBuffer.
+			contentType := getSingleValueHeader(localRequestHeaders.Headers, "content-type")
+			if !strings.Contains(strings.ToLower(contentType), "application/json") {
+				s.Logger.DebugContext(ctx, "non-JSON content-type, passing through", "content-type", contentType)
+				resp := responseBuilder.WithDoNothingResponse(false).Build()
+				for _, res := range resp {
+					if err := stream.Send(res); err != nil {
+						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
+						return err
+					}
+				}
+				continue
+			}
 			// enforce max body size before allocating memory for the chunk
 			if s.MaxRequestBodySize > 0 && len(bodyBuffer)+len(r.RequestBody.Body) > s.MaxRequestBodySize {
 				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(bodyBuffer)+len(r.RequestBody.Body), s.MaxRequestBodySize)
@@ -190,20 +205,6 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			if !r.RequestBody.EndOfStream {
 				// intermediate chunk: acknowledge and wait for more data
 				s.Logger.DebugContext(ctx, "received body chunk, waiting for more", "request id", requestID, "buffer_size", len(bodyBuffer))
-				resp := responseBuilder.WithDoNothingResponse(false).Build()
-				for _, res := range resp {
-					if err := stream.Send(res); err != nil {
-						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
-						return err
-					}
-				}
-				continue
-			}
-
-			// non-JSON requests (e.g. form submissions to /tokens) pass through without JSON-RPC parsing
-			contentType := getSingleValueHeader(localRequestHeaders.Headers, "content-type")
-			if !strings.Contains(strings.ToLower(contentType), "application/json") {
-				s.Logger.DebugContext(ctx, "non-JSON content-type, passing through", "content-type", contentType)
 				resp := responseBuilder.WithDoNothingResponse(false).Build()
 				for _, res := range resp {
 					if err := stream.Send(res); err != nil {
