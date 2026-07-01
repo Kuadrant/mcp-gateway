@@ -15,7 +15,8 @@ TEST_SERVER_IMAGE_REPO ?= ghcr.io/kuadrant/mcp-gateway
 TEST_SERVER_IMAGE_TAG ?= latest
 TEST_SERVER_IMAGES = test-server1 test-server2 test-server3 test-api-key-server \
 	test-broken-server test-custom-path-server test-oidc-server \
-	test-everything-server test-custom-response-server test-user-specific-server
+	test-everything-server test-custom-response-server test-user-specific-server \
+	test-a2a-server
 
 # buildx builder with the security.insecure entitlement: containerd's layer
 # extraction in the bake RUN step needs mount(2), which plain builds deny
