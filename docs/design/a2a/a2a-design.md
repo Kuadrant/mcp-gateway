@@ -155,7 +155,7 @@ than in any header or out-of-band knowledge the client has to be given. The same
 mechanism is used by agentgateway (Solo.io, now under the Linux Foundation), which
 also rewrites agent card URLs to point at the gateway and routes per-agent rather than
 multiplexing on a skill. Multi-agent discovery under one base URL is an active topic
-upstream (a2aproject/A2A issues #641 and #883, discussion #166); the RFC 9727 API
+upstream; the RFC 9727 API
 Catalog (served as an RFC 9264 Linkset) used here aligns with that direction.
 **[OPEN: discovery convention is held deliberately loose — commit to the RFC 9727 catalog now vs
 track upstream and keep it light. David endorsed holding it loosely; pending Jason/Craig.]**
@@ -539,8 +539,7 @@ path as `/a2a/{namespace}/{prefix}`**, which makes collision structurally imposs
 to a namespace-scoped check) and gives tenant isolation by construction. **[OPEN: adopting this switches
 the path form from `/a2a/{prefix}` (used throughout this doc) to `/a2a/{namespace}/{prefix}` everywhere —
 recommend the switch; pending mentor confirm.]** Cross-namespace registration is **allowed**: the A2A
-controller follows the cross-namespace `targetRef` pattern from #1139 (fixing issue #1199) — assumed to
-land, and copied rather than reimplemented.
+controller honors `targetRef.namespace`, so a registration may target an HTTPRoute in another namespace.
 
 ## Policy Enforcement
 
@@ -751,7 +750,7 @@ Redis A2A task entries expire naturally via their TTLs.
 
 ## Future Considerations
 
-**A2A-specific Prometheus metrics.** Following the OTel metrics pattern from PR #1044:
+**A2A-specific Prometheus metrics.** Following the gateway's existing OTel metrics pattern:
 `a2a.router.task.routing` (counter), `a2a.broker.agent_card.fetch.duration` (histogram),
 `a2a.router.task_store.operations` (counter with hit/miss labels).
 
