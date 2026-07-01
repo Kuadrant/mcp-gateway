@@ -87,7 +87,7 @@ dial tcp: lookup my-gateway-istio.mcp-system.svc.cluster.local: no such host
 
 ### Scenario 2: MCPServerRegistration Ready but tools/list returns empty
 
-**Symptom:** `MCPServerRegistration` shows `Ready: True, discoveredTools: 23` but `tools/list` returns empty. Router logs show:
+**Symptom:** `MCPServerRegistration` shows `Ready: True` but `tools/list` returns empty. Router logs show:
 ```
 received 404 from backend MCP ... server=""
 ```
