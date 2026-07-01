@@ -154,6 +154,36 @@ Gateway logs show `filter_chain_not_found`.
 
 ---
 
+## Last Resort: Reading the Source Code
+
+If must-gather output is inconclusive and the error message does not match any known scenario, locate the exact line of code that emits it. This often reveals the precise condition and code path, making a bug report far more actionable.
+
+**Source repository:** https://github.com/kuadrant/mcp-gateway
+
+**How to find the error:**
+
+1. Take the exact error string from the logs (strip dynamic values like IDs, namespaces, IP addresses first)
+2. Search the repository: `https://github.com/search?q=repo%3Akuadrant%2Fmcp-gateway+<url-encoded-error-string>&type=code`
+   Or ask the user to run locally: `grep -r "error substring" .` from the repo root
+3. Read the surrounding function — identify:
+   - What condition triggers the error
+   - Which inputs or state lead to that condition
+   - Whether the error is expected (e.g. a retry path) or truly fatal
+
+**Key source locations by component:**
+
+| Component | Path |
+|---|---|
+| Router (ext_proc) | `internal/mcp-router/` |
+| Broker | `internal/broker/` |
+| Controller / Operator | `internal/controller/` |
+| Config types | `internal/config/` |
+| CRD API types | `api/v1alpha1/` |
+
+Once you have identified the relevant code path, include the file path and line number in the bug report so the maintainers can reproduce and fix it quickly.
+
+---
+
 ## Reporting a Genuine Bug
 
 If the diagnosis points to a defect in MCP Gateway itself (not a configuration issue), guide the user to report it:
