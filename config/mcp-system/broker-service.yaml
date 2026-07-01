@@ -5,11 +5,11 @@ metadata:
   namespace: mcp-system
   labels:
     app.kubernetes.io/name: mcp-gateway
-    app.kubernetes.io/component: mcp-broker
+    app.kubernetes.io/component: broker
 spec:
   selector:
-    app: mcp-broker-router
-    component: broker-router
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/component: broker
   ports:
     - name: http
       port: 8080
