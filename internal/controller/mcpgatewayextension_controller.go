@@ -901,16 +901,18 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ con
 	}}
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
-	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
-	if err := setupIndexExtensionToGateway(ctx, mgr.GetFieldIndexer()); err != nil {
-		return fmt.Errorf("failed to setup manager %w", err)
+// SetupRequiredIndexes registers field indexes needed by MCPReconciler regardless of
+// whether the MCPGatewayExtensionReconciler is enabled.
+func SetupRequiredIndexes(ctx context.Context, indexer client.FieldIndexer) error {
+	if err := setupIndexExtensionToGateway(ctx, indexer); err != nil {
+		return err
 	}
+	return setupIndexExtensionToReferenceGrant(ctx, indexer)
+}
 
-	if err := setupIndexExtensionToReferenceGrant(ctx, mgr.GetFieldIndexer()); err != nil {
-		return fmt.Errorf("failed to setup manager %w", err)
-	}
+// SetupWithManager sets up the controller with the Manager.
+func (r *MCPGatewayExtensionReconciler) SetupWithManager(_ context.Context, mgr ctrl.Manager) error {
+	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
 
 	// enqueue mcpgateway extensions when the gateway changes
 	// enqueue when reference grants change
