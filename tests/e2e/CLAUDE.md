@@ -11,9 +11,9 @@ Untagged specs run on the PR gate by default; only tag a spec `[Full]` or `[mult
 defer a genuinely slow or heavy suite to nightly. For a quick local happy-path run use
 `make test-e2e-happy`.
 
-Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[Elicitation]`,
-`[Negative]`, `[URLElicitation]`, `[UserSpecificList]`, `[Security]`. Tags can combine, e.g.
-`[Happy,URLElicitation]`.
+Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[CACertBundle]`,
+`[Elicitation]`, `[Negative]`, `[URLElicitation]`, `[UserSpecificList]`, `[Security]`. Tags can
+combine, e.g. `[Happy,URLElicitation]`.
 
 ## E2E Test Reliability
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)

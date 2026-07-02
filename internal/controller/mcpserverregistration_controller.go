@@ -38,6 +38,7 @@ const (
 	// ManagedSecretValue is the required value for the managed secret label
 	ManagedSecretValue = "true"
 	// maxCACertSize is the maximum allowed size for CA certificate PEM data (64 KiB)
+	// single CA cert; see maxCACertBundleSize for multi-cert bundles
 	maxCACertSize = 64 * 1024
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
@@ -180,6 +181,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
+	hasGatewayCACertBundle := false
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -211,6 +213,9 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
+			if vext.Spec.CACertBundleRef != nil {
+				hasGatewayCACertBundle = true
+			}
 		}
 	}
 
@@ -224,7 +229,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return ctrl.Result{}, nil
 	}
 
-	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
+	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr, hasGatewayCACertBundle)
 	if err != nil {
 		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
@@ -336,7 +341,7 @@ func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, pare
 	return g, nil
 }
 
-func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {
+func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration, hasGatewayCACertBundle bool) (*config.MCPServer, error) {
 	if mcpsr.DeletionTimestamp != nil {
 		// don't add deleting mcpserver
 		return nil, fmt.Errorf("cant generate config for deleting server %s/%s", mcpsr.Namespace, mcpsr.Name)
@@ -348,9 +353,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
-	// if a CA cert is configured, the upstream must be HTTPS
+	// if a CA cert is configured (per-server or gateway-level), the upstream must be HTTPS
 	endpoint := serverInfo.Endpoint
-	if mcpsr.Spec.CACertSecretRef != nil {
+	if mcpsr.Spec.CACertSecretRef != nil || hasGatewayCACertBundle {
 		u, err := url.Parse(endpoint)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse endpoint URL %q: %w", endpoint, err)
@@ -527,7 +532,7 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 // determineProtocol determines the protocol (http/https) for the service endpoint.
 // For external services it checks the appProtocol on the matching port.
 // For internal services it defaults to http; TLS upstreams are handled by the
-// caCertSecretRef scheme upgrade in buildMCPServerConfig.
+// caCertSecretRef or caCertBundleRef scheme upgrade in buildMCPServerConfig.
 func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
 	if isExternal {
 		for _, port := range service.Spec.Ports {

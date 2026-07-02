@@ -28,7 +28,7 @@ func TestNewUpstreamMCP(t *testing.T) {
 		State:    string(mcpv1alpha1.ServerStateEnabled),
 		Hostname: "dummy",
 	}
-	up := NewUpstreamMCP(&testServer)
+	up := NewUpstreamMCP(&testServer, "")
 	require.NotNil(t, up)
 	require.Equal(t, testServer, up.GetConfig())
 }
@@ -66,7 +66,7 @@ func TestMCPServer_IsEnabled(t *testing.T) {
 				Name:  "test",
 				State: tc.state,
 			}
-			up := NewUpstreamMCP(&server)
+			up := NewUpstreamMCP(&server, "")
 			require.Equal(t, tc.expected, up.IsEnabled())
 		})
 	}
@@ -81,7 +81,7 @@ func TestNewUpstreamMCP_WithCACert(t *testing.T) {
 		Hostname: "dummy",
 		CACert:   "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 	}
-	up := NewUpstreamMCP(&testServer)
+	up := NewUpstreamMCP(&testServer, "")
 	require.NotNil(t, up)
 	cfg := up.GetConfig()
 	require.Equal(t, testServer.CACert, cfg.CACert)
@@ -144,7 +144,7 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 	up := NewUpstreamMCP(&config.MCPServer{
 		Name: "no-ca",
 		URL:  "http://localhost:8080/mcp",
-	})
+	}, "")
 	client, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, client, "should always return a client with timeouts set")
@@ -162,7 +162,7 @@ func TestBuildHTTPClient_WithValidCACert(t *testing.T) {
 		Name:   "with-ca",
 		URL:    "https://localhost:8443/mcp",
 		CACert: string(caPEM),
-	})
+	}, "")
 	client, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, client, "should return custom client when CACert configured")
@@ -173,7 +173,7 @@ func TestBuildHTTPClient_WithInvalidPEM(t *testing.T) {
 		Name:   "bad-ca",
 		URL:    "https://localhost:8443/mcp",
 		CACert: "not-valid-pem-data",
-	})
+	}, "")
 	_, err := up.buildHTTPClient()
 	require.Error(t, err, "should error on invalid PEM")
 	require.Contains(t, err.Error(), "failed to parse CA certificate")
@@ -194,7 +194,7 @@ func TestBuildHTTPClient_TLSConnection(t *testing.T) {
 		Name:   "tls-test",
 		URL:    srv.URL + "/mcp",
 		CACert: string(caPEM),
-	})
+	}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
@@ -221,7 +221,7 @@ func TestBuildHTTPClient_TLSConnectionFailsWithoutCA(t *testing.T) {
 	up := NewUpstreamMCP(&config.MCPServer{
 		Name: "no-ca-test",
 		URL:  srv.URL + "/mcp",
-	})
+	}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient, "client is always returned, only TLS pool varies")
@@ -249,7 +249,7 @@ func TestBuildHTTPClient_WrongCACertFailsTLS(t *testing.T) {
 		Name:   "wrong-ca-test",
 		URL:    srv.URL + "/mcp",
 		CACert: string(wrongCaPEM),
-	})
+	}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
@@ -278,7 +278,7 @@ func TestBuildHTTPClient_MultiCertBundle(t *testing.T) {
 		Name:   "bundle-test",
 		URL:    srv.URL + "/mcp",
 		CACert: string(bundle),
-	})
+	}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
@@ -305,7 +305,7 @@ func TestBuildHTTPClient_ResponseHeaderTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "hang", URL: srv.URL + "/mcp"})
+	up := NewUpstreamMCP(&config.MCPServer{Name: "hang", URL: srv.URL + "/mcp"}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
@@ -322,4 +322,68 @@ func TestBuildHTTPClient_ResponseHeaderTimeout(t *testing.T) {
 	require.Error(t, err, "expected timeout error from hanging server")
 	require.Less(t, elapsed, 2*time.Second, "client should give up well before 2s")
 	require.Contains(t, err.Error(), "timeout")
+}
+
+func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	serverCert := generateServerCert(t, caCert, caKey)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverCert}}
+	srv.StartTLS()
+	defer srv.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name: "gw-ca-test",
+		URL:  srv.URL + "/mcp",
+	}, string(caPEM))
+	httpClient, err := up.buildHTTPClient()
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestBuildHTTPClient_GatewayCAPlusPerServerCA(t *testing.T) {
+	gwCAPEM, _, _ := generateSelfSignedCA(t)
+	serverCAPEM, serverCAKey, serverCACert := generateSelfSignedCA(t)
+	serverCert := generateServerCert(t, serverCACert, serverCAKey)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverCert}}
+	srv.StartTLS()
+	defer srv.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name:   "combined-ca-test",
+		URL:    srv.URL + "/mcp",
+		CACert: string(serverCAPEM),
+	}, string(gwCAPEM))
+	httpClient, err := up.buildHTTPClient()
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name: "bad-gw-ca",
+		URL:  "https://localhost:8443/mcp",
+	}, "not-valid-pem")
+	_, err := up.buildHTTPClient()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
