@@ -153,7 +153,7 @@ func createTestManagerWithTags(t *testing.T, serverName, prefix string, tools []
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
 		Tags:   tags,
-	})
+	}, "")
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)

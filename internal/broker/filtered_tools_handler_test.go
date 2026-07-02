@@ -58,7 +58,7 @@ func createTestManager(t *testing.T, serverName, prefix string, tools []mcp.Tool
 		Name:   serverName,
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
-	})
+	}, "")
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	// populate tools directly for testing (this requires accessing internal state)

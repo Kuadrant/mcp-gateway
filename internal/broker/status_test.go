@@ -33,7 +33,7 @@ func createTestManagerForStatus(t *testing.T, serverName string, tools []mcp.Too
 		Name:   serverName,
 		Prefix: "test_",
 		URL:    "http://test.local/mcp",
-	})
+	}, "")
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)

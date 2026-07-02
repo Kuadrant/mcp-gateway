@@ -73,6 +73,12 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForSecret(ctx contex
 			})
 			continue
 		}
+		if ext.Spec.CACertBundleRef != nil && ext.Spec.CACertBundleRef.Name == secret.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: ext.Name, Namespace: ext.Namespace},
+			})
+			continue
+		}
 		if secret.Name == sessionSigningKeySecretName {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: ext.Name, Namespace: ext.Namespace},

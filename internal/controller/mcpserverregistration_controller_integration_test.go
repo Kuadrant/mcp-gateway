@@ -32,7 +32,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
-func generateTestCACertPEM() []byte {
+func generateIntegrationTestCACertPEM() []byte {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		panic(err)
@@ -518,7 +518,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
-			testCaPEM := generateTestCACertPEM()
+			testCaPEM := generateIntegrationTestCACertPEM()
 			caSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      secretName,

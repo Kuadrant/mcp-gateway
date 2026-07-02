@@ -98,6 +98,7 @@ type ConfigWriterDeleter interface {
 	DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error
 	EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error
 	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
+	WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error
 }
 
 // MCPGatewayExtensionReconciler reconciles a MCPGatewayExtension object
@@ -229,6 +230,14 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if err := r.validateSessionStore(ctx, mcpExt); err != nil {
+		var valErr *validationError
+		if errors.As(err, &valErr) {
+			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileCACertBundle(ctx, mcpExt); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)

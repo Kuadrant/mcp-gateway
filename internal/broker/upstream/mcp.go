@@ -31,18 +31,21 @@ var (
 // initialization state from the MCP handshake.
 type MCPServer struct {
 	*config.MCPServer
-	client   *client.Client
-	clientMu sync.RWMutex
-	headers  map[string]string
-	init     *mcp.InitializeResult
+	client           *client.Client
+	clientMu         sync.RWMutex
+	headers          map[string]string
+	init             *mcp.InitializeResult
+	gatewayCACertPEM string
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided configuration.
 // It sets up default headers including user-agent and gateway-server-id, and adds
-// an Authorization header if credentials are configured.
-func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
+// an Authorization header if credentials are configured. The gatewayCACertPEM is
+// the gateway-level CA bundle used as the base trust pool for TLS connections.
+func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string) *MCPServer {
 	up := &MCPServer{
-		MCPServer: config,
+		MCPServer:        config,
+		gatewayCACertPEM: gatewayCACertPEM,
 	}
 	up.headers = map[string]string{
 		"user-agent":        "mcp-broker",
@@ -57,22 +60,29 @@ func NewUpstreamMCP(config *config.MCPServer) *MCPServer {
 
 // buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
 // server. The transport always has handshake and response-header timeouts so a
-// hung or unresponsive upstream cannot block the broker indefinitely. When a
-// CACert is configured, that CA is appended to the system root pool and used
-// for TLS verification.
+// hung or unresponsive upstream cannot block the broker indefinitely. The trust
+// pool is built from system roots, plus the gateway-level CA bundle (if set),
+// plus the per-server CACert (if set).
 func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
 	transport.ResponseHeaderTimeout = defaultResponseHeaderTimeout
 	transport.ExpectContinueTimeout = defaultExpectContinueTimeout
 
-	if up.CACert != "" {
+	if up.gatewayCACertPEM != "" || up.CACert != "" {
 		rootCAs, err := x509.SystemCertPool()
 		if err != nil {
 			rootCAs = x509.NewCertPool()
 		}
-		if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-			return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+		if up.gatewayCACertPEM != "" {
+			if !rootCAs.AppendCertsFromPEM([]byte(up.gatewayCACertPEM)) {
+				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+			}
+		}
+		if up.CACert != "" {
+			if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
+				return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+			}
 		}
 		transport.TLSClientConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,

@@ -22,6 +22,7 @@ type MCPServersConfig struct {
 	//MCPGatewayExternalHostname is the accessible host of the gateway listener
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
+	GatewayCACertPEM           string
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -66,6 +67,20 @@ func (config *MCPServersConfig) Notify(ctx context.Context) {
 	for _, observer := range config.observers {
 		go observer.OnConfigChange(ctx, config)
 	}
+}
+
+// SetGatewayCACertPEM sets the gateway-level CA certificate bundle PEM.
+func (config *MCPServersConfig) SetGatewayCACertPEM(pem string) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.GatewayCACertPEM = pem
+}
+
+// GetGatewayCACertPEM returns the gateway-level CA certificate bundle PEM.
+func (config *MCPServersConfig) GetGatewayCACertPEM() string {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	return config.GatewayCACertPEM
 }
 
 // GetExternalHostname returns the public hostname of the gateway
@@ -195,8 +210,9 @@ type Observer interface {
 
 // BrokerConfig holds broker configuration
 type BrokerConfig struct {
-	Servers        []MCPServer           `json:"servers" yaml:"servers"`
-	VirtualServers []VirtualServerConfig `json:"virtualServers,omitempty" yaml:"virtualServers,omitempty"`
+	Servers          []MCPServer           `json:"servers"                          yaml:"servers"`
+	VirtualServers   []VirtualServerConfig `json:"virtualServers,omitempty"         yaml:"virtualServers,omitempty"`
+	GatewayCACertPEM string                `json:"gatewayCACertPEM,omitempty"       yaml:"gatewayCACertPEM,omitempty"`
 }
 
 // AuthConfig holds auth configuration
