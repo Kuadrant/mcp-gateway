@@ -10,6 +10,7 @@ spec:
       namespace: gateway-system
   hostnames:
     - 'conformance-server.mcp.local'
+    - 'mcp.127-0-0-1.sslip.io'
   rules:
     - matches:
         - path:

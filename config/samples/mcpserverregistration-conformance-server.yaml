@@ -7,6 +7,7 @@ metadata:
   labels:
     mcp.kuadrant.io/managed: 'true'
 spec:
+  path: /mcp
   # prefix: conformance_ # conformance test suite expects no prefix
   targetRef:
     # MCP Conformance Server - TypeScript SDK based conformance test server

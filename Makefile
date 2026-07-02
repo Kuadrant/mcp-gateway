@@ -78,6 +78,9 @@ MCP_GATEWAY_SUBDOMAIN ?= mcp
 MCP_GATEWAY_HOST ?= $(MCP_GATEWAY_SUBDOMAIN).127-0-0-1.sslip.io
 MCP_GATEWAY_NAME ?= mcp-gateway
 
+# default scheme for the local gateway URL (override to http for plain HTTP)
+GATEWAY_SCHEME ?= https
+
 # E2E configuration variables
 E2E_DOMAIN ?= 127-0-0-1.sslip.io
 GATEWAY_CLASS_NAME ?= istio
@@ -472,6 +475,17 @@ deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local
 	  echo "Gateway IP: $$GATEWAY_IP"; \
 	  kubectl patch deployment mcp-oidc-server -n mcp-test --type='json' -p="$$(cat config/keycloak/patch-hostaliases.json | envsubst)"
 
+# Patch broker deployment to trust local self-signed CA
+.PHONY: patch-broker-local-ca
+patch-broker-local-ca: ## Patch broker deployment to trust local self-signed CA
+	@echo "Patching broker-router deployment to trust local self-signed CA..."
+	@kubectl wait --for=condition=Available deployment/mcp-gateway -n mcp-system --timeout=120s
+	@kubectl get secret private-ca-keypair -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d > out/certs/ca.crt || true
+	@kubectl create secret generic gateway-ca-bundle -n mcp-system --from-file=ca.crt=out/certs/ca.crt --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl patch deployment mcp-gateway -n mcp-system --type='json' -p='[{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}]'
+	@kubectl rollout status deployment mcp-gateway -n mcp-system --timeout=60s
+	@echo "Broker-router patched with local CA"
+
 # Deploy conformance server
 .PHONY: deploy-conformance-server
 deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MCP server
@@ -723,8 +737,12 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	@echo "========================================="
 	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
+	"$(MAKE)" cert-manager-install
 	"$(MAKE)" deploy-gateway
+	$(KUBECTL) apply -f config/istio/gateway/local-gateway-tls.yaml
+	@$(KUBECTL) wait --for=condition=Ready certificate/mcp-gateway-local-cert -n gateway-system --timeout=60s
 	"$(MAKE)" deploy
+	"$(MAKE)" patch-broker-local-ca
 	"${MAKE}" add-jwt-key
 	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
 	"$(MAKE)" deploy-everything-server
@@ -757,7 +775,7 @@ local-env-setup-complete-message:
 	@echo "Local environment setup complete"
 	@echo ""
 	@echo "MCP Gateway is available at:"
-	@echo "  http://$(MCP_GATEWAY_HOST):$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"
+	@echo "  $(GATEWAY_SCHEME)://$(MCP_GATEWAY_HOST):$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"
 	@echo ""
 	@echo "Run 'make urls' to see all service URLs."
 	@echo "Run 'make info' for more setup info."
@@ -800,11 +818,11 @@ info: ## Show quick setup info and useful commands
 
 .PHONY: urls
 urls: ## Show all available service URLs
-	@"$(MAKE)" -s -f build/inspect.mk urls-impl
+	@"$(MAKE)" -s -f build/inspect.mk urls-impl GATEWAY_SCHEME=$(GATEWAY_SCHEME)
 
 .PHONY: status
 status: ## Show status of all MCP components
-	@"$(MAKE)" -s -f build/inspect.mk status-impl
+	@"$(MAKE)" -s -f build/inspect.mk status-impl GATEWAY_SCHEME=$(GATEWAY_SCHEME)
 
 
 ##@ Tools

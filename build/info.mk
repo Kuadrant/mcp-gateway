@@ -10,7 +10,7 @@ info-impl:
 	@echo "      Requires: Go 1.20+ for some tool installations."
 	@echo ""
 	@echo "Service URLs:"
-	@echo "  Gateway:     http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)"
+	@echo "  Gateway:     $(GATEWAY_SCHEME)://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)"
 	@echo "  Keycloak:    https://keycloak.127-0-0-1.sslip.io:$(KIND_HOST_PORT_KEYCLOAK)"
 	@echo ""
 	@echo "Quick Start Commands:"

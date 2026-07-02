@@ -28,7 +28,7 @@ endef
 # URLs for services
 urls-impl:
 	@echo "=== MCP Gateway URLs ==="
-	@echo "Gateway: http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)"
+	@echo "Gateway: $(GATEWAY_SCHEME)://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)"
 	@echo "Keycloak: https://keycloak.127-0-0-1.sslip.io:$(KIND_HOST_PORT_KEYCLOAK)"
 
 ##@ Inspection
@@ -61,11 +61,11 @@ inspect-everything-server: ## Open MCP Inspector for test everything server
 .PHONY: inspect-gateway
 inspect-gateway: ## Open MCP Inspector for the gateway
 	@echo "Opening MCP Inspector for gateway"; \
-	echo "URL: http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"; \
+	echo "URL: $(GATEWAY_SCHEME)://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"; \
 	echo ""; \
 	MCP_AUTO_OPEN_ENABLED=false DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@0.21.1 & \
 	sleep 2; \
-	$(open) "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"; \
+	$(open) "http://localhost:6274/?transport=streamable-http&serverUrl=$(GATEWAY_SCHEME)://mcp.127-0-0-1.sslip.io:$(KIND_HOST_PORT_MCP_GATEWAY)/mcp"; \
 	echo "Press Ctrl+C to stop and cleanup"; \
 	wait
 

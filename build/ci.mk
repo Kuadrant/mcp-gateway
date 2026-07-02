@@ -41,6 +41,8 @@ ci-setup: tools kind-create-cluster ci-gateway-images gateway-api-install ci-ins
 	# gateway HTTPS cert (mcp-gateway-tls-cert) and the TLS test server cert.
 	# Must run before deploy-gateway so the mcp-tls listener has its cert ready.
 	"$(MAKE)" deploy-tls-test-server
+	$(KUBECTL) apply -f config/istio/gateway/local-gateway-tls.yaml
+	@$(KUBECTL) wait --for=condition=Ready certificate/mcp-gateway-local-cert -n gateway-system --timeout=60s
 	# Deploy standard mcp-gateway (includes mcp-tls HTTPS listener)
 	"$(MAKE)" deploy-gateway
 	# Deploy e2e gateways (gateway-1, gateway-2)

@@ -659,7 +659,7 @@ func NewMCPGatewayExtensionSetup(k8sClient client.Client) *MCPGatewayExtensionSe
 		k8sClient:        k8sClient,
 		gatewayName:      GatewayName,
 		gatewayNamespace: GatewayNamespace,
-		listenerPort:     8080,
+		listenerPort:     8443,
 	}
 }
 
@@ -1002,7 +1002,7 @@ func NewMCPGatewayExtensionBuilder(name, namespace string) *MCPGatewayExtensionB
 	return &MCPGatewayExtensionBuilder{
 		name:         name,
 		namespace:    namespace,
-		listenerPort: 8080,
+		listenerPort: 8443,
 	}
 }
 
