@@ -101,3 +101,7 @@ mcpGatewayExtension:
     generate: ""
     # The name of the secret containing a pre-existing key pair
     secretName: ""
+
+# Network policies for broker-router and controller pods
+networkPolicy:
+  enabled: false
