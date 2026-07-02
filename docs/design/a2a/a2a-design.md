@@ -393,7 +393,9 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: weather-agent-route
-  agentCardURL: ""           # optional override for /.well-known/agent-card.json path
+  # agentCardURL: http://weather-agent.mcp-test.svc.cluster.local:9090/custom/agent-card.json
+  #                          # optional override for the card fetch URL; must match ^https?://
+  #                          # when set (an empty string fails the CRD pattern validation)
   credentialRef:             # optional auth for fetching the agent card
     name: weather-agent-secret
     key: token
@@ -408,10 +410,17 @@ status:
 - `agentPrefix` pattern: `+kubebuilder:validation:Pattern=^[a-z0-9][a-z0-9_]*$`
 - `agentCardURL` format: `+kubebuilder:validation:Pattern=^https?://`
 - `targetRef` uses `omitzero` not `omitempty` (kubeapilinter requirement)
-- `targetRef` may reference an HTTPRoute in another namespace: the controller honors
-  `targetRef.namespace`, following the same cross-namespace resolution the sibling
-  controllers use (see [Security Considerations](#security-considerations) for the
-  prefix-collision implications).
+- `targetRef` may reference an HTTPRoute in another namespace **only with that namespace's
+  consent**: the controller honors `targetRef.namespace`, and when it differs from the
+  registration's namespace a `ReferenceGrant` in the route's namespace must permit the
+  reference (`from`: `A2AAgentRegistration` in the registration's namespace, `to`:
+  `HTTPRoute`) — the same consent model `MCPGatewayExtension` uses for cross-namespace
+  Gateway references. Without a grant the registration is `Ready=False` and no config is
+  written; the controller watches `ReferenceGrant`s, so granting takes effect on the next
+  reconcile and **revoking a grant withdraws the agent's config** — consent withdrawn means
+  exposure withdrawn, not just a status flip. Being able to create a registration is not
+  permission to expose another namespace's agent (see
+  [Security Considerations](#security-considerations) for the prefix-collision implications).
 
 #### New config types
 
@@ -548,8 +557,10 @@ where creation order carries no meaning. The recommended resolution is to **name
 path as `/a2a/{namespace}/{prefix}`**, which makes collision structurally impossible (uniqueness reduces
 to a namespace-scoped check) and gives tenant isolation by construction. **[OPEN: adopting this switches
 the path form from `/a2a/{prefix}` (used throughout this doc) to `/a2a/{namespace}/{prefix}` everywhere —
-recommend the switch; pending mentor confirm.]** Cross-namespace registration is **allowed**: the A2A
-controller honors `targetRef.namespace`, so a registration may target an HTTPRoute in another namespace.
+recommend the switch; pending mentor confirm.]** Cross-namespace registration is **allowed with consent**: the A2A
+controller honors `targetRef.namespace`, and a registration may target an HTTPRoute in another namespace
+only when a `ReferenceGrant` in the route's namespace permits it — so a tenant cannot register another
+tenant's agent without that tenant opting in.
 
 ## Policy Enforcement
 

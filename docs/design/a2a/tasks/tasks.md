@@ -138,10 +138,11 @@ kubectl logs -n mcp-system deployment/mcp-gateway-controller
 **Acceptance criteria:**
 - [ ] Finalizer added on create, removed only after config is cleaned up
 - [ ] `getTargetHTTPRoute()` resolves HTTPRoute using `WrapHTTPRoute()` + `Validate()`, honoring `targetRef.namespace` (defaulting to the registration's namespace) — and the HTTPRoute field index resolves the namespace identically, so cross-namespace watches fire
+- [ ] Cross-namespace `targetRef` requires a `ReferenceGrant` in the route's namespace (`from`: `A2AAgentRegistration`, `to`: `HTTPRoute`), mirroring `MCPGatewayExtension`'s grant check; no grant → `Ready=False` and the agent's config is withdrawn (revoking consent revokes the exposure, not just the status); `ReferenceGrant` changes trigger re-reconcile via a `ReferenceGrant` watch
 - [ ] `buildA2AAgentConfig()` handles `IsHostnameBackend()` and `IsServiceBackend()` using existing helpers
 - [ ] `UpsertA2AAgent()` called for each valid MCPGatewayExtension namespace
 - [ ] Status conditions: `Ready=True` (reason `Ready`) when config is written, mirroring `MCPServerRegistration` — `Ready` is not a promise the agent is reachable or serving, and no discovered card content (skills, card fields) appears in status
-- [ ] Controller integration tests: new registration → Ready=True; missing HTTPRoute → Ready=False; deletion removes config; cross-namespace `targetRef` resolves and reconciles
+- [ ] Controller integration tests: new registration → Ready=True; missing HTTPRoute → Ready=False; deletion removes config; cross-namespace `targetRef` with a `ReferenceGrant` resolves and reconciles; cross-namespace without a grant → Ready=False, no config written; revoking the grant withdraws previously written config
 
 **Verification:**
 ```bash
