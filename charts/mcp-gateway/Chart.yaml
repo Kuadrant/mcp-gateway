@@ -2,8 +2,8 @@ apiVersion: v2
 name: mcp-gateway
 description: A Kubernetes gateway for aggregating and routing Model Context Protocol (MCP) servers
 type: application
-version: 0.1.0
-appVersion: "latest"
+version: 0.7.1
+appVersion: "0.7.1"
 home: https://github.com/Kuadrant/mcp-gateway
 sources:
   - https://github.com/Kuadrant/mcp-gateway
