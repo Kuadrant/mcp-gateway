@@ -103,6 +103,10 @@ func main() {
 		Logger:          slogger,
 	}
 
+	if err := controller.SetupRequiredIndexes(ctx, mgr.GetFieldIndexer()); err != nil {
+		panic("unable to setup required indexes: " + err.Error())
+	}
+
 	if err = (&controller.MCPReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
@@ -113,26 +117,29 @@ func main() {
 		panic("unable to start manager : " + err.Error())
 	}
 
-	brokerRouterImage := goenv.GetDefault("RELATED_IMAGE_ROUTER_BROKER", controller.DefaultBrokerRouterImage)
-	brokerRouterLogLevel := goenv.GetDefault("BROKER_ROUTER_LOG_LEVEL", "")
-	// the broker parses --log-level as an integer, so a bad value here would
-	// crash-loop the data plane rather than the controller; fail fast instead
-	if brokerRouterLogLevel != "" {
-		if _, err := strconv.Atoi(brokerRouterLogLevel); err != nil {
-			panic("invalid BROKER_ROUTER_LOG_LEVEL " + strconv.Quote(brokerRouterLogLevel) + " : must be an integer")
+	disableExtReconciler := os.Getenv("DISABLE_EXTENSION_RECONCILER")
+	if disableExtReconciler == "true" {
+		slogger.Info("Extension reconciler disabled, running in headless mode")
+	} else {
+		brokerRouterImage := goenv.GetDefault("RELATED_IMAGE_ROUTER_BROKER", controller.DefaultBrokerRouterImage)
+		brokerRouterLogLevel := goenv.GetDefault("BROKER_ROUTER_LOG_LEVEL", "")
+		if brokerRouterLogLevel != "" {
+			if _, err := strconv.Atoi(brokerRouterLogLevel); err != nil {
+				panic("invalid BROKER_ROUTER_LOG_LEVEL " + strconv.Quote(brokerRouterLogLevel) + " : must be an integer")
+			}
 		}
-	}
 
-	if err = (&controller.MCPGatewayExtensionReconciler{
-		Client:                mgr.GetClient(),
-		Scheme:                mgr.GetScheme(),
-		DirectAPIReader:       mgr.GetAPIReader(),
-		ConfigWriterDeleter:   &configReaderWriter,
-		MCPExtFinderValidator: mcpExtFinderValidator,
-		BrokerRouterImage:     brokerRouterImage,
-		BrokerRouterLogLevel:  brokerRouterLogLevel,
-	}).SetupWithManager(ctx, mgr); err != nil {
-		panic("unable to start manager : " + err.Error())
+		if err = (&controller.MCPGatewayExtensionReconciler{
+			Client:                mgr.GetClient(),
+			Scheme:                mgr.GetScheme(),
+			DirectAPIReader:       mgr.GetAPIReader(),
+			ConfigWriterDeleter:   &configReaderWriter,
+			MCPExtFinderValidator: mcpExtFinderValidator,
+			BrokerRouterImage:     brokerRouterImage,
+			BrokerRouterLogLevel:  brokerRouterLogLevel,
+		}).SetupWithManager(ctx, mgr); err != nil {
+			panic("unable to start manager : " + err.Error())
+		}
 	}
 
 	if err = (&controller.MCPVirtualServerReconciler{

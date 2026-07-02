@@ -18,6 +18,8 @@ imageController:
 controller:
   # Enable/disable controller deployment
   enabled: true
+  # Disable the MCPGatewayExtension reconciler (headless mode)
+  disableExtensionReconciler: false
 
 # Broker configuration (applied to broker-router deployed by controller)
 broker:
