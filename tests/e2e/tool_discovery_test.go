@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
-	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,7 +78,7 @@ var _ = Describe("Tool Discovery", func() {
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "disc_meta_")
 
 			By("calling discover_tools and verifying metadata")
-			sessionID := mcpGatewayClient.GetSessionId()
+			sessionID := mcpGatewayClient.ID()
 			Eventually(func(g Gomega) {
 				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, nil, nil)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -129,7 +128,7 @@ var _ = Describe("Tool Discovery", func() {
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "multicat_")
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "catmsg_")
 
-			sessionID := mcpGatewayClient.GetSessionId()
+			sessionID := mcpGatewayClient.ID()
 			discoverByCategory := func(g Gomega, category string) (hasMulti, hasMsg bool) {
 				_, resp, err := mcpCallDiscoverTools(ctx, gatewayURL, sessionID, map[string]any{"category": category}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -418,8 +417,8 @@ var _ = Describe("Tool Discovery", func() {
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			var receivedNotification atomic.Bool
-			client, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-				if j.Method == "notifications/tools/list_changed" {
+			client, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+				if method == "notifications/tools/list_changed" {
 					receivedNotification.Store(true)
 				}
 			})
@@ -428,7 +427,7 @@ var _ = Describe("Tool Discovery", func() {
 
 			WaitForToolsWithPrefix(ctx, client, "notifsel_")
 
-			sessionID := client.GetSessionId()
+			sessionID := client.ID()
 			status, _, selectErr := mcpCallSelectTools(ctx, gatewayURL, sessionID, []string{"notifsel_hello_world"}, nil)
 			Expect(selectErr).NotTo(HaveOccurred())
 			Expect(status).To(Equal(200))
@@ -732,7 +731,7 @@ var _ = Describe("Tool Discovery", func() {
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "reconf_")
 
-			sessionID := mcpGatewayClient.GetSessionId()
+			sessionID := mcpGatewayClient.ID()
 
 			By("verifying initial category and hint via discover_tools")
 			Eventually(func(g Gomega) {

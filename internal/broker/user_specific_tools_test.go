@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,12 +107,11 @@ func TestFetchUserSpecificTools_NoUserSpecificServers(t *testing.T) {
 	}
 
 	result := &mcp.ListToolsResult{
-		Tools: []mcp.Tool{{Name: "existing-tool"}},
+		Tools: []*mcp.Tool{{Name: "existing-tool"}},
 	}
-	req := &mcp.ListToolsRequest{}
-	req.Header = http.Header{"Mcp-Session-Id": []string{"gw-session"}}
+	headers := http.Header{"Mcp-Session-Id": []string{"gw-session"}}
 
-	broker.FetchUserSpecificTools(context.Background(), nil, req, result)
+	broker.FetchUserSpecificTools(context.Background(), headers, result)
 
 	assert.Len(t, result.Tools, 1)
 	assert.Equal(t, "existing-tool", result.Tools[0].Name)
@@ -137,12 +137,11 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 	}
 
 	result := &mcp.ListToolsResult{
-		Tools: []mcp.Tool{{Name: "existing-tool"}},
+		Tools: []*mcp.Tool{{Name: "existing-tool"}},
 	}
-	req := &mcp.ListToolsRequest{}
-	req.Header = http.Header{} // no session ID
+	headers := http.Header{} // no session ID
 
-	broker.FetchUserSpecificTools(context.Background(), nil, req, result)
+	broker.FetchUserSpecificTools(context.Background(), headers, result)
 
 	// should return early, no tools added
 	assert.Len(t, result.Tools, 1)
@@ -232,15 +231,14 @@ func TestFetchUserSpecificTools_FetchesAndMergesTools(t *testing.T) {
 	}
 
 	result := &mcp.ListToolsResult{
-		Tools: []mcp.Tool{{Name: "cached-tool"}},
+		Tools: []*mcp.Tool{{Name: "cached-tool"}},
 	}
-	req := &mcp.ListToolsRequest{}
-	req.Header = http.Header{
+	headers := http.Header{
 		"Mcp-Session-Id": []string{"gw-session-abc"},
 		"Authorization":  []string{"Bearer user-token"},
 	}
 
-	b.FetchUserSpecificTools(context.Background(), nil, req, result)
+	b.FetchUserSpecificTools(context.Background(), headers, result)
 
 	require.Len(t, result.Tools, 2)
 	assert.Equal(t, "cached-tool", result.Tools[0].Name)
@@ -276,12 +274,11 @@ func TestFetchUserSpecificTools_GracefulDegradation(t *testing.T) {
 	}
 
 	result := &mcp.ListToolsResult{
-		Tools: []mcp.Tool{{Name: "existing"}},
+		Tools: []*mcp.Tool{{Name: "existing"}},
 	}
-	req := &mcp.ListToolsRequest{}
-	req.Header = http.Header{"Mcp-Session-Id": []string{"gw-session-xyz"}}
+	headers := http.Header{"Mcp-Session-Id": []string{"gw-session-xyz"}}
 
-	b.FetchUserSpecificTools(context.Background(), nil, req, result)
+	b.FetchUserSpecificTools(context.Background(), headers, result)
 
 	// should still have the original tool, error swallowed
 	assert.Len(t, result.Tools, 1)
@@ -341,18 +338,16 @@ func TestFetchUserSpecificTools_SessionCaching(t *testing.T) {
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
 
-	makeReq := func() *mcp.ListToolsRequest {
-		req := &mcp.ListToolsRequest{}
-		req.Header = http.Header{
+	makeHeaders := func() http.Header {
+		return http.Header{
 			"Mcp-Session-Id": []string{gwSessionID},
 			"Authorization":  []string{"Bearer user-token"},
 		}
-		return req
 	}
 
 	// first call: should initialize
 	result1 := &mcp.ListToolsResult{}
-	b.FetchUserSpecificTools(context.Background(), nil, makeReq(), result1)
+	b.FetchUserSpecificTools(context.Background(), makeHeaders(), result1)
 	require.Len(t, result1.Tools, 1)
 	assert.Equal(t, int32(1), initCount.Load())
 
@@ -363,7 +358,7 @@ func TestFetchUserSpecificTools_SessionCaching(t *testing.T) {
 
 	// second call: should skip initialize, reuse cached session
 	result2 := &mcp.ListToolsResult{}
-	b.FetchUserSpecificTools(context.Background(), nil, makeReq(), result2)
+	b.FetchUserSpecificTools(context.Background(), makeHeaders(), result2)
 	require.Len(t, result2.Tools, 1)
 	assert.Equal(t, int32(1), initCount.Load(), "expected no second initialize call")
 }
@@ -388,3 +383,172 @@ func (m *mockActiveMCPServer) GetManagedPrompts() []mcp.Prompt             { ret
 func (m *mockActiveMCPServer) GetServedManagedPrompt(_ string) *mcp.Prompt { return nil }
 func (m *mockActiveMCPServer) Config() config.MCPServer                    { return m.cfg }
 func (m *mockActiveMCPServer) configPtr() *config.MCPServer                { return &m.cfg }
+
+// seedUserSession dials the fake upstream and stores a pooled session for
+// the given gateway session ID.
+func seedUserSession(t *testing.T, b *mcpBrokerImpl, srv userSpecificServer, gwSessionID string) *mcp.ClientSession {
+	t.Helper()
+	sess, err := b.getOrCreateUserSession(context.Background(), srv, map[string]string{"Authorization": "Bearer u"}, gwSessionID)
+	require.NoError(t, err)
+	return sess
+}
+
+func poolSize(b *mcpBrokerImpl) int {
+	n := 0
+	b.userSessionPool.Range(func(_, _ any) bool { n++; return true })
+	return n
+}
+
+// regression for the SDK migration: pooled upstream sessions (carrying the
+// user's Authorization header and a live SSE connection) were only evicted
+// on ListTools error, never when the gateway session ended.
+func TestUserSessionPool_EvictedOnGatewaySessionEnd(t *testing.T) {
+	var initCount atomic.Int32
+	ts := newTestMCPServer(&initCount, "upstream-sess")
+	defer ts.Close()
+
+	srv := userSpecificServer{id: "ns/user-server", name: "user-server", url: ts.URL, prefix: "us_"}
+	b := &mcpBrokerImpl{
+		logger:                   slog.Default(),
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+
+	seedUserSession(t, b, srv, "gw-a")
+	seedUserSession(t, b, srv, "gw-b")
+	require.Equal(t, 2, poolSize(b))
+
+	b.onGatewaySessionEnd("gw-a")
+
+	require.Equal(t, 1, poolSize(b))
+	_, stillA := b.userSessionPool.Load(userSessionKey("gw-a", srv.name))
+	require.False(t, stillA, "gw-a pool entry must be evicted on session end")
+	_, stillB := b.userSessionPool.Load(userSessionKey("gw-b", srv.name))
+	require.True(t, stillB, "gw-b pool entry must survive gw-a session end")
+}
+
+// gateway session end must evict via the real SDK session lifecycle: when
+// the client disconnects, the broker's Wait goroutine runs the cleanup.
+func TestUserSessionPool_EvictedWhenClientDisconnects(t *testing.T) {
+	var counter atomic.Int64
+	b := NewBroker(slog.Default(),
+		WithDiscoveryToolsEnabled(false),
+		WithSessionIDGenerator(func() string { return fmt.Sprintf("gw-sess-%d", counter.Add(1)) }),
+	).(*mcpBrokerImpl)
+
+	gwHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return b.MCPServer() }, nil))
+	defer gwHTTP.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0.0.1"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cs, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: gwHTTP.URL}, nil)
+	require.NoError(t, err)
+	gwSessionID := cs.ID()
+	require.NotEmpty(t, gwSessionID)
+
+	var initCount atomic.Int32
+	upstreamTS := newTestMCPServer(&initCount, "upstream-sess")
+	defer upstreamTS.Close()
+	srv := userSpecificServer{id: "ns/user-server", name: "user-server", url: upstreamTS.URL, prefix: "us_"}
+	seedUserSession(t, b, srv, gwSessionID)
+	require.Equal(t, 1, poolSize(b))
+
+	require.NoError(t, cs.Close())
+
+	require.Eventually(t, func() bool { return poolSize(b) == 0 }, 5*time.Second, 20*time.Millisecond,
+		"pool entry must be evicted when the gateway session ends")
+}
+
+func TestUserSessionPool_DrainedOnShutdown(t *testing.T) {
+	var initCount atomic.Int32
+	ts := newTestMCPServer(&initCount, "upstream-sess")
+	defer ts.Close()
+
+	srv := userSpecificServer{id: "ns/user-server", name: "user-server", url: ts.URL, prefix: "us_"}
+	b := &mcpBrokerImpl{
+		mcpServers:               map[config.UpstreamMCPID]upstream.ActiveMCPServer{},
+		logger:                   slog.Default(),
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+
+	sess := seedUserSession(t, b, srv, "gw-a")
+	require.Equal(t, 1, poolSize(b))
+
+	require.NoError(t, b.Shutdown(context.Background()))
+
+	require.Zero(t, poolSize(b), "pool must be drained on shutdown")
+	_, err := sess.ListTools(context.Background(), nil)
+	require.Error(t, err, "drained session must be closed")
+}
+
+// regression: the pool used to pin the first-seen Authorization into the
+// cached transport. mark3labs connected fresh per fetch, so the upstream
+// always saw the caller's current token; a refreshed token must reach the
+// upstream through a pooled session too.
+func TestUserSessionPool_AuthHeaderStaysFresh(t *testing.T) {
+	var lastAuth atomic.Value
+	lastAuth.Store("")
+	var initCount atomic.Int32
+	inner := newTestMCPServer(&initCount, "upstream-sess")
+	defer inner.Close()
+	capture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			lastAuth.Store(r.Header.Get("Authorization"))
+		}
+		// fixed local target and constant methods keep the proxy taint-free
+		method := http.MethodPost
+		switch r.Method {
+		case http.MethodGet:
+			method = http.MethodGet
+		case http.MethodDelete:
+			method = http.MethodDelete
+		}
+		req, err := http.NewRequestWithContext(r.Context(), method, inner.URL, r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer capture.Close()
+
+	srv := userSpecificServer{id: "ns/user-server", name: "user-server", url: capture.URL, prefix: "us_"}
+	b := &mcpBrokerImpl{
+		logger:                   slog.Default(),
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+	defer b.drainUserSessionPool()
+
+	ctx := context.Background()
+
+	// first fetch with token A
+	sessA, err := b.getOrCreateUserSession(ctx, srv, map[string]string{"Authorization": "Bearer token-a"}, "gw-1")
+	require.NoError(t, err)
+	_, err = sessA.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, "Bearer token-a", lastAuth.Load())
+
+	// second fetch on the same gateway session with a refreshed token: the
+	// pooled session must be reused but carry the new token upstream
+	sessB, err := b.getOrCreateUserSession(ctx, srv, map[string]string{"Authorization": "Bearer token-b"}, "gw-1")
+	require.NoError(t, err)
+	require.Same(t, sessA, sessB, "session must be reused from the pool")
+	require.Equal(t, 1, int(initCount.Load()), "no reconnect on token refresh")
+
+	_, err = sessB.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, "Bearer token-b", lastAuth.Load(), "refreshed token must reach the upstream")
+}

@@ -6,58 +6,68 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // FilterPrompts reduces the prompt set based on authorization headers.
-func (broker *mcpBrokerImpl) FilterPrompts(ctx context.Context, _ any, mcpReq *mcp.ListPromptsRequest, mcpRes *mcp.ListPromptsResult) {
+func (broker *mcpBrokerImpl) FilterPrompts(ctx context.Context, headers http.Header, mcpRes *mcp.ListPromptsResult) {
 	attrs := []attribute.KeyValue{brokerComponentAttr}
-	if sid := sessionIDFromContext(ctx); sid != "" {
-		attrs = append(attrs, attribute.String("mcp.session.id", sid))
-	}
 	ctx, span := brokerTracer().Start(ctx, "mcp-broker.prompts-list", trace.WithAttributes(attrs...))
 	defer span.End()
 
 	broker.logger.DebugContext(ctx, "FilterPrompts called", "input_prompts_count", len(mcpRes.Prompts))
 	prompts := mcpRes.Prompts
-	emptyPrompts := []mcp.Prompt{}
 	if len(mcpRes.Prompts) == 0 {
-		mcpRes.Prompts = emptyPrompts
+		mcpRes.Prompts = []*mcp.Prompt{}
 		return
 	}
 
-	prompts = broker.applyAuthorizedCapabilitiesFilterForPrompts(mcpReq.Header, prompts)
-	prompts = broker.applyVirtualServerFilterForPrompts(mcpReq.Header, prompts)
+	prompts = broker.applyAuthorizedCapabilitiesFilterForPrompts(headers, prompts)
+	prompts = broker.applyVirtualServerFilterForPrompts(headers, prompts)
 	prompts = broker.removeGatewayMetaFromPrompts(prompts)
 
 	span.SetAttributes(attribute.Int("mcp.prompts.count", len(prompts)))
 
 	if prompts == nil {
-		prompts = emptyPrompts
+		prompts = []*mcp.Prompt{}
 	}
 	mcpRes.Prompts = prompts
 }
 
-func (broker *mcpBrokerImpl) removeGatewayMetaFromPrompts(prompts []mcp.Prompt) []mcp.Prompt {
-	for i := range prompts {
-		if prompts[i].Meta != nil {
-			delete(prompts[i].Meta.AdditionalFields, "kuadrant/id")
-			if len(prompts[i].Meta.AdditionalFields) == 0 {
-				prompts[i].Meta = nil
-			}
+func (broker *mcpBrokerImpl) removeGatewayMetaFromPrompts(prompts []*mcp.Prompt) []*mcp.Prompt {
+	// list results share Prompt pointers with the server's stored prompts;
+	// copy the struct before mutating (see removeGatewayMeta).
+	out := make([]*mcp.Prompt, 0, len(prompts))
+	for _, p := range prompts {
+		if len(p.Meta) == 0 {
+			out = append(out, p)
+			continue
 		}
+		cleaned := make(map[string]any, len(p.Meta))
+		for k, v := range p.Meta {
+			if k == "kuadrant/id" {
+				continue
+			}
+			cleaned[k] = v
+		}
+		if len(cleaned) == 0 {
+			cleaned = nil
+		}
+		cp := *p
+		cp.Meta = mcp.Meta(cleaned)
+		out = append(out, &cp)
 	}
-	return prompts
+	return out
 }
 
-func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForPrompts(headers http.Header, prompts []mcp.Prompt) []mcp.Prompt {
+func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForPrompts(headers http.Header, prompts []*mcp.Prompt) []*mcp.Prompt {
 	headerValues, present := headers[authorizedCapabilitiesHeader]
 
 	if !present {
 		if broker.enforceCapabilityFilter {
-			return []mcp.Prompt{}
+			return []*mcp.Prompt{}
 		}
 		return prompts
 	}
@@ -65,13 +75,13 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForPrompts(headers
 	capabilities, err := broker.parseAuthorizedCapabilitiesJWT(headerValues)
 	if err != nil {
 		broker.logger.Error("failed to parse x-mcp-authorized header for prompts", "error", err)
-		return []mcp.Prompt{}
+		return []*mcp.Prompt{}
 	}
 
 	allowedPrompts, hasPrompts := capabilities["prompts"]
 	if !hasPrompts {
 		if broker.enforceCapabilityFilter {
-			return []mcp.Prompt{}
+			return []*mcp.Prompt{}
 		}
 		return prompts
 	}
@@ -79,8 +89,8 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForPrompts(headers
 	return broker.filterPromptsByServerMap(allowedPrompts)
 }
 
-func (broker *mcpBrokerImpl) filterPromptsByServerMap(allowedPrompts map[string][]string) []mcp.Prompt {
-	var filtered []mcp.Prompt
+func (broker *mcpBrokerImpl) filterPromptsByServerMap(allowedPrompts map[string][]string) []*mcp.Prompt {
+	var filtered []*mcp.Prompt
 
 	for serverName, promptNames := range allowedPrompts {
 		upstream := broker.findServerByName(serverName)
@@ -95,8 +105,9 @@ func (broker *mcpBrokerImpl) filterPromptsByServerMap(allowedPrompts map[string]
 
 		for _, prompt := range prompts {
 			if slices.Contains(promptNames, prompt.Name) {
-				prompt.Name = fmt.Sprintf("%s%s", upstream.Config().Prefix, prompt.Name)
-				filtered = append(filtered, prompt)
+				p := prompt
+				p.Name = fmt.Sprintf("%s%s", upstream.Config().Prefix, p.Name)
+				filtered = append(filtered, &p)
 			}
 		}
 	}
@@ -104,7 +115,7 @@ func (broker *mcpBrokerImpl) filterPromptsByServerMap(allowedPrompts map[string]
 	return filtered
 }
 
-func (broker *mcpBrokerImpl) applyVirtualServerFilterForPrompts(headers http.Header, prompts []mcp.Prompt) []mcp.Prompt {
+func (broker *mcpBrokerImpl) applyVirtualServerFilterForPrompts(headers http.Header, prompts []*mcp.Prompt) []*mcp.Prompt {
 	headerValues, ok := headers[virtualMCPHeader]
 	if !ok || len(headerValues) != 1 {
 		return prompts
@@ -126,7 +137,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilterForPrompts(headers http.Hea
 		filteredSet[name] = struct{}{}
 	}
 
-	var filtered []mcp.Prompt
+	var filtered []*mcp.Prompt
 	for _, prompt := range prompts {
 		if _, inFilter := filteredSet[prompt.Name]; inFilter {
 			filtered = append(filtered, prompt)

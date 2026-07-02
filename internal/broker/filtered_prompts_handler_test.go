@@ -2,14 +2,17 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"testing"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 func createPromptTestManager(t *testing.T, serverName, prefix string, prompts []mcp.Prompt) *upstream.MCPManager {
@@ -34,7 +37,7 @@ func TestFilterPrompts(t *testing.T) {
 	}{
 		{
 			Name: "returns all prompts when no headers and enforce is false",
-			FullPromptList: &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+			FullPromptList: &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 				{Name: "test_prompt1"},
 				{Name: "test_prompt2"},
 			}},
@@ -44,7 +47,7 @@ func TestFilterPrompts(t *testing.T) {
 		},
 		{
 			Name: "returns empty prompts when no headers and enforce is true",
-			FullPromptList: &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+			FullPromptList: &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 				{Name: "test_prompt1"},
 			}},
 			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{},
@@ -69,8 +72,8 @@ func TestFilterPrompts(t *testing.T) {
 				mcpServers:              tc.RegisteredMCPServers,
 			}
 
-			request := &mcp.ListPromptsRequest{Header: http.Header{}}
-			mcpBroker.FilterPrompts(context.TODO(), 1, request, tc.FullPromptList)
+			headers := http.Header{}
+			mcpBroker.FilterPrompts(context.TODO(), headers, tc.FullPromptList)
 
 			if len(tc.ExpectedPrompts) != len(tc.FullPromptList.Prompts) {
 				t.Fatalf("expected %d prompts but got %d: %v", len(tc.ExpectedPrompts), len(tc.FullPromptList.Prompts), tc.FullPromptList.Prompts)
@@ -97,17 +100,15 @@ func TestFilterPrompts_JWTFiltering(t *testing.T) {
 		},
 	}
 
-	result := &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+	result := &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 		{Name: "test_prompt1"},
 		{Name: "test_prompt2"},
 	}}
-	request := &mcp.ListPromptsRequest{
-		Header: http.Header{
-			authorizedCapabilitiesHeader: {jwt},
-		},
+	headers := http.Header{
+		authorizedCapabilitiesHeader: {jwt},
 	}
 
-	mcpBroker.FilterPrompts(context.TODO(), 1, request, result)
+	mcpBroker.FilterPrompts(context.TODO(), headers, result)
 
 	if len(result.Prompts) != 1 {
 		t.Fatalf("expected 1 prompt but got %d: %v", len(result.Prompts), result.Prompts)
@@ -135,16 +136,14 @@ func TestFilterPrompts_ToolsOnlyJWTReturnsAllPrompts(t *testing.T) {
 		},
 	}
 
-	result := &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+	result := &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 		{Name: "test_prompt1"},
 	}}
-	request := &mcp.ListPromptsRequest{
-		Header: http.Header{
-			authorizedCapabilitiesHeader: {jwt},
-		},
+	headers := http.Header{
+		authorizedCapabilitiesHeader: {jwt},
 	}
 
-	mcpBroker.FilterPrompts(context.TODO(), 1, request, result)
+	mcpBroker.FilterPrompts(context.TODO(), headers, result)
 
 	if len(result.Prompts) != 1 {
 		t.Fatalf("expected 1 prompt but got %d", len(result.Prompts))
@@ -161,7 +160,7 @@ func TestVirtualServerPromptFiltering(t *testing.T) {
 	}{
 		{
 			Name: "filters prompts to virtual server subset",
-			InputPrompts: &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+			InputPrompts: &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 				{Name: "prompt1"},
 				{Name: "prompt2"},
 				{Name: "prompt3"},
@@ -177,7 +176,7 @@ func TestVirtualServerPromptFiltering(t *testing.T) {
 		},
 		{
 			Name: "returns all prompts when virtual server has empty prompts list",
-			InputPrompts: &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+			InputPrompts: &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 				{Name: "prompt1"},
 				{Name: "prompt2"},
 			}},
@@ -193,7 +192,7 @@ func TestVirtualServerPromptFiltering(t *testing.T) {
 		},
 		{
 			Name: "returns all prompts when no virtual server header",
-			InputPrompts: &mcp.ListPromptsResult{Prompts: []mcp.Prompt{
+			InputPrompts: &mcp.ListPromptsResult{Prompts: []*mcp.Prompt{
 				{Name: "prompt1"},
 			}},
 			VirtualServers:  map[string]*config.VirtualServer{},
@@ -210,12 +209,12 @@ func TestVirtualServerPromptFiltering(t *testing.T) {
 				logger:                  slog.Default(),
 			}
 
-			request := &mcp.ListPromptsRequest{Header: http.Header{}}
+			headers := http.Header{}
 			if tc.VirtualServerID != "" {
-				request.Header[virtualMCPHeader] = []string{tc.VirtualServerID}
+				headers[virtualMCPHeader] = []string{tc.VirtualServerID}
 			}
 
-			mcpBroker.FilterPrompts(context.TODO(), 1, request, tc.InputPrompts)
+			mcpBroker.FilterPrompts(context.TODO(), headers, tc.InputPrompts)
 
 			resultPrompts := tc.InputPrompts.Prompts
 			if len(tc.ExpectedPrompts) != len(resultPrompts) {
@@ -232,5 +231,58 @@ func TestVirtualServerPromptFiltering(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// regression for the SDK migration: prompts/list results hold pointers to
+// the server's stored Prompt objects. deleting from the shared Meta map
+// permanently stripped kuadrant/id and raced with concurrent lists.
+func TestRemoveGatewayMetaFromPrompts_DoesNotMutateSharedPrompts(t *testing.T) {
+	b := &mcpBrokerImpl{logger: slog.Default()}
+
+	stored := &mcp.Prompt{
+		Name: "srv_prompt",
+		Meta: mcp.Meta{"kuadrant/id": "ns/server", "keep": "me"},
+	}
+
+	for range 2 {
+		res := []*mcp.Prompt{stored}
+		cleaned := b.removeGatewayMetaFromPrompts(res)
+
+		require.Len(t, cleaned, 1)
+		require.NotContains(t, cleaned[0].Meta, "kuadrant/id")
+		require.Equal(t, "me", cleaned[0].Meta["keep"])
+
+		require.Equal(t, "ns/server", stored.Meta["kuadrant/id"])
+	}
+}
+
+// concurrent lists share the stored Prompt pointers; the previous in-place
+// delete() was a concurrent map write under -race.
+func TestRemoveGatewayMetaFromPrompts_ConcurrentLists(t *testing.T) {
+	b := &mcpBrokerImpl{logger: slog.Default()}
+
+	stored := make([]*mcp.Prompt, 0, 10)
+	for i := range 10 {
+		stored = append(stored, &mcp.Prompt{
+			Name: fmt.Sprintf("prompt_%d", i),
+			Meta: mcp.Meta{"kuadrant/id": "ns/server"},
+		})
+	}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := make([]*mcp.Prompt, len(stored))
+			copy(res, stored)
+			b.removeGatewayMetaFromPrompts(res)
+		}()
+	}
+	wg.Wait()
+
+	for _, p := range stored {
+		require.Equal(t, "ns/server", p.Meta["kuadrant/id"])
 	}
 }

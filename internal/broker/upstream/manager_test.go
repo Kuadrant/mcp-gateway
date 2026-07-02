@@ -12,8 +12,7 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +34,7 @@ type MockMCP struct {
 	hasToolsCap         bool
 	hasPromptsCap       bool
 	connected           atomic.Bool
-	notificationHandler func(mcp.JSONRPCNotification)
+	notificationHandler func(method string)
 }
 
 func (m *MockMCP) GetName() string {
@@ -74,7 +73,7 @@ func (m *MockMCP) Disconnect() error {
 	return nil
 }
 
-func (m *MockMCP) ListTools(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+func (m *MockMCP) ListTools(ctx context.Context) (*mcp.ListToolsResult, error) {
 	if m.listToolsDelay > 0 {
 		select {
 		case <-time.After(m.listToolsDelay):
@@ -85,7 +84,11 @@ func (m *MockMCP) ListTools(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.L
 	if m.listToolsErr != nil {
 		return nil, m.listToolsErr
 	}
-	return &mcp.ListToolsResult{Tools: m.tools}, nil
+	ptrs := make([]*mcp.Tool, len(m.tools))
+	for i := range m.tools {
+		ptrs[i] = &m.tools[i]
+	}
+	return &mcp.ListToolsResult{Tools: ptrs}, nil
 }
 
 func (m *MockMCP) SupportsPrompts() bool {
@@ -96,14 +99,18 @@ func (m *MockMCP) SupportsPromptsListChanged() bool {
 	return m.hasPromptsCap
 }
 
-func (m *MockMCP) ListPrompts(_ context.Context, _ mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error) {
+func (m *MockMCP) ListPrompts(_ context.Context) (*mcp.ListPromptsResult, error) {
 	if m.listPromptsErr != nil {
 		return nil, m.listPromptsErr
 	}
-	return &mcp.ListPromptsResult{Prompts: m.prompts}, nil
+	ptrs := make([]*mcp.Prompt, len(m.prompts))
+	for i := range m.prompts {
+		ptrs[i] = &m.prompts[i]
+	}
+	return &mcp.ListPromptsResult{Prompts: ptrs}, nil
 }
 
-func (m *MockMCP) OnNotification(handler func(notification mcp.JSONRPCNotification)) {
+func (m *MockMCP) OnNotification(handler func(method string)) {
 	m.notificationHandler = handler
 }
 
@@ -120,15 +127,17 @@ func (m *MockMCP) IsEnabled() bool {
 	return m.cfg.State == "" || m.cfg.State == string(mcpv1alpha1.ServerStateEnabled)
 }
 
+func (m *MockMCP) GetToolHints(string) (ToolHints, bool) {
+	return ToolHints{}, false
+}
+
 func (m *MockMCP) ProtocolInfo() *mcp.InitializeResult {
 	result := &mcp.InitializeResult{
 		ProtocolVersion: m.protocolVersion,
-		Capabilities:    mcp.ServerCapabilities{},
+		Capabilities:    &mcp.ServerCapabilities{},
 	}
 	if m.hasToolsCap {
-		result.Capabilities.Tools = &struct {
-			ListChanged bool `json:"listChanged,omitempty"`
-		}{}
+		result.Capabilities.Tools = &mcp.ToolCapabilities{}
 	}
 	return result
 }
@@ -141,30 +150,30 @@ func newMockMCP(name, prefix string) *MockMCP {
 		prefix:          prefix,
 		id:              id,
 		cfg:             &config.MCPServer{Name: name, Prefix: prefix, URL: "http://mock/mcp"},
-		protocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		protocolVersion: "2025-03-26",
 		hasToolsCap:     true,
-		tools:           []mcp.Tool{{Name: "mock_tool", InputSchema: mcp.ToolInputSchema{Type: "object"}}},
+		tools:           []mcp.Tool{{Name: "mock_tool", InputSchema: map[string]any{"type": "object"}}},
 	}
 }
 
 func validTool(name string) mcp.Tool {
-	return mcp.Tool{Name: name, InputSchema: mcp.ToolInputSchema{Type: "object"}}
+	return mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}
 }
 
 // MockToolsAdderDeleter implements ToolsAdderDeleter for testing
 type MockToolsAdderDeleter struct {
-	tools    map[string]*server.ServerTool
+	tools    map[string]*GatewayTool
 	addCalls int
 	delCalls int
 }
 
 func newMockToolsAdderDeleter() *MockToolsAdderDeleter {
 	return &MockToolsAdderDeleter{
-		tools: make(map[string]*server.ServerTool),
+		tools: make(map[string]*GatewayTool),
 	}
 }
 
-func (m *MockToolsAdderDeleter) AddTools(tools ...server.ServerTool) {
+func (m *MockToolsAdderDeleter) AddTools(tools ...GatewayTool) {
 	m.addCalls++
 	for i := range tools {
 		m.tools[tools[i].Tool.Name] = &tools[i]
@@ -178,7 +187,7 @@ func (m *MockToolsAdderDeleter) DeleteTools(names ...string) {
 	}
 }
 
-func (m *MockToolsAdderDeleter) ListTools() map[string]*server.ServerTool {
+func (m *MockToolsAdderDeleter) ListTools() map[string]*GatewayTool {
 	return m.tools
 }
 
@@ -258,8 +267,8 @@ func TestMCPManager_GetManagedTools(t *testing.T) {
 	require.NoError(t, err)
 
 	tools := []mcp.Tool{
-		{Name: "tool1", Description: "Tool 1", InputSchema: mcp.ToolInputSchema{Type: "object"}},
-		{Name: "tool2", Description: "Tool 2", InputSchema: mcp.ToolInputSchema{Type: "object"}},
+		{Name: "tool1", Description: "Tool 1", InputSchema: map[string]any{"type": "object"}},
+		{Name: "tool2", Description: "Tool 2", InputSchema: map[string]any{"type": "object"}},
 	}
 	manager.SetToolsForTesting(tools)
 
@@ -378,7 +387,7 @@ func TestMCPManager_setStatus(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
 			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
-			manager.serverTools = make([]server.ServerTool, tc.numServerTools)
+			manager.serverTools = make([]GatewayTool, tc.numServerTools)
 
 			manager.setStatus(tc.err, tc.totalTools, 0, nil, nil)
 
@@ -388,23 +397,22 @@ func TestMCPManager_setStatus(t *testing.T) {
 			assert.Contains(t, manager.status.Message, tc.messageContain)
 			if tc.expectReady {
 				assert.Equal(t, tc.totalTools, manager.status.TotalTools)
-				// protocol validation is populated from the negotiated version on success
 				assert.True(t, manager.status.ProtocolValidation.IsValid)
 				assert.Equal(t, mock.protocolVersion, manager.status.ProtocolValidation.SupportedVersion)
-				assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, manager.status.ProtocolValidation.ExpectedVersion)
+				assert.Equal(t, expectedProtocolVersion, manager.status.ProtocolValidation.ExpectedVersion)
 			}
 		})
 	}
 }
 
 // TestMCPManager_setStatus_ProtocolVersions verifies the negotiated protocol version
-// reported by an upstream is surfaced on the status across the full valid-version
-// matrix. The matrix is driven by mcp.ValidProtocolVersions so it expands
-// automatically when the MCP library learns a new version.
+// reported by an upstream is surfaced on the status across valid versions.
 func TestMCPManager_setStatus_ProtocolVersions(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	for _, version := range mcp.ValidProtocolVersions {
+	var testProtocolVersions = []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"}
+
+	for _, version := range testProtocolVersions {
 		t.Run(version, func(t *testing.T) {
 			mock := newMockMCP("test-server", "test_")
 			mock.protocolVersion = version
@@ -415,7 +423,7 @@ func TestMCPManager_setStatus_ProtocolVersions(t *testing.T) {
 
 			assert.True(t, manager.status.ProtocolValidation.IsValid)
 			assert.Equal(t, version, manager.status.ProtocolValidation.SupportedVersion)
-			assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, manager.status.ProtocolValidation.ExpectedVersion)
+			assert.Equal(t, expectedProtocolVersion, manager.status.ProtocolValidation.ExpectedVersion)
 		})
 	}
 }
@@ -472,12 +480,12 @@ func TestMCPManager_toolToServerTool(t *testing.T) {
 	assert.Equal(t, "A test tool", serverTool.Tool.Description)
 
 	// check that meta has id field
-	id, ok := serverTool.Tool.Meta.AdditionalFields[gatewayServerID]
+	id, ok := serverTool.Tool.Meta[gatewayServerID]
 	assert.True(t, ok)
 	assert.Equal(t, string(mock.id), id)
 
 	// handler should return error result
-	result, err := serverTool.Handler(context.Background(), mcp.CallToolRequest{})
+	result, err := serverTool.Handler(context.Background(), &mcp.CallToolRequest{})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -689,17 +697,17 @@ func TestDiffTools(t *testing.T) {
 
 // MockGatewayServer implements ToolsAdderDeleter for testing
 type MockGatewayServer struct {
-	tools map[string]*server.ServerTool
+	tools map[string]*GatewayTool
 	mu    sync.Mutex
 }
 
 func NewMockGatewayServer() *MockGatewayServer {
 	return &MockGatewayServer{
-		tools: make(map[string]*server.ServerTool),
+		tools: make(map[string]*GatewayTool),
 	}
 }
 
-func (m *MockGatewayServer) AddTools(tools ...server.ServerTool) {
+func (m *MockGatewayServer) AddTools(tools ...GatewayTool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range tools {
@@ -715,10 +723,10 @@ func (m *MockGatewayServer) DeleteTools(names ...string) {
 	}
 }
 
-func (m *MockGatewayServer) ListTools() map[string]*server.ServerTool {
+func (m *MockGatewayServer) ListTools() map[string]*GatewayTool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make(map[string]*server.ServerTool, len(m.tools))
+	result := make(map[string]*GatewayTool, len(m.tools))
 	for k, v := range m.tools {
 		result[k] = v
 	}
@@ -781,8 +789,7 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 			require.NoError(t, err)
 
 			if tt.hasExistingTools {
-				// set serverTools directly since shouldFetchTools checks this field
-				manager.serverTools = []server.ServerTool{{Tool: mcp.Tool{Name: "existing_tool"}}}
+				manager.serverTools = []GatewayTool{{Tool: mcp.Tool{Name: "existing_tool"}}}
 			}
 
 			result := manager.shouldFetchTools(tt.eventType)
@@ -1020,7 +1027,7 @@ func TestMCPManager_manage_FilterOutPolicy(t *testing.T) {
 	mock := newMockMCP("test-server", "test_")
 	mock.tools = []mcp.Tool{
 		validTool("good_tool"),
-		{Name: "bad_tool", InputSchema: mcp.ToolInputSchema{Type: "int"}},
+		{Name: "bad_tool", InputSchema: map[string]any{"type": "int"}},
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
@@ -1043,8 +1050,8 @@ func TestMCPManager_manage_FilterOutPolicy_AllInvalid(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
 	mock.tools = []mcp.Tool{
-		{Name: "bad1", InputSchema: mcp.ToolInputSchema{Type: "int"}},
-		{Name: "bad2", InputSchema: mcp.ToolInputSchema{Type: "string"}},
+		{Name: "bad1", InputSchema: map[string]any{"type": "int"}},
+		{Name: "bad2", InputSchema: map[string]any{"type": "string"}},
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
@@ -1065,7 +1072,7 @@ func TestMCPManager_manage_RejectServerPolicy(t *testing.T) {
 	mock := newMockMCP("test-server", "test_")
 	mock.tools = []mcp.Tool{
 		validTool("good_tool"),
-		{Name: "bad_tool", InputSchema: mcp.ToolInputSchema{Type: "int"}},
+		{Name: "bad_tool", InputSchema: map[string]any{"type": "int"}},
 	}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
@@ -1131,9 +1138,7 @@ func TestMCPManager_EventChannel_NotificationRoutesThrough(t *testing.T) {
 
 	// fire notification through the captured callback
 	require.NotNil(t, mock.notificationHandler, "notification handler should be registered")
-	mock.notificationHandler(mcp.JSONRPCNotification{
-		Notification: mcp.Notification{Method: notificationToolsListChanged},
-	})
+	mock.notificationHandler(notificationToolsListChanged)
 
 	require.Eventually(t, func() bool {
 		tools := gateway.ListTools()
@@ -1216,7 +1221,7 @@ func TestMCPManager_StopDuringManage(t *testing.T) {
 
 // MockPromptsAdderDeleter implements PromptsAdderDeleter for testing
 type MockPromptsAdderDeleter struct {
-	prompts  map[string]*server.ServerPrompt
+	prompts  map[string]*GatewayPrompt
 	addCalls int
 	delCalls int
 	mu       sync.Mutex
@@ -1224,11 +1229,11 @@ type MockPromptsAdderDeleter struct {
 
 func newMockPromptsAdderDeleter() *MockPromptsAdderDeleter {
 	return &MockPromptsAdderDeleter{
-		prompts: make(map[string]*server.ServerPrompt),
+		prompts: make(map[string]*GatewayPrompt),
 	}
 }
 
-func (m *MockPromptsAdderDeleter) AddPrompts(prompts ...server.ServerPrompt) {
+func (m *MockPromptsAdderDeleter) AddPrompts(prompts ...GatewayPrompt) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.addCalls++
@@ -1246,10 +1251,10 @@ func (m *MockPromptsAdderDeleter) DeletePrompts(names ...string) {
 	}
 }
 
-func (m *MockPromptsAdderDeleter) ListPrompts() map[string]*server.ServerPrompt {
+func (m *MockPromptsAdderDeleter) ListPrompts() map[string]*GatewayPrompt {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make(map[string]*server.ServerPrompt, len(m.prompts))
+	result := make(map[string]*GatewayPrompt, len(m.prompts))
 	for k, v := range m.prompts {
 		result[k] = v
 	}
@@ -1281,11 +1286,11 @@ func TestMCPManager_promptToServerPrompt(t *testing.T) {
 			assert.Equal(t, tt.expectedName, serverPrompt.Prompt.Name)
 			assert.Equal(t, tt.promptDesc, serverPrompt.Prompt.Description)
 
-			id, ok := serverPrompt.Prompt.Meta.AdditionalFields[gatewayServerID]
+			id, ok := serverPrompt.Prompt.Meta[gatewayServerID]
 			assert.True(t, ok)
 			assert.Equal(t, string(mock.id), id)
 
-			result, promptErr := serverPrompt.Handler(context.Background(), mcp.GetPromptRequest{})
+			result, promptErr := serverPrompt.Handler(context.Background(), &mcp.GetPromptRequest{})
 			assert.NoError(t, promptErr)
 			assert.NotNil(t, result)
 			assert.Empty(t, result.Messages)

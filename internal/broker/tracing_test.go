@@ -3,8 +3,11 @@ package broker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
+	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -55,28 +58,73 @@ func TestRecordBrokerError(t *testing.T) {
 	require.Equal(t, "broker", attr.Value.AsString())
 }
 
-func TestRequestSpanTracker(t *testing.T) {
-	exporter := setupTestTracer(t)
-	tracker := newRequestSpanTracker()
-	tracker.start(context.Background(), "req-1", "mcp-broker.handle-request",
-		attribute.String("mcp.method", "tools/list"),
-	)
-	span, ok := tracker.remove("req-1")
-	require.True(t, ok)
-	require.NotNil(t, span)
-	span.End()
-	spans := exporter.GetSpans()
-	require.Len(t, spans, 1)
-	require.Equal(t, "mcp-broker.handle-request", spans[0].Name)
-	attr, found := findAttribute(spans[0].Attributes, "mcp.method")
-	require.True(t, found)
-	require.Equal(t, "tools/list", attr.Value.AsString())
+// connectInMemory wires a client session to the broker's MCP server over an
+// in-memory transport.
+func connectInMemory(t *testing.T, b *mcpBrokerImpl) *mcp.ClientSession {
+	t.Helper()
+	ct, st := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	go func() { _, _ = b.MCPServer().Connect(ctx, st, nil) }()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0.0.1"}, nil)
+	cs, err := client.Connect(ctx, ct, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs
 }
 
-func TestRequestSpanTrackerEndMissing(t *testing.T) {
-	_ = setupTestTracer(t)
-	tracker := newRequestSpanTracker()
-	span, ok := tracker.remove("nonexistent")
-	require.False(t, ok)
-	require.Nil(t, span)
+// the tracing middleware must create one span per request, end it when the
+// request finishes, and pass the span context downstream so handler spans
+// nest under it.
+func TestTracingMiddleware_SpanPerRequestWithNesting(t *testing.T) {
+	exporter := setupTestTracer(t)
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	cs := connectInMemory(t, b)
+
+	_, err := cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	spans := exporter.GetSpans()
+	var handle, filter tracetest.SpanStub
+	for _, s := range spans {
+		switch s.Name {
+		case "mcp-broker.handle-request":
+			if attr, ok := findAttribute(s.Attributes, "mcp.method"); ok && attr.Value.AsString() == "tools/list" {
+				handle = s
+			}
+		case "mcp-broker.tools-list":
+			filter = s
+		}
+	}
+	require.NotEmpty(t, handle.Name, "expected a handle-request span for tools/list")
+	require.NotEmpty(t, filter.Name, "expected the FilterTools span")
+
+	require.Equal(t, handle.SpanContext.TraceID(), filter.SpanContext.TraceID(),
+		"handler spans must share the request trace")
+	require.Equal(t, handle.SpanContext.SpanID(), filter.Parent.SpanID(),
+		"FilterTools span must nest under the request span")
+}
+
+func TestTracingMiddleware_ErrorRecordedOnSpan(t *testing.T) {
+	exporter := setupTestTracer(t)
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	cs := connectInMemory(t, b)
+
+	_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "no_such_tool"})
+	require.Error(t, err)
+
+	var found bool
+	for _, s := range exporter.GetSpans() {
+		if s.Name != "mcp-broker.handle-request" {
+			continue
+		}
+		if attr, ok := findAttribute(s.Attributes, "mcp.method"); ok && attr.Value.AsString() == "tools/call" {
+			if attr, ok := findAttribute(s.Attributes, "error_source"); ok && attr.Value.AsString() == "broker" {
+				found = true
+			}
+		}
+	}
+	require.True(t, found, "expected the tools/call span to record the broker error")
 }

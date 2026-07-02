@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,7 +70,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying user-a sees both standard and user-specific tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard server tools should be present"))
@@ -108,7 +108,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying user-a sees list_repos and create_issue but not run_pipeline")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_list_repos", toolsList)).To(BeTrueBecause("user-a should see list_repos"))
@@ -118,7 +118,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying user-b sees run_pipeline but not list_repos or create_issue")
 		Eventually(func(g Gomega) {
-			toolsList, err := userBClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userBClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_run_pipeline", toolsList)).To(BeTrueBecause("user-b should see run_pipeline"))
@@ -128,9 +128,9 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying both users see common tools")
 		Eventually(func(g Gomega) {
-			toolsA, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsA, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
-			toolsB, err := userBClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsB, err := userBClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_server_info", toolsA)).To(BeTrueBecause("user-a should see server_info"))
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_server_info", toolsB)).To(BeTrueBecause("user-b should see server_info"))
@@ -159,7 +159,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying all user-specific tools have the prefix")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent("myprefix_list_repos", toolsList)).To(BeTrueBecause("user-a tools should have myprefix_"))
@@ -187,7 +187,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		defer func() { _ = mcpClient.Close() }()
 
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrue())
 			baselineCount = len(toolsList.Tools)
@@ -211,7 +211,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		defer func() { _ = noAuthClient.Close() }()
 
 		Eventually(func(g Gomega) {
-			toolsList, err := noAuthClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := noAuthClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrue())
 			// without auth, the user-specific server returns only common tools (server_info, headers)
@@ -255,7 +255,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying tools/list returns standard tools without error")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard tools should still be present"))
@@ -288,19 +288,17 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Waiting for user-specific tools to appear")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_server_info", toolsList)).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Calling uspec_server_info tool")
-		res, err := userAClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "uspec_server_info"},
-		})
+		res, err := userAClient.CallTool(ctx, &mcp.CallToolParams{Name: "uspec_server_info"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
-		content, ok := res.Content[0].(mcp.TextContent)
+		content, ok := res.Content[0].(*mcp.TextContent)
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(ContainSubstring("server=user-specific-test-server"))
 		Expect(content.Text).To(ContainSubstring("user=user-a-token"))
@@ -329,19 +327,17 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Waiting for tools to appear")
 		Eventually(func(g Gomega) {
-			toolsList, err := userClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := userClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_headers", toolsList)).To(BeTrue())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Calling uspec_headers to inspect forwarded headers")
-		res, err := userClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "uspec_headers"},
-		})
+		res, err := userClient.CallTool(ctx, &mcp.CallToolParams{Name: "uspec_headers"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
-		content, ok := res.Content[0].(mcp.TextContent)
+		content, ok := res.Content[0].(*mcp.TextContent)
 		Expect(ok).To(BeTrue())
 
 		headerText := strings.ToLower(content.Text)
@@ -385,7 +381,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Verifying only the allowed tool is returned")
 		Eventually(func(g Gomega) {
-			toolsList, err := vsClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := vsClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(len(toolsList.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server filter")

@@ -6,15 +6,15 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/Kuadrant/mcp-gateway/internal/transport"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -31,9 +31,25 @@ type userSpecificServer struct {
 	prefix string
 }
 
+// userSessionKey builds the pool key for a per-user upstream session.
+func userSessionKey(gatewaySessionID, serverName string) string {
+	return gatewaySessionID + "/" + serverName
+}
+
+// cachedUserSession holds a reusable upstream client session for a specific
+// user + server combination. the session is kept alive across tools/list
+// calls and closed on ListTools error, gateway session end or broker
+// shutdown. headers are resolved per request from the holder so a client
+// that refreshes its token mid-session always reaches the upstream with
+// the current one, as mark3labs did by connecting fresh per fetch.
+type cachedUserSession struct {
+	session *mcp.ClientSession
+	headers atomic.Pointer[map[string]string]
+}
+
 // FetchUserSpecificTools fetches tools from userSpecificList servers using the
 // caller's session headers and merges them into the result before FilterTools runs.
-func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, _ any, mcpReq *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
 	broker.mcpLock.RLock()
 	servers := broker.userSpecificServers
 	broker.mcpLock.RUnlock()
@@ -51,24 +67,14 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, _ any, 
 
 	broker.logger.Debug("fetching user-specific tools", "serverCount", len(servers))
 
-	gatewaySessionID := mcpReq.Header.Get(gatewaySessionHeader)
+	gatewaySessionID := headers.Get(gatewaySessionHeader)
 	if gatewaySessionID == "" {
 		broker.logger.Error("no gateway session ID for user-specific tool fetch")
 		span.SetStatus(codes.Error, "missing gateway session ID")
 		return
 	}
 
-	userHeaders := filterUserHeaders(mcpReq.Header)
-
-	var cachedSessions map[string]string
-	if broker.sessionCache != nil {
-		var err error
-		cachedSessions, err = broker.sessionCache.GetSession(ctx, gatewaySessionID)
-		if err != nil {
-			broker.logger.Error("failed to get cached sessions", "error", err)
-			cachedSessions = map[string]string{}
-		}
-	}
+	userHeaders := filterUserHeaders(headers)
 
 	var mu sync.Mutex
 	var allTools []mcp.Tool
@@ -76,7 +82,7 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, _ any, 
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, srv := range servers {
 		g.Go(func() error {
-			tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID, cachedSessions[srv.name])
+			tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
 			if err != nil {
 				broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
 				return nil // graceful degradation
@@ -91,27 +97,23 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, _ any, 
 	_ = g.Wait()
 
 	span.SetAttributes(attribute.Int("mcp.user_specific.tools_fetched", len(allTools)))
-	result.Tools = append(result.Tools, allTools...)
+
+	// convert value tools to pointers for ListToolsResult
+	for i := range allTools {
+		result.Tools = append(result.Tools, &allTools[i])
+	}
 }
 
-func (broker *mcpBrokerImpl) fetchToolsFromServer(ctx context.Context, srv userSpecificServer, userHeaders map[string]string, gatewaySessionID, cachedUpstreamSessionID string) ([]mcp.Tool, error) {
-	tools, err := broker.doFetchTools(ctx, srv, userHeaders, cachedUpstreamSessionID)
-	if err != nil && cachedUpstreamSessionID != "" {
-		// cached session may be stale — clear and retry with fresh init
-		broker.logger.Debug("retrying user-specific fetch with fresh init", "server", srv.name, "error", err)
-		if broker.sessionCache != nil {
-			_ = broker.sessionCache.RemoveServerSession(ctx, gatewaySessionID, srv.name)
-		}
-		tools, err = broker.doFetchTools(ctx, srv, userHeaders, "")
-	}
+func (broker *mcpBrokerImpl) fetchToolsFromServer(ctx context.Context, srv userSpecificServer, userHeaders map[string]string, gatewaySessionID string) ([]mcp.Tool, error) {
+	tools, err := broker.doFetchTools(ctx, srv, userHeaders, gatewaySessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	// cache the upstream session for reuse by subsequent tools/list and tools/call
+	// cache the upstream session ID for reuse by tools/call routing
 	if broker.sessionCache != nil {
 		sessionID := tools.sessionID
-		if sessionID != "" && sessionID != cachedUpstreamSessionID {
+		if sessionID != "" {
 			ttl := gatewaySessionTTL(gatewaySessionID)
 			if ttl > 0 {
 				if _, storeErr := broker.sessionCache.AddSession(ctx, gatewaySessionID, srv.name, sessionID, ttl); storeErr != nil {
@@ -129,13 +131,11 @@ type fetchResult struct {
 	sessionID string
 }
 
-func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificServer, userHeaders map[string]string, upstreamSessionID string) (result *fetchResult, retErr error) {
-	sessionReused := upstreamSessionID != ""
+func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificServer, userHeaders map[string]string, gatewaySessionID string) (result *fetchResult, retErr error) {
 	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-server",
 		trace.WithAttributes(
 			attribute.String("mcp.server.name", srv.name),
 			attribute.String("mcp.server.url", srv.url),
-			attribute.Bool("mcp.user_specific.session_reused", sessionReused),
 		),
 	)
 	defer func() {
@@ -151,47 +151,35 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	fetchCtx, cancel := context.WithTimeout(ctx, broker.userSpecificFetchTimeout)
 	defer cancel()
 
-	options := []transport.StreamableHTTPCOption{
-		transport.WithHTTPHeaders(userHeaders),
-	}
-	if sessionReused {
-		broker.logger.Debug("using cached upstream session for user-specific server", "server", srv.name, "upstreamSession", upstreamSessionID)
-		options = append(options, transport.WithSession(upstreamSessionID))
-	}
-
-	mcpClient, err := client.NewStreamableHttpClient(srv.url, options...)
+	session, err := broker.getOrCreateUserSession(fetchCtx, srv, userHeaders, gatewaySessionID)
 	if err != nil {
-		return nil, fmt.Errorf("create client: %w", err)
-	}
-	// don't call mcpClient.Close() — it sends HTTP DELETE which terminates
-	// the upstream session. We don't explicitly close these sessions.
-
-	if err := mcpClient.Start(fetchCtx); err != nil {
-		return nil, fmt.Errorf("start client: %w", err)
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 
-	if upstreamSessionID == "" {
-		broker.logger.Debug("initializing user-specific server (no cached session)", "server", srv.name)
-		_, err := mcpClient.Initialize(fetchCtx, mcp.InitializeRequest{
-			Params: mcp.InitializeParams{
-				ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-				ClientInfo: mcp.Implementation{
-					Name:    "mcp-broker",
-					Version: "0.0.1",
-				},
-			},
-		})
+	toolsResult, err := session.ListTools(fetchCtx, nil)
+	if err != nil {
+		// stale session; evict and retry once
+		broker.evictUserSession(gatewaySessionID, srv.name)
+		session, err = broker.getOrCreateUserSession(fetchCtx, srv, userHeaders, gatewaySessionID)
 		if err != nil {
-			return nil, fmt.Errorf("initialize: %w", err)
+			return nil, fmt.Errorf("reconnect: %w", err)
+		}
+		toolsResult, err = session.ListTools(fetchCtx, nil)
+		if err != nil {
+			broker.evictUserSession(gatewaySessionID, srv.name)
+			return nil, fmt.Errorf("list tools: %w", err)
 		}
 	}
 
-	toolsResult, err := mcpClient.ListTools(fetchCtx, mcp.ListToolsRequest{})
-	if err != nil {
-		return nil, fmt.Errorf("list tools: %w", err)
+	// dereference pointer tools from result
+	valueTools := make([]mcp.Tool, 0, len(toolsResult.Tools))
+	for _, t := range toolsResult.Tools {
+		if t != nil {
+			valueTools = append(valueTools, *t)
+		}
 	}
 
-	validTools, invalids := upstream.ValidateTools(toolsResult.Tools)
+	validTools, invalids := upstream.ValidateTools(valueTools)
 	if len(invalids) > 0 {
 		switch broker.invalidToolPolicy {
 		case mcpv1alpha1.InvalidToolPolicyFilterOut:
@@ -204,12 +192,100 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 
 	for i := range validTools {
 		validTools[i].Name = srv.prefix + validTools[i].Name
-		validTools[i].Meta = mcp.NewMetaFromMap(map[string]any{
+		validTools[i].Meta = mcp.Meta{
 			"kuadrant/id": string(srv.id),
-		})
+		}
 	}
 
-	return &fetchResult{tools: validTools, sessionID: mcpClient.GetSessionId()}, nil
+	return &fetchResult{tools: validTools, sessionID: session.ID()}, nil
+}
+
+// getOrCreateUserSession returns a cached upstream session or creates a new
+// one. the session is kept alive in the pool for reuse by subsequent calls;
+// the caller's current headers replace the pooled ones on every call so
+// reuse never pins a stale Authorization.
+func (broker *mcpBrokerImpl) getOrCreateUserSession(ctx context.Context, srv userSpecificServer, userHeaders map[string]string, gatewaySessionID string) (*mcp.ClientSession, error) {
+	key := userSessionKey(gatewaySessionID, srv.name)
+
+	if val, ok := broker.userSessionPool.Load(key); ok {
+		cached := val.(*cachedUserSession)
+		cached.headers.Store(&userHeaders)
+		return cached.session, nil
+	}
+
+	cached := &cachedUserSession{}
+	cached.headers.Store(&userHeaders)
+
+	httpClient := &http.Client{
+		Transport: &transport.DynamicHeaderRoundTripper{
+			Base:    http.DefaultTransport,
+			Headers: func() map[string]string { return *cached.headers.Load() },
+		},
+	}
+
+	t := &mcp.StreamableClientTransport{
+		Endpoint:   srv.url,
+		HTTPClient: httpClient,
+	}
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-broker",
+		Version: "0.0.1",
+	}, nil)
+
+	session, err := mcpClient.Connect(ctx, t, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	cached.session = session
+	// if another goroutine raced us, close ours and use theirs with our
+	// headers, which are at least as fresh
+	if existing, loaded := broker.userSessionPool.LoadOrStore(key, cached); loaded {
+		_ = session.Close()
+		winner := existing.(*cachedUserSession)
+		winner.headers.Store(&userHeaders)
+		return winner.session, nil
+	}
+
+	return session, nil
+}
+
+// evictUserSession removes and closes a cached upstream session.
+func (broker *mcpBrokerImpl) evictUserSession(gatewaySessionID, serverName string) {
+	broker.closePoolEntry(userSessionKey(gatewaySessionID, serverName))
+}
+
+// evictUserSessions removes and closes every pooled upstream session
+// belonging to the given gateway session. called when the session ends.
+func (broker *mcpBrokerImpl) evictUserSessions(gatewaySessionID string) {
+	prefix := gatewaySessionID + "/"
+	broker.userSessionPool.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			broker.closePoolEntry(k)
+		}
+		return true
+	})
+}
+
+// drainUserSessionPool closes every pooled upstream session. called on
+// broker shutdown.
+func (broker *mcpBrokerImpl) drainUserSessionPool() {
+	broker.userSessionPool.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok {
+			broker.closePoolEntry(k)
+		}
+		return true
+	})
+}
+
+func (broker *mcpBrokerImpl) closePoolEntry(key string) {
+	if val, loaded := broker.userSessionPool.LoadAndDelete(key); loaded {
+		cached := val.(*cachedUserSession)
+		if err := cached.session.Close(); err != nil {
+			broker.logger.Debug("failed to close pooled user session", "error", err)
+		}
+	}
 }
 
 // gatewaySessionTTL extracts the remaining TTL from a gateway session JWT
