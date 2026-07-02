@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,7 +15,12 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 func TestMcpsrReferencesSecret(t *testing.T) {
@@ -68,6 +74,171 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 				t.Errorf("mcpsrReferencesSecret() = %v, want %v", got, tt.wantMatch)
 			}
 		})
+	}
+}
+
+func TestGetTargetHTTPRouteUsesTargetRefNamespace(t *testing.T) {
+	routeName := gatewayv1beta1.ObjectName("target-route")
+	tests := []struct {
+		name          string
+		objects       []client.Object
+		wantNamespace string
+		wantErr       string
+	}{
+		{
+			name: "uses targetRef namespace when ReferenceGrant allows it",
+			objects: []client.Object{
+				testHTTPRoute("registrations"),
+				testHTTPRoute("routes"),
+				testMCPServerReferenceGrant("allow-target-route", "routes", "registrations", &routeName),
+			},
+			wantNamespace: "routes",
+		},
+		{
+			name: "requires ReferenceGrant for cross namespace route",
+			objects: []client.Object{
+				testHTTPRoute("routes"),
+			},
+			wantErr: "ReferenceGrant required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = mcpv1alpha1.AddToScheme(scheme)
+			_ = gatewayv1.Install(scheme)
+			_ = gatewayv1beta1.Install(scheme)
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.objects...).
+				Build()
+
+			r := &MCPReconciler{Client: fakeClient}
+			mcpsr := &mcpv1alpha1.MCPServerRegistration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "server",
+					Namespace: "registrations",
+				},
+				Spec: mcpv1alpha1.MCPServerRegistrationSpec{
+					TargetRef: mcpv1alpha1.TargetReference{
+						Name:      "target-route",
+						Namespace: "routes",
+					},
+				},
+			}
+
+			got, err := r.getTargetHTTPRoute(context.Background(), mcpsr)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("getTargetHTTPRoute() expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("getTargetHTTPRoute() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("getTargetHTTPRoute() unexpected error: %v", err)
+			}
+			if got.Namespace != tt.wantNamespace {
+				t.Errorf("getTargetHTTPRoute() namespace = %q, want %q", got.Namespace, tt.wantNamespace)
+			}
+		})
+	}
+}
+
+func TestUpdateHTTPRouteStatusRequiresReferenceGrantForCrossNamespaceCleanup(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	_ = gatewayv1beta1.Install(scheme)
+
+	httpRoute := testHTTPRoute("routes")
+	httpRoute.Status.Parents = []gatewayv1.RouteParentStatus{
+		{
+			ControllerName: gatewayv1.GatewayController("test.example.com/gateway-controller"),
+			ParentRef: gatewayv1.ParentReference{
+				Name: gatewayv1.ObjectName("gateway"),
+			},
+			Conditions: []metav1.Condition{
+				{
+					Type:   "Programmed",
+					Status: metav1.ConditionTrue,
+					Reason: "InUseByMCPServerRegistration",
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(httpRoute).
+		WithStatusSubresource(&gatewayv1.HTTPRoute{}).
+		Build()
+
+	now := metav1.Now()
+	mcpsr := &mcpv1alpha1.MCPServerRegistration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "server",
+			Namespace:         "registrations",
+			DeletionTimestamp: &now,
+		},
+		Spec: mcpv1alpha1.MCPServerRegistrationSpec{
+			TargetRef: mcpv1alpha1.TargetReference{
+				Kind:      "HTTPRoute",
+				Name:      "target-route",
+				Namespace: "routes",
+			},
+		},
+	}
+
+	r := &MCPReconciler{Client: fakeClient}
+	if err := r.updateHTTPRouteStatus(context.Background(), mcpsr); err != nil {
+		t.Fatalf("updateHTTPRouteStatus() unexpected error: %v", err)
+	}
+
+	got := &gatewayv1.HTTPRoute{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "target-route", Namespace: "routes"}, got); err != nil {
+		t.Fatalf("failed to get HTTPRoute: %v", err)
+	}
+	if len(got.Status.Parents[0].Conditions) != 1 {
+		t.Fatalf("conditions = %v, want Programmed condition left intact", got.Status.Parents[0].Conditions)
+	}
+}
+
+func testHTTPRoute(namespace string) *gatewayv1.HTTPRoute {
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "target-route",
+			Namespace: namespace,
+		},
+	}
+}
+
+func testMCPServerReferenceGrant(name, namespace, fromNamespace string, routeName *gatewayv1beta1.ObjectName) *gatewayv1beta1.ReferenceGrant {
+	return &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{
+					Group:     gatewayv1beta1.Group(mcpv1alpha1.GroupVersion.Group),
+					Kind:      "MCPServerRegistration",
+					Namespace: gatewayv1beta1.Namespace(fromNamespace),
+				},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{
+					Group: gatewayv1beta1.Group(gatewayv1.GroupVersion.Group),
+					Kind:  "HTTPRoute",
+					Name:  routeName,
+				},
+			},
+		},
 	}
 }
 
