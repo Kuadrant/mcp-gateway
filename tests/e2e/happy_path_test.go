@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -550,10 +551,14 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"X-Mcp-Virtualserver": virtualServerHeader,
-		})
-		Expect(err).NotTo(HaveOccurred())
+		var virtualServerClient *mcpclient.Client
+		Eventually(func(g Gomega) {
+			var err error
+			virtualServerClient, err = NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+				"X-Mcp-Virtualserver": virtualServerHeader,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		defer func() { _ = virtualServerClient.Close() }()
 
 		By("Verifying only the tools from MCPVirtualServer are returned")
@@ -1099,10 +1104,14 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"X-Mcp-Virtualserver": virtualServerHeader,
-		})
-		Expect(err).NotTo(HaveOccurred())
+		var virtualServerClient *mcpclient.Client
+		Eventually(func(g Gomega) {
+			var err error
+			virtualServerClient, err = NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+				"X-Mcp-Virtualserver": virtualServerHeader,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		defer func() { _ = virtualServerClient.Close() }()
 
 		By("Verifying only the allowed prompt is returned via virtual server")
@@ -1202,10 +1211,14 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"X-Mcp-Virtualserver": virtualServerHeader,
-		})
-		Expect(err).NotTo(HaveOccurred())
+		var virtualServerClient *mcpclient.Client
+		Eventually(func(g Gomega) {
+			var err error
+			virtualServerClient, err = NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+				"X-Mcp-Virtualserver": virtualServerHeader,
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		defer func() { _ = virtualServerClient.Close() }()
 
 		By("Verifying all prompts are returned (no prompts field = no filtering)")

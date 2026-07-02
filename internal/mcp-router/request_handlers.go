@@ -236,12 +236,12 @@ func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *eppb.
 	// the token is already trusted. We surface the verified sub as the internal
 	// x-mcp-verified-sub header so the broker can bind token submissions to an
 	// identity without re-parsing the raw token. The header is in
-	// internalOnlyHeaders, so any client-supplied value is stripped first.
+	// clientStrippedHeaders, so any client-supplied value is stripped first.
 	authHeader := getSingleValueHeader(headers.GetHeaders(), authorizationHeader)
 	if sub, _ := internaljwt.ExtractSubClaim(authHeader); sub != "" {
 		requestHeaders.WithVerifiedSub(sub)
 	}
-	return response.WithRequestHeadersResponse(requestHeaders.Build(), internalOnlyHeaders...).Build(), nil
+	return response.WithRequestHeadersResponse(requestHeaders.Build(), clientStrippedHeaders...).Build(), nil
 }
 
 // RouteMCPRequest handles request bodies for MCP requests.
@@ -872,14 +872,32 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 
 	}
 	headers.WithMCPServerName("mcpBroker")
-	// re-inject internal headers stripped in the headers phase so the broker can use them for filtering
-	for _, name := range internalOnlyHeaders {
-		if v := mcpReq.GetSingleHeaderValue(name); v != "" {
-			headers.WithCustomHeader(name, v)
-		}
+	virtualServerID, ok, err := s.validVirtualServerHeader(mcpReq)
+	if err != nil {
+		s.Logger.WarnContext(ctx, "rejecting broker request: invalid virtual server header", "error", err)
+		return response.WithImmediateResponse(400, "bad request").Build()
+	}
+	if ok {
+		headers.WithCustomHeader(mcpVirtualServerHeader, virtualServerID)
 	}
 	return response.WithRequestBodyHeadersResponse(headers.Build()).Build()
 
+}
+
+func (s *ExtProcServer) validVirtualServerHeader(mcpReq *MCPRequest) (string, bool, error) {
+	virtualServerID := mcpReq.GetSingleHeaderValue(mcpVirtualServerHeader)
+	if virtualServerID == "" {
+		return "", false, nil
+	}
+	if s.RoutingConfig == nil {
+		return "", false, fmt.Errorf("virtual server %s not found", virtualServerID)
+	}
+	for _, vs := range s.RoutingConfig.ListVirtualServers() {
+		if vs != nil && vs.Name == virtualServerID {
+			return virtualServerID, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("virtual server %s not found", virtualServerID)
 }
 
 // elicitationInfo holds the data needed to route an elicitation request to the broker.
