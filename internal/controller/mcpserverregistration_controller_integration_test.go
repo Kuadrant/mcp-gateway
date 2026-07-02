@@ -411,13 +411,19 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			reconciler := newMCPServerReconciler(configWriter)
 			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
 
-			// reconcile multiple times to get past finalizer addition
-			for i := 0; i < 3; i++ {
-				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpsrNamespacedName,
-				})
-				time.Sleep(100 * time.Millisecond)
-			}
+			// first reconcile to add finalizer
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			// second reconcile to process
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
@@ -458,13 +464,19 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			reconciler := newMCPServerReconciler(configWriter)
 			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
 
-			// reconcile multiple times to get past finalizer addition
-			for i := 0; i < 3; i++ {
-				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpsrNamespacedName,
-				})
-				time.Sleep(100 * time.Millisecond)
-			}
+			// first reconcile to add finalizer
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			// second reconcile to process
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
@@ -918,13 +930,19 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			reconciler := newMCPServerReconciler(configWriter)
 			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
 
-			// reconcile multiple times to get past finalizer addition
-			for i := 0; i < 3; i++ {
-				_, _ = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: mcpsrNamespacedName,
-				})
-				time.Sleep(100 * time.Millisecond)
-			}
+			// first reconcile to add finalizer
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			// second reconcile to process
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: mcpsrNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
 				updated := &mcpv1alpha1.MCPServerRegistration{}
