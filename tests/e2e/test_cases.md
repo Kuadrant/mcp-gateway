@@ -338,19 +338,14 @@
 - When an MCPGatewayExtension has `caCertBundleRef` set with CA-A, and an MCPServerRegistration has `caCertSecretRef` set with CA-B (a different CA), the broker should trust both CA-A and CA-B for that server. A server whose certificate is signed by CA-B should connect successfully. This verifies additive behavior.
 - **Runs on PR CI.**
 
-### [HTTPS] [CACertBundle] Gateway bundle alone insufficient for server with unique CA
+### [HTTPS] [CACertBundle] Wrong CA fails, rotation to correct CA recovers
 
-- When an MCPGatewayExtension has `caCertBundleRef` set with CA-A, and an upstream server's certificate is signed by CA-B (not in the gateway bundle), and the MCPServerRegistration does NOT have `caCertSecretRef`, the broker should fail the TLS handshake with a certificate verification error. The MCPServerRegistration should not become Ready.
+- When an MCPGatewayExtension has `caCertBundleRef` set with a wrong CA, tools should not appear for a TLS server whose certificate is signed by a different CA. After rotating the CA bundle secret to the correct CA, the controller re-validates, rewrites the config, and the broker rebuilds its trust pool. Tools should appear after propagation.
 - **Runs on PR CI.**
 
 ### [HTTPS] [CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error
 
 - When `caCertBundleRef` references a Secret that does not exist, the MCPGatewayExtension should report a status condition with an error message mentioning the missing Secret. Similarly, a Secret without the required label `mcp.kuadrant.io/secret=true` should result in a validation error in the status.
-- **Runs on PR CI.**
-
-### [HTTPS] [CACertBundle] CA bundle rotation updates broker trust pool
-
-- When the CA bundle Secret is updated with a new CA certificate (e.g. after CA rotation), the controller should detect the change, re-validate the PEM, and write the updated `gatewayCACertPEM` into the config secret. The config change flows through `mcpConfig.Notify()`, triggering the broker to rebuild its trust pool. After the update propagates (~60-120s kubelet volume sync), servers whose certificates are signed by the new CA should connect successfully.
 - **Runs on PR CI.**
 
 ### [HTTPS] [CACertBundle] Gateway CA bundle with existing per-server CA on same server

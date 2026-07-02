@@ -237,7 +237,7 @@ var _ = Describe("CA Cert Bundle", Ordered, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [CACertBundle] Gateway bundle alone insufficient for server with unique CA", func() {
+	It("[HTTPS] [CACertBundle] Wrong CA fails, rotation to correct CA recovers", func() {
 		By("Generating wrong CA for gateway bundle")
 		wrongCAPEM := generateSelfSignedCACertForBundle("Wrong CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, wrongCAPEM)
@@ -266,6 +266,24 @@ var _ = Describe("CA Cert Bundle", Ordered, func() {
 			}
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_wrong_", toolsList)).To(BeFalse())
 		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+
+		By("Rotating CA bundle to correct CA")
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: caBundleSecretName, Namespace: SystemNamespace,
+		}, caBundle)).To(Succeed())
+		caBundle.Data["ca.crt"] = correctCAPEM
+		Expect(k8sClient.Update(ctx, caBundle)).To(Succeed())
+
+		By("Reconnecting MCP client after rotation")
+		_ = mcpGatewayClient.Close()
+		connectMCPClient()
+
+		By("Verifying tools appear after CA rotation propagates")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_wrong_", toolsList)).To(BeTrue())
+		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[HTTPS] [CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error", func() {
@@ -301,53 +319,6 @@ var _ = Describe("CA Cert Bundle", Ordered, func() {
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient,
 				MCPExtensionName, SystemNamespace, string(mcpv1alpha1.ConditionReasonSecretInvalid))).To(Succeed())
-		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
-	})
-
-	It("[HTTPS] [CACertBundle] CA bundle rotation updates broker trust pool", func() {
-		By("Generating initial wrong CA for gateway bundle")
-		wrongCAPEM := generateSelfSignedCACertForBundle("Initial Wrong CA")
-		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, wrongCAPEM)
-		testResources = append(testResources, caBundle)
-
-		setupBundleRef()
-		connectMCPClient()
-
-		By("Registering TLS server (will initially fail with wrong CA)")
-		registration := NewTestResources("cab-rotate", k8sClient).
-			ForInternalService(tlsServerName, tlsServerPort).
-			WithHostname(tlsServerHostname).
-			WithPrefix("cab_rot_").
-			WithSectionName(tlsListenerName).
-			Build()
-		testResources = append(testResources, registration.GetObjects()...)
-		registration.Register(ctx)
-
-		By("Verifying tools are absent initially (wrong CA)")
-		Consistently(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
-			if err != nil {
-				return
-			}
-			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_rot_", toolsList)).To(BeFalse())
-		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
-
-		By("Rotating CA bundle to correct CA")
-		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: caBundleSecretName, Namespace: SystemNamespace,
-		}, caBundle)).To(Succeed())
-		caBundle.Data["ca.crt"] = correctCAPEM
-		Expect(k8sClient.Update(ctx, caBundle)).To(Succeed())
-
-		By("Reconnecting MCP client after rotation")
-		_ = mcpGatewayClient.Close()
-		connectMCPClient()
-
-		By("Verifying tools appear after CA rotation propagates")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_rot_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
