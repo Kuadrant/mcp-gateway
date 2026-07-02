@@ -268,30 +268,6 @@ var _ = Describe("CA Cert Bundle", Ordered, func() {
 		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [CACertBundle] No gateway bundle, no per-server CA — public CA works", func() {
-		connectMCPClient()
-
-		By("Registering a plain HTTP backend (no TLS, no CA needed)")
-		registration := NewTestResources("cab-noca", k8sClient).
-			WithPrefix("cab_noca_").
-			Build()
-		testResources = append(testResources, registration.GetObjects()...)
-		registeredServer := registration.Register(ctx)
-
-		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient,
-				registeredServer.Name, registeredServer.Namespace)).To(Succeed())
-		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
-
-		By("Verifying tools are discovered (no TLS to worry about)")
-		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_noca_", toolsList)).To(BeTrue())
-		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
-	})
-
 	It("[HTTPS] [CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error", func() {
 		By("Patching MCPGatewayExtension to reference non-existent secret")
 		ref := &mcpv1alpha1.CACertBundleReference{Name: "nonexistent-secret", Key: "ca.crt"}

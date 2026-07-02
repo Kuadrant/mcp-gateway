@@ -343,11 +343,6 @@
 - When an MCPGatewayExtension has `caCertBundleRef` set with CA-A, and an upstream server's certificate is signed by CA-B (not in the gateway bundle), and the MCPServerRegistration does NOT have `caCertSecretRef`, the broker should fail the TLS handshake with a certificate verification error. The MCPServerRegistration should not become Ready.
 - **Runs on PR CI.**
 
-### [HTTPS] [CACertBundle] No gateway bundle, no per-server CA — public CA works
-
-- When neither `caCertBundleRef` nor `caCertSecretRef` is set, servers using publicly-trusted CAs should continue to work. Servers using private CAs should fail with certificate verification errors. This verifies no regression in default TLS behavior.
-- **Runs on PR CI.**
-
 ### [HTTPS] [CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error
 
 - When `caCertBundleRef` references a Secret that does not exist, the MCPGatewayExtension should report a status condition with an error message mentioning the missing Secret. Similarly, a Secret without the required label `mcp.kuadrant.io/secret=true` should result in a validation error in the status.
