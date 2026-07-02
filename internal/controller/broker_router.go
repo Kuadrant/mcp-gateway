@@ -545,14 +545,60 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	return false, ""
 }
 
-// filterManagedFlags returns only the binary name and flags the controller manages.
+// commandEntry represents a single logical entry in a container command:
+// either the binary name, a "--flag=value" token, or a "--flag value" pair
+// spanning two tokens.
+type commandEntry struct {
+	tokens   []string
+	flagName string
+}
+
+// flagName extracts the flag name from a "--flag" or "--flag=value" token.
+func flagName(arg string) string {
+	if idx := strings.Index(arg, "="); idx != -1 {
+		return arg[:idx]
+	}
+	return arg
+}
+
+// isManagedFlag reports whether name (e.g. "--log-level") is a controller-managed flag.
+func isManagedFlag(name string) bool {
+	return slices.Contains(managedCommandFlags, name)
+}
+
+// parseCommandEntries splits a container command into logical entries,
+// grouping "--flag value" split-form flags into a single entry with their
+// value token.
+func parseCommandEntries(command []string) []commandEntry {
+	var entries []commandEntry
+	for i := 0; i < len(command); i++ {
+		arg := command[i]
+		if !strings.HasPrefix(arg, "--") {
+			entries = append(entries, commandEntry{tokens: []string{arg}})
+			continue
+		}
+		name := flagName(arg)
+		if strings.Contains(arg, "=") {
+			entries = append(entries, commandEntry{tokens: []string{arg}, flagName: name})
+			continue
+		}
+		if i+1 < len(command) && !strings.HasPrefix(command[i+1], "--") {
+			entries = append(entries, commandEntry{tokens: []string{arg, command[i+1]}, flagName: name})
+			i++
+			continue
+		}
+		entries = append(entries, commandEntry{tokens: []string{arg}, flagName: name})
+	}
+	return entries
+}
+
+// filterManagedFlags returns the binary name and the controller-managed flags
+// (with their values) as a flat token slice.
 func filterManagedFlags(command []string) []string {
 	var out []string
-	for _, arg := range command {
-		if !strings.HasPrefix(arg, "--") || slices.ContainsFunc(managedCommandFlags, func(flag string) bool {
-			return strings.HasPrefix(arg, flag)
-		}) {
-			out = append(out, arg)
+	for _, entry := range parseCommandEntries(command) {
+		if entry.flagName == "" || isManagedFlag(entry.flagName) {
+			out = append(out, entry.tokens...)
 		}
 	}
 	return out
@@ -560,18 +606,16 @@ func filterManagedFlags(command []string) []string {
 
 // mergeCommand takes the desired command from the controller and the existing
 // command from the deployment. It returns a merged command that preserves any
-// user-added flags while updating controller-managed flags.
+// user-added flags (including split "--flag value" entries) while updating
+// controller-managed flags.
 func mergeCommand(desired, existing []string) []string {
-	// start with all user flags from the existing command
 	var userFlags []string
-	for _, arg := range existing {
-		if !strings.HasPrefix(arg, "--") {
+	for _, entry := range parseCommandEntries(existing) {
+		if entry.flagName == "" {
 			continue
 		}
-		if !slices.ContainsFunc(managedCommandFlags, func(flag string) bool {
-			return strings.HasPrefix(arg, flag)
-		}) {
-			userFlags = append(userFlags, arg)
+		if !isManagedFlag(entry.flagName) {
+			userFlags = append(userFlags, entry.tokens...)
 		}
 	}
 	return slices.Concat(desired, userFlags)
