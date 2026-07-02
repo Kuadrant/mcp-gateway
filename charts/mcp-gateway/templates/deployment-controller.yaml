@@ -32,6 +32,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: RELATED_IMAGE_ROUTER_BROKER
               value: {{ include "mcp-gateway.image" . }}
+            {{- if .Values.controller.disableExtensionReconciler }}
+            - name: DISABLE_EXTENSION_RECONCILER
+              value: "true"
+            {{- end }}
           ports:
             - name: health
               containerPort: 8081
