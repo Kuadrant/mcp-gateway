@@ -9,4 +9,5 @@ resources:
   - gateway-1.yaml
   - gateway-2.yaml
   - gateway-shared.yaml
+  - gateway-elicitation.yaml
   - nodeport.yaml

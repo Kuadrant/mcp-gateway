@@ -60,11 +60,14 @@ func (v *Verifier) MCPServerRegistrationReady(name, namespace string) error {
 	}
 
 	for _, condition := range mcpServer.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
-			return nil
+		if condition.Type == "Ready" {
+			if condition.Status == metav1.ConditionTrue {
+				return nil
+			}
+			return fmt.Errorf("MCPServerRegistration %s/%s not ready: %s", namespace, name, condition.Message)
 		}
 	}
-	return fmt.Errorf("MCPServerRegistration %s/%s not ready", namespace, name)
+	return fmt.Errorf("MCPServerRegistration %s/%s has no Ready condition", namespace, name)
 }
 
 // MCPServerRegistrationNotReadyWithReason checks Ready=False with expected reason in message

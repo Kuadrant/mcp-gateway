@@ -33,11 +33,9 @@ const (
 	tlsServerName     = "mcp-tls-server"
 	tlsServerPort     = int32(8443)
 	tlsListenerName   = "mcp-tls"
-	tlsListenerHost   = "*.mcp-gateway.local"
 	tlsServerHostname = "tls-server.mcp-gateway.local"
 	caKeypairSecret   = "private-ca-keypair"
 	certManagerNS     = "cert-manager"
-	caLabeledSecret   = "e2e-ca-bundle"
 	wrongCaSecret     = "e2e-wrong-ca"
 
 	githubMCPHost = "api.githubcopilot.com"

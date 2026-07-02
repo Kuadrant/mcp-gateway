@@ -54,6 +54,17 @@ const (
 	TeamBNamespaceValue   = "team-b"
 )
 
+// elicitation gateway constants (isolated URL elicitation tests)
+const (
+	ElicitationGatewayName  = "e2e-elicitation"
+	ElicitationListenerName = "mcp-tls"
+)
+
+// tool-discovery listener on the shared mcp-gateway (isolated tool discovery tests)
+const (
+	ToolDiscoveryListenerName = "tool-discovery"
+)
+
 const defaultE2EDomain = "127-0-0-1.sslip.io"
 
 // e2e environment configuration
@@ -72,18 +83,23 @@ var (
 
 // public hosts - derived from E2E_DOMAIN
 var (
-	gatewayPublicHost = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp.mcp-gateway.local")
-	E2E1PublicHost    = goenv.GetDefault("E2E1_PUBLIC_HOST", "e2e-1."+e2eDomain)
-	TeamAPublicHost   = goenv.GetDefault("TEAM_A_PUBLIC_HOST", "team-a."+e2eDomain)
-	TeamBPublicHost   = goenv.GetDefault("TEAM_B_PUBLIC_HOST", "team-b."+e2eDomain)
+	gatewayPublicHost       = goenv.GetDefault("GATEWAY_PUBLIC_HOST", "mcp.mcp-gateway.local")
+	E2E1PublicHost          = goenv.GetDefault("E2E1_PUBLIC_HOST", "e2e-1."+e2eDomain)
+	TeamAPublicHost         = goenv.GetDefault("TEAM_A_PUBLIC_HOST", "team-a."+e2eDomain)
+	TeamBPublicHost         = goenv.GetDefault("TEAM_B_PUBLIC_HOST", "team-b."+e2eDomain)
+	ElicitationPublicHost   = goenv.GetDefault("ELICITATION_PUBLIC_HOST", "elicitation."+e2eDomain)
+	ToolDiscoveryPublicHost = goenv.GetDefault("TOOL_DISCOVERY_PUBLIC_HOST", "mcp.tool-discovery."+e2eDomain)
 )
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
 var (
-	gatewayURL      = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8009/mcp"))
-	E2E1GatewayURL  = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
-	TeamAGatewayURL = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
-	TeamBGatewayURL = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))
+	gatewayURL               = goenv.GetDefault("GATEWAY_URL", gatewayURLDefault(gatewayPublicHost, "https://mcp.mcp-gateway.local:8009/mcp"))
+	E2E1GatewayURL           = goenv.GetDefault("E2E1_GATEWAY_URL", gatewayURLDefault(E2E1PublicHost, "http://localhost:8004/mcp"))
+	TeamAGatewayURL          = goenv.GetDefault("TEAM_A_GATEWAY_URL", gatewayURLDefault(TeamAPublicHost, "http://localhost:8005/mcp"))
+	TeamBGatewayURL          = goenv.GetDefault("TEAM_B_GATEWAY_URL", gatewayURLDefault(TeamBPublicHost, "http://localhost:8006/mcp"))
+	ElicitationGatewayURL    = goenv.GetDefault("ELICITATION_GATEWAY_URL", gatewayURLDefault(ElicitationPublicHost, "https://elicit.mcp-gateway.local:8010/mcp"))
+	URLElicitationGatewayURL = goenv.GetDefault("URL_ELICITATION_GATEWAY_URL", gatewayURLDefault(ElicitationPublicHost, "https://url-elicit.mcp-gateway.local:8010/mcp"))
+	ToolDiscoveryGatewayURL  = goenv.GetDefault("TOOL_DISCOVERY_GATEWAY_URL", gatewayURLDefault(ToolDiscoveryPublicHost, "http://mcp.tool-discovery.127-0-0-1.sslip.io:8001/mcp"))
 )
 
 // gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,

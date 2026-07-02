@@ -38,3 +38,6 @@ nodes:
   - containerPort: 30074 # shared-gateway team-b
     hostPort: 8006
     protocol: TCP
+  - containerPort: 30077 # e2e-elicitation gateway
+    hostPort: 8010
+    protocol: TCP

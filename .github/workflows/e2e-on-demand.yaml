@@ -151,11 +151,11 @@ jobs:
 
       - name: Run E2E tests (happy)
         if: needs.check-permission.outputs.suite == 'happy'
-        run: make test-e2e-happy
+        run: make test-e2e-happy E2E_PROCS=4
 
       - name: Run E2E tests (full)
         if: needs.check-permission.outputs.suite == 'full'
-        run: make test-e2e-ci-full
+        run: make test-e2e-ci-full E2E_PROCS=4
 
       - name: Collect logs on failure
         if: failure()

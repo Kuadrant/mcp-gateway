@@ -355,7 +355,7 @@ func parseSSEResult(body []byte) (json.RawMessage, error) {
 }
 
 // mcpInitializeWithElicitation sends an initialize with elicitation capability declared
-func mcpInitializeWithElicitation(mcpURL string, headers map[string]string) (string, error) { //nolint:unparam
+func mcpInitializeWithElicitation(mcpURL string, headers map[string]string) (string, error) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{"elicitation":{}},"clientInfo":{"name":"e2e-raw-elicit","version":"0.0.1"}}}`
 	resp, err := mcpPost(context.Background(), mcpURL, "", []byte(body), headers)
 	if err != nil {
@@ -438,7 +438,7 @@ func extractElicitationURL(sseErr *sseError) (string, error) {
 }
 
 // extractHiddenField extracts the value of a hidden input field from HTML
-func extractHiddenField(html, fieldName string) string { //nolint:unparam
+func extractHiddenField(html, fieldName string) string {
 	re := regexp.MustCompile(`<input[^>]+name="` + regexp.QuoteMeta(fieldName) + `"[^>]+value="([^"]*)"`)
 	m := re.FindStringSubmatch(html)
 	if len(m) < 2 {
@@ -467,7 +467,7 @@ func adaptElicitationURL(elicitationURL, gatewayBaseURL string) (string, error) 
 }
 
 // rawHTTPGetFull performs a GET and returns status, body, and response cookies
-func rawHTTPGetFull(targetURL string, headers map[string]string) (int, string, []*http.Cookie, error) { //nolint:unparam
+func rawHTTPGetFull(targetURL string, headers map[string]string) (int, string, []*http.Cookie, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
 	if err != nil {
 		return 0, "", nil, err

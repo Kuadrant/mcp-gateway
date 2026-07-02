@@ -97,7 +97,6 @@ func NewMCPGatewayClientWithNotifications(ctx context.Context, gatewayHost strin
 			notificationFunc(notification)
 			return
 		}
-		GinkgoWriter.Println("default notification handler", notification)
 	})
 
 	client.OnConnectionLost(func(err error) {
@@ -138,7 +137,7 @@ func NewMCPGatewayClientWithElicitation(ctx context.Context, gatewayHost string,
 	_, err = gatewayClient.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			Capabilities:    mcp.ClientCapabilities{},
+			Capabilities:    mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapability{}},
 			ClientInfo: mcp.Implementation{
 				Name:    "e2e-elicitation",
 				Version: "0.0.1",

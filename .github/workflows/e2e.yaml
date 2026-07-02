@@ -164,7 +164,7 @@ jobs:
         run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.ci-node.outputs.test-server-source }}
 
       - name: Run E2E tests
-        run: make test-e2e-ci
+        run: make test-e2e-ci E2E_PROCS=4
 
       - name: Collect logs on failure
         if: failure()

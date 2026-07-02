@@ -55,3 +55,6 @@ nodes:
   - containerPort: 30076 # demo team-b
     hostPort: 8008
     protocol: TCP
+  - containerPort: 30077 # e2e-elicitation gateway
+    hostPort: 8010
+    protocol: TCP

@@ -27,11 +27,15 @@ import (
 // creates the required secret and patches MCPGatewayExtension, then registers cleanup
 // to restore the original state.
 func SetupTrustedHeadersAuth(ctx context.Context, k8sClient client.Client) {
-	// create the secret if it doesn't exist
+	SetupTrustedHeadersAuthInNamespace(ctx, k8sClient, SystemNamespace, MCPExtensionName)
+}
+
+// SetupTrustedHeadersAuthInNamespace configures trusted headers auth on the given extension.
+func SetupTrustedHeadersAuthInNamespace(ctx context.Context, k8sClient client.Client, namespace, extName string) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "trusted-headers-public-key",
-			Namespace: SystemNamespace,
+			Namespace: namespace,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -41,16 +45,15 @@ func SetupTrustedHeadersAuth(ctx context.Context, k8sClient client.Client) {
 	Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
 
 	DeferCleanup(func() {
-		Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, secret))).To(Succeed())
 	})
 
-	// get current deployment generation before patching
-	gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+	gen, err := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
 	Expect(err).NotTo(HaveOccurred())
 
 	ext := &mcpv1alpha1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, client.ObjectKey{
-		Name: MCPExtensionName, Namespace: SystemNamespace,
+		Name: extName, Namespace: namespace,
 	}, ext)).To(Succeed())
 
 	patch := client.MergeFrom(ext.DeepCopy())
@@ -60,36 +63,31 @@ func SetupTrustedHeadersAuth(ctx context.Context, k8sClient client.Client) {
 	Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
 
 	DeferCleanup(func() {
-		// get current deployment generation before cleanup
-		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+		gen, err := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
 		Expect(err).NotTo(HaveOccurred())
 
 		ext := &mcpv1alpha1.MCPGatewayExtension{}
 		err = k8sClient.Get(ctx, client.ObjectKey{
-			Name: MCPExtensionName, Namespace: SystemNamespace,
+			Name: extName, Namespace: namespace,
 		}, ext)
 		if err == nil {
 			patch := client.MergeFrom(ext.DeepCopy())
 			ext.Spec.TrustedHeadersKey = nil
 			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
 
-			// wait for deployment spec to be updated
 			Eventually(func(g Gomega) {
-				g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeFalse())
+				g.Expect(IsTrustedHeadersEnabledInNamespace(ctx, namespace)).To(BeFalse())
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-			// wait for deployment to roll out
-			Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+			Expect(WaitForDeploymentReplicas(ctx, namespace, "mcp-gateway", 1, gen)).To(Succeed())
 		}
 	})
 
-	// wait for deployment to be updated with the env var
 	Eventually(func(g Gomega) {
-		g.Expect(IsTrustedHeadersEnabled(ctx)).To(BeTrue())
+		g.Expect(IsTrustedHeadersEnabledInNamespace(ctx, namespace)).To(BeTrue())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-	// wait for deployment to roll out with new pods
-	Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
+	Expect(WaitForDeploymentReplicas(ctx, namespace, "mcp-gateway", 1, gen)).To(Succeed())
 }
 
 // TestResourcesBuilder is a unified builder for creating test resources
@@ -645,6 +643,7 @@ type MCPGatewayExtensionSetup struct {
 	extension        *mcpv1alpha1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
 	httpRoute        *gatewayapiv1.HTTPRoute
+	urlElicitation   bool
 	disableHTTPRoute bool
 	createHTTPRoute  bool
 	createdNamespace bool
@@ -713,7 +712,13 @@ func (s *MCPGatewayExtensionSetup) WithSectionName(sectionName string) *MCPGatew
 	return s
 }
 
-// WithDisableHTTPRoute sets the disable-httproute annotation
+// WithURLElicitation enables URL-based token elicitation on the extension.
+func (s *MCPGatewayExtensionSetup) WithURLElicitation() *MCPGatewayExtensionSetup {
+	s.urlElicitation = true
+	return s
+}
+
+// WithDisableHTTPRoute sets the disable-httproute annotation.
 func (s *MCPGatewayExtensionSetup) WithDisableHTTPRoute(disable bool) *MCPGatewayExtensionSetup {
 	s.disableHTTPRoute = disable
 	return s
@@ -747,6 +752,9 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	if s.pollInterval != "" {
 		interval, _ := strconv.Atoi(s.pollInterval)
 		spec.BackendPingIntervalSeconds = ptr.To(int32(interval))
+	}
+	if s.urlElicitation {
+		spec.URLElicitation = mcpv1alpha1.URLElicitationEnabled
 	}
 	if s.disableHTTPRoute {
 		spec.HTTPRouteManagement = mcpv1alpha1.HTTPRouteManagementDisabled
@@ -841,13 +849,17 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 
 // Clean deletes any existing MCPGatewayExtension, ReferenceGrant, HTTPRoute, and namespace that will be used by this extension builder instance. This is useful for ensuring a clean state before setting up new resources
 func (s *MCPGatewayExtensionSetup) Clean(ctx context.Context) *MCPGatewayExtensionSetup {
-	// delete MCPGatewayExtension if it exists
+	// delete MCPGatewayExtension if it exists and wait for it to be gone
 	if s.name != "" && s.namespace != "" {
 		ext := &mcpv1alpha1.MCPGatewayExtension{}
 		err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, ext)
 		if err == nil {
 			GinkgoWriter.Printf("Deleting existing MCPGatewayExtension %s/%s\n", s.namespace, s.name)
 			CleanupResource(ctx, s.k8sClient, ext)
+			Eventually(func() bool {
+				err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1alpha1.MCPGatewayExtension{})
+				return apierrors.IsNotFound(err)
+			}, TestTimeoutMedium, TestRetryInterval).Should(BeTrue(), "MCPGatewayExtension should be deleted")
 		}
 	}
 
@@ -943,6 +955,11 @@ func (s *MCPGatewayExtensionSetup) TearDown(ctx context.Context) {
 	if s.createdExtension && s.extension != nil {
 		GinkgoWriter.Printf("Deleting MCPGatewayExtension %s/%s\n", s.namespace, s.name)
 		CleanupResource(ctx, s.k8sClient, s.extension)
+		// wait for finalizer to complete before deleting namespace
+		Eventually(func() bool {
+			err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1alpha1.MCPGatewayExtension{})
+			return apierrors.IsNotFound(err)
+		}, TestTimeoutMedium, TestRetryInterval).Should(BeTrue(), "MCPGatewayExtension should be fully deleted before namespace cleanup")
 	}
 
 	if s.createdHTTPRoute && s.httpRoute != nil {

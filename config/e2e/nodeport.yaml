@@ -99,3 +99,28 @@ spec:
     gateway.networking.k8s.io/gateway-name: shared-gateway
   sessionAffinity: None
   type: NodePort
+---
+# NodePort for e2e-elicitation gateway (HTTPS)
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    gateway.istio.io/managed: istio.io-gateway-controller
+    gateway.networking.k8s.io/gateway-name: e2e-elicitation
+    istio.io/dataplane-mode: none
+  name: e2e-elicitation-np
+  namespace: gateway-system
+spec:
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ports:
+    - appProtocol: https
+      name: mcp-tls
+      nodePort: 30077
+      port: 8443
+      protocol: TCP
+      targetPort: 8443
+  selector:
+    gateway.networking.k8s.io/gateway-name: e2e-elicitation
+  sessionAffinity: None
+  type: NodePort

@@ -58,6 +58,85 @@ npx @modelcontextprotocol/conformance server \
 2. Add new scenario blocks to `.github/workflows/conformance.yaml` under the "Run MCP conformance tests" step
 3. Each scenario runs as a separate `npx @modelcontextprotocol/conformance server --url ... --scenario <name>` command
 
+## Parallel test isolation via dedicated listeners
+
+Tests that register MCPServerRegistrations on the shared `mcp-gateway` gateway interfere with
+each other when run in parallel (config reloads, session invalidation, tool list changes).
+
+To isolate a test suite for parallel execution:
+
+1. **Add a wildcard HTTP listener** to `config/istio/gateway/gateway.yaml` on port 8080:
+   ```yaml
+   - name: my-test-suite
+     hostname: '*.my-test-suite.127-0-0-1.sslip.io'
+     port: 8080
+     protocol: HTTP
+     allowedRoutes:
+       namespaces:
+         from: All
+   ```
+
+2. **Create a dedicated namespace and MCPGatewayExtension** in `BeforeAll` targeting that listener
+   with `WithSectionName("my-test-suite")`.
+
+3. **All MCPServerRegistrations must set both**:
+   - `WithSectionName("my-test-suite")` — so the HTTPRoute parentRef targets the correct listener
+   - `WithHostname("server.my-test-suite.127-0-0-1.sslip.io")` — so the HTTPRoute hostname
+     matches the listener's wildcard pattern; the gateway rejects routes whose hostname doesn't
+     match the listener
+
+4. **Gateway URL** uses the same wildcard domain on the Kind nodeport:
+   `http://mcp.my-test-suite.127-0-0-1.sslip.io:8001/mcp` (port 8001 maps to gateway port 8080
+   via nodeport 30080).
+
+Both the sectionName and hostname are required — the controller uses `httpRouteAttachesToListener`
+which checks sectionName against listeners on the same port, and the gateway itself only accepts
+HTTPRoutes whose hostname matches the listener's hostname pattern. Missing either causes "no valid
+gateways for httproute" or "no valid mcpgatewayextensions configured" errors.
+
+See `tool_discovery_test.go` for a working example of this pattern.
+
+## Parallel safety rules
+
+Tests run with `--procs` (multiple Ginkgo processes). Every new or modified test must follow these
+rules to avoid cross-test interference.
+
+### Mark tests `Serial` when they mutate shared infrastructure
+
+Any test that does one of the following MUST have the `Serial` decorator on the `It`:
+
+- Scales, restarts, or patches the shared `mcp-gateway` deployment
+- Scales, restarts, or patches a shared test server deployment (e.g. `mcp-test-server3`)
+- Modifies the shared `MCPGatewayExtension` (e.g. `SetupTrustedHeadersAuth`, session store changes)
+- Disables or re-enables an `MCPServerRegistration` that other tests depend on
+- Creates an `MCPGatewayExtension` in a namespace that already has one
+
+### Never use shared bools for async notification callbacks
+
+Notification handlers run in a separate goroutine. Reading a `bool` in `Eventually` while a
+callback writes it is a data race (fails under `-race`). Use a buffered channel and
+`Eventually(ch).Should(Receive())` instead. See `happy_path_test.go` notification tests for the
+pattern.
+
+### Use unique prefixes and per-test cleanup
+
+- Every `MCPServerRegistration` must use a unique prefix (e.g. `WithPrefix("mytest_")`)
+- Assertions must check only the test's own prefix via `WaitForToolsWithPrefix` or
+  `verifyMCPServerRegistrationToolsPresent` — never assert exact tool counts on the shared gateway
+- Clean up resources per-test with `deferCleanupResources` or `AfterEach`, not per-suite
+
+### Make helper functions idempotent
+
+Helpers that patch deployments (add volumes, flags, listeners) must check whether the patch has
+already been applied before re-applying. A crashed prior run may leave state behind. See
+`PatchBrokerCA` and `AddGatewayHTTPSListener` for the pattern.
+
+### Prefer isolated listeners over the shared gateway
+
+Tests that would conflict with parallel registrations on the shared gateway should use the
+dedicated listener pattern (see "Parallel test isolation via dedicated listeners" above).
+Only register on the shared gateway when testing shared-gateway-specific behaviour.
+
 ## Known Issues: Flaky E2E Tests
 **Problem**: Tests timeout waiting for broker to register servers due to:
 - ConfigMap volume mount sync delays (60-120s in Kubernetes)

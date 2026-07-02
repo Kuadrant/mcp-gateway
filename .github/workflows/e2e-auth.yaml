@@ -64,7 +64,7 @@ jobs:
         run: make ci-auth-setup
 
       - name: Run auth E2E tests
-        run: make test-e2e-auth-ci
+        run: make test-e2e-auth-ci E2E_PROCS=4
 
       - name: Collect logs on failure
         if: failure()

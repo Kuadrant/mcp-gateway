@@ -73,3 +73,10 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+    - name: tool-discovery
+      hostname: '*.tool-discovery.127-0-0-1.sslip.io'
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All

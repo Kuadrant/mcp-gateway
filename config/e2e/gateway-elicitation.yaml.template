@@ -1,0 +1,37 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  labels:
+    istio: ingressgateway
+    gateway.io/name: e2e-elicitation
+  name: e2e-elicitation
+  namespace: gateway-system
+spec:
+  gatewayClassName: ${GATEWAY_CLASS_NAME}
+  listeners:
+    - name: mcp
+      hostname: 'elicitation.${E2E_DOMAIN}'
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: mcps
+      port: 8080
+      protocol: HTTP
+      hostname: '*.elicitation.mcp.local'
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: mcp-tls
+      port: 8443
+      protocol: HTTPS
+      hostname: '*.mcp-gateway.local'
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: mcp-gateway-tls-cert
+      allowedRoutes:
+        namespaces:
+          from: All

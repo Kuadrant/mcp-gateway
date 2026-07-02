@@ -33,7 +33,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}
 	})
 
-	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", func() {
+	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", Serial, func() {
 		// Use TestServerNameSpace (mcp-test) which doesn't have an existing MCPGatewayExtension
 		// We need to create a ReferenceGrant first to allow cross-namespace reference
 		By("Creating a ReferenceGrant to allow cross-namespace reference")
@@ -64,7 +64,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("listener"))
 	})
 
-	It("[Full] Second MCPGatewayExtension in same namespace is rejected", func() {
+	It("[Full] Second MCPGatewayExtension in same namespace is rejected", Serial, func() {
 		// The default MCPGatewayExtension in SystemNamespace (mcp-system) is already running
 		// Creating a second one in the same namespace should fail
 
@@ -89,7 +89,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("already has MCPGatewayExtension"))
 	})
 
-	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", func() {
+	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", Serial, func() {
 		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", TestServerNameSpace).
 			WithTarget("non-existent-gateway", GatewayNamespace).
@@ -111,7 +111,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("invalid"))
 	})
 
-	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", func() {
+	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", Serial, func() {
 		// Note: The existing MCPGatewayExtension in SystemNamespace (mcp-system) already owns the gateway.
 		// After adding a ReferenceGrant, this MCPGatewayExtension will get a conflict status
 		// because only one MCPGatewayExtension can own a gateway (the oldest one wins).
@@ -254,8 +254,10 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Re-establishing MCP client connection")
-		e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ mcp.JSONRPCNotification) {})
-		Expect(clientErr).Error().NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ mcp.JSONRPCNotification) {})
+			g.Expect(clientErr).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = e2e1Client.Close() }()
 
 		By("Verifying gateway is accessible again")

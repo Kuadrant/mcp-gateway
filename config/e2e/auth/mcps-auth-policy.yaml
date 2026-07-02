@@ -11,7 +11,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: mcp-gateway
-    sectionName: mcps
+    sectionName: mcp-tls
   # Skip this policy for the gateway's own internal hairpin initialize requests.
   # The router sets `router-key` on these requests and validates them independently
   # via a short-lived JWT; Authorino should not also demand a Keycloak token.

@@ -83,11 +83,11 @@ ci-auth-setup: cert-manager-install kuadrant-install ## Setup auth infrastructur
 	@GATEWAY_IP=$$($(KUBECTL) get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null); \
 		if [ -z "$$GATEWAY_IP" ]; then echo "ERROR: gateway has no IP address" && exit 1; fi; \
 		docker exec mcp-gateway-control-plane bash -c "grep -q 'keycloak.127-0-0-1.sslip.io' /etc/hosts || echo '$$GATEWAY_IP keycloak.127-0-0-1.sslip.io' >> /etc/hosts"
-	# apply AuthPolicies: reuse sample secrets + mcp-auth-policy, add simplified mcps policy (no Vault)
+	# apply AuthPolicies: reuse sample secrets, e2e-specific policies target mcp-tls listener
 	$(KUBECTL) apply -f ./config/samples/oauth-token-exchange/trusted-header-public-key.yaml
 	@$(detect-kuadrant-ns); \
 	$(KUBECTL) apply -f ./config/samples/oauth-token-exchange/trusted-headers-private-key.yaml -n $$KUADRANT_NS
-	$(KUBECTL) apply -f ./config/samples/oauth-token-exchange/tools-list-auth.yaml
+	$(KUBECTL) apply -f ./config/e2e/auth/mcp-auth-policy.yaml
 	$(KUBECTL) apply -f ./config/e2e/auth/mcps-auth-policy.yaml
 	# patch Authorino to reach Keycloak
 	@$(detect-kuadrant-ns); \

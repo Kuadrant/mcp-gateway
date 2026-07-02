@@ -14,9 +14,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// auth tests must target the gateway via hostname, not localhost.
-// AuthPolicy (Authorino) matches on Host header; localhost bypasses enforcement.
-var authGatewayURL = goenv.GetDefault("AUTH_GATEWAY_URL", fmt.Sprintf("%s://%s:8001/mcp", e2eScheme, gatewayPublicHost))
+// auth tests use the main HTTPS gateway URL so HTTPRoutes attach to the mcp-tls
+// listener where the AuthPolicy is enforced.
+var authGatewayURL = goenv.GetDefault("AUTH_GATEWAY_URL", gatewayURL)
 
 func authInitBody() []byte {
 	return []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e-auth","version":"0.0.1"}}}`)
@@ -126,12 +126,11 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 			var listErr error
 			_, tools, listErr = mcpListTools(ctx, authGatewayURL, sessionID, headers)
 			g.Expect(listErr).NotTo(HaveOccurred())
-			g.Expect(tools).NotTo(BeEmpty())
+			g.Expect(tools).To(ContainElement("test1_greet"), "accounting has greet for test-server1")
+			g.Expect(tools).To(ContainElement("test2_headers"), "accounting has headers for test-server2")
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
-		Expect(tools).To(ContainElement("test1_greet"), "accounting has greet for test-server1")
 		Expect(tools).NotTo(ContainElement("test1_time"), "accounting does NOT have time for test-server1")
-		Expect(tools).To(ContainElement("test2_headers"), "accounting has headers for test-server2")
 		Expect(tools).NotTo(ContainElement("test2_hello_world"), "accounting does NOT have hello_world for test-server2")
 	})
 

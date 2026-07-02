@@ -10,6 +10,10 @@ import (
 	"strings"
 
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ScaleDeployment scales a deployment to the specified replicas
@@ -142,18 +146,63 @@ func RemoveDeploymentCommandFlag(ctx context.Context, namespace, deploymentName,
 
 // AddGatewayHTTPSListener patches a Gateway to add an HTTPS listener with TLS termination.
 func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listenerName, hostname, certSecretName string, port int) error {
+	// check if listener already exists
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "gateway", gatewayName,
+		"-n", namespace, "-o", fmt.Sprintf("jsonpath={.spec.listeners[?(@.name==\"%s\")].name}", listenerName))
+	out, err := cmd.CombinedOutput()
+	if err == nil && strings.TrimSpace(string(out)) == listenerName {
+		return nil
+	}
+
 	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/listeners/-","value":{`+
 		`"name":"%s","hostname":"%s","port":%d,"protocol":"HTTPS",`+
 		`"tls":{"mode":"Terminate","certificateRefs":[{"kind":"Secret","name":"%s"}]},`+
 		`"allowedRoutes":{"namespaces":{"from":"All"}}}}]`,
 		listenerName, hostname, port, certSecretName)
-	cmd := exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
+	cmd = exec.CommandContext(ctx, "kubectl", "patch", "gateway", gatewayName,
 		"-n", namespace, "--type=json", "-p", patch)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to add HTTPS listener to gateway %s: %s: %w", gatewayName, string(output), err)
 	}
 	return nil
+}
+
+// PatchBrokerCA copies the private CA cert into the given namespace and patches
+// the broker-router deployment to trust it for HTTPS hairpin requests.
+func PatchBrokerCA(ctx context.Context, k8sClient client.Client, namespace string) {
+	deployment := &appsv1.Deployment{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway", Namespace: namespace}, deployment); err == nil {
+		for _, v := range deployment.Spec.Template.Spec.Volumes {
+			if v.Name == "gateway-ca" {
+				return
+			}
+		}
+	}
+
+	caSecret := &corev1.Secret{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)).To(Succeed())
+	caCertPEM, ok := caSecret.Data["ca.crt"]
+	Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
+
+	caBundle := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-ca-bundle",
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"ca.crt": caCertPEM},
+	}
+	_ = k8sClient.Delete(ctx, caBundle)
+	Expect(k8sClient.Create(ctx, caBundle)).To(Succeed())
+
+	combinedPatch := `[` +
+		`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},` +
+		`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
+		`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
+		`]`
+	Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
+	Expect(WaitForDeploymentReady(ctx, namespace, "mcp-gateway")).To(Succeed())
 }
 
 // PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.
@@ -243,7 +292,12 @@ func SetURLElicitation(namespace, name string, enabled bool) error {
 
 // IsTrustedHeadersEnabled checks if the gateway has trusted headers public key configured
 func IsTrustedHeadersEnabled(ctx context.Context) bool {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", "-n", SystemNamespace,
+	return IsTrustedHeadersEnabledInNamespace(ctx, SystemNamespace)
+}
+
+// IsTrustedHeadersEnabledInNamespace checks if trusted headers auth is enabled on the deployment in the given namespace.
+func IsTrustedHeadersEnabledInNamespace(ctx context.Context, namespace string) bool {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", "-n", namespace,
 		"mcp-gateway", "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='TRUSTED_HEADER_PUBLIC_KEY')].valueFrom.secretKeyRef.name}")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
