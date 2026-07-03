@@ -110,6 +110,9 @@ type mcpBrokerImpl struct {
 	// userSpecificServers is precomputed in OnConfigChange to avoid per-request iteration
 	userSpecificServers []userSpecificServer
 
+	// gatewayCACertPEM is the current gateway-level CA certificate bundle PEM
+	gatewayCACertPEM string
+
 	// tagsToolsRegistered tracks whether list_tags/filter_tools_by_tags are currently registered
 	tagsToolsRegistered atomic.Bool
 }
@@ -280,11 +283,19 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	// concurrently replacing conf.Servers/VirtualServers under its own write lock.
 	servers := conf.ListServers()
 	virtualServers := conf.ListVirtualServers()
+	newGatewayCACert := conf.GetGatewayCACertPEM()
 
 	m.logger.DebugContext(ctx, "Broker OnConfigChange start", "Total managers for upstream mcp servers", len(m.mcpServers), "total servers", len(servers))
 	// unregister decommissioned servers
 	m.mcpLock.Lock()
 	defer m.mcpLock.Unlock()
+
+	// when gateway CA cert changes, TLS-using managers must be recreated
+	gatewayCACertChanged := m.gatewayCACertPEM != newGatewayCACert
+	if gatewayCACertChanged {
+		m.logger.InfoContext(ctx, "gateway CA certificate bundle changed, recreating TLS managers")
+		m.gatewayCACertPEM = newGatewayCACert
+	}
 
 	for serverID := range m.mcpServers {
 		if !slices.ContainsFunc(servers, func(s *config.MCPServer) bool {
@@ -304,9 +315,8 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		man, ok := m.mcpServers[mcpServer.ID()]
 		if ok {
 			m.logger.InfoContext(ctx, "Server is registered", "mcpID", mcpServer.ID())
-			// already have a manger
-			if mcpServer.ConfigChanged(man.Config()) {
-				// todo prob could look at just updating the config
+			serverUsesTLS := strings.HasPrefix(mcpServer.URL, "https://")
+			if (gatewayCACertChanged && serverUsesTLS) || mcpServer.ConfigChanged(man.Config()) {
 				m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 				man.Stop()
 				delete(m.mcpServers, mcpServer.ID())
@@ -315,7 +325,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 		// check if we need to setup a new manager
 		if _, ok := m.mcpServers[mcpServer.ID()]; !ok {
 			m.logger.InfoContext(ctx, "starting new manager", "server id", mcpServer.ID())
-			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+			manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer, newGatewayCACert), m.listeningMCPServer, m.listeningMCPServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 			if err != nil {
 				m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
 				continue

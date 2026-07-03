@@ -644,6 +644,7 @@ type MCPGatewayExtensionSetup struct {
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
 	httpRoute        *gatewayapiv1.HTTPRoute
 	urlElicitation   bool
+	caCertBundleRef  *mcpv1alpha1.CACertBundleReference
 	disableHTTPRoute bool
 	createHTTPRoute  bool
 	createdNamespace bool
@@ -731,6 +732,12 @@ func (s *MCPGatewayExtensionSetup) WithHTTPRoute() *MCPGatewayExtensionSetup {
 	return s
 }
 
+// WithCACertBundleRef sets the CA cert bundle reference on the MCPGatewayExtension
+func (s *MCPGatewayExtensionSetup) WithCACertBundleRef(name, key string) *MCPGatewayExtensionSetup {
+	s.caCertBundleRef = &mcpv1alpha1.CACertBundleReference{Name: name, Key: key}
+	return s
+}
+
 // Build creates the MCPGatewayExtension and ReferenceGrant objects (without registering them)
 func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	spec := mcpv1alpha1.MCPGatewayExtensionSpec{
@@ -758,6 +765,9 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	}
 	if s.disableHTTPRoute {
 		spec.HTTPRouteManagement = mcpv1alpha1.HTTPRouteManagementDisabled
+	}
+	if s.caCertBundleRef != nil {
+		spec.CACertBundleRef = s.caCertBundleRef
 	}
 
 	s.extension = &mcpv1alpha1.MCPGatewayExtension{

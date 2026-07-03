@@ -20,11 +20,8 @@ import (
 	. "github.com/onsi/gomega"
 	istiov1beta1 "istio.io/api/networking/v1beta1"
 	istionetv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -48,25 +45,6 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		testResources    []client.Object
 		mcpGatewayClient *NotifyingMCPClient
 	)
-
-	BeforeAll(func() {
-		By("Checking cert-manager is installed")
-		probe := &unstructured.UnstructuredList{}
-		probe.SetGroupVersionKind(schema.GroupVersionKind{
-			Group: "cert-manager.io", Version: "v1", Kind: "ClusterIssuerList",
-		})
-		if err := k8sClient.List(ctx, probe); err != nil {
-			Skip("cert-manager not installed - skipping Custom TLS tests")
-		}
-
-		By("Checking TLS test server is deployed")
-		deploy := &appsv1.Deployment{}
-		if err := k8sClient.Get(ctx, types.NamespacedName{
-			Name: tlsServerName, Namespace: TestServerNameSpace,
-		}, deploy); err != nil {
-			Skip("TLS test server not deployed (run 'make deploy-tls-test-server') - skipping Custom TLS tests")
-		}
-	})
 
 	BeforeEach(func() {
 		testResources = []client.Object{}

@@ -30,6 +30,16 @@ Client → Gateway (Envoy) → Router (ext_proc) → Broker → Upstream MCP Ser
 
 Istio is ONLY a Gateway API provider — no sidecars, no ambient mode, no service mesh. Just istiod programming the Gateway's Envoy proxy.
 
+## TLS Trust Pool
+
+Broker upstream TLS trust is additive, three layers:
+
+1. **System roots** — always loaded
+2. **Gateway CA bundle** — `MCPGatewayExtension.caCertBundleRef` references a shared Secret, written once to config as `gatewayCACertPEM`
+3. **Per-server CA** — `MCPServerRegistration.caCertSecretRef` appends for servers with unique CAs
+
+Each layer appends to the previous. Gateway bundle changes trigger broker to recreate all upstream managers.
+
 ## Authentication (Two Separate Paths)
 
 1. **Broker → upstream** (`credentialRef`): broker uses MCPServerRegistration's `credentialRef` for tool listing and session management. NEVER injected into client tool/call requests. Router has no access to `credentialRef`.

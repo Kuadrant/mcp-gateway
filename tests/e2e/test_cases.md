@@ -295,7 +295,7 @@
 ### [HTTPS] [Happy] Test broker connects to TLS upstream with custom CA certificate
 
 - When an MCPServerRegistration has a `caCertSecretRef` pointing to a valid CA certificate Secret and the upstream MCP server terminates TLS with a certificate signed by that CA, the broker should successfully connect via HTTPS, discover tools, and make them available through the gateway. The test deploys an nginx TLS proxy in front of mcp-test-server2 using a cert-manager private CA, creates a labeled Secret containing the CA certificate, and verifies that tools are listed and can be invoked through the gateway.
-- **Runs on PR CI** — cert-manager and TLS test server are deployed by `make ci-setup`. Skips if either is absent.
+- **Runs on PR CI** — cert-manager and TLS test server are deployed by `make ci-setup`.
 
 ### [HTTPS] [Negative] Test broker rejects TLS upstream with wrong CA certificate
 
@@ -305,7 +305,7 @@
 ### [HTTPS] [Happy] broker connects to TLS upstream and tools/call works via hairpin SNI
 
 - When a plain HTTP backend is registered on an HTTPS listener with a server-specific hostname, `tools/list` should discover tools and `tools/call` should succeed. The hairpin initialize request must use the server's hostname as TLS SNI so the gateway selects the correct filter chain and route table for that server.
-- **Runs on PR CI.** Skips if cert-manager or the TLS test server are absent.
+- **Runs on PR CI.**
 
 ### [HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS
 
@@ -321,7 +321,37 @@
 ### [HTTPS] [Happy] tools/call to internal TLS backend fails without DestinationRule, succeeds with it
 
 - When an MCPServerRegistration with `caCertSecretRef` targets an internal TLS backend, `tools/list` should succeed because the broker connects directly. However, `tools/call` should fail because the gateway forwards plain HTTP to the TLS backend after terminating the client's TLS. After creating a DestinationRule with TLS origination for the same service, `tools/call` should succeed because the gateway re-encrypts traffic to the backend.
-- **Runs on PR CI.** Skips if cert-manager or the TLS test server are absent.
+- **Runs on PR CI.**
+
+### [HTTPS] [Happy,CACertBundle] Gateway CA bundle enables TLS connection to upstream server
+
+- When an MCPGatewayExtension is configured with `caCertBundleRef` pointing to a Secret containing the CA that signed an upstream TLS server's certificate, and an MCPServerRegistration for that server does NOT have `caCertSecretRef`, the broker should use the gateway-level CA bundle to verify the TLS connection. The upstream server's tools should be discovered and callable through the gateway.
+- **Runs on PR CI** — cert-manager and TLS test server are deployed by `make ci-setup`.
+
+### [HTTPS] [Full,CACertBundle] Multiple servers sharing the same gateway CA bundle
+
+- When an MCPGatewayExtension has `caCertBundleRef` set and two MCPServerRegistrations target upstream TLS servers whose certificates are signed by the same CA (referenced by the bundle), both servers should have their tools discovered and callable without either registration needing `caCertSecretRef`. This verifies the shared trust pool works across multiple servers.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [HTTPS] [Full,CACertBundle] Per-server CA appends to gateway bundle
+
+- When an MCPGatewayExtension has `caCertBundleRef` set with CA-A, and an MCPServerRegistration has `caCertSecretRef` set with CA-B (a different CA), the broker should trust both CA-A and CA-B for that server. A server whose certificate is signed by CA-B should connect successfully. This verifies additive behavior.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [HTTPS] [Full,CACertBundle] Wrong CA fails, rotation to correct CA recovers
+
+- When an MCPGatewayExtension has `caCertBundleRef` set with a wrong CA, tools should not appear for a TLS server whose certificate is signed by a different CA. After rotating the CA bundle secret to the correct CA, the controller re-validates, rewrites the config, and the broker rebuilds its trust pool. Tools should appear after propagation.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [HTTPS] [Full,CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error
+
+- When `caCertBundleRef` references a Secret that does not exist, the MCPGatewayExtension should report a status condition with an error message mentioning the missing Secret. Similarly, a Secret without the required label `mcp.kuadrant.io/secret=true` should result in a validation error in the status.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [HTTPS] [Full,CACertBundle] Gateway CA bundle with existing per-server CA on same server
+
+- When an MCPGatewayExtension has `caCertBundleRef` set with a CA that covers an upstream TLS server, and the same server's MCPServerRegistration also has `caCertSecretRef` pointing to the same CA, the broker should connect successfully. Both the gateway bundle and per-server CA contribute to the trust pool additively. This verifies no conflict when the same CA appears in both places.
+- **Nightly / on-demand only** (`[Full]` tag).
 
 Both external tests are tagged `[HTTPS_EXTERNAL]` and skip on PR CI. Run them manually for sanity checks (e.g. before releases):
 
@@ -345,6 +375,7 @@ make test-e2e-https
 |------|-------|-------------------------|
 | Private CA + hairpin SNI (happy + negative) | Yes | Yes |
 | DestinationRule TLS origination | Yes | Yes |
+| Gateway CA bundle (`[CACertBundle]`) | Yes | Yes |
 | GitHub external | Skipped | Yes (needs `GITHUB_MCP_PAT`) |
 | Real public certs | Skipped | Yes (needs real TLS cluster) |
 

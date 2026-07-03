@@ -204,6 +204,10 @@ func (m *mockConfigWriterDeleter) WriteEmptyConfig(ctx context.Context, namespac
 	return nil
 }
 
+func (m *mockConfigWriterDeleter) WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
+	return nil
+}
+
 // newTestReconciler creates a new MCPGatewayExtensionReconciler for testing
 func newTestReconciler() *MCPGatewayExtensionReconciler {
 	return &MCPGatewayExtensionReconciler{

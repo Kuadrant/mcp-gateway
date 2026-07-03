@@ -119,6 +119,13 @@ type MCPGatewayExtensionSpec struct {
 	// injects the corresponding OAUTH_* env vars into the broker-router deployment.
 	// +optional
 	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
+
+	// caCertBundleRef references a Secret containing a PEM-encoded CA certificate
+	// bundle used as the base trust pool for all upstream MCP server connections.
+	// Per-server caCertSecretRef on MCPServerRegistration appends to this pool.
+	// The Secret must have the label mcp.kuadrant.io/secret=true.
+	// +optional
+	CACertBundleRef *CACertBundleReference `json:"caCertBundleRef,omitempty"`
 }
 
 // OAuthProtectedResource configures the OAuth protected resource metadata
@@ -157,6 +164,20 @@ type OAuthProtectedResource struct {
 	// +kubebuilder:validation:MaxItems=50
 	// +listType=atomic
 	ScopesSupported []string `json:"scopesSupported,omitempty"`
+}
+
+// CACertBundleReference identifies a Secret containing a PEM-encoded CA bundle.
+type CACertBundleReference struct {
+	// name is the name of the Secret resource.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
+
+	// key is the key within the Secret that contains the CA bundle PEM data.
+	// If not specified, defaults to "ca.crt".
+	// +optional
+	// +default="ca.crt"
+	Key string `json:"key,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
