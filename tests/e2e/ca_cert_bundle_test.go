@@ -47,7 +47,7 @@ func patchExtensionCACertBundle(ref *mcpv1alpha1.CACertBundleReference) {
 	Expect(k8sClient.Patch(ctx, ext, client.RawPatch(types.MergePatchType, patchBytes))).To(Succeed())
 }
 
-var _ = Describe("CA Cert Bundle", Ordered, func() {
+var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 	var (
 		testResources    []client.Object
 		mcpGatewayClient *NotifyingMCPClient
