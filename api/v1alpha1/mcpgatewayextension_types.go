@@ -74,8 +74,8 @@ type MCPGatewayExtensionSpec struct {
 
 	// privateHost overrides the internal host used for hair-pinning requests
 	// back through the gateway. Defaults to
-	// <gateway>-istio.<ns>.svc.cluster.local:<port>, with an https:// scheme
-	// prefix when the targeted Gateway listener uses the HTTPS protocol. The
+	// <gateway>-<gatewayClassName>.<ns>.svc.cluster.local:<port>, with an https://
+	// scheme prefix when the targeted Gateway listener uses the HTTPS protocol. The
 	// value supplied here is honoured verbatim, so an operator can include a
 	// scheme (e.g. "https://my-gw:443") or pin to a different port.
 	// +optional
@@ -291,8 +291,10 @@ func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, r
 	})
 }
 
-// InternalHost returns the internal/private host computed from the targetRef
-func (m *MCPGatewayExtension) InternalHost(port uint32) string {
+// InternalHost returns the internal/private host computed from the targetRef.
+// gatewayClassName is used to derive the Service name created by the Gateway controller,
+// which follows the convention <gateway-name>-<gatewayClassName>.<namespace>.svc.cluster.local.
+func (m *MCPGatewayExtension) InternalHost(port uint32, gatewayClassName string) string {
 	if m.Spec.PrivateHost != "" {
 		return m.Spec.PrivateHost
 	}
@@ -300,7 +302,7 @@ func (m *MCPGatewayExtension) InternalHost(port uint32) string {
 	if gatewayNamespace == "" {
 		gatewayNamespace = m.Namespace
 	}
-	return fmt.Sprintf(m.Spec.TargetRef.Name+"-istio."+gatewayNamespace+".svc.cluster.local:%v", port)
+	return fmt.Sprintf("%s-%s.%s.svc.cluster.local:%v", m.Spec.TargetRef.Name, gatewayClassName, gatewayNamespace, port)
 }
 
 // HTTPRouteDisabled returns true if HTTPRouteManagement is set to Disabled

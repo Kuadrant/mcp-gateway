@@ -8,11 +8,12 @@ import (
 
 func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 	tests := []struct {
-		name        string
-		namespace   string
-		targetRef   MCPGatewayExtensionTargetReference
-		privateHost string
-		want        string
+		name             string
+		namespace        string
+		targetRef        MCPGatewayExtensionTargetReference
+		privateHost      string
+		gatewayClassName string
+		want             string
 	}{
 		{
 			name:      "uses targetRef namespace when specified",
@@ -21,7 +22,8 @@ func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 				Name:      "my-gateway",
 				Namespace: "gateway-system",
 			},
-			want: "my-gateway-istio.gateway-system.svc.cluster.local:8080",
+			gatewayClassName: "istio",
+			want:             "my-gateway-istio.gateway-system.svc.cluster.local:8080",
 		},
 		{
 			name:      "falls back to extension namespace when targetRef namespace empty",
@@ -29,7 +31,18 @@ func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 			targetRef: MCPGatewayExtensionTargetReference{
 				Name: "my-gateway",
 			},
-			want: "my-gateway-istio.team-a.svc.cluster.local:8080",
+			gatewayClassName: "istio",
+			want:             "my-gateway-istio.team-a.svc.cluster.local:8080",
+		},
+		{
+			name:      "openshift-default gateway class uses correct service name",
+			namespace: "mcp-system",
+			targetRef: MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+			gatewayClassName: "openshift-default",
+			want:             "my-gateway-openshift-default.gateway-system.svc.cluster.local:8080",
 		},
 		{
 			name:      "privateHost overrides computed value",
@@ -38,8 +51,9 @@ func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 				Name:      "my-gateway",
 				Namespace: "gateway-system",
 			},
-			privateHost: "custom-gateway.custom-ns.svc.cluster.local:9090",
-			want:        "custom-gateway.custom-ns.svc.cluster.local:9090",
+			gatewayClassName: "istio",
+			privateHost:      "custom-gateway.custom-ns.svc.cluster.local:9090",
+			want:             "custom-gateway.custom-ns.svc.cluster.local:9090",
 		},
 	}
 
@@ -54,7 +68,7 @@ func TestMCPGatewayExtension_InternalHost(t *testing.T) {
 					PrivateHost: tt.privateHost,
 				},
 			}
-			if got := m.InternalHost(8080); got != tt.want {
+			if got := m.InternalHost(8080, tt.gatewayClassName); got != tt.want {
 				t.Errorf("InternalHost() = %v, want %v", got, tt.want)
 			}
 		})
