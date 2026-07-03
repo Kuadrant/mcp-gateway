@@ -95,6 +95,17 @@ spec:
                 - Enabled
                 - Disabled
                 type: string
+              logLevel:
+                description: |-
+                  logLevel controls the broker-router log verbosity.
+                  Maps to the broker's --log-level flag: debug=-4, info=0, warn=4, error=8.
+                  When unset, the operator-wide BROKER_ROUTER_LOG_LEVEL default (if configured) is used.
+                enum:
+                - debug
+                - info
+                - warn
+                - error
+                type: string
               oauthProtectedResource:
                 description: |-
                   oauthProtectedResource configures the OAuth protected resource metadata
