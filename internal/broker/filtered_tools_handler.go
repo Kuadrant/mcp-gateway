@@ -127,11 +127,13 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilter(headers http.Head
 
 // parseAuthorizedCapabilitiesJWT validates and extracts allowed capabilities from the JWT header.
 func (broker *mcpBrokerImpl) parseAuthorizedCapabilitiesJWT(headerValues []string) (map[string]map[string][]string, error) {
-	if len(headerValues) != 1 {
-		return nil, fmt.Errorf("expected exactly 1 header value, got %d", len(headerValues))
+	if len(headerValues) == 0 {
+		return nil, fmt.Errorf("expected at least 1 header value")
 	}
 
-	jwtValue := headerValues[0]
+	// Use the last header value. If a client forges a header, Authorino will append its legitimate
+	// wristband JWT to the end of the header list, so the last one is the trusted one.
+	jwtValue := headerValues[len(headerValues)-1]
 	if jwtValue == "" {
 		return nil, fmt.Errorf("empty header value")
 	}
