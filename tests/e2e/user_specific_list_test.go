@@ -20,7 +20,10 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 	)
 
 	BeforeEach(func() {
-		_ = ScaleDeployment(ctx, TestServerNameSpace, userSpecificMCPTestServer, 1)
+		Expect(ScaleDeployment(ctx, TestServerNameSpace, userSpecificMCPTestServer, 1)).To(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(WaitForDeploymentReady(ctx, TestServerNameSpace, userSpecificMCPTestServer)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	AfterEach(func() {
@@ -224,7 +227,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		GinkgoWriter.Printf("baseline standard tool count: %d\n", baselineCount)
 	})
 
-	It("[UserSpecificList] user-specific server down does not break tools/list", func() {
+	It("[UserSpecificList] user-specific server down does not break tools/list", Serial, func() {
 		By("Creating a standard server registration")
 		stdReg := NewMCPServerResourcesWithDefaults("uspec-degrade", k8sClient).
 			WithPrefix("std_").Build()
@@ -264,6 +267,9 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Scaling user-specific server back up for other tests")
 		Expect(ScaleDeployment(ctx, TestServerNameSpace, userSpecificMCPTestServer, 1)).To(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(WaitForDeploymentReady(ctx, TestServerNameSpace, userSpecificMCPTestServer)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[UserSpecificList] tool call routing works for user-specific tools", func() {
