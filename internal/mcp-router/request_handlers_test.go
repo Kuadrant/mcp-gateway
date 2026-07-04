@@ -1204,7 +1204,9 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 
 	t.Run("reinjects configured virtual server header for broker filtering", func(t *testing.T) {
 		srv := newServer(t)
-		srv.RoutingConfig.SetServers(nil, []*config.VirtualServer{{Name: "test/vs"}})
+		rc := &config.MCPServersConfig{}
+		rc.SetServers(nil, []*config.VirtualServer{{Name: "test/vs"}})
+		srv.RoutingConfig.Store(rc)
 		req := &MCPRequest{
 			JSONRPC: "2.0",
 			Method:  methodInitialize,
@@ -1246,6 +1248,22 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 			},
 		}
 		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 400)
+	})
+
+	t.Run("returns 500 when RoutingConfig is nil", func(t *testing.T) {
+		srv := newServer(t)
+		srv.RoutingConfig.Store(nil)
+		req := &MCPRequest{
+			JSONRPC: "2.0",
+			Method:  methodInitialize,
+			ID:      "1",
+			Headers: &corev3.HeaderMap{
+				Headers: []*corev3.HeaderValue{
+					{Key: "x-mcp-virtualserver", RawValue: []byte("test/vs")},
+				},
+			},
+		}
+		mustImmediate(t, srv.HandleNoneToolCall(context.Background(), req), 500)
 	})
 }
 

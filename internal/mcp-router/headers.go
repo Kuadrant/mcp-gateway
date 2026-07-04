@@ -36,7 +36,7 @@ var internalOnlyHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader, 
 
 // clientStrippedHeaders are headers that the router unconditionally strips from
 // incoming client requests during the headers phase.
-var clientStrippedHeaders = []string{mcpVirtualServerHeader, mcpVerifiedSubHeader}
+var clientStrippedHeaders = []string{mcpAuthorizedHeader, mcpVirtualServerHeader, mcpVerifiedSubHeader}
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 	if headers == nil {

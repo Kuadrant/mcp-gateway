@@ -23,6 +23,9 @@ import (
 // ErrInvalidRequest is an error for an invalid request
 var ErrInvalidRequest = fmt.Errorf("MCP Request is invalid")
 
+// ErrNilRoutingConfig is returned when RoutingConfig is nil
+var ErrNilRoutingConfig = fmt.Errorf("routing config is nil")
+
 // RouterError represents an error with an associated HTTP status code
 type RouterError struct {
 	StatusCode int32
@@ -875,6 +878,9 @@ func (s *ExtProcServer) HandleNoneToolCall(ctx context.Context, mcpReq *MCPReque
 	virtualServerID, ok, err := s.validVirtualServerHeader(mcpReq)
 	if err != nil {
 		s.Logger.WarnContext(ctx, "rejecting broker request: invalid virtual server header", "error", err)
+		if errors.Is(err, ErrNilRoutingConfig) {
+			return response.WithImmediateResponse(500, "internal error").Build()
+		}
 		return response.WithImmediateResponse(400, "bad request").Build()
 	}
 	if ok {
@@ -889,10 +895,11 @@ func (s *ExtProcServer) validVirtualServerHeader(mcpReq *MCPRequest) (string, bo
 	if virtualServerID == "" {
 		return "", false, nil
 	}
-	if s.RoutingConfig == nil {
-		return "", false, fmt.Errorf("virtual server %s not found", virtualServerID)
+	rc := s.RoutingConfig.Load()
+	if rc == nil {
+		return "", false, ErrNilRoutingConfig
 	}
-	for _, vs := range s.RoutingConfig.ListVirtualServers() {
+	for _, vs := range rc.ListVirtualServers() {
 		if vs != nil && vs.Name == virtualServerID {
 			return virtualServerID, true, nil
 		}
