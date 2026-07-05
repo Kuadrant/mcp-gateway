@@ -409,8 +409,10 @@ status:
 - `agentPrefix` immutability: `+kubebuilder:validation:XValidation:rule="self == oldSelf"`
 - `agentPrefix` pattern: `+kubebuilder:validation:Pattern=^[a-z0-9][a-z0-9_]*$`
 - `targetRef` immutability: `+kubebuilder:validation:XValidation:rule="self == oldSelf"` — retargeting
-  a registration would leave the previous agent's config behind (config is last-known-good, removed only
-  on deletion and consent revocation), so replacing an agent means replacing the registration
+  to a route on a different gateway would require cleaning stale namespace fan-out config from the
+  previous target (config is last-known-good, removed only on deletion and consent revocation), so
+  replacing an agent means replacing the registration; blue/green swaps happen at the HTTPRoute's
+  `backendRef`, which the controller watches
 - `agentCardURL` format: `+kubebuilder:validation:Pattern=^https?://`
 - `targetRef` uses `omitzero` not `omitempty` (kubeapilinter requirement)
 - `targetRef` may reference an HTTPRoute in another namespace **only with that namespace's
