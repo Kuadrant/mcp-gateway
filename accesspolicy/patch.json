@@ -1,0 +1,17 @@
+[
+  {
+    "op": "replace",
+    "path": "/rules/0/apiGroups/0",
+    "value": "agentic.agentic.networking.x-k8s.io"
+  },
+  {
+    "op": "replace",
+    "path": "/rules/1/apiGroups/0",
+    "value": "agentic.agentic.networking.x-k8s.io"
+  },
+  {
+    "op": "replace",
+    "path": "/rules/2/apiGroups/0",
+    "value": "agentic.agentic.networking.x-k8s.io"
+  }
+]

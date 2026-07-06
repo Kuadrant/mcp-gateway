@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================================
+# accesspolicy-controller quickstart
+# Sets up a complete demo environment with Kind, Kuadrant, MCP Gateway,
+# and the MCP Inspector.
+# ============================================================================
+
+# ── Colors & formatting ─────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+STEP=0
+
+step() {
+  STEP=$((STEP + 1))
+  echo ""
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+  echo -e "${BOLD}${CYAN}  Step ${STEP}: ${1}${RESET}"
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+info()    { echo -e "  ${DIM}ℹ${RESET}  ${1}"; }
+success() { echo -e "  ${GREEN}✔${RESET}  ${1}"; }
+warn()    { echo -e "  ${YELLOW}⚠${RESET}  ${1}"; }
+fail()    { echo -e "  ${RED}✖${RESET}  ${1}"; exit 1; }
+
+# ── Configuration ────────────────────────────────────────────────────────────
+CLUSTER_NAME="accesspolicy-demo"
+CONTROLLER_IMG="accesspolicy-controller:demo"
+MCP_SERVER_IMG="accesspolicy-mcp-server:demo"
+NAMESPACE="quickstart-ns"
+GATEWAY_API_VERSION="v1.2.0"
+PORT_FORWARD_PORT=8080
+
+# Resolve project root (the directory containing this script's parent)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 1: Check prerequisites
+# ─────────────────────────────────────────────────────────────────────────────
+step "Checking prerequisites"
+
+MISSING=()
+for cmd in kind kubectl docker go helm npx; do
+  if command -v "${cmd}" &>/dev/null; then
+    success "${cmd} $(${cmd} version --short 2>/dev/null || ${cmd} version --client 2>/dev/null | head -1 || echo 'found')"
+  else
+    MISSING+=("${cmd}")
+    warn "${cmd} — ${RED}not found${RESET}"
+  fi
+done
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  fail "Missing required tools: ${MISSING[*]}. Please install them and re-run."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 2: Create Kind cluster
+# ─────────────────────────────────────────────────────────────────────────────
+step "Creating Kind cluster '${CLUSTER_NAME}'"
+
+if kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
+  warn "Cluster '${CLUSTER_NAME}' already exists — skipping creation"
+else
+  kind create cluster --config "${SCRIPT_DIR}/kind-config.yaml"
+  success "Kind cluster '${CLUSTER_NAME}' created"
+fi
+
+kubectl cluster-info --context "kind-${CLUSTER_NAME}" >/dev/null 2>&1
+success "kubectl context set to kind-${CLUSTER_NAME}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3: Install Gateway API CRDs
+# ─────────────────────────────────────────────────────────────────────────────
+step "Installing Gateway API CRDs (${GATEWAY_API_VERSION})"
+
+kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml" \
+  --context "kind-${CLUSTER_NAME}"
+success "Gateway API CRDs installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4: Install Istio, Kuadrant & MCP Gateway
+# ─────────────────────────────────────────────────────────────────────────────
+step "Installing Istio, Kuadrant, and MCP Gateway"
+
+helm repo add istio https://istio-release.storage.googleapis.com/charts
+helm repo update istio
+helm upgrade --install istio-base istio/base -n istio-system --create-namespace --wait
+helm upgrade --install istiod istio/istiod -n istio-system \
+  --set pilot.resources.requests.memory=256Mi \
+  --set pilot.resources.requests.cpu=100m \
+  --wait
+success "Istio installed"
+
+helm repo add kuadrant https://kuadrant.io/helm-charts/ 2>/dev/null || true
+helm repo update kuadrant
+
+if helm status kuadrant --namespace kuadrant-system --kube-context "kind-${CLUSTER_NAME}" &>/dev/null; then
+  warn "Kuadrant already installed — skipping"
+else
+  helm upgrade --install kuadrant kuadrant/kuadrant-operator \
+    --namespace kuadrant-system \
+    --create-namespace \
+    --kube-context "kind-${CLUSTER_NAME}" \
+    --wait --timeout 5m
+  
+  cat <<EOF | kubectl apply --context "kind-${CLUSTER_NAME}" -f -
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: kuadrant-system
+EOF
+  success "Kuadrant operator installed"
+fi
+
+kubectl apply -k 'https://github.com/Kuadrant/mcp-gateway/config/crd?ref=main' --context "kind-${CLUSTER_NAME}"
+sleep 5 # wait for CRDs to register
+
+for i in 1 2 3 4; do
+  if kubectl apply -k 'https://github.com/Kuadrant/mcp-gateway/config/install?ref=main' --context "kind-${CLUSTER_NAME}"; then
+    break
+  fi
+  warn "Failed to apply MCP gateway config, retrying in 5 seconds..."
+  sleep 5
+done
+
+# Fix upstream RBAC bug in mcp-gateway early preview
+kubectl patch clusterrole mcp-controller --type='json' -p='[{"op": "add", "path": "/rules/-", "value": {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list", "watch", "update", "patch"]}}]' --context "kind-${CLUSTER_NAME}"
+success "MCP Gateway components installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5: Build & load controller image
+# ─────────────────────────────────────────────────────────────────────────────
+step "Building controller image (${CONTROLLER_IMG})"
+
+cd "${PROJECT_ROOT}"
+make docker-build IMG="${CONTROLLER_IMG}"
+kind load docker-image "${CONTROLLER_IMG}" --name "${CLUSTER_NAME}"
+success "Controller image built and loaded into Kind"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 6: Install XAccessPolicy CRDs
+# ─────────────────────────────────────────────────────────────────────────────
+step "Installing XAccessPolicy CRDs"
+
+cd "${PROJECT_ROOT}"
+make install
+success "XAccessPolicy CRDs installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 7: Deploy the controller
+# ─────────────────────────────────────────────────────────────────────────────
+step "Deploying accesspolicy-controller"
+
+cd "${PROJECT_ROOT}"
+make deploy IMG="${CONTROLLER_IMG}"
+info "Waiting for controller deployment to be ready..."
+kubectl rollout status deployment/accesspolicy-controller-manager \
+  -n accesspolicy-system \
+  --context "kind-${CLUSTER_NAME}" \
+  --timeout=120s
+success "Controller deployed and ready"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 8: Create quickstart namespace
+# ─────────────────────────────────────────────────────────────────────────────
+step "Creating namespace '${NAMESPACE}'"
+
+kubectl create namespace "${NAMESPACE}" --context "kind-${CLUSTER_NAME}" --dry-run=client -o yaml \
+  | kubectl apply -f - --context "kind-${CLUSTER_NAME}"
+kubectl label namespace "${NAMESPACE}" istio-injection=enabled --overwrite --context "kind-${CLUSTER_NAME}"
+success "Namespace '${NAMESPACE}' ready with Istio injection"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 9: Build & load MCP server image
+# ─────────────────────────────────────────────────────────────────────────────
+step "Building MCP server image (${MCP_SERVER_IMG})"
+
+docker build -t "${MCP_SERVER_IMG}" "${SCRIPT_DIR}/mcpserver"
+kind load docker-image "${MCP_SERVER_IMG}" --name "${CLUSTER_NAME}"
+success "MCP server image built and loaded into Kind"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 10: Deploy MCP server
+# ─────────────────────────────────────────────────────────────────────────────
+step "Deploying MCP server"
+
+kubectl apply -f "${SCRIPT_DIR}/mcpserver/deployment.yaml" --context "kind-${CLUSTER_NAME}"
+info "Waiting for MCP server deployment to be ready..."
+kubectl rollout status deployment/mcp-server \
+  -n "${NAMESPACE}" \
+  --context "kind-${CLUSTER_NAME}" \
+  --timeout=120s
+success "MCP server deployed and ready"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 11: Apply policy resources (Gateway + HTTPRoute + XAccessPolicies)
+# ─────────────────────────────────────────────────────────────────────────────
+step "Applying Gateway & XAccessPolicies"
+
+kubectl apply -f "${SCRIPT_DIR}/policy/resources.yaml" --context "kind-${CLUSTER_NAME}"
+kubectl apply -f "${SCRIPT_DIR}/policy/policy-team-a.yaml" --context "kind-${CLUSTER_NAME}"
+kubectl apply -f "${SCRIPT_DIR}/policy/policy-team-b.yaml" --context "kind-${CLUSTER_NAME}"
+success "Gateway, HTTPRoute, and multiple XAccessPolicies applied"
+
+info "Waiting for XAccessPolicies to be accepted..."
+sleep 3
+kubectl get xaccesspolicies -n "${NAMESPACE}" --context "kind-${CLUSTER_NAME}" || true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 12: Port-forward Gateway service
+# ─────────────────────────────────────────────────────────────────────────────
+step "Setting up port-forward (localhost:${PORT_FORWARD_PORT} → gateway:8080)"
+
+# Kill any existing port-forward on the same port
+lsof -ti ":${PORT_FORWARD_PORT}" 2>/dev/null | xargs -r kill 2>/dev/null || true
+
+# Wait until the istio gateway deployment is ready
+info "Waiting for the istio gateway deployment to be ready..."
+kubectl wait --for=condition=available --timeout=120s deployment/demo-gateway-istio -n quickstart-ns || true
+
+# Kill any existing port-forwards and proxies
+pkill -f "kubectl port-forward svc/demo-gateway-istio" || true
+pkill -f "node ${SCRIPT_DIR}/proxy.js" || true
+
+# Start port-forward on port 8081 in background
+kubectl port-forward svc/demo-gateway-istio 8081:8080 -n quickstart-ns >/dev/null 2>&1 &
+PF_PID=$!
+sleep 2
+
+if kill -0 "${PF_PID}" 2>/dev/null; then
+  success "Port-forward active (PID ${PF_PID}) on port 8081"
+else
+  warn "Port-forward may have failed — check manually"
+fi
+
+# Start the header-injecting proxy on port 8080
+node "${SCRIPT_DIR}/proxy.js" >/dev/null 2>&1 &
+PROXY_PID=$!
+sleep 1
+
+if kill -0 "${PROXY_PID}" 2>/dev/null; then
+  success "MCP Proxy active (PID ${PROXY_PID}) on port 8080"
+else
+  warn "Proxy may have failed — check manually"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 13: Print instructions
+# ─────────────────────────────────────────────────────────────────────────────
+step "Multi-Policy Demo ready!"
+
+echo ""
+echo -e "${GREEN}${BOLD}  ✅  accesspolicy-controller multi-policy demo is running!${RESET}"
+echo ""
+echo -e "  To visualize the policy enforcement, run the official MCP Inspector in a new terminal:"
+echo -e "  ${CYAN}npx -y @modelcontextprotocol/inspector --transport sse --server-url http://localhost:${PORT_FORWARD_PORT}/sse${RESET}"
+echo ""
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${BOLD}  We applied two independent XAccessPolicies targeting the same Gateway!${RESET}"
+echo -e "  - Team A allowed 'get-sum'"
+echo -e "  - Team B allowed 'echo'"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo ""
+printf "  ${BOLD}%-20s %-15s${RESET}\n" "Tool" "Expected"
+printf "  ${DIM}%-20s %-15s${RESET}\n" "────────────────────" "───────────────"
+printf "  %-20s ${GREEN}%-15s${RESET}\n" "get-sum" "✅ Allowed (by Team A)"
+printf "  %-20s ${GREEN}%-15s${RESET}\n" "echo" "✅ Allowed (by Team B)"
+printf "  %-20s ${RED}%-15s${RESET}\n" "get-tiny-image" "❌ Blocked"
+echo ""
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo ""
+echo -e "  ${DIM}Cleanup: make quickstart-clean${RESET}"
+echo -e "  ${DIM}Logs:    kubectl logs -n accesspolicy-system deployment/accesspolicy-controller-manager -c manager -f${RESET}"
+echo ""
