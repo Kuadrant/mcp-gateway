@@ -356,13 +356,13 @@ func TestVirtualServerFiltering(t *testing.T) {
 			ExpectedTools:   []string{},
 		},
 		{
-			Name: "returns all tools when virtual server not found",
+			Name: "returns empty when virtual server not found",
 			InputTools: &mcp.ListToolsResult{Tools: []mcp.Tool{
 				{Name: "server1_tool1"},
 			}},
 			VirtualServers:  map[string]*config.VirtualServer{},
 			VirtualServerID: "mcp-test/nonexistent",
-			ExpectedTools:   []string{"server1_tool1"}, // returns original tools when VS not found
+			ExpectedTools:   []string{},
 		},
 		{
 			Name: "returns all tools when no virtual server header",

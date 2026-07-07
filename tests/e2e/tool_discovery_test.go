@@ -314,9 +314,13 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(k8sClient.Create(ctx, vs)).To(Succeed())
 
 			vsHeader := fmt.Sprintf("%s/%s", vs.Namespace, vs.Name)
-			sessionID, err := mcpInitialize(ctx, toolDiscURL, map[string]string{"X-Mcp-Virtualserver": vsHeader})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mcpNotifyInitialized(ctx, toolDiscURL, sessionID, map[string]string{"X-Mcp-Virtualserver": vsHeader})).To(Succeed())
+			var sessionID string
+			Eventually(func(g Gomega) {
+				var err error
+				sessionID, err = mcpInitialize(ctx, toolDiscURL, map[string]string{"X-Mcp-Virtualserver": vsHeader})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(mcpNotifyInitialized(ctx, toolDiscURL, sessionID, map[string]string{"X-Mcp-Virtualserver": vsHeader})).To(Succeed())
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("discover_tools should only return the virtual server's allowed tools")
 			Eventually(func(g Gomega) {

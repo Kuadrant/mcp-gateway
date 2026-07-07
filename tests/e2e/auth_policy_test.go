@@ -243,9 +243,13 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		}
 
-		sessionID, err := mcpInitialize(ctx, authGatewayURL, headers)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+		var sessionID string
+		Eventually(func(g Gomega) {
+			var err error
+			sessionID, err = mcpInitialize(ctx, authGatewayURL, headers)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, headers)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Listing prompts — JWT allows test1_greet, VirtualServer allows everything_simple_prompt, intersection is empty")
 		Eventually(func(g Gomega) {
