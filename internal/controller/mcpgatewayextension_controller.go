@@ -23,7 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/proto"
@@ -52,7 +52,7 @@ const (
 	labelIstioRev = "istio.io/rev"
 )
 
-func envoyFilterLabels(mcpExt *mcpv1alpha1.MCPGatewayExtension, gateway *gatewayv1.Gateway) map[string]string {
+func envoyFilterLabels(mcpExt *mcpv1.MCPGatewayExtension, gateway *gatewayv1.Gateway) map[string]string {
 	// inherit istio.io/rev from gateway, default to "default" if not set
 	istioRev := "default"
 	if gateway != nil && gateway.Labels != nil {
@@ -131,7 +131,7 @@ type MCPGatewayExtensionReconciler struct {
 
 // Reconcile reconciles an MCPGatewayExtension resource. Deploying and configuring a MCP Gateway instance configured to integrate and provide MCP functionality with the targeted gateway
 func (r *MCPGatewayExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{}
+	mcpExt := &mcpv1.MCPGatewayExtension{}
 	if err := r.Get(ctx, req.NamespacedName, mcpExt); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -148,7 +148,7 @@ func (r *MCPGatewayExtensionReconciler) Reconcile(ctx context.Context, req ctrl.
 	return r.reconcileActive(ctx, mcpExt)
 }
 
-func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (ctrl.Result, error) {
+func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(mcpExt, mcpGatewayFinalizer) {
 		return ctrl.Result{}, nil
 	}
@@ -173,7 +173,7 @@ func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpE
 	return ctrl.Result{}, r.Update(ctx, mcpExt)
 }
 
-func (r *MCPGatewayExtensionReconciler) ensureFinalizer(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+func (r *MCPGatewayExtensionReconciler) ensureFinalizer(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (bool, error) {
 	if controllerutil.ContainsFinalizer(mcpExt, mcpGatewayFinalizer) {
 		return false, nil
 	}
@@ -182,7 +182,7 @@ func (r *MCPGatewayExtensionReconciler) ensureFinalizer(ctx context.Context, mcp
 	return true, r.Update(ctx, mcpExt)
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (ctrl.Result, error) {
+func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (ctrl.Result, error) {
 	// check for namespace conflict first - only one MCPGatewayExtension per namespace
 	if err := r.checkNamespaceConflict(ctx, mcpExt); err != nil {
 		var valErr *validationError
@@ -255,7 +255,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if !deploymentReady {
-		if err := r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, mcpv1alpha1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready"); err != nil {
+		if err := r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, mcpv1.ConditionReasonDeploymentNotReady, "broker-router deployment is not ready"); err != nil {
 			return ctrl.Result{}, err
 		}
 		// requeue to check deployment status again since Owns watch doesn't trigger on status-only changes
@@ -272,14 +272,14 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "successfully verified and configured")
+	return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "successfully verified and configured")
 }
 
-func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (*gatewayv1.Gateway, *mcpv1alpha1.ListenerConfig, error) {
+func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (*gatewayv1.Gateway, *mcpv1.ListenerConfig, error) {
 	targetGateway, err := r.gatewayTarget(ctx, mcpExt.Spec.TargetRef)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+			return nil, nil, newValidationError(mcpv1.ConditionReasonInvalid,
 				fmt.Sprintf("invalid: gateway target %s/%s not found", mcpExt.Spec.TargetRef.Namespace, mcpExt.Spec.TargetRef.Name))
 		}
 		return nil, nil, err
@@ -293,7 +293,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 
 	// a resolvable hostname is required: either the listener must have one or spec.publicHost must be set
 	if listenerConfig.Hostname == "" && mcpExt.Spec.PublicHost == "" {
-		return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+		return nil, nil, newValidationError(mcpv1.ConditionReasonInvalid,
 			fmt.Sprintf("listener %q on gateway %s/%s has no hostname and spec.publicHost is not set",
 				mcpExt.Spec.TargetRef.SectionName, targetGateway.Namespace, targetGateway.Name))
 	}
@@ -308,7 +308,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 	for _, listener := range targetGateway.Spec.Listeners {
 		if string(listener.Name) == mcpExt.Spec.TargetRef.SectionName {
 			if !listenerAllowsNamespace(&listener, mcpExt.Namespace, targetGateway.Namespace, ns.Labels) {
-				return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+				return nil, nil, newValidationError(mcpv1.ConditionReasonInvalid,
 					fmt.Sprintf("listener %q on gateway %s/%s does not allow routes from namespace %q",
 						mcpExt.Spec.TargetRef.SectionName, targetGateway.Namespace, targetGateway.Name, mcpExt.Namespace))
 			}
@@ -330,7 +330,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 			if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
 				return nil, nil, err
 			}
-			return nil, nil, newValidationError(mcpv1alpha1.ConditionReasonRefGrantRequired,
+			return nil, nil, newValidationError(mcpv1.ConditionReasonRefGrantRequired,
 				fmt.Sprintf("invalid: ReferenceGrant required in %s to allow cross-namespace reference from %s", mcpExt.Spec.TargetRef.Namespace, mcpExt.Namespace))
 		}
 	}
@@ -339,7 +339,7 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 }
 
 // findListenerConfigByName finds listener configuration by name.
-func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*mcpv1alpha1.ListenerConfig, error) {
+func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*mcpv1.ListenerConfig, error) {
 	for _, listener := range gateway.Spec.Listeners {
 		if string(listener.Name) == sectionName {
 			hostname := ""
@@ -347,7 +347,7 @@ func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*
 				hostname = string(*listener.Hostname)
 			}
 			port := uint32(listener.Port) // #nosec G115
-			return &mcpv1alpha1.ListenerConfig{
+			return &mcpv1.ListenerConfig{
 				Port:     port,
 				Hostname: hostname,
 				Name:     sectionName,
@@ -355,7 +355,7 @@ func findListenerConfigByName(gateway *gatewayv1.Gateway, sectionName string) (*
 			}, nil
 		}
 	}
-	return nil, newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+	return nil, newValidationError(mcpv1.ConditionReasonInvalid,
 		fmt.Sprintf("listener %q not found on gateway %s/%s", sectionName, gateway.Namespace, gateway.Name))
 }
 
@@ -402,14 +402,14 @@ func listenerAllowsNamespace(listener *gatewayv1.Listener, namespace, gatewayNam
 
 // checkNamespaceConflict checks if there are multiple MCPGatewayExtensions in the same namespace.
 // Only one MCPGatewayExtension is allowed per namespace. The oldest (by creation timestamp) wins.
-func (r *MCPGatewayExtensionReconciler) checkNamespaceConflict(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
-	extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+func (r *MCPGatewayExtensionReconciler) checkNamespaceConflict(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
+	extList := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, extList, client.InNamespace(mcpExt.Namespace)); err != nil {
 		return fmt.Errorf("failed to list extensions in namespace: %w", err)
 	}
 
 	// filter out extensions being deleted
-	var activeExts []mcpv1alpha1.MCPGatewayExtension
+	var activeExts []mcpv1.MCPGatewayExtension
 	for _, ext := range extList.Items {
 		if ext.DeletionTimestamp == nil {
 			activeExts = append(activeExts, ext)
@@ -425,7 +425,7 @@ func (r *MCPGatewayExtensionReconciler) checkNamespaceConflict(ctx context.Conte
 		return nil // this is the oldest one, it's valid
 	}
 
-	return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+	return newValidationError(mcpv1.ConditionReasonInvalid,
 		fmt.Sprintf("conflict: namespace %s already has MCPGatewayExtension %s (only one per namespace allowed)",
 			mcpExt.Namespace, oldest.Name))
 }
@@ -433,7 +433,7 @@ func (r *MCPGatewayExtensionReconciler) checkNamespaceConflict(ctx context.Conte
 // checkListenerConflict checks if there are multiple MCPGatewayExtensions targeting listeners
 // that share the same port on the same Gateway. This is invalid because only one ext_proc
 // can handle a given port.
-func (r *MCPGatewayExtensionReconciler) checkListenerConflict(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+func (r *MCPGatewayExtensionReconciler) checkListenerConflict(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1.ListenerConfig) error {
 	existingExts, err := r.listMCPGatewayExtsForGateway(ctx, targetGateway)
 	if err != nil {
 		return fmt.Errorf("failed to list extensions for gateway: %w", err)
@@ -457,9 +457,9 @@ func (r *MCPGatewayExtensionReconciler) checkListenerConflict(ctx context.Contex
 		}
 		if extListenerConfig.Port == listenerConfig.Port {
 			// conflict: same port on same gateway
-			oldest := findOldestExtension([]mcpv1alpha1.MCPGatewayExtension{*mcpExt, ext})
+			oldest := findOldestExtension([]mcpv1.MCPGatewayExtension{*mcpExt, ext})
 			if oldest.GetUID() != mcpExt.GetUID() {
-				return newValidationError(mcpv1alpha1.ConditionReasonInvalid,
+				return newValidationError(mcpv1.ConditionReasonInvalid,
 					fmt.Sprintf("conflict: listener port %d on gateway %s/%s is already configured by MCPGatewayExtension %s/%s (listener %s)",
 						listenerConfig.Port, targetGateway.Namespace, targetGateway.Name, ext.Namespace, ext.Name, ext.Spec.TargetRef.SectionName))
 			}
@@ -469,7 +469,7 @@ func (r *MCPGatewayExtensionReconciler) checkListenerConflict(ctx context.Contex
 	return nil
 }
 
-func findOldestExtension(exts []mcpv1alpha1.MCPGatewayExtension) *mcpv1alpha1.MCPGatewayExtension {
+func findOldestExtension(exts []mcpv1.MCPGatewayExtension) *mcpv1.MCPGatewayExtension {
 	oldest := &exts[0]
 	for i := 1; i < len(exts); i++ {
 		if exts[i].CreationTimestamp.Before(&oldest.CreationTimestamp) {
@@ -479,15 +479,15 @@ func findOldestExtension(exts []mcpv1alpha1.MCPGatewayExtension) *mcpv1alpha1.MC
 	return oldest
 }
 
-func (r *MCPGatewayExtensionReconciler) updateStatus(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, status metav1.ConditionStatus, reason, message string) error {
-	existing := meta.FindStatusCondition(mcpExt.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+func (r *MCPGatewayExtensionReconciler) updateStatus(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, status metav1.ConditionStatus, reason, message string) error {
+	existing := meta.FindStatusCondition(mcpExt.Status.Conditions, mcpv1.ConditionTypeReady)
 	var existingCopy metav1.Condition
 	if existing != nil {
 		existingCopy = *existing
 	}
 
 	mcpExt.SetReadyCondition(status, reason, message)
-	updated := meta.FindStatusCondition(mcpExt.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+	updated := meta.FindStatusCondition(mcpExt.Status.Conditions, mcpv1.ConditionTypeReady)
 
 	if existing != nil && equality.Semantic.DeepEqual(existingCopy, *updated) {
 		return nil
@@ -500,7 +500,7 @@ const GatewayListenerConditionType gatewayv1.ListenerConditionType = "MCPGateway
 
 // updateGatewayListenerStatus updates the Gateway listener status with a condition
 // indicating that an MCP Gateway Extension is configured for this listener
-func (r *MCPGatewayExtensionReconciler) updateGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, gateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+func (r *MCPGatewayExtensionReconciler) updateGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, gateway *gatewayv1.Gateway, listenerConfig *mcpv1.ListenerConfig) error {
 	// get fresh copy of gateway to avoid conflicts
 	freshGateway := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(gateway), freshGateway); err != nil {
@@ -562,7 +562,7 @@ func (r *MCPGatewayExtensionReconciler) updateGatewayListenerStatus(ctx context.
 
 // removeGatewayListenerStatus removes the MCP Gateway Extension condition from
 // the Gateway listener status during cleanup
-func (r *MCPGatewayExtensionReconciler) removeGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) removeGatewayListenerStatus(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	gatewayNamespace := mcpExt.Spec.TargetRef.Namespace
 	if gatewayNamespace == "" {
 		gatewayNamespace = mcpExt.Namespace
@@ -609,7 +609,7 @@ func (r *MCPGatewayExtensionReconciler) removeGatewayListenerStatus(ctx context.
 	return r.Status().Update(ctx, gateway)
 }
 
-func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, target mcpv1alpha1.MCPGatewayExtensionTargetReference) (*gatewayv1.Gateway, error) {
+func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, target mcpv1.MCPGatewayExtensionTargetReference) (*gatewayv1.Gateway, error) {
 	g := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: target.Namespace, Name: target.Name}, g); err != nil {
 		// return NotFound errors unwrapped so caller can check with apierrors.IsNotFound
@@ -621,11 +621,11 @@ func (r *MCPGatewayExtensionReconciler) gatewayTarget(ctx context.Context, targe
 	return g, nil
 }
 
-func mcpExtToRefGrantIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
-	return fmt.Sprintf("%s/MCPGatewayExtension/%s", mcpv1alpha1.GroupVersion.Group, mext.Namespace)
+func mcpExtToRefGrantIndexValue(mext mcpv1.MCPGatewayExtension) string {
+	return fmt.Sprintf("%s/MCPGatewayExtension/%s", mcpv1.GroupVersion.Group, mext.Namespace)
 }
 
-func mcpExtToGatewayIndexValue(mext mcpv1alpha1.MCPGatewayExtension) string {
+func mcpExtToGatewayIndexValue(mext mcpv1.MCPGatewayExtension) string {
 	return fmt.Sprintf("%s/%s", mext.Spec.TargetRef.Namespace, mext.Spec.TargetRef.Name)
 }
 
@@ -642,10 +642,10 @@ func refGrantToMCPExtIndexValue(r gatewayv1beta1.ReferenceGrant) string {
 func setupIndexExtensionToGateway(ctx context.Context, indexer client.FieldIndexer) error {
 	if err := indexer.IndexField(
 		ctx,
-		&mcpv1alpha1.MCPGatewayExtension{},
+		&mcpv1.MCPGatewayExtension{},
 		gatewayIndexKey,
 		func(obj client.Object) []string {
-			mcpExt, ok := obj.(*mcpv1alpha1.MCPGatewayExtension)
+			mcpExt, ok := obj.(*mcpv1.MCPGatewayExtension)
 			if !ok {
 				return nil
 			}
@@ -657,8 +657,8 @@ func setupIndexExtensionToGateway(ctx context.Context, indexer client.FieldIndex
 	return nil
 }
 
-func (r *MCPGatewayExtensionReconciler) listMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) (*mcpv1alpha1.MCPGatewayExtensionList, error) {
-	mcpGatewayExtList := &mcpv1alpha1.MCPGatewayExtensionList{}
+func (r *MCPGatewayExtensionReconciler) listMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) (*mcpv1.MCPGatewayExtensionList, error) {
+	mcpGatewayExtList := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, mcpGatewayExtList,
 		client.MatchingFields{gatewayIndexKey: gatewayToMCPExtIndexValue(*g)},
 	); err != nil {
@@ -689,10 +689,10 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForGateway(ctx conte
 func setupIndexExtensionToReferenceGrant(ctx context.Context, indexer client.FieldIndexer) error {
 	if err := indexer.IndexField(
 		ctx,
-		&mcpv1alpha1.MCPGatewayExtension{},
+		&mcpv1.MCPGatewayExtension{},
 		refGrantIndexKey,
 		func(obj client.Object) []string {
-			mcpGatewayExt, ok := obj.(*mcpv1alpha1.MCPGatewayExtension)
+			mcpGatewayExt, ok := obj.(*mcpv1.MCPGatewayExtension)
 			if !ok {
 				return nil
 			}
@@ -712,7 +712,7 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 
 	r.log.Debug("processing reference grant change", "name", ref.Name, "namespace", ref.Namespace)
 
-	mcpGatewayExtList := &mcpv1alpha1.MCPGatewayExtensionList{}
+	mcpGatewayExtList := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, mcpGatewayExtList,
 		client.MatchingFields{refGrantIndexKey: refGrantToMCPExtIndexValue(*ref)},
 	); err != nil {
@@ -729,7 +729,7 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 	return requests
 }
 
-func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) (*istionetv1alpha3.EnvoyFilter, error) {
+func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1.ListenerConfig) (*istionetv1alpha3.EnvoyFilter, error) {
 	// build the ext_proc filter config as a structpb.Struct
 	extProcConfig, err := structpb.NewStruct(map[string]any{
 		"name": "envoy.filters.http.ext_proc",
@@ -803,7 +803,7 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1alpha1.MCP
 	}, nil
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1alpha1.ListenerConfig) error {
+func (r *MCPGatewayExtensionReconciler) reconcileEnvoyFilter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *mcpv1.ListenerConfig) error {
 	envoyFilter, err := r.buildEnvoyFilter(mcpExt, targetGateway, listenerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to build envoy filter: %w", err)
@@ -863,7 +863,7 @@ func managedLabelsDiff(existing, desired map[string]string) string {
 	return ""
 }
 
-func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	name, namespace := envoyFilterNameAndNamespace(mcpExt)
 	envoyFilter := &istionetv1alpha3.EnvoyFilter{}
 	if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, envoyFilter); err != nil {
@@ -880,7 +880,7 @@ func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, m
 	return nil
 }
 
-func envoyFilterNameAndNamespace(mcpExt *mcpv1alpha1.MCPGatewayExtension) (name, namespace string) {
+func envoyFilterNameAndNamespace(mcpExt *mcpv1.MCPGatewayExtension) (name, namespace string) {
 	name = fmt.Sprintf("mcp-ext-proc-%s-gateway", mcpExt.Namespace)
 	namespace = mcpExt.Spec.TargetRef.Namespace
 	if namespace == "" {
@@ -925,7 +925,7 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 	// enqueue when reference grants change
 	// enqueue when envoy filter changes (cross-namespace, so we use Watches instead of Owns)
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPGatewayExtension{}).
+		For(&mcpv1.MCPGatewayExtension{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).

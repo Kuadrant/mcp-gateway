@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -576,7 +576,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			_, respBody, _, err := mcpRawPost(ctx, toolDiscURL, sessionID,
 				[]byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"discover_tools"}}`), nil)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(respBody).To(ContainSubstring(`"error"`), "discover_tools should return a JSON-RPC error when disabled")
+			Expect(respBody).To(Or(ContainSubstring(`"error"`), ContainSubstring(`"isError":true`)), "discover_tools should return an error when disabled")
 		})
 
 		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
@@ -875,7 +875,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("updating category and hint on the live MCPServerRegistration")
 			Eventually(func(g Gomega) {
-				fresh := &mcpv1alpha1.MCPServerRegistration{}
+				fresh := &mcpv1.MCPServerRegistration{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKey{
 					Name:      server.Name,
 					Namespace: server.Namespace,

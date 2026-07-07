@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	. "github.com/onsi/ginkgo/v2"
@@ -504,7 +504,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		DeferCleanup(func() {
 			By("Cleanup: removing sessionStore from MCPGatewayExtension")
 			Eventually(func(g Gomega) {
-				ext := &mcpv1alpha1.MCPGatewayExtension{}
+				ext := &mcpv1.MCPGatewayExtension{}
 				g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
 				ext.Spec.SessionStore = nil
 				g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
@@ -531,9 +531,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Enabling Redis session cache via sessionStore on MCPGatewayExtension")
 		Eventually(func(g Gomega) {
-			ext := &mcpv1alpha1.MCPGatewayExtension{}
+			ext := &mcpv1.MCPGatewayExtension{}
 			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
-			ext.Spec.SessionStore = &mcpv1alpha1.SessionStore{SecretName: redisSecretName}
+			ext.Spec.SessionStore = &mcpv1.SessionStore{SecretName: redisSecretName}
 			g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
@@ -1529,7 +1529,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Disabling the MCPServerRegistration by patching spec.state to Disabled")
 		patch := client.MergeFrom(registeredServer.DeepCopy())
-		registeredServer.Spec.State = mcpv1alpha1.ServerStateDisabled
+		registeredServer.Spec.State = mcpv1.ServerStateDisabled
 		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
 
 		By("Verifying tools are removed from the gateway's tool list")
@@ -1548,7 +1548,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Re-enabling the MCPServerRegistration by patching spec.state back to Enabled")
 		patch = client.MergeFrom(registeredServer.DeepCopy())
-		registeredServer.Spec.State = mcpv1alpha1.ServerStateEnabled
+		registeredServer.Spec.State = mcpv1.ServerStateEnabled
 		Expect(k8sClient.Patch(ctx, registeredServer, patch)).To(Succeed())
 
 		By("Verifying tools return to the gateway's tool list")

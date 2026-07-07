@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,7 +25,7 @@ func createTestManagerWithMeta(t *testing.T, serverName, prefix string, tools []
 		Category: category,
 		Hint:     hint,
 	}, "")
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)
 	return upstream.NewActiveForTesting(manager)

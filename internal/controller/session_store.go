@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -13,7 +13,7 @@ import (
 )
 
 // validateSessionStore checks that the session store secret exists and contains the CACHE_CONNECTION_STRING key.
-func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	if mcpExt.Spec.SessionStore == nil {
 		return nil
 	}
@@ -22,27 +22,27 @@ func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context
 	secret := &corev1.Secret{}
 	if err := r.DirectAPIReader.Get(ctx, client.ObjectKey{Name: secretName, Namespace: mcpExt.Namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return newValidationError(mcpv1alpha1.ConditionReasonSecretNotFound,
+			return newValidationError(mcpv1.ConditionReasonSecretNotFound,
 				fmt.Sprintf("session store secret %s not found in namespace %s", secretName, mcpExt.Namespace))
 		}
 		return fmt.Errorf("failed to get session store secret: %w", err)
 	}
 
 	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s is missing required label %s=%s", secretName, ManagedSecretLabel, ManagedSecretValue))
 	}
 	if secret.Data == nil {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s has no data", secretName))
 	}
 	val, ok := secret.Data["CACHE_CONNECTION_STRING"]
 	if !ok {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s is missing required data entry \"CACHE_CONNECTION_STRING\"", secretName))
 	}
 	if len(val) == 0 {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s has empty \"CACHE_CONNECTION_STRING\" value", secretName))
 	}
 
@@ -54,7 +54,7 @@ func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context
 func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
 
-	extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+	extList := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, extList, client.InNamespace(secret.Namespace)); err != nil {
 		return nil
 	}

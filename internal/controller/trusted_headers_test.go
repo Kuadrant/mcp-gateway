@@ -6,19 +6,19 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 func TestBuildTrustedHeadersSecrets(t *testing.T) {
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TrustedHeadersKey: &mcpv1alpha1.TrustedHeadersKey{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TrustedHeadersKey: &mcpv1.TrustedHeadersKey{
 				SecretName: "my-keys",
-				Generate:   mcpv1alpha1.KeyGenerationEnabled,
+				Generate:   mcpv1.KeyGenerationEnabled,
 			},
 		},
 	}
@@ -98,7 +98,7 @@ func TestValidateTrustedHeadersSecret(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			wantReason: mcpv1alpha1.ConditionReasonSecretInvalid,
+			wantReason: mcpv1.ConditionReasonSecretInvalid,
 		},
 		{
 			name: "empty data map",
@@ -106,13 +106,13 @@ func TestValidateTrustedHeadersSecret(t *testing.T) {
 				Data: map[string][]byte{},
 			},
 			wantErr:    true,
-			wantReason: mcpv1alpha1.ConditionReasonSecretInvalid,
+			wantReason: mcpv1.ConditionReasonSecretInvalid,
 		},
 		{
 			name:       "nil data",
 			secret:     &corev1.Secret{},
 			wantErr:    true,
-			wantReason: mcpv1alpha1.ConditionReasonSecretInvalid,
+			wantReason: mcpv1.ConditionReasonSecretInvalid,
 		},
 	}
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,7 +42,7 @@ func (f *fakeMCPExtLister) ListMCPGatewayExtensionNamespaces(_ context.Context) 
 
 func newVirtualServerReconciler(writer *fakeVSConfigWriter, lister *fakeMCPExtLister, objs ...client.Object) *MCPVirtualServerReconciler {
 	scheme := runtime.NewScheme()
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -111,24 +111,26 @@ func TestMCPVirtualServerReconciler_doesNotWriteToDefaultNamespace(t *testing.T)
 func TestReconcile_VirtualServerDeletion_WritesConfig(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
-	deleting := &mcpv1alpha1.MCPVirtualServer{
+	// the virtual server being deleted — has DeletionTimestamp and the finalizer
+	deleting := &mcpv1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "vs-deleting",
 			Namespace:         "ns",
 			DeletionTimestamp: &now,
 			Finalizers:        []string{mcpGatewayFinalizer},
 		},
-		Spec: mcpv1alpha1.MCPVirtualServerSpec{
+		Spec: mcpv1.MCPVirtualServerSpec{
 			Tools: []string{"tool_a"},
 		},
 	}
 
-	remaining := &mcpv1alpha1.MCPVirtualServer{
+	// a second virtual server that should remain
+	remaining := &mcpv1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "vs-remaining",
 			Namespace: "ns",
 		},
-		Spec: mcpv1alpha1.MCPVirtualServerSpec{
+		Spec: mcpv1.MCPVirtualServerSpec{
 			Tools: []string{"tool_b"},
 		},
 	}
@@ -164,14 +166,14 @@ func TestReconcile_VirtualServerDeletion_WritesConfig(t *testing.T) {
 func TestReconcile_VirtualServerDeletion_EmptyConfigWhenLast(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 
-	last := &mcpv1alpha1.MCPVirtualServer{
+	last := &mcpv1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "vs-last",
 			Namespace:         "ns",
 			DeletionTimestamp: &now,
 			Finalizers:        []string{mcpGatewayFinalizer},
 		},
-		Spec: mcpv1alpha1.MCPVirtualServerSpec{
+		Spec: mcpv1.MCPVirtualServerSpec{
 			Tools: []string{"tool_a"},
 		},
 	}

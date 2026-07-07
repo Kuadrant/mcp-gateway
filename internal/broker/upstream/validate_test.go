@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 )
@@ -307,6 +307,6 @@ func TestValidatePrompts(t *testing.T) {
 }
 
 func TestInvalidToolPolicyConstants(t *testing.T) {
-	assert.Equal(t, mcpv1alpha1.InvalidToolPolicy("FilterOut"), mcpv1alpha1.InvalidToolPolicyFilterOut)
-	assert.Equal(t, mcpv1alpha1.InvalidToolPolicy("RejectServer"), mcpv1alpha1.InvalidToolPolicyRejectServer)
+	assert.Equal(t, mcpv1.InvalidToolPolicy("FilterOut"), mcpv1.InvalidToolPolicyFilterOut)
+	assert.Equal(t, mcpv1.InvalidToolPolicy("RejectServer"), mcpv1.InvalidToolPolicyRejectServer)
 }

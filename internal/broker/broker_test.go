@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/tests/server2"
@@ -296,7 +296,7 @@ func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
 func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
 	mcpServer := upstream.NewUpstreamMCP(&cfg, "")
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	return manager
 }

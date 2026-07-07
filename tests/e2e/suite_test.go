@@ -56,7 +56,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 var (
@@ -81,7 +81,7 @@ func setupK8sClient() {
 
 	testScheme = runtime.NewScheme()
 	Expect(scheme.AddToScheme(testScheme)).To(Succeed())
-	Expect(mcpv1alpha1.AddToScheme(testScheme)).To(Succeed())
+	Expect(mcpv1.AddToScheme(testScheme)).To(Succeed())
 	Expect(gatewayapiv1.Install(testScheme)).To(Succeed())
 	Expect(gatewayv1beta1.Install(testScheme)).To(Succeed())
 	Expect(istionetv1beta1.AddToScheme(testScheme)).To(Succeed())
@@ -121,7 +121,7 @@ var _ = SynchronizedBeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("System namespace %s must exist", SystemNamespace))
 
 	By("cleaning up all existing mcpserverregistrations")
-	err = k8sClient.DeleteAllOf(ctx, &mcpv1alpha1.MCPServerRegistration{}, client.InNamespace(TestServerNameSpace), &client.DeleteAllOfOptions{ListOptions: client.ListOptions{
+	err = k8sClient.DeleteAllOf(ctx, &mcpv1.MCPServerRegistration{}, client.InNamespace(TestServerNameSpace), &client.DeleteAllOfOptions{ListOptions: client.ListOptions{
 		LabelSelector: labels.Everything(),
 	}})
 	Expect(err).ToNot(HaveOccurred(), "all existing MCPServers should be removed before the e2e test suite")
@@ -131,12 +131,12 @@ var _ = SynchronizedBeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred(), "all existing HTTPRoutes should be removed before the e2e test suite")
 
 	By("cleaning up all existing mcpgatewayextensions")
-	err = k8sClient.DeleteAllOf(ctx, &mcpv1alpha1.MCPGatewayExtension{}, client.InNamespace(SystemNamespace))
+	err = k8sClient.DeleteAllOf(ctx, &mcpv1.MCPGatewayExtension{}, client.InNamespace(SystemNamespace))
 	Expect(err).ToNot(HaveOccurred(), "all existing MCPGatewayExtensions should be removed before the e2e test suite")
 
 	By("waiting for existing mcpgatewayextensions to be fully deleted")
 	Eventually(func(g Gomega) {
-		extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+		extList := &mcpv1.MCPGatewayExtensionList{}
 		err := k8sClient.List(ctx, extList, client.InNamespace(SystemNamespace))
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(extList.Items).To(BeEmpty())

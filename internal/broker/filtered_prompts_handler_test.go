@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,7 +19,7 @@ func createPromptTestManager(t *testing.T, serverName, prefix string, prompts []
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
 	}, "")
-	manager, _ := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, _ := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1.InvalidToolPolicyFilterOut)
 	manager.SetPromptsForTesting(prompts)
 	return manager
 }
