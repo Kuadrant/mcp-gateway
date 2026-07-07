@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -45,12 +46,12 @@ func isBrokerToolName(name string) bool {
 
 // IsBrokerTool returns true if the given tool is a broker-internal meta-tool,
 // either by name (static tools) or by meta annotation (dynamic tools like tags).
-func IsBrokerTool(tool mcp.Tool) bool {
+func IsBrokerTool(tool *mcp.Tool) bool {
 	if isBrokerToolName(tool.Name) {
 		return true
 	}
-	if tool.Meta != nil {
-		if v, ok := tool.Meta.AdditionalFields[brokerToolMetaKey]; ok {
+	if len(tool.Meta) > 0 {
+		if v, ok := tool.Meta[brokerToolMetaKey]; ok {
 			if b, ok := v.(bool); ok && b {
 				return true
 			}
@@ -77,14 +78,34 @@ type serverInfo struct {
 	Tools      []string `json:"tools"`
 }
 
+// headersFromRequest safely extracts HTTP headers from a CallToolRequest
+func headersFromRequest(req *mcp.CallToolRequest) http.Header {
+	if req.Extra != nil {
+		return req.Extra.Header
+	}
+	return nil
+}
+
+// unmarshalArguments unmarshals req.Params.Arguments into a map
+func unmarshalArguments(req *mcp.CallToolRequest) (map[string]any, error) {
+	if len(req.Params.Arguments) == 0 {
+		return map[string]any{}, nil
+	}
+	var args map[string]any
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return nil, err
+	}
+	return args, nil
+}
+
 // registerDiscoveryTools adds the discover_tools and select_tools meta-tools to the broker's MCP server
 func (m *mcpBrokerImpl) registerDiscoveryTools() {
 	discoverTool := mcp.Tool{
 		Name:        discoverToolsName,
 		Description: "Browse available servers and tools. Returns server names, categories, hints, and tool names without full schemas. Use the optional category parameter to filter by category.",
-		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]any{
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
 				"category": map[string]any{
 					"type":        "string",
 					"description": "Filter servers by category (case-insensitive match against any element in the server's category list)",
@@ -92,17 +113,17 @@ func (m *mcpBrokerImpl) registerDiscoveryTools() {
 			},
 		},
 	}
-	discoverTool.Meta = mcp.NewMetaFromMap(map[string]any{
+	discoverTool.Meta = mcp.Meta{
 		brokerToolMetaKey: true,
 		"kuadrant/id":     brokerServerID,
-	})
+	}
 
 	selectTool := mcp.Tool{
 		Name:        selectToolsName,
 		Description: "Scope your session to a specific set of tools. After calling this, subsequent tools/list calls will return only the selected tools with full schemas. Pass an empty list to reset to the full tool set.",
-		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]any{
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
 				"tools": map[string]any{
 					"type":        "array",
 					"description": "List of tool names to include in your session scope. Pass an empty array to reset to the full tool set.",
@@ -111,26 +132,31 @@ func (m *mcpBrokerImpl) registerDiscoveryTools() {
 					},
 				},
 			},
-			Required: []string{"tools"},
+			"required": []string{"tools"},
 		},
 	}
-	selectTool.Meta = mcp.NewMetaFromMap(map[string]any{
+	selectTool.Meta = mcp.Meta{
 		brokerToolMetaKey: true,
 		"kuadrant/id":     brokerServerID,
-	})
+	}
 
-	m.listeningMCPServer.AddTools(
-		server.ServerTool{Tool: discoverTool, Handler: m.handleDiscoverTools},
-		server.ServerTool{Tool: selectTool, Handler: m.handleSelectTools},
+	m.gatewayServer.AddTools(
+		upstream.GatewayTool{Tool: discoverTool, Handler: m.handleDiscoverTools},
+		upstream.GatewayTool{Tool: selectTool, Handler: m.handleSelectTools},
 	)
 }
 
 // handleDiscoverTools implements the discover_tools tool handler
-func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	_, span := otel.Tracer("broker").Start(ctx, "discover_tools")
 	defer span.End()
 
-	categoryFilter := req.GetString("category", "")
+	args, err := unmarshalArguments(req)
+	if err != nil {
+		return upstream.NewToolResultError("invalid arguments"), nil
+	}
+	categoryFilter, _ := args["category"].(string)
+
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.String("discovery.tool", discoverToolsName),
@@ -138,8 +164,10 @@ func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req mcp.CallToo
 		)
 	}
 
+	headers := headersFromRequest(req)
+
 	m.mcpLock.RLock()
-	resp := m.buildDiscoverResponse(req.Header, categoryFilter)
+	resp := m.buildDiscoverResponse(headers, categoryFilter)
 	m.mcpLock.RUnlock()
 
 	slices.SortFunc(resp.Servers, func(a, b serverInfo) int {
@@ -155,7 +183,7 @@ func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req mcp.CallToo
 
 // buildDiscoverResponse collects server info for visible tools, optionally filtered by category.
 // caller must hold mcpLock.
-func (m *mcpBrokerImpl) buildDiscoverResponse(headers map[string][]string, categoryFilter string) discoverToolsResponse {
+func (m *mcpBrokerImpl) buildDiscoverResponse(headers http.Header, categoryFilter string) discoverToolsResponse {
 	visible := m.getVisibleToolNames(headers)
 	resp := discoverToolsResponse{Servers: []serverInfo{}}
 
@@ -198,67 +226,74 @@ func (m *mcpBrokerImpl) visibleToolNames(prefix string, manager upstream.ActiveM
 }
 
 // handleSelectTools implements the select_tools tool handler
-func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	_, span := otel.Tracer("broker").Start(ctx, "select_tools")
 	defer span.End()
 
-	session := server.ClientSessionFromContext(ctx)
-	if session == nil {
-		return mcp.NewToolResultError("no active session"), nil
+	if req.Session == nil {
+		return upstream.NewToolResultError("no active session"), nil
 	}
-	sessionID := session.SessionID()
+	sessionID := req.Session.ID()
 
 	const maxSelectTools = 250
 
-	rawTools := req.GetArguments()["tools"]
+	args, err := unmarshalArguments(req)
+	if err != nil {
+		return upstream.NewToolResultError("invalid arguments"), nil
+	}
+
+	rawTools := args["tools"]
 	toolNames, err := parseToolNames(rawTools)
 	if err != nil {
-		return mcp.NewToolResultError("invalid tools parameter"), nil
+		return upstream.NewToolResultError("invalid tools parameter"), nil
 	}
 
 	if len(toolNames) > maxSelectTools {
-		return mcp.NewToolResultError(fmt.Sprintf("too many tools requested (max %d)", maxSelectTools)), nil
+		return upstream.NewToolResultError(fmt.Sprintf("too many tools requested (max %d)", maxSelectTools)), nil
 	}
 
 	if span.IsRecording() {
+		// session ids are bearer JWTs; never record the raw value
 		span.SetAttributes(
 			attribute.String("discovery.tool", selectToolsName),
 			attribute.Int("discovery.tools_requested", len(toolNames)),
-			attribute.String("discovery.session_id", sessionID),
+			attribute.String("discovery.session_id", internaljwt.LogSafeSessionID(sessionID)),
 		)
 	}
+
+	headers := headersFromRequest(req)
 
 	// empty list resets to full tool set
 	if len(toolNames) == 0 {
 		m.scopeStore.resetScope(sessionID)
-		warning := m.sendToolsListChanged(sessionID)
-		return m.marshalToolResult(m.selectResponse("scope reset to all tools", nil, warning)), nil
+		m.sendToolsListChanged(sessionID)
+		return m.marshalToolResult(m.selectResponse("scope reset to all tools", nil)), nil
 	}
 
 	m.mcpLock.RLock()
-	valErr := m.validateToolSelectionLocked(toolNames, req.Header, sessionID)
+	valErr := m.validateToolSelectionLocked(toolNames, headers, sessionID)
 	if valErr == nil {
 		m.scopeStore.setScope(sessionID, toolNames)
 	}
 	m.mcpLock.RUnlock()
 
 	if valErr != nil {
-		return mcp.NewToolResultError("tool not available"), nil
+		return upstream.NewToolResultError("tool not available"), nil
 	}
 
-	warning := m.sendToolsListChanged(sessionID)
+	m.sendToolsListChanged(sessionID)
 
 	if span.IsRecording() {
 		span.SetAttributes(attribute.Int("discovery.tools_scoped", len(toolNames)))
 	}
 
 	status := fmt.Sprintf("scope set to %d tools", len(toolNames))
-	return m.marshalToolResult(m.selectResponse(status, toolNames, warning)), nil
+	return m.marshalToolResult(m.selectResponse(status, toolNames)), nil
 }
 
 // validateToolSelectionLocked checks that every requested tool is visible and not a broker meta-tool.
 // caller must hold mcpLock.
-func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers map[string][]string, sessionID string) error {
+func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers http.Header, sessionID string) error {
 	visible := m.getVisibleToolNames(headers)
 
 	for _, name := range toolNames {
@@ -267,7 +302,7 @@ func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers 
 			return fmt.Errorf("broker tool: %s", name)
 		}
 		if _, ok := visible[name]; !ok {
-			m.logger.Debug("select_tools: tool not available", "tool", name, "session", sessionID)
+			m.logger.Debug("select_tools: tool not available", "tool", name, "session", internaljwt.LogSafeSessionID(sessionID))
 			return fmt.Errorf("not visible: %s", name)
 		}
 	}
@@ -275,60 +310,51 @@ func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers 
 }
 
 // selectResponse builds the map payload for a select_tools result.
-func (m *mcpBrokerImpl) selectResponse(status string, tools []string, warning string) map[string]any {
+func (m *mcpBrokerImpl) selectResponse(status string, tools []string) map[string]any {
 	result := map[string]any{"status": status}
 	if tools != nil {
 		result["tools"] = tools
 	}
-	if warning != "" {
-		result["warning"] = warning
-	}
 	return result
 }
 
-// sendToolsListChanged sends a notifications/tools/list_changed to the specific session.
-// returns a warning string if the notification fails.
-func (m *mcpBrokerImpl) sendToolsListChanged(sessionID string) string {
-	err := m.listeningMCPServer.SendNotificationToSpecificClient(
-		sessionID,
-		"notifications/tools/list_changed",
-		nil,
-	)
-	if err != nil {
-		m.logger.Debug("failed to send tools/list_changed notification", "session", sessionID, "error", err)
-		return "notification delivery failed; scope is applied but client may not refresh tool list automatically"
-	}
-	return ""
+// sendToolsListChanged sends notifications/tools/list_changed to the
+// specified session. uses a SendingMiddleware to filter the SDK's
+// broadcast to only the target session. pass empty sessionID to
+// broadcast to all sessions. delivery is asynchronous: failures cannot
+// be reported in the select_tools response.
+func (m *mcpBrokerImpl) sendToolsListChanged(sessionID string) {
+	m.gatewayServer.TriggerToolsListChanged(sessionID)
 }
 
 // getVisibleToolNames returns a set of tool names visible to the current request,
 // after applying auth and virtual server filtering. caller must hold mcpLock.
-func (m *mcpBrokerImpl) getVisibleToolNames(headers map[string][]string) map[string]struct{} {
+func (m *mcpBrokerImpl) getVisibleToolNames(headers http.Header) map[string]struct{} {
 	allTools := m.collectAllPrefixedTools()
 
 	filtered := m.applyAuthorizedCapabilitiesFilter(headers, allTools)
 	filtered = m.applyVirtualServerFilter(headers, filtered)
 
 	visible := make(map[string]struct{}, len(filtered))
-	for i := range filtered {
-		visible[filtered[i].Name] = struct{}{}
+	for _, t := range filtered {
+		visible[t.Name] = struct{}{}
 	}
 	return visible
 }
 
 // collectAllPrefixedTools builds the full list of prefixed tools across all servers.
 // caller must hold mcpLock.
-func (m *mcpBrokerImpl) collectAllPrefixedTools() []mcp.Tool {
-	var all []mcp.Tool
+func (m *mcpBrokerImpl) collectAllPrefixedTools() []*mcp.Tool {
+	var all []*mcp.Tool
 	for _, manager := range m.mcpServers {
 		cfg := manager.Config()
 		prefix := cfg.Prefix
 		serverID := string(cfg.ID())
 		for _, tool := range manager.GetManagedTools() {
-			t := mcp.Tool{Name: prefix + tool.Name}
-			t.Meta = mcp.NewMetaFromMap(map[string]any{
+			t := &mcp.Tool{Name: prefix + tool.Name}
+			t.Meta = mcp.Meta{
 				"kuadrant/id": serverID,
-			})
+			}
 			all = append(all, t)
 		}
 	}
@@ -340,19 +366,18 @@ func (m *mcpBrokerImpl) marshalToolResult(v any) *mcp.CallToolResult {
 	data, err := json.Marshal(v)
 	if err != nil {
 		m.logger.Error("failed to marshal tool response", "error", err)
-		return mcp.NewToolResultError("internal error")
+		return upstream.NewToolResultError("internal error")
 	}
-	return mcp.NewToolResultText(string(data))
+	return upstream.NewToolResultText(string(data))
 }
 
-// applyScopeFilter filters tools based on session scope. used in the AfterListTools hook.
-func (m *mcpBrokerImpl) applyScopeFilter(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
-	session := server.ClientSessionFromContext(ctx)
-	if session == nil {
-		return tools
+// applyScopeFilter filters tools based on session scope
+func (m *mcpBrokerImpl) applyScopeFilter(_ context.Context, sessionID string, tools []*mcp.Tool) []*mcp.Tool {
+	if sessionID == "" {
+		return m.applyThresholdFilter(tools)
 	}
 
-	state, scopedTools := m.scopeStore.getScope(session.SessionID())
+	state, scopedTools := m.scopeStore.getScope(sessionID)
 	switch state {
 	case scopeUnset, scopeAll:
 		return m.applyThresholdFilter(tools)
@@ -363,31 +388,31 @@ func (m *mcpBrokerImpl) applyScopeFilter(ctx context.Context, tools []mcp.Tool) 
 }
 
 // filterByScope keeps only tools that are in the scoped set, plus broker meta-tools.
-func filterByScope(tools []mcp.Tool, scope map[string]struct{}) []mcp.Tool {
-	filtered := make([]mcp.Tool, 0, len(tools))
-	for i := range tools {
-		if IsBrokerTool(tools[i]) {
-			filtered = append(filtered, tools[i])
+func filterByScope(tools []*mcp.Tool, scope map[string]struct{}) []*mcp.Tool {
+	filtered := make([]*mcp.Tool, 0, len(tools))
+	for _, t := range tools {
+		if IsBrokerTool(t) {
+			filtered = append(filtered, t)
 			continue
 		}
-		if _, ok := scope[tools[i].Name]; ok {
-			filtered = append(filtered, tools[i])
+		if _, ok := scope[t.Name]; ok {
+			filtered = append(filtered, t)
 		}
 	}
 	return filtered
 }
 
 // applyThresholdFilter hides real tools when count exceeds the threshold, leaving only meta-tools.
-func (m *mcpBrokerImpl) applyThresholdFilter(tools []mcp.Tool) []mcp.Tool {
+func (m *mcpBrokerImpl) applyThresholdFilter(tools []*mcp.Tool) []*mcp.Tool {
 	if m.discovery.threshold <= 0 {
 		return tools
 	}
 
-	metaOnly := make([]mcp.Tool, 0, len(tools))
+	metaOnly := make([]*mcp.Tool, 0, len(tools))
 	realCount := 0
-	for i := range tools {
-		if IsBrokerTool(tools[i]) {
-			metaOnly = append(metaOnly, tools[i])
+	for _, t := range tools {
+		if IsBrokerTool(t) {
+			metaOnly = append(metaOnly, t)
 		} else {
 			realCount++
 		}

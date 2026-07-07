@@ -16,8 +16,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/tests/server2"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,13 +36,13 @@ var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 // mockGateway is a no-op ToolsAdderDeleter/PromptsAdderDeleter for tests that don't need real gateway behaviour.
 type mockGateway struct{}
 
-func newMockGateway() *mockGateway                                  { return &mockGateway{} }
-func (m *mockGateway) AddTools(_ ...server.ServerTool)              {}
-func (m *mockGateway) DeleteTools(_ ...string)                      {}
-func (m *mockGateway) ListTools() map[string]*server.ServerTool     { return nil }
-func (m *mockGateway) AddPrompts(_ ...server.ServerPrompt)          {}
-func (m *mockGateway) DeletePrompts(_ ...string)                    {}
-func (m *mockGateway) ListPrompts() map[string]*server.ServerPrompt { return nil }
+func newMockGateway() *mockGateway                                     { return &mockGateway{} }
+func (m *mockGateway) AddTools(_ ...upstream.GatewayTool)              {}
+func (m *mockGateway) DeleteTools(_ ...string)                         {}
+func (m *mockGateway) ListTools() map[string]*upstream.GatewayTool     { return nil }
+func (m *mockGateway) AddPrompts(_ ...upstream.GatewayPrompt)          {}
+func (m *mockGateway) DeletePrompts(_ ...string)                       {}
+func (m *mockGateway) ListPrompts() map[string]*upstream.GatewayPrompt { return nil }
 
 // TestMain starts an MCP server that we will run actual tests against
 func TestMain(m *testing.M) {
@@ -234,13 +233,13 @@ func TestGetServerInfo(t *testing.T) {
 	bImpl, ok := b.(*mcpBrokerImpl)
 	require.True(t, ok)
 	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(createTestManager(t, "test1", "", []mcp.Tool{
-		mcp.NewTool("pour_chocolate"),
+		{Name: "pour_chocolate"},
 	}))
 	bImpl.mcpServers["test2"] = upstream.NewActiveForTesting(createTestManager(t, "test2", "", []mcp.Tool{
-		mcp.NewTool("restore_from_tape"),
+		{Name: "restore_from_tape"},
 	}))
 	bImpl.mcpServers["test3"] = upstream.NewActiveForTesting(createTestManager(t, "test3", "t", []mcp.Tool{
-		mcp.NewTool("restore_from_tape"),
+		{Name: "restore_from_tape"},
 	}))
 	bImpl.mcpServers["test4"] = upstream.NewActiveForTesting(createTestManager(t, "test4", "tt", []mcp.Tool{}))
 
@@ -293,6 +292,21 @@ func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
 	require.Equal(t, "short", svr.Name, "should match gh_ when gh_repos_ doesn't match")
 }
 
+// createTestManagerMCP is createTestManager but also returns the underlying
+// MCPServer so tests can seed tool hints.
+func createTestManagerMCP(t *testing.T, serverName, prefix string, tools []mcp.Tool) (*upstream.MCPServer, *upstream.MCPManager) {
+	t.Helper()
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:   serverName,
+		Prefix: prefix,
+		URL:    "http://test.local/mcp",
+	}, "")
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+	manager.SetToolsForTesting(tools)
+	return mcpServer, manager
+}
+
 func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
 	mcpServer := upstream.NewUpstreamMCP(&cfg, "")
@@ -301,7 +315,7 @@ func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream
 	return manager
 }
 
-func TestToolAnnotations(t *testing.T) {
+func TestToolHints(t *testing.T) {
 	b := NewBroker(logger,
 		WithEnforceCapabilityFilter(true),
 		WithManagerTickerInterval(time.Microsecond),
@@ -312,40 +326,55 @@ func TestToolAnnotations(t *testing.T) {
 	// Attach phony tools to the upstreams
 	bImpl, ok := b.(*mcpBrokerImpl)
 	require.True(t, ok)
-	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(createTestManager(t, "test1", "", []mcp.Tool{
-		mcp.NewTool("get_status", mcp.WithToolAnnotation(mcp.ToolAnnotation{
-			ReadOnlyHint:   mcp.ToBoolPtr(true),
-			IdempotentHint: mcp.ToBoolPtr(true),
-		})),
-		mcp.NewTool("pour_chocolate", mcp.WithToolAnnotation(mcp.ToolAnnotation{
-			ReadOnlyHint:   mcp.ToBoolPtr(false),
-			IdempotentHint: mcp.ToBoolPtr(false),
-		})),
-	}))
+	mcpServer, manager := createTestManagerMCP(t, "test1", "", []mcp.Tool{
+		{Name: "get_status"},
+		{Name: "pour_chocolate"},
+		{Name: "check_gauge"},
+	})
+	// hints as harvested from the raw upstream tools/list: explicit values
+	// and absent (nil) hints must both survive
+	boolPtr := func(v bool) *bool { return &v }
+	mcpServer.SetToolHintsForTesting(map[string]upstream.ToolHints{
+		"get_status": {
+			ReadOnlyHint:   boolPtr(true),
+			IdempotentHint: boolPtr(true),
+			Raw:            []byte(`{"readOnlyHint":true,"idempotentHint":true}`),
+		},
+		"pour_chocolate": {
+			ReadOnlyHint:   boolPtr(false),
+			IdempotentHint: boolPtr(false),
+			Raw:            []byte(`{"readOnlyHint":false,"idempotentHint":false}`),
+		},
+		// check_gauge has no harvested hints: all unspecified
+	})
+	bImpl.mcpServers["test1"] = upstream.NewActiveForTesting(manager)
 
 	testCases := []struct {
 		name       string
 		serverName config.UpstreamMCPID
 		toolName   string
 		shouldFail bool
-		readOnly   bool
-		idempotent bool
+		readOnly   *bool
+		idempotent *bool
 	}{
 		{
-			name:       "status tool",
+			name:       "status tool explicit true",
 			serverName: "test1",
 			toolName:   "get_status",
-			shouldFail: false,
-			readOnly:   true,
-			idempotent: true,
+			readOnly:   boolPtr(true),
+			idempotent: boolPtr(true),
 		},
 		{
-			name:       "pour tool",
+			name:       "pour tool explicit false",
 			serverName: "test1",
 			toolName:   "pour_chocolate",
-			shouldFail: false,
-			readOnly:   false,
-			idempotent: false,
+			readOnly:   boolPtr(false),
+			idempotent: boolPtr(false),
+		},
+		{
+			name:       "served tool without hints is all-unspecified",
+			serverName: "test1",
+			toolName:   "check_gauge",
 		},
 		{
 			name:       "invalid tool",
@@ -363,14 +392,16 @@ func TestToolAnnotations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			annotation, exists := b.ToolAnnotations(tc.serverName, tc.toolName)
+			hints, exists := b.ToolAnnotations(tc.serverName, tc.toolName)
 			if tc.shouldFail {
-				require.False(t, exists, "expected no annotation to be found")
+				require.False(t, exists, "expected no hints to be found")
 				return
 			}
-			require.True(t, exists, "expected annotation to be found")
-			require.Equal(t, tc.readOnly, *annotation.ReadOnlyHint, "readOnly mismatch: %#v", annotation)
-			require.Equal(t, tc.idempotent, *annotation.IdempotentHint, "idempotent mismatch: %#v", annotation)
+			require.True(t, exists, "expected hints to be found")
+			require.Equal(t, tc.readOnly, hints.ReadOnlyHint, "readOnly mismatch: %#v", hints)
+			require.Equal(t, tc.idempotent, hints.IdempotentHint, "idempotent mismatch: %#v", hints)
+			require.Nil(t, hints.DestructiveHint)
+			require.Nil(t, hints.OpenWorldHint)
 		})
 	}
 }

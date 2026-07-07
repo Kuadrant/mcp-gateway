@@ -8,7 +8,6 @@ import (
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
-	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -24,7 +23,7 @@ func (a *app) createBroker() {
 		panic("flag mcp-check-interval cannot be 0 or less seconds")
 	}
 
-	a.mcpBroker = broker.NewBroker(a.logger.With("component", "broker"),
+	brokerOpts := []broker.Option{
 		broker.WithEnforceCapabilityFilter(a.brokerCfg.enforceCapabilityFiltering),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
@@ -33,7 +32,15 @@ func (a *app) createBroker() {
 		broker.WithDiscoveryToolsEnabled(a.brokerCfg.discoveryToolsEnabled),
 		broker.WithDiscoveryToolThreshold(a.brokerCfg.discoveryToolThreshold),
 		broker.WithSessionCache(a.sessionCache),
-	)
+	}
+	if a.jwtMgr != nil {
+		brokerOpts = append(brokerOpts,
+			broker.WithSessionIDGenerator(a.jwtMgr.Generate),
+			broker.WithSessionValidator(a.jwtMgr.Validate),
+			broker.WithSessionTerminator(a.jwtMgr.Terminate),
+		)
+	}
+	a.mcpBroker = broker.NewBroker(a.logger.With("component", "broker"), brokerOpts...)
 	a.tokenHandler = broker.NewTokenHandler(a.sessionCache, a.tokenElicitMap, *a.logger)
 	a.elicitHandler = &broker.ElicitationHandler{
 		ElicitationMap: a.tokenElicitMap,
@@ -77,14 +84,6 @@ func (a *app) setUpHTTPServer() {
 		WriteTimeout: writeTimeout,
 	}
 
-	streamableHTTPOpts := []server.StreamableHTTPOption{
-		server.WithStreamableHTTPServer(httpSrv),
-	}
-	if a.jwtMgr != nil {
-		streamableHTTPOpts = append(streamableHTTPOpts, server.WithSessionIdManager(a.jwtMgr))
-	}
-	streamableHTTPServer := server.NewStreamableHTTPServer(a.mcpBroker.MCPServer(), streamableHTTPOpts...)
-
 	mux.HandleFunc("OPTIONS /mcp", func(w http.ResponseWriter, r *http.Request) {
 		a.logger.Debug("Handling OPTIONS", "Mcp-Session-Id", r.Header.Get("Mcp-Session-Id"))
 		w.WriteHeader(http.StatusOK)
@@ -96,10 +95,9 @@ func (a *app) setUpHTTPServer() {
 		mux.Handle("/tokens", a.tokenHandler)
 		mux.Handle("/mcp/elicitation", a.elicitHandler)
 	}
-	mux.Handle("/mcp", traceContextMiddleware(streamableHTTPServer))
+	mux.Handle("/mcp", traceContextMiddleware(a.mcpBroker.MCPHandler()))
 
 	a.brokerServer = httpSrv
-	a.mcpServer = streamableHTTPServer
 }
 
 func traceContextMiddleware(next http.Handler) http.Handler {

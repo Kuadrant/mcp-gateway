@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

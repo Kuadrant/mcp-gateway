@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,12 +9,17 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
 	"time"
+
+	"github.com/Kuadrant/mcp-gateway/internal/transport"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -149,10 +155,55 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, client, "should always return a client with timeouts set")
 
-	tr, ok := client.Transport.(*http.Transport)
-	require.True(t, ok, "transport should be *http.Transport")
+	tee, ok := client.Transport.(*toolHintsTee)
+	require.True(t, ok, "transport should be *toolHintsTee")
+	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
+	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
+	tr, ok := hrt.Base.(*http.Transport)
+	require.True(t, ok, "base transport should be *http.Transport")
 	require.Equal(t, defaultTLSHandshakeTimeout, tr.TLSHandshakeTimeout)
+	// bounds header wait only; SSE bodies stream untouched. zero here lets a
+	// silent upstream hang Connect forever via the standalone SSE GET.
 	require.Equal(t, defaultResponseHeaderTimeout, tr.ResponseHeaderTimeout)
+}
+
+// regression: an upstream that accepts the standalone SSE GET but never sends
+// response headers must not hang Connect forever. observed with a test server
+// whose logging middleware swallowed Flush: the manager goroutine wedged, the
+// server never became ready, and readiness flapping took down the data plane.
+func TestConnectBoundedWhenUpstreamNeverAnswersSSE(t *testing.T) {
+	old := defaultResponseHeaderTimeout
+	defaultResponseHeaderTimeout = 100 * time.Millisecond
+	defer func() { defaultResponseHeaderTimeout = old }()
+
+	s := mcp.NewServer(&mcp.Implementation{Name: "hangs-sse", Version: "0.0.1"}, nil)
+	inner := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return s }, nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			<-r.Context().Done() // swallow the standalone SSE GET, send nothing
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "hangs-sse", URL: srv.URL}, "")
+	done := make(chan error, 1)
+	go func() {
+		done <- up.Connect(context.Background(), func() {})
+	}()
+
+	// worst case is the SDK's standalone SSE retry cycle (~10s with backoff
+	// and jitter); anything past 30s means Connect is hung again
+	select {
+	case err := <-done:
+		// connect may fail outright or return a poisoned session; either is
+		// fine, the invariant is that it returns
+		t.Logf("Connect returned: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("Connect hung waiting for standalone SSE response headers")
+	}
+	_ = up.Disconnect()
 }
 
 func TestBuildHTTPClient_WithValidCACert(t *testing.T) {
@@ -291,37 +342,73 @@ func TestBuildHTTPClient_MultiCertBundle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-// TestBuildHTTPClient_ResponseHeaderTimeout verifies the upstream client does
-// not block indefinitely when an upstream server accepts the connection but
-// never sends response headers. Without ResponseHeaderTimeout the broker would
-// hang on this request forever.
-func TestBuildHTTPClient_ResponseHeaderTimeout(t *testing.T) {
-	prev := defaultResponseHeaderTimeout
+// ResponseHeaderTimeout bounds only the wait for response headers; it must
+// not tear down an SSE stream whose body outlives the timeout.
+func TestResponseHeaderTimeoutDoesNotKillEstablishedSSE(t *testing.T) {
+	old := defaultResponseHeaderTimeout
 	defaultResponseHeaderTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { defaultResponseHeaderTimeout = prev })
+	defer func() { defaultResponseHeaderTimeout = old }()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		require.NoError(t, http.NewResponseController(w).Flush())
+		// deliver an event well after the header timeout has elapsed
+		time.Sleep(3 * defaultResponseHeaderTimeout)
+		_, _ = w.Write([]byte("data: late\n\n"))
+		require.NoError(t, http.NewResponseController(w).Flush())
 	}))
 	defer srv.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "hang", URL: srv.URL + "/mcp"}, "")
+	up := NewUpstreamMCP(&config.MCPServer{Name: "sse-alive", URL: srv.URL}, "")
 	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
-	require.NotNil(t, httpClient)
 
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
-
-	start := time.Now()
 	resp, err := httpClient.Do(req)
-	elapsed := time.Since(start)
-	if resp != nil {
-		_ = resp.Body.Close()
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "reading the SSE body past the header timeout must not error")
+	require.Contains(t, string(body), "data: late")
+}
+
+// regression: OnNotification used to be a no-op before Connect (nil client)
+// and was only wired after the session was live, leaving a gap where
+// list-changed notifications were silently dropped. the manager registers
+// the handler before connecting; deliveries must work in that order.
+func TestOnNotification_RegisteredBeforeConnect(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}},
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "")
+	got := make(chan string, 4)
+	up.OnNotification(func(method string) { got <- method })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	srv.AddTool(&mcp.Tool{Name: "late", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+	select {
+	case method := <-got:
+		require.Equal(t, "notifications/tools/list_changed", method)
+	case <-time.After(10 * time.Second):
+		t.Fatal("notification never reached a handler registered before Connect")
 	}
-	require.Error(t, err, "expected timeout error from hanging server")
-	require.Less(t, elapsed, 2*time.Second, "client should give up well before 2s")
-	require.Contains(t, err.Error(), "timeout")
 }
 
 func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {

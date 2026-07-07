@@ -8,8 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -18,29 +17,25 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-type acceptHandler struct {
-	content map[string]any
+// acceptElicitHandler returns an elicitation handler that accepts with provided content
+func acceptElicitHandler(content map[string]any) func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+	return func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		GinkgoWriter.Printf("elicitation request received: %s\n", req.Params.Message)
+		return &mcp.ElicitResult{
+			Action:  "accept",
+			Content: content,
+		}, nil
+	}
 }
 
-func (h *acceptHandler) Elicit(_ context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	GinkgoWriter.Printf("elicitation request received: %s\n", req.Params.Message)
-	return &mcp.ElicitationResult{
-		ElicitationResponse: mcp.ElicitationResponse{
-			Action:  mcp.ElicitationResponseActionAccept,
-			Content: h.content,
-		},
-	}, nil
-}
-
-type declineHandler struct{}
-
-func (h *declineHandler) Elicit(_ context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	GinkgoWriter.Printf("elicitation request received (declining): %s\n", req.Params.Message)
-	return &mcp.ElicitationResult{
-		ElicitationResponse: mcp.ElicitationResponse{
-			Action: mcp.ElicitationResponseActionDecline,
-		},
-	}, nil
+// declineElicitHandler returns an elicitation handler that declines
+func declineElicitHandler() func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+	return func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		GinkgoWriter.Printf("elicitation request received (declining): %s\n", req.Params.Message)
+		return &mcp.ElicitResult{
+			Action: "decline",
+		}, nil
+	}
 }
 
 const (
@@ -145,13 +140,9 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 	It("[Elicitation] should accept elicitation and return user-provided information", func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
-		handler := &acceptHandler{
-			content: map[string]any{
-				"name": "e2e-test-user",
-			},
-		}
+		handler := acceptElicitHandler(map[string]any{"name": "e2e-test-user"})
 
-		var elicitClient *mcpclient.Client
+		var elicitClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, ElicitationGatewayURL, handler)
@@ -161,7 +152,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
-			toolsList, err := elicitClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := elicitClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent(toolName, toolsList)).To(BeTrueBecause("%s should exist", toolName))
@@ -170,16 +161,14 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		By("Calling trigger-elicitation-request tool")
 		var responseText string
 		Eventually(func(g Gomega) {
-			res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
-			})
+			res, err := elicitClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
 
 			responseText = ""
 			for _, c := range res.Content {
-				tc, ok := c.(mcp.TextContent)
+				tc, ok := c.(*mcp.TextContent)
 				if ok {
 					responseText += tc.Text
 				}
@@ -192,9 +181,9 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 	It("[Elicitation] should decline elicitation", func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
-		handler := &declineHandler{}
+		handler := declineElicitHandler()
 
-		var elicitClient *mcpclient.Client
+		var elicitClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, ElicitationGatewayURL, handler)
@@ -204,7 +193,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 		By("Verifying the trigger-elicitation-request tool is visible")
 		Eventually(func(g Gomega) {
-			toolsList, err := elicitClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := elicitClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent(toolName, toolsList)).To(BeTrueBecause("%s should exist", toolName))
@@ -213,16 +202,14 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		By("Calling trigger-elicitation-request tool")
 		var responseText string
 		Eventually(func(g Gomega) {
-			res, err := elicitClient.CallTool(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
-			})
+			res, err := elicitClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
 
 			responseText = ""
 			for _, c := range res.Content {
-				tc, ok := c.(mcp.TextContent)
+				tc, ok := c.(*mcp.TextContent)
 				if ok {
 					responseText += tc.Text
 				}
@@ -236,7 +223,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		By("Creating a standard client without elicitation handler")
-		var standardClient *mcpclient.Client
+		var standardClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			standardClient, err = NewMCPGatewayClient(ctx, ElicitationGatewayURL)
@@ -246,7 +233,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 		By("Verifying the trigger-elicitation-request tool is visible in tools/list")
 		Eventually(func(g Gomega) {
-			toolsList, err := standardClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := standardClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			found := false
@@ -259,9 +246,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Calling trigger-elicitation-request tool should error")
-		res, err := standardClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}},
-		})
+		res, err := standardClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]any{}})
 		if err != nil {
 			GinkgoWriter.Println("tool call error (expected):", err)
 			return

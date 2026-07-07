@@ -10,7 +10,8 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/server"
+
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 )
 
 const (
@@ -36,8 +37,6 @@ var ErrInvalidBackendInitToken = errors.New("invalid backend-init token")
 type Deleter interface {
 	DeleteSessions(ctx context.Context, key ...string) error
 }
-
-var _ server.SessionIdManager = &JWTManager{}
 
 // Claims represents the claims in a session JWT
 type Claims struct {
@@ -219,7 +218,8 @@ const terminateTimeout = 5 * time.Second
 
 // Terminate part of the SessionIDManager interface. Will remove the associated sessions from cache
 func (m *JWTManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
-	m.logger.Info("terminate session id in jwt session manager", "session", sessionID)
+	// session ids are bearer JWTs; never log the raw value
+	m.logger.Info("terminate session id in jwt session manager", "session", internaljwt.LogSafeSessionID(sessionID))
 	if m.sessionDeleter != nil {
 		// TODO(craig) this method will be invoked by the MCPBroker so we can probably do the cache deletion there rather than in this manager
 		// background ctx with deadline; SessionIdManager interface gives us none

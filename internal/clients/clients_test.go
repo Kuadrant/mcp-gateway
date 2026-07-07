@@ -4,14 +4,22 @@ Package clients provides a set of clients for use with the gateway code
 package clients
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,6 +108,64 @@ func TestInitialize(t *testing.T) {
 			require.NotNil(t, client)
 		})
 	}
+}
+
+// TestInitializeAgainstLegacyServer runs Initialize against a stateful SDK
+// server behind a counting proxy. It pins the hairpin hot-path contract to
+// exactly what mark3labs cost: two POSTs (initialize +
+// notifications/initialized), no server/discover probe (short-circuited
+// in-process) and no standalone SSE GET (each extra request here is a full
+// gateway round trip inside the first tools/call of a session).
+func TestInitializeAgainstLegacyServer(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-backend", Version: "0.0.1"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+
+	var gets atomic.Int64
+	var mu sync.Mutex
+	var methods []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets.Add(1)
+		}
+		if r.Method == http.MethodPost {
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var msg struct {
+				Method string `json:"method"`
+			}
+			require.NoError(t, json.Unmarshal(body, &msg))
+			mu.Lock()
+			methods = append(methods, msg.Method)
+			mu.Unlock()
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+	pool := &HairpinClientPool{
+		defaultClient: &http.Client{},
+		clients:       make(map[string]*http.Client),
+	}
+	conf := &config.MCPServer{
+		Name:     "test-server",
+		URL:      ts.URL + "/mcp",
+		Hostname: u.Host,
+	}
+
+	session, err := Initialize(context.Background(), u.Host, conf, map[string]string{}, false, pool)
+	require.NoError(t, err)
+	require.NotEmpty(t, session.ID(), "hairpin init must yield a backend session id")
+
+	mu.Lock()
+	seen := append([]string(nil), methods...)
+	mu.Unlock()
+	require.Equal(t, []string{"initialize", "notifications/initialized"}, seen,
+		"hairpin init must cost exactly the requests mark3labs made")
+	require.Zero(t, gets.Load(), "hairpin init must not open a standalone SSE stream")
+	require.NoError(t, session.Close())
 }
 
 func TestBuildHairpinHTTPClientPool(t *testing.T) {

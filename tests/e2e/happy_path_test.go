@@ -11,8 +11,7 @@ import (
 	"time"
 
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -65,7 +64,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying MCPServerRegistrations tools are present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer1.Spec.Prefix))
@@ -74,15 +73,13 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		toolName := fmt.Sprintf("%s%s", registeredServer1.Spec.Prefix, "hello_world")
 		By("Invoking a tool")
-		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
-				"name": "e2e",
-			}},
-		})
+		res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
+			"name": "e2e",
+		}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically("==", 1))
-		content, ok := res.Content[0].(mcp.TextContent)
+		content, ok := res.Content[0].(*mcp.TextContent)
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Hello, e2e!"))
 
@@ -95,7 +92,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer1.Name, registeredServer1.Namespace)
 			g.Expect(err).NotTo(BeNil())
 			g.Expect(err.Error()).Should(ContainSubstring("not found"))
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer1.Spec.Prefix, toolsList)).To(BeFalse())
@@ -133,15 +130,13 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are accessible")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("httpback_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 
 		By("Calling a tool to verify the broker connected over HTTP")
-		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "httpback_greet", Arguments: map[string]string{"name": "test"}},
-		})
+		res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: "httpback_greet", Arguments: map[string]string{"name": "test"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(res.Content).NotTo(BeEmpty())
@@ -168,15 +163,13 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are accessible")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("custompath_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
 
 		By("Calling a tool to verify the broker connected via the non-default path")
-		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "custompath_path_info"},
-		})
+		res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: "custompath_path_info"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(res.Content).NotTo(BeEmpty())
@@ -199,7 +192,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying MCPServerRegistrations tools are not present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s should NOT exist", registeredServer.Spec.Prefix))
@@ -217,7 +210,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying MCPServerRegistrations tools are present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -235,20 +228,20 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		registeredServer := registration.Register(ctx)
 
 		By("creating a new client")
-		var mcpClient *mcpclient.Client
+		var mcpClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			mcpClient, err = NewMCPGatewayClient(context.Background(), gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		clientSession := mcpClient.GetSessionId()
+		clientSession := mcpClient.ID()
 		By("Ensuring the gateway has registered the server")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 		By("Ensuring the gateway has the tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -259,13 +252,11 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var mcpsessionid string
 		Eventually(func(g Gomega) {
 			currentSessionID := ""
-			res, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: toolName},
-			})
+			res, err := mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			for _, cont := range res.Content {
-				textContent, ok := cont.(mcp.TextContent)
+				textContent, ok := cont.(*mcp.TextContent)
 				g.Expect(ok).To(BeTrue())
 				if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
 					GinkgoWriter.Println(textContent.Text)
@@ -277,13 +268,11 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 		By("Invoking the headers tool again")
-		res, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName},
-		})
+		res, err := mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
 		Expect(err).Error().NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		for _, cont := range res.Content {
-			textContent, ok := cont.(mcp.TextContent)
+			textContent, ok := cont.(*mcp.TextContent)
 			Expect(ok).To(BeTrue())
 			if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
 				Expect(textContent.Text).To(ContainSubstring("Mcp-Session-Id"))
@@ -299,19 +288,17 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		mcpClient, err = NewMCPGatewayClient(context.Background(), gatewayURL)
 		Expect(err).Error().NotTo(HaveOccurred())
 		By("invoking headers tool with new client")
-		res, err = mcpClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName},
-		})
+		res, err = mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
 		Expect(err).Error().NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		for _, cont := range res.Content {
-			textContent, ok := cont.(mcp.TextContent)
+			textContent, ok := cont.(*mcp.TextContent)
 			Expect(ok).To(BeTrue())
 			if strings.HasPrefix(textContent.Text, "Mcp-Session-Id") {
 				GinkgoWriter.Println(textContent.Text)
 				Expect(textContent.Text).To(ContainSubstring("Mcp-Session-Id"))
 				Expect(mcpsessionid).To(Not(Equal(textContent.Text)))
-				Expect(textContent.Text).To(Not(ContainSubstring(mcpClient.GetSessionId())))
+				Expect(textContent.Text).To(Not(ContainSubstring(mcpClient.ID())))
 			}
 		}
 	})
@@ -581,7 +568,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	It("[Happy] should assign unique mcp-session-ids to concurrent clients and new session on reconnect", func() {
 		By("Creating multiple clients concurrently")
-		var client1, client2, client3 *mcpclient.Client
+		var client1, client2, client3 *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			client1, err = NewMCPGatewayClient(ctx, gatewayURL)
@@ -604,9 +591,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		defer func() { _ = client3.Close() }()
 
 		By("Verifying all clients have unique session IDs")
-		session1 := client1.GetSessionId()
-		session2 := client2.GetSessionId()
-		session3 := client3.GetSessionId()
+		session1 := client1.ID()
+		session2 := client2.ID()
+		session3 := client3.ID()
 
 		Expect(session1).NotTo(BeEmpty(), "client1 should have a session ID")
 		Expect(session2).NotTo(BeEmpty(), "client2 should have a session ID")
@@ -619,7 +606,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Disconnecting client1 and reconnecting")
 		Expect(client1.Close()).To(Succeed())
 
-		var reconnectedClient *mcpclient.Client
+		var reconnectedClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
 			reconnectedClient, err = NewMCPGatewayClient(ctx, gatewayURL)
@@ -627,7 +614,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = reconnectedClient.Close() }()
 
-		newSession := reconnectedClient.GetSessionId()
+		newSession := reconnectedClient.ID()
 		Expect(newSession).NotTo(BeEmpty(), "reconnected client should have a session ID")
 		Expect(newSession).NotTo(Equal(session1), "reconnected client should have a different session ID than before")
 		Expect(newSession).NotTo(Equal(session2), "reconnected client should have a different session ID than client2")
@@ -651,7 +638,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying MCPServerRegistration tools are present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -673,7 +660,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying only the tools from MCPVirtualServer are returned")
 		Eventually(func(g Gomega) {
-			filteredTools, err := virtualServerClient.ListTools(ctx, mcp.ListToolsRequest{})
+			filteredTools, err := virtualServerClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(filteredTools).NotTo(BeNil())
 			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server")
@@ -681,7 +668,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying the original client without header still sees all tools")
-		allToolsAgain, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+		allToolsAgain, err := mcpGatewayClient.ListTools(ctx, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(allToolsAgain.Tools)).To(BeNumerically(">", 1), "expected more than 1 tool without virtual server header")
 	})
@@ -696,9 +683,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		// for that reason we only assert we received at least one rather than a set number
 		By("Creating clients with notification handlers and different sessions")
 		client1Notification := make(chan struct{}, 1)
-		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			if strings.Contains(j.Method, "list_changed") {
-				GinkgoWriter.Println("client 1 received notification registration", j.Method)
+		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+			if strings.Contains(method, "list_changed") {
+				GinkgoWriter.Println("client 1 received notification registration", method)
 				select {
 				case client1Notification <- struct{}{}:
 				default:
@@ -709,9 +696,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		defer func() { _ = client1.Close() }()
 
 		client2Notification := make(chan struct{}, 1)
-		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			if strings.Contains(j.Method, "list_changed") {
-				GinkgoWriter.Println("client 2 received notification registration", j.Method)
+		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+			if strings.Contains(method, "list_changed") {
+				GinkgoWriter.Println("client 2 received notification registration", method)
 				select {
 				case client2Notification <- struct{}{}:
 				default:
@@ -720,7 +707,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client2.Close() }()
-		Expect(mcpGatewayClient.sessionID).NotTo(BeEmpty())
+		Expect(client1.sessionID).NotTo(BeEmpty())
 		Expect(client2.sessionID).NotTo(BeEmpty())
 		Expect(client1.sessionID).NotTo(Equal(client2.sessionID))
 
@@ -737,7 +724,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		// We do this to wait for the tools and prompts to show up as we know then that the gateway has done its work
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -746,7 +733,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying both clients received list_changed notifications within 1 minutes")
 		Eventually(func(g Gomega) {
-			_, err := client1.ListTools(ctx, mcp.ListToolsRequest{})
+			_, err := client1.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		Eventually(client1Notification).WithTimeout(TestTimeoutMedium).Should(Receive(), "client1 should have received a notification")
@@ -771,7 +758,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying initial tools are present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -779,9 +766,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating new clients with notification handlers")
 		client1Notification := make(chan struct{}, 1)
-		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			if j.Method == "notifications/tools/list_changed" {
-				GinkgoWriter.Println("client 1 received notification", j.Method)
+		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+			if method == "notifications/tools/list_changed" {
+				GinkgoWriter.Println("client 1 received notification", method)
 				select {
 				case client1Notification <- struct{}{}:
 				default:
@@ -792,9 +779,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		defer func() { _ = client1.Close() }()
 
 		client2Notification := make(chan struct{}, 1)
-		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			GinkgoWriter.Println("client 2 received notification", j.Method)
-			if j.Method == "notifications/tools/list_changed" {
+		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+			GinkgoWriter.Println("client 2 received notification", method)
+			if method == "notifications/tools/list_changed" {
 				select {
 				case client2Notification <- struct{}{}:
 				default:
@@ -810,19 +797,17 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var res *mcp.CallToolResult
 		Eventually(func(g Gomega) {
 			var err error
-			res, err = client1.CallTool(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{
-					Name: addToolName,
-					Arguments: map[string]string{
-						"name":        dynamicToolName,
-						"description": "A dynamically added tool for testing notifications",
-					},
+			res, err = client1.CallTool(ctx, &mcp.CallToolParams{
+				Name: addToolName,
+				Arguments: map[string]string{
+					"name":        dynamicToolName,
+					"description": "A dynamically added tool for testing notifications",
 				},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			for _, c := range res.Content {
-				if tc, ok := c.(mcp.TextContent); ok {
+				if tc, ok := c.(*mcp.TextContent); ok {
 					g.Expect(tc.Text).NotTo(ContainSubstring("Tool not found"))
 				}
 			}
@@ -835,7 +820,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools/list now includes the new dynamically added tool")
 		Eventually(func(g Gomega) {
-			toolsList, err := client1.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := client1.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
@@ -875,7 +860,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are NOT present (backend is down, broker cannot connect)")
 		Consistently(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s should not exist when backend is down", registeredServer.Spec.Prefix))
@@ -891,7 +876,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are now present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -899,9 +884,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with notification handler")
 		receivedNotification := make(chan struct{}, 1)
-		notifyClient, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {
-			if j.Method == "notifications/tools/list_changed" {
-				GinkgoWriter.Println("received notification during unavailability test", j.Method)
+		notifyClient, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+			if method == "notifications/tools/list_changed" {
+				GinkgoWriter.Println("received notification during unavailability test", method)
 				select {
 				case receivedNotification <- struct{}{}:
 				default:
@@ -916,7 +901,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are removed from tools/list within timeout")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s should be removed when server unavailable", registeredServer.Spec.Prefix))
@@ -928,11 +913,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Verifying tool call fails when server unavailable")
 		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "time")
 		Eventually(func(g Gomega) {
-			res, callErr := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: toolName},
-			})
+			res, callErr := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
 			if callErr != nil {
-				return // transport error — backend is down
+				return // transport error
 			}
 			g.Expect(res).NotTo(BeNil())
 			g.Expect(res.IsError).To(BeTrue(), "tool call should fail when backend is down")
@@ -948,7 +931,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are restored in tools/list")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s should be restored when server available", registeredServer.Spec.Prefix))
@@ -956,9 +939,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tool call work when server back available")
 		toolName = fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "time")
-		_, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName},
-		})
+		_, err = mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
 		Expect(err).NotTo(HaveOccurred(), "tool calls should work once the server is back and ready")
 	})
 
@@ -983,7 +964,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var allTools *mcp.ListToolsResult
 		Eventually(func(g Gomega) {
 			var err error
-			allTools, err = mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			allTools, err = mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(allTools).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, allTools)).To(BeTrueBecause("%s should exist", registeredServer.Spec.Prefix))
@@ -1006,7 +987,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying only the tools from the JWT are returned")
 		Eventually(func(g Gomega) {
-			filteredTools, err := authorizedClient.ListTools(ctx, mcp.ListToolsRequest{})
+			filteredTools, err := authorizedClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(filteredTools).NotTo(BeNil())
 			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from authorized capabilities header")
@@ -1116,7 +1097,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying expected tools are present")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolPresent("echo", toolsList)).To(BeTrueBecause("%q should exist", "greet"))
@@ -1125,29 +1106,25 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		toolName := "hello_world"
 		By("Invoking the first tool")
-		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
-				"name": "e2e",
-			}},
-		})
+		res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
+			"name": "e2e",
+		}})
 		Expect(err).Error().NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically("==", 1))
-		content, ok := res.Content[0].(mcp.TextContent)
+		content, ok := res.Content[0].(*mcp.TextContent)
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Hello, e2e!"))
 
 		toolName = "echo"
 		By("Invoking the second tool")
-		res, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
-				"message": "e2e",
-			}},
-		})
+		res, err = mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: map[string]string{
+			"message": "e2e",
+		}})
 		Expect(err).Error().NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically("==", 1))
-		content, ok = res.Content[0].(mcp.TextContent)
+		content, ok = res.Content[0].(*mcp.TextContent)
 		Expect(ok).To(BeTrue())
 		Expect(content.Text).To(Equal("Echo: e2e"))
 	})
@@ -1171,23 +1148,21 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Verifying prompts are present with prefix")
 		expectedPrompt := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
 		Eventually(func(g Gomega) {
-			promptsList, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			promptsList, err := mcpGatewayClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(promptsList).NotTo(BeNil())
 			g.Expect(PromptsListHasPrompt(promptsList, expectedPrompt)).To(BeTrueBecause("prompt %q should exist", expectedPrompt))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Invoking the prompt via GetPrompt")
-		promptResult, err := mcpGatewayClient.GetPrompt(ctx, mcp.GetPromptRequest{
-			Params: mcp.GetPromptParams{
-				Name:      expectedPrompt,
-				Arguments: map[string]string{"name": "e2e"},
-			},
+		promptResult, err := mcpGatewayClient.GetPrompt(ctx, &mcp.GetPromptParams{
+			Name:      expectedPrompt,
+			Arguments: map[string]string{"name": "e2e"},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(promptResult).NotTo(BeNil())
 		Expect(len(promptResult.Messages)).To(BeNumerically(">=", 1), "prompt should return at least one message")
-		content, ok := promptResult.Messages[0].Content.(mcp.TextContent)
+		content, ok := promptResult.Messages[0].Content.(*mcp.TextContent)
 		Expect(ok).To(BeTrue(), "prompt message content should be TextContent")
 		Expect(content.Text).To(Equal("Say hi to e2e"))
 
@@ -1196,7 +1171,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying prompts are removed after unregistration")
 		Eventually(func(g Gomega) {
-			promptsList, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			promptsList, err := mcpGatewayClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(promptsList).NotTo(BeNil())
 			g.Expect(PromptsListHasPrefix(promptsList, registeredServer.Spec.Prefix)).To(BeFalseBecause("prompts with prefix %q should be removed", registeredServer.Spec.Prefix))
@@ -1227,7 +1202,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying prompts from both servers are present with their respective prefixes")
 		Eventually(func(g Gomega) {
-			promptsList, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			promptsList, err := mcpGatewayClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(promptsList).NotTo(BeNil())
 			g.Expect(PromptsListHasPrompt(promptsList, "s1a_greet")).To(BeTrueBecause("s1a_greet should exist"))
@@ -1273,7 +1248,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying only the allowed prompt is returned via virtual server")
 		Eventually(func(g Gomega) {
-			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(filteredPrompts).NotTo(BeNil())
 			g.Expect(len(filteredPrompts.Prompts)).To(Equal(1), "expected exactly 1 prompt from virtual server")
@@ -1281,7 +1256,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying the original client without header still sees all prompts")
-		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 	})
@@ -1334,7 +1309,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Verifying only the allowed prompt is returned")
 		expectedPrompt := fmt.Sprintf("%s%s", registeredServerA.Spec.Prefix, "greet")
 		Eventually(func(g Gomega) {
-			filteredPrompts, err := authorizedClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			filteredPrompts, err := authorizedClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(filteredPrompts).NotTo(BeNil())
 			g.Expect(len(filteredPrompts.Prompts)).To(Equal(1), "expected exactly 1 prompt from authorized capabilities header")
@@ -1342,7 +1317,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying a client without the header still sees both prompts")
-		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		promptsAll, err := mcpGatewayClient.ListPrompts(ctx, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 		Expect(PromptsListHasPrompt(promptsAll, fmt.Sprintf("%s%s", registeredServerB.Spec.Prefix, "greet"))).To(BeTrue())
@@ -1384,7 +1359,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying all prompts are returned (no prompts field = no filtering)")
 		Eventually(func(g Gomega) {
-			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+			filteredPrompts, err := virtualServerClient.ListPrompts(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(filteredPrompts).NotTo(BeNil())
 			expectedPrompt := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "greet")
@@ -1393,7 +1368,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools ARE filtered by the VirtualServer")
 		Eventually(func(g Gomega) {
-			filteredTools, err := virtualServerClient.ListTools(ctx, mcp.ListToolsRequest{})
+			filteredTools, err := virtualServerClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(filteredTools).NotTo(BeNil())
 			g.Expect(len(filteredTools.Tools)).To(Equal(1), "expected exactly 1 tool from virtual server")
@@ -1428,7 +1403,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		rpcErr, parseErr := parseSSEError(body)
 		Expect(parseErr).NotTo(HaveOccurred(), "expected a JSON-RPC error in SSE response")
-		Expect(rpcErr.Code).To(Equal(mcp.INVALID_PARAMS), "expected JSON-RPC invalid-params error code (-32602)")
+		Expect(rpcErr.Code).To(Equal(-32602), "expected JSON-RPC invalid-params error code (-32602)")
 	})
 
 	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
@@ -1474,7 +1449,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying both servers' tools are now available")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			// greet from server1 (no prefix) - unique to server1
@@ -1489,17 +1464,13 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Invoking same tools from both servers")
 		// Call server1's time (no prefix)
-		res, err := mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "time"},
-		})
+		res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: "time"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
 
 		// Call server2's prefixed headers tool
-		res, err = mcpGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: "server2_time"},
-		})
+		res, err = mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{Name: "server2_time"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
@@ -1521,7 +1492,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should exist", registeredServer.Spec.Prefix))
@@ -1534,7 +1505,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools are removed from the gateway's tool list")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeFalseBecause("%s tools should be removed when disabled", registeredServer.Spec.Prefix))
@@ -1553,7 +1524,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Verifying tools return to the gateway's tool list")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(registeredServer.Spec.Prefix, toolsList)).To(BeTrueBecause("%s tools should return after re-enabling", registeredServer.Spec.Prefix))

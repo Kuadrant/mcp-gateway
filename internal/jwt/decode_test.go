@@ -3,6 +3,7 @@ package jwt
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,34 @@ func TestExtractSubClaim(t *testing.T) {
 				t.Fatalf("got sub=%q, want %q", sub, tt.wantSub)
 			}
 		})
+	}
+}
+
+func TestLogSafeSessionID(t *testing.T) {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"jti":"abc-123","exp":9999999999}`))
+	token := "eyJhbGciOiJIUzI1NiJ9." + payload + ".sig"
+
+	if got := LogSafeSessionID(token); got != "jti:abc-123" {
+		t.Errorf("expected jti:abc-123, got %q", got)
+	}
+
+	opaque := LogSafeSessionID("not-a-jwt-token")
+	if opaque == "not-a-jwt-token" || opaque == "" {
+		t.Errorf("opaque IDs must be hashed, got %q", opaque)
+	}
+	if opaque != LogSafeSessionID("not-a-jwt-token") {
+		t.Error("hashing must be deterministic")
+	}
+	if !strings.HasPrefix(opaque, "sha256:") {
+		t.Errorf("expected sha256 prefix, got %q", opaque)
+	}
+
+	if got := LogSafeSessionID(""); got != "" {
+		t.Errorf("expected empty for empty input, got %q", got)
+	}
+
+	// the raw token must never appear in the output
+	if strings.Contains(LogSafeSessionID(token), ".sig") {
+		t.Error("output must not contain the raw token")
 	}
 }

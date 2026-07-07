@@ -802,7 +802,7 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 			sessionCloser()
 			return "", NewRouterError(401, fmt.Errorf("invalid session"))
 		}
-		remoteSessionID := clientHandle.GetSessionId()
+		remoteSessionID := clientHandle.ID()
 		s.Logger.DebugContext(ctx, "got remote session id ", "mcp server", mcpServerConfig.Name, "session", remoteSessionID)
 		{
 			_, storeSpan := tracer().Start(ctx, "mcp-router.session-cache.store",

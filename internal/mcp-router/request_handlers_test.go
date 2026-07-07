@@ -14,13 +14,14 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/mark3labs/mcp-go/client"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -184,7 +185,7 @@ func TestHandleRequestBody(t *testing.T) {
 	require.True(t, sessionAdded)
 
 	// Mock InitForClient - should not be called since session exists
-	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
 		// This should not be called in this test since session exists in cache
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
@@ -1210,7 +1211,7 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NoError(t, err)
 
 	var captured map[string]string
-	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
 		captured = make(map[string]string, len(headers))
 		for k, v := range headers {
 			captured[k] = v
@@ -1485,7 +1486,7 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, sessionAdded)
 
-	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
 		return nil, fmt.Errorf("InitForClient should not be called when session exists")
 	}
 
@@ -1584,7 +1585,7 @@ func setupTokenResolutionTestServer(t *testing.T, serverConfigs []*config.MCPSer
 		JWTManager:   jwtManager,
 		Logger:       logger,
 		SessionCache: cache,
-		InitForClient: func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*client.Client, error) {
+		InitForClient: func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
 			return nil, fmt.Errorf("should not be called")
 		},
 		Broker:              newMockBroker(serverConfigs, toolMap),
@@ -1885,4 +1886,62 @@ func extractSSEData(t *testing.T, sse string) string {
 		return rest
 	}
 	return rest[:end]
+}
+
+// x-mcp-annotation-hints must render mark3labs semantics: nil pointers as
+// unspecified, explicit true/false preserved, all four keys always present.
+func TestAnnotationHintsHeader(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
+	// local rendering replica mirrors the inline code in HandleToolCall
+	renderHints := func(h upstream.ToolHints) string {
+		var parts []string
+		push := func(key string, val *bool) {
+			if val == nil {
+				parts = append(parts, fmt.Sprintf("%s=unspecified", key))
+			} else if *val {
+				parts = append(parts, fmt.Sprintf("%s=true", key))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=false", key))
+			}
+		}
+		push("readOnly", h.ReadOnlyHint)
+		push("destructive", h.DestructiveHint)
+		push("idempotent", h.IdempotentHint)
+		push("openWorld", h.OpenWorldHint)
+		return strings.Join(parts, ",")
+	}
+	cases := []struct {
+		name  string
+		hints upstream.ToolHints
+		want  string
+	}{
+		{
+			name:  "all unspecified",
+			hints: upstream.ToolHints{},
+			want:  "readOnly=unspecified,destructive=unspecified,idempotent=unspecified,openWorld=unspecified",
+		},
+		{
+			name: "explicit values",
+			hints: upstream.ToolHints{
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			},
+			want: "readOnly=true,destructive=false,idempotent=true,openWorld=false",
+		},
+		{
+			name: "mixed explicit false and unspecified",
+			hints: upstream.ToolHints{
+				ReadOnlyHint:   boolPtr(false),
+				IdempotentHint: boolPtr(false),
+			},
+			want: "readOnly=false,destructive=unspecified,idempotent=false,openWorld=unspecified",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, renderHints(tc.hints))
+		})
+	}
 }

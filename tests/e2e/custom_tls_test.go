@@ -15,7 +15,7 @@ import (
 	"time"
 
 	wrappers "github.com/golang/protobuf/ptypes/wrappers"
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	istiov1beta1 "istio.io/api/networking/v1beta1"
@@ -84,7 +84,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Verifying tools with tls_hp_ prefix are present via tools/list")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("tls_hp_", toolsList)).To(BeTrue(),
@@ -93,17 +93,15 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Invoking tools/call — hairpin uses server hostname as SNI for correct filter chain selection")
 		Eventually(func(g Gomega) {
-			res, err := mcpGatewayClient.CallTool(ctx, mcpgo.CallToolRequest{
-				Params: mcpgo.CallToolParams{
-					Name:      "tls_hp_greet",
-					Arguments: map[string]string{"name": "hairpin-sni-test"},
-				},
+			res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "tls_hp_greet",
+				Arguments: map[string]string{"name": "hairpin-sni-test"},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			g.Expect(res.IsError).To(BeFalse(), "tools/call should succeed via hairpin with server hostname SNI")
 			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
-			content, ok := res.Content[0].(mcpgo.TextContent)
+			content, ok := res.Content[0].(*mcp.TextContent)
 			g.Expect(ok).To(BeTrue())
 			g.Expect(content.Text).To(ContainSubstring("hairpin-sni-test"))
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
@@ -153,7 +151,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Verifying tools with tls_wrong_ prefix are absent")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("tls_wrong_", toolsList)).To(BeFalse(),
 				"tools with prefix tls_wrong_ should NOT exist")
@@ -204,7 +202,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Verifying tools/list succeeds (broker discovers tools directly)")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("tls_dr_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
@@ -212,11 +210,9 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		By("Attempting tools/call without DestinationRule — Envoy sends plain HTTP to TLS backend")
 		toolName := "tls_dr_echo_tls"
 		Eventually(func(g Gomega) {
-			res, err := mcpGatewayClient.CallTool(ctx, mcpgo.CallToolRequest{
-				Params: mcpgo.CallToolParams{
-					Name:      toolName,
-					Arguments: map[string]string{"message": "should-fail"},
-				},
+			res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      toolName,
+				Arguments: map[string]string{"message": "should-fail"},
 			})
 			// the hairpin initialize also routes through Envoy, so the plain-HTTP-to-TLS
 			// mismatch can surface as either a transport error (500 from failed init) or
@@ -259,18 +255,16 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 
 		By("Calling tools/call — Envoy re-encrypts via DestinationRule TLS origination")
 		Eventually(func(g Gomega) {
-			res, err := mcpGatewayClient.CallTool(ctx, mcpgo.CallToolRequest{
-				Params: mcpgo.CallToolParams{
-					Name:      toolName,
-					Arguments: map[string]string{"message": "tls-origination-test"},
-				},
+			res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      toolName,
+				Arguments: map[string]string{"message": "tls-origination-test"},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(res).NotTo(BeNil())
 			g.Expect(res.IsError).To(BeFalse(),
 				"tools/call should succeed with DestinationRule TLS origination")
 			g.Expect(len(res.Content)).To(BeNumerically(">=", 1))
-			content, ok := res.Content[0].(mcpgo.TextContent)
+			content, ok := res.Content[0].(*mcp.TextContent)
 			g.Expect(ok).To(BeTrue())
 			g.Expect(content.Text).To(ContainSubstring("tls-origination-test"))
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
@@ -386,7 +380,7 @@ var _ = Describe("HTTPS External Backends", func() {
 
 		By("Verifying tools/list succeeds over HTTPS")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("realcert_", toolsList)).To(BeTrue(),

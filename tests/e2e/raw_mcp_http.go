@@ -13,7 +13,10 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 )
+
+var jsonRPCID atomic.Int64
 
 // raw MCP HTTP helpers provide direct control over the Mcp-Session-Id header,
 // which the SDK clients abstract away. This is needed for tests that verify
@@ -90,7 +93,7 @@ func mcpNotifyInitialized(ctx context.Context, url, sessionID string, headers ma
 // mcpListNames posts a JSON-RPC list request (e.g. tools/list, prompts/list)
 // and extracts the name strings from the given result key.
 func mcpListNames(ctx context.Context, url, sessionID, method, resultKey string, headers map[string]string) (int, []string, error) {
-	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"%s"}`, method)
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"%s"}`, jsonRPCID.Add(1), method)
 	resp, err := mcpPost(ctx, url, sessionID, []byte(body), headers)
 	if err != nil {
 		return 0, nil, fmt.Errorf("%s failed: %w", method, err)
@@ -110,13 +113,20 @@ func mcpListNames(ctx context.Context, url, sessionID, method, resultKey string,
 		return resp.StatusCode, nil, err
 	}
 
-	var parsed map[string][]struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(result, &parsed); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(result, &raw); err != nil {
 		return resp.StatusCode, nil, fmt.Errorf("failed to parse %s result: %w: %s", method, err, string(result))
 	}
-	items := parsed[resultKey]
+	itemsJSON, ok := raw[resultKey]
+	if !ok {
+		return resp.StatusCode, nil, fmt.Errorf("key %q not found in %s result: %s", resultKey, method, string(result))
+	}
+	var items []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(itemsJSON, &items); err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("failed to parse %s[%s]: %w: %s", method, resultKey, err, string(itemsJSON))
+	}
 	names := make([]string, len(items))
 	for i, item := range items {
 		names[i] = item.Name
@@ -135,7 +145,7 @@ func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[
 	}
 	payload := map[string]any{
 		"jsonrpc": "2.0",
-		"id":      2,
+		"id":      jsonRPCID.Add(1),
 		"method":  "tools/call",
 		"params":  params,
 	}
@@ -183,7 +193,7 @@ func mcpGetPrompt(ctx context.Context, url, sessionID, promptName string, args m
 	}
 	payload := map[string]any{
 		"jsonrpc": "2.0",
-		"id":      2,
+		"id":      jsonRPCID.Add(1),
 		"method":  "prompts/get",
 		"params":  params,
 	}
@@ -383,7 +393,7 @@ func mcpCallToolRaw(mcpURL, sessionID, toolName string, args map[string]any, hea
 	}
 	payload := map[string]any{
 		"jsonrpc": "2.0",
-		"id":      3,
+		"id":      jsonRPCID.Add(1),
 		"method":  "tools/call",
 		"params":  params,
 	}

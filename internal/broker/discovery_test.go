@@ -11,10 +11,14 @@ import (
 	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+func mustMarshalArgs(m map[string]any) json.RawMessage {
+	b, _ := json.Marshal(m)
+	return b
+}
 
 func createTestManagerWithMeta(t *testing.T, serverName, prefix string, tools []mcp.Tool, category []string, hint string) upstream.ActiveMCPServer {
 	t.Helper()
@@ -40,16 +44,19 @@ func TestDiscoverTools_BasicResponse(t *testing.T) {
 		[]string{"Weather", "External"}, "weather data from OpenWeather",
 	)
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{}
-	req.Header = http.Header{}
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Arguments: mustMarshalArgs(map[string]any{}),
+		},
+		Extra: &mcp.RequestExtra{Header: http.Header{}},
+	}
 
 	result, err := b.handleDiscoverTools(context.Background(), req)
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 
 	var resp discoverToolsResponse
-	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &resp))
+	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &resp))
 	require.Len(t, resp.Servers, 1)
 	require.Equal(t, "weather-service", resp.Servers[0].Name)
 	require.Equal(t, []string{"Weather", "External"}, resp.Servers[0].Categories)
@@ -89,15 +96,18 @@ func TestDiscoverTools_CategoryFilter(t *testing.T) {
 			if tc.filter != "" {
 				args["category"] = tc.filter
 			}
-			req := mcp.CallToolRequest{}
-			req.Params.Arguments = args
-			req.Header = http.Header{}
+			req := &mcp.CallToolRequest{
+				Params: &mcp.CallToolParamsRaw{
+					Arguments: mustMarshalArgs(args),
+				},
+				Extra: &mcp.RequestExtra{Header: http.Header{}},
+			}
 
 			result, err := b.handleDiscoverTools(context.Background(), req)
 			require.NoError(t, err)
 
 			var resp discoverToolsResponse
-			require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &resp))
+			require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &resp))
 			require.Len(t, resp.Servers, tc.expected)
 		})
 	}
@@ -112,15 +122,18 @@ func TestDiscoverTools_EmptyCategoryMatchReturnsEmptyServers(t *testing.T) {
 		[]string{"Weather"}, "",
 	)
 
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{"category": "nonexistent"}
-	req.Header = http.Header{}
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Arguments: mustMarshalArgs(map[string]any{"category": "nonexistent"}),
+		},
+		Extra: &mcp.RequestExtra{Header: http.Header{}},
+	}
 
 	result, err := b.handleDiscoverTools(context.Background(), req)
 	require.NoError(t, err)
 
 	var resp discoverToolsResponse
-	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &resp))
+	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &resp))
 	require.Len(t, resp.Servers, 0)
 }
 
@@ -133,15 +146,15 @@ func TestMatchesCategory(t *testing.T) {
 }
 
 func TestIsBrokerTool(t *testing.T) {
-	require.False(t, IsBrokerTool(mcp.Tool{Name: "user_tool"}))
-	require.True(t, IsBrokerTool(mcp.Tool{Name: "discover_tools"}))
-	require.True(t, IsBrokerTool(mcp.Tool{Name: "select_tools"}))
+	require.False(t, IsBrokerTool(&mcp.Tool{Name: "user_tool"}))
+	require.True(t, IsBrokerTool(&mcp.Tool{Name: "discover_tools"}))
+	require.True(t, IsBrokerTool(&mcp.Tool{Name: "select_tools"}))
 
 	// tags tools are detected via meta annotation, not name
-	require.False(t, IsBrokerTool(mcp.Tool{Name: "list_tags"}))
+	require.False(t, IsBrokerTool(&mcp.Tool{Name: "list_tags"}))
 	tagsTool := mcp.Tool{Name: "list_tags"}
-	tagsTool.Meta = mcp.NewMetaFromMap(map[string]any{brokerToolMetaKey: true})
-	require.True(t, IsBrokerTool(tagsTool))
+	tagsTool.Meta = mcp.Meta(map[string]any{brokerToolMetaKey: true})
+	require.True(t, IsBrokerTool(&tagsTool))
 }
 
 func TestIsBrokerToolName(t *testing.T) {
@@ -186,113 +199,101 @@ func TestSelectTools_AllOrNothing(t *testing.T) {
 		[]string{"Test"}, "",
 	)
 
-	// mock session
-	session := &mockSession{id: "test-session-1"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
+	b.mcpLock.RLock()
+	err := b.validateToolSelectionLocked([]string{"s1_real_tool", "s1_nonexistent"}, http.Header{}, "test-session-1")
+	b.mcpLock.RUnlock()
+	require.Error(t, err, "should fail because s1_nonexistent doesn't exist")
 
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"s1_real_tool", "s1_nonexistent"},
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.True(t, result.IsError, "should fail because s1_nonexistent doesn't exist")
-
-	// scope must remain unset after a failed selection
+	// scope must remain unset after a failed validation
 	state, _ := b.scopeStore.getScope("test-session-1")
 	require.Equal(t, scopeUnset, state)
 }
 
-func TestSelectTools_Success(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+// selectTools invokes the registered select_tools handler over a live SDK
+// client session and decodes the response payload. payload is nil for
+// error results.
+func selectTools(t *testing.T, cs *mcp.ClientSession, tools []string) (*mcp.CallToolResult, map[string]any) {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      selectToolsName,
+		Arguments: map[string]any{"tools": tools},
+	})
+	require.NoError(t, err)
+	if res.IsError {
+		return res, nil
+	}
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Content[0].(*mcp.TextContent).Text), &payload))
+	return res, payload
+}
 
-	b.mcpServers["s1"] = createTestManagerWithMeta(t,
+func TestSelectTools_Success(t *testing.T) {
+	h := newDiscoveryHarness(t)
+	h.b.mcpServers["s1"] = createTestManagerWithMeta(t,
 		"svc1", "s1_",
 		[]mcp.Tool{{Name: "tool_a"}, {Name: "tool_b"}},
 		[]string{"Test"}, "",
 	)
+	cs := h.connect(t)
 
-	session := &mockSession{id: "test-session-2"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
+	res, payload := selectTools(t, cs, []string{"s1_tool_a"})
+	require.False(t, res.IsError)
+	require.Equal(t, "scope set to 1 tools", payload["status"])
+	require.Equal(t, []any{"s1_tool_a"}, payload["tools"])
+	// SDK notification dispatch is async, so a delivery-failure warning
+	// key is no longer possible (accepted delta vs mark3labs)
+	require.NotContains(t, payload, "warning")
 
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"s1_tool_a"},
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-
-	// verify scope was set
-	state, tools := b.scopeStore.getScope("test-session-2")
+	state, tools := h.b.scopeStore.getScope(cs.ID())
 	require.Equal(t, scopeFiltered, state)
 	_, ok := tools["s1_tool_a"]
 	require.True(t, ok)
 }
 
 func TestSelectTools_EmptyResetsScope(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+	h := newDiscoveryHarness(t)
+	h.b.mcpServers["s1"] = createTestManagerWithMeta(t,
+		"svc1", "s1_",
+		[]mcp.Tool{{Name: "tool_a"}},
+		[]string{"Test"}, "",
+	)
+	cs := h.connect(t)
 
-	b.scopeStore.setScope("s1", []string{"tool_a"})
+	res, _ := selectTools(t, cs, []string{"s1_tool_a"})
+	require.False(t, res.IsError)
+	state, _ := h.b.scopeStore.getScope(cs.ID())
+	require.Equal(t, scopeFiltered, state)
 
-	session := &mockSession{id: "s1"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
+	res, payload := selectTools(t, cs, []string{})
+	require.False(t, res.IsError)
+	require.Equal(t, "scope reset to all tools", payload["status"])
+	require.NotContains(t, payload, "warning")
 
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{},
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-
-	state, _ := b.scopeStore.getScope("s1")
+	state, _ = h.b.scopeStore.getScope(cs.ID())
 	require.Equal(t, scopeAll, state)
 }
 
 func TestSelectTools_Rescope(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
-
-	b.mcpServers["s1"] = createTestManagerWithMeta(t,
+	h := newDiscoveryHarness(t)
+	h.b.mcpServers["s1"] = createTestManagerWithMeta(t,
 		"svc1", "s1_",
 		[]mcp.Tool{{Name: "tool_a"}, {Name: "tool_b"}, {Name: "tool_c"}},
 		[]string{"Test"}, "",
 	)
+	cs := h.connect(t)
 
-	session := &mockSession{id: "rescope-session"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
-	// first select_tools: scope to tool_a
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"s1_tool_a"},
-	}
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-
-	state, tools := b.scopeStore.getScope("rescope-session")
+	res, _ := selectTools(t, cs, []string{"s1_tool_a"})
+	require.False(t, res.IsError)
+	state, tools := h.b.scopeStore.getScope(cs.ID())
 	require.Equal(t, scopeFiltered, state)
 	require.Len(t, tools, 1)
 	_, ok := tools["s1_tool_a"]
 	require.True(t, ok)
 
-	// second select_tools: re-scope to tool_b and tool_c
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"s1_tool_b", "s1_tool_c"},
-	}
-	result, err = b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-
-	state, tools = b.scopeStore.getScope("rescope-session")
+	res, payload := selectTools(t, cs, []string{"s1_tool_b", "s1_tool_c"})
+	require.False(t, res.IsError)
+	require.NotContains(t, payload, "warning")
+	state, tools = h.b.scopeStore.getScope(cs.ID())
 	require.Equal(t, scopeFiltered, state)
 	require.Len(t, tools, 2)
 	_, ok = tools["s1_tool_b"]
@@ -307,41 +308,27 @@ func TestSelectTools_Rescope(t *testing.T) {
 func TestSelectTools_BrokerToolsNotSelectable(t *testing.T) {
 	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
 
-	session := &mockSession{id: "s1"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"discover_tools"},
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.True(t, result.IsError)
+	b.mcpLock.RLock()
+	err := b.validateToolSelectionLocked([]string{"discover_tools"}, http.Header{}, "s1")
+	b.mcpLock.RUnlock()
+	require.Error(t, err)
 }
 
 func TestSelectTools_MaxToolsExceeded(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+	h := newDiscoveryHarness(t)
+	cs := h.connect(t)
 
-	session := &mockSession{id: "max-tools-session"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
-	// build a tools list exceeding the 1000 limit
-	tools := make([]any, 1001)
+	tools := make([]string, 251)
 	for i := range tools {
 		tools[i] = fmt.Sprintf("tool_%d", i)
 	}
+	res, _ := selectTools(t, cs, tools)
+	require.True(t, res.IsError)
+	require.Equal(t, "too many tools requested (max 250)", res.Content[0].(*mcp.TextContent).Text)
 
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": tools,
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
-	require.NoError(t, err)
-	require.True(t, result.IsError, "should reject when tool count exceeds max")
+	// a rejected selection must leave the scope unset
+	state, _ := h.b.scopeStore.getScope(cs.ID())
+	require.Equal(t, scopeUnset, state)
 }
 
 func TestThresholdFilter(t *testing.T) {
@@ -350,10 +337,10 @@ func TestThresholdFilter(t *testing.T) {
 		WithDiscoveryToolThreshold(2),
 	).(*mcpBrokerImpl)
 
-	brokerTool := mcp.Tool{Name: "discover_tools"}
-	brokerTool.Meta = mcp.NewMetaFromMap(map[string]any{brokerToolMetaKey: true})
+	brokerTool := &mcp.Tool{Name: "discover_tools"}
+	brokerTool.Meta = mcp.Meta(map[string]any{brokerToolMetaKey: true})
 
-	tools := []mcp.Tool{
+	tools := []*mcp.Tool{
 		{Name: "tool1"},
 		{Name: "tool2"},
 		{Name: "tool3"},
@@ -372,10 +359,7 @@ func TestThresholdFilter_ZeroMeansNeverHide(t *testing.T) {
 		WithDiscoveryToolThreshold(0),
 	).(*mcpBrokerImpl)
 
-	tools := []mcp.Tool{
-		{Name: "tool1"},
-		{Name: "tool2"},
-	}
+	tools := []*mcp.Tool{{Name: "tool1"}, {Name: "tool2"}}
 
 	result := b.applyThresholdFilter(tools)
 	require.Len(t, result, 2)
@@ -387,10 +371,7 @@ func TestThresholdFilter_UnderThreshold(t *testing.T) {
 		WithDiscoveryToolThreshold(5),
 	).(*mcpBrokerImpl)
 
-	tools := []mcp.Tool{
-		{Name: "tool1"},
-		{Name: "tool2"},
-	}
+	tools := []*mcp.Tool{{Name: "tool1"}, {Name: "tool2"}}
 
 	result := b.applyThresholdFilter(tools)
 	require.Len(t, result, 2)
@@ -402,14 +383,11 @@ func TestScopeFilterRevalidatesAuth(t *testing.T) {
 	// scope has tool_a, but tool_a is not in the current tool list (e.g. removed upstream)
 	b.scopeStore.setScope("s1", []string{"tool_a"})
 
-	session := &mockSession{id: "s1"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
-	currentTools := []mcp.Tool{
+	currentTools := []*mcp.Tool{
 		{Name: "tool_b"},
 	}
 
-	result := b.applyScopeFilter(ctx, currentTools)
+	result := b.applyScopeFilter(context.Background(), "s1", currentTools)
 	// tool_a is in scope but not in current tools, so should be empty (no broker tools in this list)
 	require.Len(t, result, 0)
 }
@@ -430,8 +408,8 @@ func TestConfigChanged_CategoryAndHint(t *testing.T) {
 }
 
 func TestDiscoveryToolsRegistration(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(true))
-	tools := b.MCPServer().ListTools()
+	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
+	tools := b.gatewayServer.ListTools()
 
 	_, hasDiscover := tools[discoverToolsName]
 	require.True(t, hasDiscover, "discover_tools should be registered")
@@ -441,14 +419,14 @@ func TestDiscoveryToolsRegistration(t *testing.T) {
 }
 
 func TestDiscoveryToolsNotRegisteredWhenDisabled(t *testing.T) {
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(false))
-	tools := b.MCPServer().ListTools()
+	b := NewBroker(logger, WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	tools := b.gatewayServer.ListTools()
 
 	_, hasDiscover := tools[discoverToolsName]
 	require.False(t, hasDiscover, "discover_tools should not be registered when disabled")
 }
 
-func TestSelectTools_NotificationFailureWarning(t *testing.T) {
+func TestSelectTools_ValidationSucceedsForValidTool(t *testing.T) {
 	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
 
 	b.mcpServers["s1"] = createTestManagerWithMeta(t,
@@ -457,25 +435,10 @@ func TestSelectTools_NotificationFailureWarning(t *testing.T) {
 		[]string{"Test"}, "",
 	)
 
-	// use a session that is NOT registered with the MCP server,
-	// so SendNotificationToSpecificClient will fail
-	session := &mockSession{id: "unregistered-session"}
-	ctx := b.listeningMCPServer.WithContext(context.Background(), session)
-
-	req := mcp.CallToolRequest{}
-	req.Header = http.Header{}
-	req.Params.Arguments = map[string]any{
-		"tools": []any{"s1_tool_a"},
-	}
-
-	result, err := b.handleSelectTools(ctx, req)
+	b.mcpLock.RLock()
+	err := b.validateToolSelectionLocked([]string{"s1_tool_a"}, http.Header{}, "validate-session")
+	b.mcpLock.RUnlock()
 	require.NoError(t, err)
-	require.False(t, result.IsError)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &resp))
-	_, hasWarning := resp["warning"]
-	require.True(t, hasWarning, "should include warning when notification fails")
 }
 
 func TestScopeStore_CleanupOnDisconnect(t *testing.T) {
@@ -502,7 +465,7 @@ func TestDiscoveryEnabled_ScopeStoreAllocated(t *testing.T) {
 	require.NotNil(t, b.scopeStore, "scope store should be allocated when discovery enabled")
 	require.True(t, b.discovery.enabled)
 
-	tools := b.MCPServer().ListTools()
+	tools := b.gatewayServer.ListTools()
 	_, hasDiscover := tools[discoverToolsName]
 	require.True(t, hasDiscover, "discover_tools should be registered when enabled")
 }
@@ -512,26 +475,7 @@ func TestDiscoveryDisabled_NoScopeStore(t *testing.T) {
 	require.Nil(t, b.scopeStore, "scope store should be nil when discovery disabled")
 	require.False(t, b.discovery.enabled)
 
-	tools := b.MCPServer().ListTools()
+	tools := b.gatewayServer.ListTools()
 	_, hasDiscover := tools[discoverToolsName]
 	require.False(t, hasDiscover, "discover_tools should not be registered when disabled")
 }
-
-// mockSession implements server.ClientSession for testing
-type mockSession struct {
-	id   string
-	ch   chan mcp.JSONRPCNotification
-	init bool
-}
-
-func (m *mockSession) SessionID() string { return m.id }
-func (m *mockSession) Initialize()       { m.init = true }
-func (m *mockSession) Initialized() bool { return m.init }
-func (m *mockSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	if m.ch == nil {
-		m.ch = make(chan mcp.JSONRPCNotification, 10)
-	}
-	return m.ch
-}
-
-var _ server.ClientSession = &mockSession{}

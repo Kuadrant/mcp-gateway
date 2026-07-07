@@ -9,7 +9,7 @@ import (
 	"time"
 
 	goenv "github.com/caitlinelfring/go-env-default"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -156,18 +156,18 @@ func BuildTestMCPVirtualServer(name, namespace string, tools []string) *MCPVirtu
 
 // MCPToolsLister interface for clients that can list tools
 type MCPToolsLister interface {
-	ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+	ListTools(ctx context.Context, params *mcp.ListToolsParams) (*mcp.ListToolsResult, error)
 }
 
 // MCPPromptsLister interface for clients that can list prompts
 type MCPPromptsLister interface {
-	ListPrompts(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error)
+	ListPrompts(ctx context.Context, params *mcp.ListPromptsParams) (*mcp.ListPromptsResult, error)
 }
 
 // WaitForToolsWithPrefix waits for tools with the given prefix to be present
 func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix string) {
 	Eventually(func(g Gomega) {
-		toolsList, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		toolsList, err := client.ListTools(ctx, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(toolsList).NotTo(BeNil())
 		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeTrue(),
@@ -178,7 +178,7 @@ func WaitForToolsWithPrefix(ctx context.Context, client MCPToolsLister, prefix s
 // WaitForPromptsWithPrefix waits for prompts with the given prefix to be present
 func WaitForPromptsWithPrefix(ctx context.Context, client MCPPromptsLister, prefix string) {
 	Eventually(func(g Gomega) {
-		promptsList, err := client.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		promptsList, err := client.ListPrompts(ctx, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(promptsList).NotTo(BeNil())
 		g.Expect(PromptsListHasPrefix(promptsList, prefix)).To(BeTrue(),
@@ -189,7 +189,7 @@ func WaitForPromptsWithPrefix(ctx context.Context, client MCPPromptsLister, pref
 // WaitForToolsWithPrefixAbsent waits for tools with the given prefix to be absent
 func WaitForToolsWithPrefixAbsent(ctx context.Context, client MCPToolsLister, prefix string) {
 	Eventually(func(g Gomega) {
-		toolsList, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		toolsList, err := client.ListTools(ctx, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(toolsList).NotTo(BeNil())
 		g.Expect(verifyMCPServerRegistrationToolsPresent(prefix, toolsList)).To(BeFalse(),

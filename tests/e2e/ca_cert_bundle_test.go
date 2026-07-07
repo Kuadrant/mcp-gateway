@@ -13,7 +13,7 @@ import (
 	"math/big"
 	"time"
 
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -150,7 +150,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 		By("Verifying tools are discovered")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_basic_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
@@ -192,7 +192,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 		By("Verifying tools from both servers are discovered")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_m1_", toolsList)).To(BeTrue())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_m2_", toolsList)).To(BeTrue())
@@ -231,7 +231,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 		By("Verifying tools are discovered via additive trust pool")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_add_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
@@ -260,7 +260,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		// weak assertion: only proves tools don't appear, not why.
 		// stronger: hit broker /status and assert x509 error in Message field.
 		Consistently(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			if err != nil {
 				return
 			}
@@ -280,7 +280,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 		By("Verifying tools appear after CA rotation propagates")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_wrong_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
@@ -353,7 +353,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 		By("Verifying tools are discovered (no conflict from duplicate CA)")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcpgo.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, &mcp.ListToolsParams{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(verifyMCPServerRegistrationToolsPresent("cab_dup_", toolsList)).To(BeTrue())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
