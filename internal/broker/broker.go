@@ -83,6 +83,11 @@ type mcpBrokerImpl struct {
 	mcpServers map[config.UpstreamMCPID]upstream.ActiveMCPServer
 	// protects mcpServers
 	mcpLock sync.RWMutex
+	// reloadMu serialises OnConfigChange end to end: config.Notify runs each
+	// observer in its own goroutine and Stop deliberately runs outside
+	// mcpLock, so overlapping reloads could interleave. lock order is
+	// reloadMu before mcpLock; never taken on the request path.
+	reloadMu sync.Mutex
 
 	// gatewayServer wraps the mcp.Server and tracks tools/prompts
 	gatewayServer *gatewayServer
@@ -386,6 +391,13 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 }
 
 func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServersConfig) {
+	// serialise reloads: Notify spawns a goroutine per observer and
+	// secret-mount updates fire several fsnotify events back to back. with
+	// Stop outside mcpLock, an unserialised stale reload's Stop could delete
+	// a replacement manager's tools and then re-apply an old snapshot.
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
 	// Take a consistent snapshot before acquiring mcpLock; LoadConfig may be
 	// concurrently replacing conf.Servers/VirtualServers under its own write lock.
 	servers := conf.ListServers()
