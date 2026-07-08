@@ -125,7 +125,7 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilter(headers http.Head
 		return tools
 	}
 
-	return broker.filterToolsByServerMap(allowedTools)
+	return broker.filterToolsByServerMap(allowedTools, tools)
 }
 
 // parseAuthorizedCapabilitiesJWT validates and extracts allowed capabilities from the JWT header.
@@ -183,33 +183,31 @@ func (broker *mcpBrokerImpl) findServerByName(name string) upstream.ActiveMCPSer
 	return nil
 }
 
-// filterToolsByServerMap filters tools based on a map of server name to allowed tool names.
-func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]string) []*mcp.Tool {
-	var filtered []*mcp.Tool
-
+// filterToolsByServerMap keeps the tools whose (server, name) appears in the JWT's
+// allowed-capabilities map. It filters the already-merged tool slice rather than
+// rebuilding from each upstream's cached managed tools: userSpecificList servers
+// cache no managed tools (they are fetched per-request and merged in earlier), so
+// rebuilding would silently drop them.
+func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]string, tools []*mcp.Tool) []*mcp.Tool {
+	allowed := make(map[string]struct{})
 	for serverName, toolNames := range allowedTools {
 		upstream := broker.findServerByName(serverName)
 		if upstream == nil {
 			broker.logger.Error("upstream not found", "server", serverName)
 			continue
 		}
-		tools := upstream.GetManagedTools()
-		if tools == nil {
-			broker.logger.Debug("no tools registered for upstream server", "server", upstream.MCPName())
-			continue
-		}
-
-		for _, tool := range tools {
-			broker.logger.Debug("checking access", "tool", tool.Name, "against", toolNames)
-			if slices.Contains(toolNames, tool.Name) {
-				broker.logger.Debug("access granted", "tool", tool.Name)
-				t := tool
-				t.Name = fmt.Sprintf("%s%s", upstream.Config().Prefix, t.Name)
-				filtered = append(filtered, &t)
-			}
+		prefix := upstream.Config().Prefix
+		for _, name := range toolNames {
+			allowed[prefix+name] = struct{}{}
 		}
 	}
 
+	var filtered []*mcp.Tool
+	for _, tool := range tools {
+		if _, ok := allowed[tool.Name]; ok {
+			filtered = append(filtered, tool)
+		}
+	}
 	return filtered
 }
 

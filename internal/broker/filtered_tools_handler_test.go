@@ -100,6 +100,37 @@ func TestFilteredTools(t *testing.T) {
 			},
 		},
 		{
+			// userSpecificList servers cache no managed tools (fetched per-request and
+			// merged into the result before filtering). The JWT filter must keep them
+			// rather than rebuild the list from cached managed tools, which drops them.
+			Name: "keeps user-specific tools alongside cached tools",
+			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
+				{Name: "std_list_repos"},
+				{Name: "us_create_issue", Meta: mcp.Meta{"kuadrant/id": "mcp-test/user-server"}},
+			}},
+			RegisteredMCPServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+				"mcp-test/std-server:std_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
+					"mcp-test/std-server",
+					"std_",
+					[]mcp.Tool{{Name: "list_repos"}},
+				)),
+				"mcp-test/user-server:us_:http://test.local/mcp": upstream.NewActiveForTesting(createTestManager(t,
+					"mcp-test/user-server",
+					"us_",
+					nil,
+				)),
+			},
+			AllowedToolsList: map[string][]string{
+				"mcp-test/std-server":  {"list_repos"},
+				"mcp-test/user-server": {"create_issue"},
+			},
+			enforceFilterList: true,
+			ExpectedTools: []mcp.Tool{
+				{Name: "std_list_repos"},
+				{Name: "us_create_issue"},
+			},
+		},
+		{
 			Name: "test filters tools with same tool name as expected",
 			FullToolList: &mcp.ListToolsResult{Tools: []*mcp.Tool{
 				{Name: "test1_tool"},
