@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779988646446,
+  "lastUpdate": 1783512186230,
   "repoUrl": "https://github.com/Kuadrant/mcp-gateway",
   "entries": {
     "MCP Gateway Performance": [
@@ -177,6 +177,53 @@ window.BENCHMARK_DATA = {
           {
             "name": "avg_tool_call_ms",
             "value": 2.938,
+            "unit": "ms"
+          },
+          {
+            "name": "tool_error_rate",
+            "value": 0,
+            "unit": "percent"
+          },
+          {
+            "name": "session_fail_rate",
+            "value": 0,
+            "unit": "percent"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "David Martin",
+            "username": "david-martin",
+            "email": "david-martin@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "fb148dc38e14c26d130ac669f634fec8d2167fe5",
+          "message": "Merge pull request #1262 from Kuadrant/fix/issue-triage-label-stripping\n\nfix: stop issue-triage workflow from stripping maintainer labels",
+          "timestamp": "2026-07-08T11:28:50Z",
+          "url": "https://github.com/Kuadrant/mcp-gateway/commit/fb148dc38e14c26d130ac669f634fec8d2167fe5"
+        },
+        "date": 1783512185929,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p95_tool_call_ms",
+            "value": 7,
+            "unit": "ms"
+          },
+          {
+            "name": "p99_tool_call_ms",
+            "value": 0,
+            "unit": "ms"
+          },
+          {
+            "name": "avg_tool_call_ms",
+            "value": 2.930201342281879,
             "unit": "ms"
           },
           {
