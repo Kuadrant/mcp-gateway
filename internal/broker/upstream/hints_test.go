@@ -101,7 +101,7 @@ func TestToolHintsTee_EndToEnd(t *testing.T) {
 			ts := httptest.NewServer(handler)
 			defer ts.Close()
 
-			up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "")
+			up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			require.NoError(t, up.Connect(ctx, func() {}))

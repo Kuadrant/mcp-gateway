@@ -4,7 +4,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `notifications/tools/list_changed` (upstream detection) | Implemented | MCPManager detects and re-fetches tools |
+| `notifications/tools/list_changed` (upstream detection) | Implemented | Pushed over the broker-owned notification watcher, backstopped by the periodic re-list; see below |
 | `notifications/tools/list_changed` (client forwarding) | Implemented | MCP Go SDK dispatch, filtered per session by the broker's targeting middleware; E2E tested |
 | Progress updates (streamed in tool call POST) | Implemented | Handled by the MCP Go SDK; covered by `tools-call-with-progress` conformance test |
 | Elicitation request/response routing (form mode) | Implemented | JSON-RPC request ID mapping; E2E tested |
@@ -47,7 +47,7 @@ Progress updates are streamed as events within tool call POST responses by the M
 
 The MCP Gateway supports two distinct types of notification mechanisms:
 
-1. **State Change Events**: Notifications that are safe to send to all connected clients (e.g., `notifications/tools/list_changed`, `notifications/resources/list_changed`, `notifications/prompts/list_changed`, `notifications/roots/list_changed`). These are received via persistent Server-Sent Events (SSE) connections the broker maintains to all backend MCP servers using the broker's configured authentication credentials.
+1. **State Change Events**: Notifications that are safe to send to all connected clients (e.g., `notifications/tools/list_changed`, `notifications/resources/list_changed`, `notifications/prompts/list_changed`, `notifications/roots/list_changed`). The broker receives these over a standalone GET SSE stream it holds to each connected upstream using the broker's configured authentication credentials. The stream is owned by a broker-side **notification watcher** rather than the MCP Go SDK: watcher failures never affect the session, and the MCPManager's periodic re-list backstops freshness. See [backend MCP management](./backend-mcp-management.md#upstream-freshness) for the rationale and failure semantics.
 
 2. **Client-Specific Events**: Events related to specific client sessions that are streamed as part of tool call POST responses:
    - Progress updates for long-running tool calls
@@ -61,7 +61,7 @@ The broker maintains a Server-Sent Events (SSE) connection with each connected c
 
 #### State Change Events
 
-> **Implementation Note**: The `notifications/tools/list_changed` event is fully implemented. The MCPManager detects this notification from upstream servers and re-fetches the tool list. The MCP Go SDK handles forwarding state change notifications to all connected clients via their GET SSE connections. Other state change events (`resources/list_changed`, `prompts/list_changed`, `roots/list_changed`) are not applicable as the gateway currently only federates tools.
+> **Implementation Note**: The `notifications/tools/list_changed` event is fully implemented. The notification watcher (`internal/broker/upstream/notification_watcher.go`) receives upstream pushes and triggers an immediate re-list; the MCPManager's periodic health tick re-list backstops any push the watcher misses. The MCP Go SDK handles forwarding state change notifications to all connected clients via their GET SSE connections. Other state change events (`resources/list_changed`, `prompts/list_changed`, `roots/list_changed`) are not applicable as the gateway currently only federates tools.
 
 State change events are notifications that are safe and appropriate to send to all connected clients. The gateway supports the following state change events:
 
@@ -80,17 +80,17 @@ sequenceDiagram
   participant Server1 as MCP Server 1
   participant Server2 as MCP Server 2
 
-  Note over Gateway, Server2: State change event channel establishment
+  Note over Gateway, Server2: Broker session establishment
   Gateway ->> Server1: POST /mcp "initialize" (broker auth)
   Server1 -->> Gateway: initialize response (capabilities)
   Gateway ->> Server1: POST /mcp "notifications/initialized"
-  Gateway ->> Server1: GET /mcp
-  Server1 -->> Gateway: SSE connection established
+  Gateway ->> Server1: GET /mcp [notification watcher]
+  Server1 -->> Gateway: SSE stream established
   Gateway ->> Server2: POST /mcp "initialize" (broker auth)
   Server2 -->> Gateway: initialize response (capabilities)
   Gateway ->> Server2: POST /mcp "notifications/initialized"
-  Gateway ->> Server2: GET /mcp
-  Server2 -->> Gateway: SSE connection established
+  Gateway ->> Server2: GET /mcp [notification watcher]
+  Server2 -->> Gateway: SSE stream established
   Note over Client1, Gateway: Client notifications connection
   Client1 ->> Gateway: POST /mcp "initialize"
   Client1 ->> Gateway: POST /mcp "notifications/initialized"
@@ -100,30 +100,27 @@ sequenceDiagram
   Client2 ->> Gateway: POST /mcp "notifications/initialized"
   Client2 ->> Gateway: GET /mcp
   Gateway -->> Client2: SSE connection established
-  Note over Server2, Client1: State change events
+  Note over Server2, Client1: State change events (push, re-list backstop)
   Server1 -->> Gateway: notifications/tools/list_changed
-  Gateway -->> Client1: forward notification
-  Gateway -->> Client2: forward notification
-  Server2 -->> Gateway: notifications/prompts/list_changed
-  Gateway -->> Client1: forward notification
-  Gateway -->> Client2: forward notification
+  Gateway ->> Server1: POST /mcp "tools/list" (immediate re-list)
+  Server1 -->> Gateway: tools/list response (changed)
+  Gateway -->> Client1: notifications/tools/list_changed
+  Gateway -->> Client2: notifications/tools/list_changed
 ```
 
-1. **Capability Checking**: When a backend MCP server is discovered, the broker first sends an `initialize` request using the broker's configured authentication credentials. The broker checks the `initialize` response to determine which state change event [capabilities](https://modelcontextprotocol.io/specification/2025-06-18/server/resources) the server supports (e.g., `notifications/tools/list_changed`, `notifications/resources/list_changed`, etc.).
+1. **Capability Checking**: When a backend MCP server is discovered, the broker first sends an `initialize` request using the broker's configured authentication credentials and validates the protocol version and declared [capabilities](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
 
-2. **Persistent Broker Connections**: For each backend MCP server that supports state change events, the broker establishes a persistent GET connection:
-   - Sends a `notifications/initialized` notification
-   - Establishes a GET `/mcp` connection for receiving SSE notifications
-   
-   These connections remain open for the lifetime of the backend server connection. The broker must implement reconnection logic to handle cases where connections are dropped due to server restarts, session invalidation, or network issues.
+2. **Notification Watching**: After each session is established, a broker-owned notification watcher opens a GET `/mcp` SSE stream to the upstream. Watcher failures never affect the session: transient errors retry forever with capped backoff, and upstreams that do not offer the stream (405/404 or non-SSE responses) stop the watcher permanently while the session carries on.
 
-3. **Event Reception and Forwarding**: When a backend MCP server sends a state change event (e.g., `notifications/tools/list_changed`), the broker receives it via the persistent connection and forwards it to all currently connected clients via their respective GET connections.
+3. **Re-list and Diff**: A pushed `list_changed` triggers an immediate re-list; the MCPManager also re-lists on its periodic health tick as a backstop, since notifications sent while the stream is down are not buffered by upstreams without event replay. Either way the result is diffed against the cached set and applied to the gateway's tool registry.
 
-4. **Client Response**: Clients typically respond to `list_changed` notifications by making a new `tools/list`, `resources/list`, `prompts/list`, or `roots/list` request to refresh their understanding of available primitives.
+4. **Forwarding**: When the re-list changes the gateway's tool registry, the MCP Go SDK dispatches `notifications/tools/list_changed` to all currently connected clients via their respective GET connections.
 
-**Why Broker Auth for State Change Events:**
+5. **Client Response**: Clients typically respond to `list_changed` notifications by making a new `tools/list`, `resources/list`, `prompts/list`, or `roots/list` request to refresh their understanding of available primitives.
 
-The broker uses its own authentication credentials (configured at startup) rather than client credentials because state change events are not tied to any specific client session, must be received even when no clients have made tool calls yet, and allows the broker to maintain a single persistent connection per backend server rather than per client.
+**Why Broker Auth for State Change Detection:**
+
+The broker uses its own authentication credentials (configured at startup) rather than client credentials because state changes are not tied to any specific client session, must be detected even when no clients have made tool calls yet, and this allows the broker to maintain a single session and notification stream per backend server rather than per client.
 
 #### Gateway-Initiated Notifications: Targeting and the Sentinel Tool
 
@@ -306,11 +303,11 @@ The request ID mapping created for the original `elicitation/create` is cleaned 
 ### Implementation Considerations
 
 1. **Connection Management**: The broker must efficiently manage multiple concurrent connections:
-   - One persistent GET connection per backend MCP server (for state change events)
+   - One session plus one watched GET stream per backend MCP server (state change events, backstopped by the periodic re-list)
    - One GET connection per connected client (for receiving state change events)
    - Long-running POST connections for tool calls that emit progress updates or elicitations
 
-2. **Capability Detection**: The broker must check the `initialize` response from each backend MCP server to determine which state change event capabilities are supported before establishing GET notification connections.
+2. **Capability Detection**: The broker must check the `initialize` response from each backend MCP server to validate the protocol version and declared capabilities.
 
 3. **Request ID Mapping**: The router maintains a mapping table for elicitation request IDs that includes:
    - Gateway-assigned request ID (random UUID)

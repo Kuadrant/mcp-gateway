@@ -21,7 +21,7 @@ func createPromptTestManager(t *testing.T, serverName, prefix string, prompts []
 		Name:   serverName,
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
-	}, "")
+	}, "", nil)
 	manager, _ := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	manager.SetPromptsForTesting(prompts)
 	return manager

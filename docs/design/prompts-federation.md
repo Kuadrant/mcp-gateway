@@ -112,7 +112,7 @@ The implementation follows the same pattern as tools throughout. Each component 
 
 #### Upstream Client (`internal/broker/upstream/mcp.go`)
 
-Add `ListPrompts()` and `SupportsPromptsListChanged()` to the `MCP` interface. These wrap the mcp-go client methods and check the initialize response capabilities.
+Add `ListPrompts()` and `SupportsPromptsListChanged()` to the `MCP` interface. These wrap the client methods and check the initialize response capabilities. The capability accessor no longer gates fetching: the manager re-lists on every timer tick as the backstop for the notification watcher.
 
 #### MCPManager (`internal/broker/upstream/manager.go`)
 
@@ -283,7 +283,7 @@ Behavioral decisions made during implementation:
 - **Transient failure handling**: A `getPrompts` or `getTools` listing failure preserves existing capabilities. Capabilities are only removed on connect/ping failure (server unreachable) or graceful shutdown.
 - **Conflict handling**: Both tool and prompt conflicts preserve existing capabilities and set error status, rather than removing all capabilities.
 - **Notification granularity**: `notifications/tools/list_changed` and `notifications/prompts/list_changed` are delivered via separate channels (`toolEvents`, `promptEvents`) with buffer of 1 each, preventing cross-type interference. A tool notification only re-fetches tools, not prompts, and vice versa.
-- **Fetch optimization**: `shouldFetchPrompts` mirrors `shouldFetchTools`. When a server supports `prompts/list_changed`, prompts are not re-fetched on timer ticks if already discovered.
+- **Fetch scoping**: `shouldFetchPrompts` mirrors `shouldFetchTools`. A prompt notification re-fetches only prompts, and every timer tick re-lists as the freshness backstop for the notification watcher.
 - **Shared routing**: `HandleToolCall` and `HandlePromptGet` share a `routeToUpstream` method for session lookup, lazy initialization, body marshaling, path resolution, and response building.
 - **Hairpin headers**: During lazy session initialization, `x-mcp-toolname` and `x-mcp-promptname` are only set when non-empty, preventing AuthPolicy rules from firing on irrelevant capability types.
 

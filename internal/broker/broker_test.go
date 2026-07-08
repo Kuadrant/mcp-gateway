@@ -300,7 +300,7 @@ func createTestManagerMCP(t *testing.T, serverName, prefix string, tools []mcp.T
 		Name:   serverName,
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
-	}, "")
+	}, "", nil)
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	manager.SetToolsForTesting(tools)
@@ -309,7 +309,7 @@ func createTestManagerMCP(t *testing.T, serverName, prefix string, tools []mcp.T
 
 func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
-	mcpServer := upstream.NewUpstreamMCP(&cfg, "")
+	mcpServer := upstream.NewUpstreamMCP(&cfg, "", nil)
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	return manager

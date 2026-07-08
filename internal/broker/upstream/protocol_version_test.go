@@ -57,7 +57,7 @@ func connectTo(t *testing.T, url string) (*MCPServer, error) {
 		URL:      url,
 		State:    string(mcpv1alpha1.ServerStateEnabled),
 		Hostname: "pinned",
-	}, "")
+	}, "", nil)
 	return up, up.Connect(t.Context(), func() {})
 }
 

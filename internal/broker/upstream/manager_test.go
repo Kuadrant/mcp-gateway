@@ -539,6 +539,114 @@ func TestMCPManager_manage_PingError(t *testing.T) {
 	assert.Contains(t, status.Message, "ping")
 }
 
+// regression: the connect and ping failure paths returned before the
+// backoff was applied, so an unreachable upstream retried at raw ticker
+// cadence forever.
+func TestMCPManager_manage_ConnectionFailureAppliesBackoff(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	tests := []struct {
+		name string
+		fail func(m *MockMCP)
+		heal func(m *MockMCP)
+	}{
+		{
+			name: "connect failure",
+			fail: func(m *MockMCP) { m.connectErr = fmt.Errorf("connection refused") },
+			heal: func(m *MockMCP) { m.connectErr = nil },
+		},
+		{
+			name: "ping failure",
+			fail: func(m *MockMCP) { m.pingErr = fmt.Errorf("ping timeout") },
+			heal: func(m *MockMCP) { m.pingErr = nil },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := newMockMCP("test-server", "test_")
+			gateway := newMockToolsAdderDeleter()
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, time.Minute, mcpv1alpha1.InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			tt.fail(mock)
+			manager.manage(context.Background(), eventTypeTimer)
+
+			assert.False(t, manager.GetStatus().Ready)
+			assert.NotEqual(t, manager.baseBackoff, manager.backoff, "failure must consume a backoff step")
+
+			tt.heal(mock)
+			manager.manage(context.Background(), eventTypeTimer)
+
+			assert.True(t, manager.GetStatus().Ready)
+			assert.Equal(t, manager.baseBackoff, manager.backoff, "success must reset the backoff")
+		})
+	}
+}
+
+// transient connect/ping failures must not thrash the gateway registry:
+// cached tools and prompts stay served until the failure persists across
+// maxConsecutiveFailures attempts.
+func TestMCPManager_manage_RetainsToolsUntilFailureThreshold(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	ctx := context.Background()
+	mock := newMockMCP("test-server", "test_")
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasPromptsCap = true
+	mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
+	gateway := newMockToolsAdderDeleter()
+	promptsGateway := newMockPromptsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, promptsGateway, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(ctx, eventTypeTimer)
+	require.Len(t, gateway.tools, 1)
+	require.Len(t, promptsGateway.prompts, 1)
+
+	mock.connectErr = fmt.Errorf("connection refused")
+	for i := 1; i < maxConsecutiveFailures; i++ {
+		manager.manage(ctx, eventTypeTimer)
+		assert.False(t, manager.GetStatus().Ready, "failure %d: status must go not ready", i)
+		assert.Len(t, gateway.tools, 1, "failure %d: tools must be retained below the threshold", i)
+		assert.Len(t, promptsGateway.prompts, 1, "failure %d: prompts must be retained below the threshold", i)
+	}
+
+	manager.manage(ctx, eventTypeTimer)
+	assert.Empty(t, gateway.tools, "tools must be dropped once the failure threshold is reached")
+	assert.Empty(t, promptsGateway.prompts, "prompts must be dropped once the failure threshold is reached")
+}
+
+func TestMCPManager_manage_FailureCountResetsOnSuccess(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	ctx := context.Background()
+	mock := newMockMCP("test-server", "test_")
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	gateway := newMockToolsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(ctx, eventTypeTimer)
+	require.Len(t, gateway.tools, 1)
+
+	// two failures, then a recovery
+	mock.connectErr = fmt.Errorf("connection refused")
+	manager.manage(ctx, eventTypeTimer)
+	manager.manage(ctx, eventTypeTimer)
+	mock.connectErr = nil
+	manager.manage(ctx, eventTypeTimer)
+	require.True(t, manager.GetStatus().Ready)
+
+	// two more failures: the earlier streak must not count against these
+	mock.connectErr = fmt.Errorf("connection refused")
+	manager.manage(ctx, eventTypeTimer)
+	manager.manage(ctx, eventTypeTimer)
+	assert.Len(t, gateway.tools, 1, "failure count must reset on success")
+
+	// a third consecutive failure crosses the threshold
+	manager.manage(ctx, eventTypeTimer)
+	assert.Empty(t, gateway.tools)
+}
+
 func TestMCPManager_manage_ListToolsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
@@ -744,14 +852,14 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 		expectedShouldFetch     bool
 	}{
 		{
-			name:                    "no tools list change support always fetch on timer",
+			name:                    "no tools list change support fetch on timer",
 			supportsToolsListChange: false,
 			hasExistingTools:        true,
 			eventType:               eventTypeTimer,
 			expectedShouldFetch:     true,
 		},
 		{
-			name:                    "no tools list change support always fetch on notification",
+			name:                    "no tools list change support fetch on notification",
 			supportsToolsListChange: false,
 			hasExistingTools:        true,
 			eventType:               eventTypeToolNotification,
@@ -765,11 +873,14 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 			expectedShouldFetch:     true,
 		},
 		{
-			name:                    "with tools list change support skip fetch on timer when tools exist",
+			// the standalone SSE stream to upstreams is disabled, so
+			// list-changed pushes cannot be relied on; the timer re-list
+			// is the freshness fallback regardless of capability
+			name:                    "with tools list change support fetch on timer when tools exist",
 			supportsToolsListChange: true,
 			hasExistingTools:        true,
 			eventType:               eventTypeTimer,
-			expectedShouldFetch:     false,
+			expectedShouldFetch:     true,
 		},
 		{
 			name:                    "with tools list change support fetch on timer when no tools",
@@ -777,6 +888,13 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 			hasExistingTools:        false,
 			eventType:               eventTypeTimer,
 			expectedShouldFetch:     true,
+		},
+		{
+			name:                    "prompt notification does not fetch tools",
+			supportsToolsListChange: true,
+			hasExistingTools:        true,
+			eventType:               eventTypePromptNotification,
+			expectedShouldFetch:     false,
 		},
 	}
 
@@ -798,7 +916,7 @@ func TestMCPManager_shouldFetchTools(t *testing.T) {
 	}
 }
 
-func TestMCPManager_manage_SkipsFetchOnTimerWhenToolsListChangeSupported(t *testing.T) {
+func TestMCPManager_manage_FetchesOnTimerWhenToolsListChangeSupported(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
 	mock.tools = []mcp.Tool{validTool("tool1")}
@@ -807,23 +925,19 @@ func TestMCPManager_manage_SkipsFetchOnTimerWhenToolsListChangeSupported(t *test
 	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	// First call with notification - should fetch and add tools
+	// first call with notification - should fetch and add tools
 	manager.manage(context.Background(), eventTypeToolNotification)
 	assert.Equal(t, 1, gateway.addCalls, "should add tools on notification")
 	assert.Len(t, gateway.tools, 1)
 
-	// Update mock tools - simulating a change on the server
+	// update mock tools - simulating a change on the server
 	mock.tools = []mcp.Tool{validTool("tool1"), validTool("tool2")}
 
-	// Timer event - should skip fetching since we support notifications and have tools
+	// timer event - must pick up the change: with the standalone SSE stream
+	// disabled the periodic re-list is the only freshness mechanism
 	manager.manage(context.Background(), eventTypeTimer)
-	assert.Equal(t, 1, gateway.addCalls, "should not fetch tools on timer when notifications supported")
-	assert.Len(t, gateway.tools, 1, "tools should remain unchanged")
-
-	// Notification event - should fetch and update tools
-	manager.manage(context.Background(), eventTypeToolNotification)
-	assert.Equal(t, 2, gateway.addCalls, "should fetch tools on notification")
-	assert.Len(t, gateway.tools, 2, "tools should be updated")
+	assert.Equal(t, 2, gateway.addCalls, "should fetch tools on timer")
+	assert.Len(t, gateway.tools, 2, "timer re-list should pick up upstream change")
 }
 
 func TestMCPManager_manage_OnlyCallsAddDeleteWhenNeeded(t *testing.T) {
