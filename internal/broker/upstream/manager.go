@@ -203,10 +203,21 @@ type MCPManager struct {
 	promptEvents chan struct{}
 	done         chan struct{} // closed when the event loop exits
 	status       ServerValidationStatus
+
+	// consecutiveFailures counts connect/ping failures since the last
+	// healthy pass. only touched from the event loop goroutine.
+	consecutiveFailures int
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
 const DefaultTickerInterval = time.Minute * 1
+
+// maxConsecutiveFailures is the number of consecutive connect/ping failures
+// tolerated before cached tools and prompts are dropped from the gateway.
+// tool calls route directly to the backend via envoy, so serving a cached
+// list through a transient upstream blip is no worse than the staleness
+// already allowed between health ticks, and avoids client-visible churn.
+const maxConsecutiveFailures = 3
 
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
@@ -366,6 +377,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.removeAllTools()
 		man.removeAllPrompts()
 		_ = man.mcp.Disconnect()
+		man.consecutiveFailures = 0
 		man.setStatus(fmt.Errorf("server is disabled"), 0, 0, nil, nil)
 		return
 	}
@@ -375,28 +387,15 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	// during connect the client will validate the protocol. So we don't have a separate validate requirement currently. If a client already exists it will be re-used.
 	man.logger.DebugContext(ctx, "attempting to connect", "upstream mcp server", man.mcp.ID())
 	if err := man.mcp.Connect(ctx, man.registerCallbacks()); err != nil {
-		err = fmt.Errorf("failed to connect to upstream mcp %s removing tools : %w", man.mcp.ID(), err)
-		man.recordBackendError(span, err)
-		man.logger.ErrorContext(ctx, "connection failed", "upstream mcp server", man.mcp.ID(), "error", err)
-		man.removeAllTools()
-		man.removeAllPrompts()
-		// we call disconnect here as we may have connected but failed to initialize
-		_ = man.mcp.Disconnect()
-		man.setStatus(err, numberOfTools, numberOfPrompts, nil, nil)
+		man.handleConnectionFailure(ctx, span, fmt.Errorf("failed to connect to upstream mcp %s : %w", man.mcp.ID(), err), numberOfTools, numberOfPrompts)
 		return
 	}
 	// there may be an active client so we also ping
 	if err := man.mcp.Ping(ctx); err != nil {
-		// if we fail to ping we disconnect to ensure a fresh connection next time around
-		err = fmt.Errorf("upstream mcp failed to ping server %s removing tools : %w", man.mcp.ID(), err)
-		man.recordBackendError(span, err)
-		man.logger.ErrorContext(ctx, "ping failed", "upstream mcp server", man.mcp.ID(), "error", err)
-		man.removeAllTools()
-		man.removeAllPrompts()
-		_ = man.mcp.Disconnect()
-		man.setStatus(err, numberOfTools, numberOfPrompts, nil, nil)
+		man.handleConnectionFailure(ctx, span, fmt.Errorf("upstream mcp failed to ping server %s : %w", man.mcp.ID(), err), numberOfTools, numberOfPrompts)
 		return
 	}
+	man.consecutiveFailures = 0
 
 	if man.mcp.GetConfig().UserSpecificList {
 		man.logger.Debug("userSpecificList server healthy, tools fetched per-user", "upstream mcp server", man.mcp.ID())
@@ -535,25 +534,19 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	}
 }
 
+// shouldFetchTools reports whether this event warrants a tools/list.
+// list-changed pushes from the notification watcher trigger an immediate
+// fetch; the timer re-list backstops them regardless of the upstream's
+// listChanged capability, since the watcher stops permanently for
+// upstreams without the stream and events sent while it reconnects are
+// lost unless the upstream replays them.
 func (man *MCPManager) shouldFetchTools(event eventType) bool {
-	// fetch if no support for tools list change notifications
-	if !man.mcp.SupportsToolsListChanged() {
-		return true
-	}
-	if event == eventTypeToolNotification {
-		return true
-	}
-	return event == eventTypeTimer && len(man.serverTools) == 0
+	return event == eventTypeTimer || event == eventTypeToolNotification
 }
 
+// shouldFetchPrompts mirrors shouldFetchTools for prompts.
 func (man *MCPManager) shouldFetchPrompts(event eventType) bool {
-	if !man.mcp.SupportsPromptsListChanged() {
-		return true
-	}
-	if event == eventTypePromptNotification {
-		return true
-	}
-	return event == eventTypeTimer && len(man.serverPrompts) == 0
+	return event == eventTypeTimer || event == eventTypePromptNotification
 }
 
 // GetStatus returns the current status of the MCP Server
@@ -587,15 +580,45 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	}
 }
 
+// handleConnectionFailure records a connect/ping failure and backs off the
+// retry. cached tools and prompts stay served through transient failures
+// and are only dropped once the failure persists across
+// maxConsecutiveFailures attempts; the session is torn down either way so
+// the next attempt starts fresh.
+func (man *MCPManager) handleConnectionFailure(ctx context.Context, span trace.Span, err error, numberOfTools, numberOfPrompts int) {
+	man.consecutiveFailures++
+	man.recordBackendError(span, err)
+	man.logger.ErrorContext(ctx, "upstream connection failure", "upstream mcp server", man.mcp.ID(), "error", err, "consecutive failures", man.consecutiveFailures)
+	if man.consecutiveFailures >= maxConsecutiveFailures {
+		man.logger.ErrorContext(ctx, "failure threshold reached, removing tools and prompts", "upstream mcp server", man.mcp.ID(), "threshold", maxConsecutiveFailures)
+		man.removeAllTools()
+		man.removeAllPrompts()
+	}
+	_ = man.mcp.Disconnect()
+	man.setStatus(err, numberOfTools, numberOfPrompts, nil, nil)
+	man.applyBackoff()
+}
+
 func (man *MCPManager) resetBackoff() {
 	man.backoff = man.baseBackoff
-	man.ticker.Reset(man.tickerInterval)
+	man.resetTicker(man.tickerInterval)
 }
 
 func (man *MCPManager) applyBackoff() {
 	duration := man.backoff.Step()
 	man.logger.Debug("applying backoff", "duration", duration, "upstream mcp server", man.mcp.ID())
-	man.ticker.Reset(duration)
+	man.resetTicker(duration)
+}
+
+// resetTicker re-arms the ticker and drops a tick that fired while manage
+// was in flight, so the new interval applies instead of an immediate
+// re-run. only called from the event loop goroutine.
+func (man *MCPManager) resetTicker(d time.Duration) {
+	man.ticker.Reset(d)
+	select {
+	case <-man.ticker.C:
+	default:
+	}
 }
 
 func (man *MCPManager) recordBackendError(span trace.Span, err error) {

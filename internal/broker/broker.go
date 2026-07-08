@@ -475,7 +475,7 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 		if _, ok := m.mcpServers[mcpServer.ID()]; ok {
 			continue
 		}
-		manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer, m.gatewayCACertPEM), m.gatewayServer, m.gatewayServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
+		manager, err := upstream.NewUpstreamMCPManager(upstream.NewUpstreamMCP(mcpServer, m.gatewayCACertPEM, m.logger.With("sub-component", "mcp-upstream")), m.gatewayServer, m.gatewayServer, m.logger.With("sub-component", "mcp-manager"), m.managerTickerInterval, m.invalidToolPolicy)
 		if err != nil {
 			m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
 			continue

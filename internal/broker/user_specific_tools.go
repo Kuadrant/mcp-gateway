@@ -226,6 +226,12 @@ func (broker *mcpBrokerImpl) getOrCreateUserSession(ctx context.Context, srv use
 	t := &mcp.StreamableClientTransport{
 		Endpoint:   srv.url,
 		HTTPClient: httpClient,
+		// these sessions only serve per-user tools/list; nothing consumes
+		// server pushes, and the sdk opens the standalone SSE GET
+		// synchronously inside Connect and treats its failure as
+		// session-fatal. skip it: saves a round trip per session and keeps
+		// a mishandled GET from failing the user's request.
+		DisableStandaloneSSE: true,
 	}
 
 	mcpClient := mcp.NewClient(&mcp.Implementation{

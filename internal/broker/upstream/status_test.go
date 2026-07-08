@@ -68,7 +68,7 @@ func TestExpectedVersionMatchesSDKProposal(t *testing.T) {
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "probe", URL: ts.URL}, "")
+	up := NewUpstreamMCP(&config.MCPServer{Name: "probe", URL: ts.URL}, "", nil)
 	require.NoError(t, up.Connect(ctx, func() {}))
 	defer func() { _ = up.Disconnect() }()
 
@@ -98,7 +98,7 @@ func TestUpstreamClientCapabilities(t *testing.T) {
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "probe", URL: ts.URL}, "")
+	up := NewUpstreamMCP(&config.MCPServer{Name: "probe", URL: ts.URL}, "", nil)
 	require.NoError(t, up.Connect(ctx, func() {}))
 	defer func() { _ = up.Disconnect() }()
 

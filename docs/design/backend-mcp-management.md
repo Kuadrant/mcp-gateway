@@ -63,13 +63,12 @@ sequenceDiagram
   Server->>Manager: initialize response
   Note right of Manager: Validate protocol version<br/>and capabilities
   Manager->>Server: POST /mcp "notifications/initialized"
-  Note right of Manager: Subscribe to state change<br/>notifications via SSE
-  Manager->>Server: GET /mcp [SSE connection]
+  Manager->>Server: GET /mcp [supervised notification watcher]
+  Note right of Manager: Watcher failure never fails<br/>the session; re-list backstops
   Manager->>Server: POST /mcp "tools/list"
   Server->>Manager: tools/list response
   Manager->>Broker: Register discovered tools
-  Manager->>Manager: Periodic health checks
-  Manager->>Server: [monitor for notifications]
+  Manager->>Manager: Periodic health checks and re-list
   Controller->>Broker: Fetch status updates /status
 ```
 
@@ -79,36 +78,37 @@ The `MCPManager` is responsible for managing a single upstream MCP server connec
 
 1. **Initialization**: Establishes connection, validates protocol version and capabilities
 2. **Discovery**: Fetches initial tool list and registers tools with the broker
-3. **Notification Subscription**: Sets up SSE connection for state change events
-4. **Health Monitoring**: Periodically checks connection health and reconnects if needed
-5. **Notification Handling**: Processes state change notifications and forwards them to the broker
-6. **Graceful Shutdown**: Cleans up connections and resources when stopped
+3. **Health Monitoring**: Periodically checks connection health, re-lists tools/prompts, and reconnects if needed
+4. **Notification Handling**: Reacts to `list_changed` notifications from the notification watcher with an immediate re-list
+5. **Graceful Shutdown**: Cleans up connections, including the notification watcher, when stopped
 
-### State Change Notifications
+### Upstream Freshness
 
-The MCPManager subscribes to state change notifications from the upstream MCP server:
+The MCP Go SDK opens the standalone GET SSE stream synchronously inside `Connect` on a detached context and treats its failure as session-fatal, so a single upstream that mishandles the GET would block connection establishment for minutes and then poison the session. The SDK therefore never owns that stream (`DisableStandaloneSSE` is set, matching the router's hairpin client).
 
-- `notifications/tools/list_changed`
-- `notifications/resources/list_changed`
-- `notifications/prompts/list_changed`
-- `notifications/roots/list_changed`
+Instead, each connected session runs a broker-owned **notification watcher** that holds the standalone GET stream with the broker's failure semantics:
 
-When a notification is received, the MCPManager:
-1. Updates its internal state (e.g., re-fetches tool list)
-2. Forwards the notification to the broker
-3. The broker forwards it to all connected clients
+- Failures are never fatal to the session: the watcher retries forever with capped exponential backoff (aligned with the manager's backoff)
+- A `405`/`404` response, or a `200` without an SSE content type, means the upstream does not offer the stream: the watcher stops permanently, the session is unaffected
+- `notifications/tools/list_changed` and `notifications/prompts/list_changed` trigger an immediate re-list through the manager's existing refresh path
+- Server pings delivered on the stream are answered, so keepalive-enabled upstreams do not consider the broker session dead
+- The watcher resumes with `Last-Event-ID` when the upstream supplies event ids
+- The watcher uses the same HTTP client as all other upstream calls (auth headers, TLS trust pool, response header timeout)
 
-For more details, see the [notifications design documentation](./notifications.md).
+The manager additionally re-lists tools and prompts on every health tick regardless of the upstream's `listChanged` capability. This poll backstop is deliberate: upstreams without event replay do not buffer notifications sent while the stream is down (reconnect windows lose events), and the watcher stops permanently for upstreams that do not offer the stream at all. Push keeps updates immediate; the tick bounds worst-case staleness at the ticker interval (default 1 minute) in every failure mode.
+
+For `userSpecificList` servers the manager's health session still starts a watcher like any other connected session; only the per-user sessions do not run one, as their tool lists are fetched per request, leaving no cached state for a notification to refresh and nothing consuming server pushes.
+
+For client-facing notification forwarding, see the [notifications design documentation](./notifications.md).
 
 ### Error Handling and Retry Logic
 
 The MCPManager implements exponential backoff retry for:
 - Initial connection failures
+- Ping (health check) failures
 - Discovery failures
-- Health check failures
-- Notification connection drops
 
-Retries are handled in background routines to avoid blocking the main broker operations.
+On connection or ping failure the manager keeps serving its cached tools and prompts, dropping them only after three consecutive failed checks (`maxConsecutiveFailures`), avoiding client-visible tool churn on transient blips. Retries are handled in background routines to avoid blocking the main broker operations.
 
 ### Status and Health
 

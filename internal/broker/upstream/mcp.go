@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -17,8 +18,8 @@ import (
 
 // Transport-level timeouts for upstream HTTP clients. We bound connection
 // establishment and response-header reads instead of setting http.Client.Timeout,
-// because the streamable HTTP client reuses the same client for the long-lived
-// SSE listen stream, which must not be capped.
+// because the same client carries the long-lived SSE notification stream,
+// which must not be capped.
 var (
 	defaultTLSHandshakeTimeout   = 10 * time.Second
 	defaultResponseHeaderTimeout = 30 * time.Second
@@ -36,6 +37,12 @@ type MCPServer struct {
 	headers          map[string]string
 	init             *mcp.InitializeResult
 	gatewayCACertPEM string
+	logger           *slog.Logger
+
+	// notification watcher state for the current session, guarded by
+	// clientMu; at most one watcher per connected session
+	watcher       *notificationWatcher
+	watcherCancel context.CancelFunc
 
 	// toolHints preserves raw annotation fidelity from the last tools/list
 	// exchange, keyed by served (prefixed) tool name. populated by the
@@ -50,11 +57,16 @@ type MCPServer struct {
 	notifyHandler func(method string)
 }
 
-// NewUpstreamMCP creates a new MCPServer instance from the provided configuration.
-func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string) *MCPServer {
+// NewUpstreamMCP creates a new MCPServer instance from the provided
+// configuration. A nil logger discards output.
+func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *slog.Logger) *MCPServer {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	up := &MCPServer{
 		MCPServer:        config,
 		gatewayCACertPEM: gatewayCACertPEM,
+		logger:           logger,
 	}
 	up.headers = map[string]string{
 		"user-agent":        "mcp-broker",
@@ -75,9 +87,8 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
 	base.ExpectContinueTimeout = defaultExpectContinueTimeout
-	// bounds header wait only, not SSE body streaming. without it an
-	// upstream that never answers the standalone SSE GET hangs Connect
-	// forever (the SDK opens that GET synchronously with no deadline).
+	// bounds header wait only, not SSE body streaming. without it a silent
+	// upstream wedges the manager on any POST (initialize, tools/list).
 	base.ResponseHeaderTimeout = defaultResponseHeaderTimeout
 
 	if up.gatewayCACertPEM != "" || up.CACert != "" {
@@ -214,6 +225,14 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		Endpoint:   up.URL,
 		HTTPClient: httpC,
 		MaxRetries: 3,
+		// the sdk opens the standalone GET SSE stream synchronously inside
+		// Connect on a context detached from ours and treats its failure as
+		// session-fatal (MaxRetries x ResponseHeaderTimeout blocked, ~125s).
+		// upstreams that mishandle the GET must not poison the session, so
+		// the sdk never owns that stream: the broker's notification watcher
+		// holds it with non-fatal semantics, and the manager's periodic
+		// re-list backstops freshness.
+		DisableStandaloneSSE: true,
 	}
 
 	client := mcp.NewClient(&mcp.Implementation{
@@ -256,6 +275,8 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
+	up.startNotificationWatcher(ctx, httpC, session)
+
 	// register notification and connection-lost handlers after session is
 	// assigned so OnConnectionLost can start session.Wait() immediately
 	onConnection()
@@ -263,8 +284,47 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	return nil
 }
 
+// startNotificationWatcher watches the upstream's standalone SSE stream
+// for the lifetime of the session. ctx is the manager's: cancellation on
+// manager stop ends the watch even without an explicit Disconnect.
+func (up *MCPServer) startNotificationWatcher(ctx context.Context, httpC *http.Client, session *mcp.ClientSession) {
+	watchCtx, cancel := context.WithCancel(ctx)
+	w := &notificationWatcher{
+		endpoint:   up.URL,
+		httpClient: httpC,
+		// the sdk exposes the server-assigned Mcp-Session-Id directly;
+		// empty for stateless upstreams, which then see a bare GET
+		sessionID:       session.ID(),
+		protocolVersion: up.init.ProtocolVersion,
+		serverID:        string(up.ID()),
+		notify:          up.notify,
+		logger:          up.logger,
+		done:            make(chan struct{}),
+	}
+	up.clientMu.Lock()
+	up.watcher = w
+	up.watcherCancel = cancel
+	up.clientMu.Unlock()
+	go w.watch(watchCtx)
+}
+
+// stopNotificationWatcher cancels the current watcher, if any, and waits
+// for its goroutine to exit. must not be called holding clientMu.
+func (up *MCPServer) stopNotificationWatcher() {
+	up.clientMu.Lock()
+	w, cancel := up.watcher, up.watcherCancel
+	up.watcher, up.watcherCancel = nil, nil
+	up.clientMu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-w.done
+	}
+}
+
 // Disconnect closes the connection to the upstream MCP server.
 func (up *MCPServer) Disconnect() error {
+	up.stopNotificationWatcher()
+
 	up.clientMu.Lock()
 	defer up.clientMu.Unlock()
 

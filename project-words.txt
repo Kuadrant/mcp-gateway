@@ -190,6 +190,7 @@ jsonreference
 jsonschema
 jwtmgr
 Kagenti
+keepalive
 keyout
 kgateway
 Kiali
