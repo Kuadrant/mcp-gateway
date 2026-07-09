@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -771,6 +772,14 @@ func (s *ExtProcServer) initializeMCPServerSession(ctx context.Context, mcpReq *
 		if err != nil {
 			s.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
 			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
+			var dnsErr *net.DNSError
+			if errors.As(err, &dnsErr) {
+				host := dnsErr.Name
+				if host == "" {
+					host = routingCfg.MCPGatewayInternalHostname
+				}
+				return "", NewRouterErrorf(500, "hairpin init failed: host %q not found — check MCPGatewayExtension privateHost", host)
+			}
 			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
 		}
 		var sessionCloser = func() {

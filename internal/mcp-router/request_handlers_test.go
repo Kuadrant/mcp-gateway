@@ -11,6 +11,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"log/slog"
+	"net"
 	"os"
 	"testing"
 
@@ -1944,4 +1945,57 @@ func TestAnnotationHintsHeader(t *testing.T) {
 			require.Equal(t, tc.want, renderHints(tc.hints))
 		})
 	}
+}
+
+func TestInitializeMCPServerSession_DNSError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
+	require.NoError(t, err)
+
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
+		return nil, &net.DNSError{
+			Err:  "no such host",
+			Name: "mcp-gateway-istio.gateway-system.svc.cluster.local",
+		}
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			State:    "Enabled",
+			Hostname: "backend.example.com",
+		},
+	}
+	srv := &ExtProcServer{
+		JWTManager:    jwtManager,
+		Logger:        logger,
+		SessionCache:  cache,
+		InitForClient: mockInitForClient,
+		Broker:        newMockBroker(serverConfigs, map[string]string{}),
+	}
+	srv.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers:                    serverConfigs,
+		MCPGatewayInternalHostname: "mcp-gateway-istio.gateway-system.svc.cluster.local",
+	})
+
+	req := &MCPRequest{
+		ID:         ptr.To(0),
+		JSONRPC:    "2.0",
+		Method:     "tools/call",
+		serverName: "dummy",
+		Headers: &corev3.HeaderMap{
+			Headers: []*corev3.HeaderValue{
+				{Key: "mcp-session-id", RawValue: []byte("client-supplied-gateway-session")},
+			},
+		},
+	}
+
+	_, err = srv.initializeMCPServerSession(context.Background(), req)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `hairpin init failed: host "mcp-gateway-istio.gateway-system.svc.cluster.local" not found — check MCPGatewayExtension privateHost`)
 }
