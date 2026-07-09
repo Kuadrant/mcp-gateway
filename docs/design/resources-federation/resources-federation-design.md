@@ -177,5 +177,5 @@ Enforcement semantics are unchanged: a missing `resources` key makes no assertio
 - [Issue #788 - Add support for MCP Resources federation](https://github.com/Kuadrant/mcp-gateway/issues/788) - includes SEP-1865 (MCP Apps UI rendering) as the motivating use case and the source of `_meta.ui.resourceUri`
 - [#788 comment - scope update for the 2026-07-28 spec RC](https://github.com/Kuadrant/mcp-gateway/issues/788#issuecomment-4682923399) - maintainer guidance narrowing scope to `resources/list`/`resources/read`, closing subscriptions, and flagging the new caching model
 - [Issue #1238 - Full MCP Resources federation (general URI schemes)](https://github.com/Kuadrant/mcp-gateway/issues/1238)
-- [Prompts federation design doc](../prompts-federation.md)
+- [Prompts federation design doc](https://github.com/Kuadrant/mcp-gateway/blob/main/docs/design/prompts-federation.md)
 - [mcp-go v0.52.0 Hooks API](https://pkg.go.dev/github.com/mark3labs/mcp-go@v0.52.0/server#Hooks)
