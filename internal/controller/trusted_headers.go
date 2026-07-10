@@ -10,11 +10,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 // buildTrustedHeadersSecrets generates an ecdsa key pair and returns public/private secrets
-func buildTrustedHeadersSecrets(mcpExt *mcpv1alpha1.MCPGatewayExtension) (*corev1.Secret, *corev1.Secret, error) {
+func buildTrustedHeadersSecrets(mcpExt *mcpv1.MCPGatewayExtension) (*corev1.Secret, *corev1.Secret, error) {
 	pubPEM, privPEM, err := generateECDSAKeyPair()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
@@ -52,11 +52,11 @@ func buildTrustedHeadersSecrets(mcpExt *mcpv1alpha1.MCPGatewayExtension) (*corev
 // validateTrustedHeadersSecret checks the secret has the required "key" entry
 func validateTrustedHeadersSecret(secret *corev1.Secret, secretName string) *validationError {
 	if secret.Data == nil {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("secret %s has no data", secretName))
 	}
 	if _, ok := secret.Data["key"]; !ok {
-		return newValidationError(mcpv1alpha1.ConditionReasonSecretInvalid,
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("secret %s is missing required data entry \"key\"", secretName))
 	}
 	return nil
@@ -64,12 +64,12 @@ func validateTrustedHeadersSecret(secret *corev1.Secret, secretName string) *val
 
 // reconcileTrustedHeaders reconciles the trusted-header public key secret;
 // generates a key pair or validates the byo secret.
-func (r *MCPGatewayExtensionReconciler) reconcileTrustedHeaders(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) reconcileTrustedHeaders(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	if mcpExt.Spec.TrustedHeadersKey == nil {
 		return nil
 	}
 
-	if mcpExt.Spec.TrustedHeadersKey.Generate == mcpv1alpha1.KeyGenerationEnabled {
+	if mcpExt.Spec.TrustedHeadersKey.Generate == mcpv1.KeyGenerationEnabled {
 		return r.reconcileGeneratedTrustedHeaders(ctx, mcpExt)
 	}
 
@@ -79,7 +79,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileTrustedHeaders(ctx context.Cont
 	// use direct reader to avoid cache and informer setup for secrets
 	if err := r.DirectAPIReader.Get(ctx, client.ObjectKey{Name: secretName, Namespace: mcpExt.Namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return newValidationError(mcpv1alpha1.ConditionReasonSecretNotFound,
+			return newValidationError(mcpv1.ConditionReasonSecretNotFound,
 				fmt.Sprintf("secret %s not found in namespace %s", secretName, mcpExt.Namespace))
 		}
 		return fmt.Errorf("failed to get trusted headers secret: %w", err)
@@ -94,7 +94,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileTrustedHeaders(ctx context.Cont
 
 // reconcileGeneratedTrustedHeaders creates the public and private key secrets if either is missing.
 // Both secrets are checked to handle partial failures from a previous reconcile.
-func (r *MCPGatewayExtensionReconciler) reconcileGeneratedTrustedHeaders(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) reconcileGeneratedTrustedHeaders(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	secretName := mcpExt.Spec.TrustedHeadersKey.SecretName
 	privSecretName := secretName + "-private"
 

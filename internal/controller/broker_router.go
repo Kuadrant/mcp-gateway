@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -74,11 +74,11 @@ var managedEnvVarNames = []string{
 // logLevelFlagValues maps spec.logLevel to the numeric value expected by the
 // broker-router's --log-level flag, following Go's slog level convention
 // (debug=-4, info=0, warn=4, error=8).
-var logLevelFlagValues = map[mcpv1alpha1.LogLevel]string{
-	mcpv1alpha1.LogLevelDebug: "-4",
-	mcpv1alpha1.LogLevelInfo:  "0",
-	mcpv1alpha1.LogLevelWarn:  "4",
-	mcpv1alpha1.LogLevelError: "8",
+var logLevelFlagValues = map[mcpv1.LogLevel]string{
+	mcpv1.LogLevelDebug: "-4",
+	mcpv1.LogLevelInfo:  "0",
+	mcpv1.LogLevelWarn:  "4",
+	mcpv1.LogLevelError: "8",
 }
 
 func brokerRouterLabels() map[string]string {
@@ -88,7 +88,7 @@ func brokerRouterLabels() map[string]string {
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost, internalHost string) *appsv1.Deployment {
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1.MCPGatewayExtension, publicHost, internalHost string) *appsv1.Deployment {
 	labels := brokerRouterLabels()
 	replicas := int32(1)
 
@@ -100,7 +100,8 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		command = append(command, fmt.Sprintf("--mcp-check-interval=%d", *mcpExt.Spec.BackendPingIntervalSeconds))
 	}
 	command = append(command, "--mcp-gateway-public-host="+publicHost)
-	if mcpExt.Spec.URLElicitation == mcpv1alpha1.URLElicitationEnabled {
+	urlElicitationEnabled := mcpExt.Spec.URLElicitation == mcpv1.URLElicitationEnabled
+	if urlElicitationEnabled {
 		command = append(command, "--enable-url-elicitation")
 	}
 	if v, ok := logLevelFlagValues[mcpExt.Spec.LogLevel]; ok {
@@ -256,7 +257,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterServiceAccount(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.ServiceAccount {
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterServiceAccount(mcpExt *mcpv1.MCPGatewayExtension) *corev1.ServiceAccount {
 	labels := brokerRouterLabels()
 	automount := false
 
@@ -270,7 +271,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterServiceAccount(mcpExt *
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1alpha1.MCPGatewayExtension) *corev1.Service {
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1.MCPGatewayExtension) *corev1.Service {
 	labels := brokerRouterLabels()
 
 	return &corev1.Service{
@@ -312,7 +313,7 @@ func stripPort(host string) string {
 // priority: annotation override > listener hostname.
 // For wildcard hostnames (*.example.com), we use mcp.example.com as the default subdomain.
 // Any port suffix is stripped since HTTPRoute hostnames don't allow ports.
-func derivePublicHost(listenerConfig *mcpv1alpha1.ListenerConfig, annotationOverride string) (string, error) {
+func derivePublicHost(listenerConfig *mcpv1.ListenerConfig, annotationOverride string) (string, error) {
 	var hostname string
 	// annotation takes precedence for backwards compatibility
 	if annotationOverride != "" {
@@ -343,7 +344,7 @@ func derivePublicHost(listenerConfig *mcpv1alpha1.ListenerConfig, annotationOver
 // port). Otherwise the host is computed from the targetRef and listener port,
 // and an https:// scheme prefix is added when the listener is HTTPS so the
 // broker hairpin doesn't send plain HTTP to a TLS-only port (issue #917).
-func derivePrivateHost(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig, gatewayClassName string) string {
+func derivePrivateHost(mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *mcpv1.ListenerConfig, gatewayClassName string) string {
 	if mcpExt.Spec.PrivateHost != "" {
 		return mcpExt.Spec.PrivateHost
 	}
@@ -355,11 +356,11 @@ func derivePrivateHost(mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *
 	return host
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, listenerConfig *mcpv1alpha1.ListenerConfig, gatewayClassName string) (bool, error) {
+func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *mcpv1.ListenerConfig, gatewayClassName string) (bool, error) {
 	// derive values from listener config before building resources
 	publicHost, err := derivePublicHost(listenerConfig, mcpExt.Spec.PublicHost)
 	if err != nil {
-		return false, newValidationError(mcpv1alpha1.ConditionReasonInvalid, err.Error())
+		return false, newValidationError(mcpv1.ConditionReasonInvalid, err.Error())
 	}
 	internalHost := derivePrivateHost(mcpExt, listenerConfig, gatewayClassName)
 
@@ -657,7 +658,7 @@ func mergeVolumeMounts(desired, existing []corev1.VolumeMount) []corev1.VolumeMo
 	return slices.Concat(desired, userMounts)
 }
 
-func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
+func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
 	mcpPath := "/mcp"
@@ -773,7 +774,7 @@ func httpRouteNeedsUpdate(desired, existing *gatewayv1.HTTPRoute) (bool, string)
 	return false, ""
 }
 
-func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
+func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1.MCPGatewayExtension, publicHost string) *gatewayv1.HTTPRoute {
 	labels := brokerRouterLabels()
 	pathType := gatewayv1.PathMatchPathPrefix
 	tokensPath := "/tokens"
@@ -832,7 +833,7 @@ func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1alpha1
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension, publicHost string) error {
+func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, publicHost string) error {
 	key := client.ObjectKey{Name: tokensHTTPRouteName, Namespace: mcpExt.Namespace}
 	existing := &gatewayv1.HTTPRoute{}
 	exists := true
@@ -844,7 +845,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Con
 		}
 	}
 
-	if mcpExt.Spec.URLElicitation != mcpv1alpha1.URLElicitationEnabled {
+	urlElicitationEnabled := mcpExt.Spec.URLElicitation == mcpv1.URLElicitationEnabled
+	if !urlElicitationEnabled {
 		if exists {
 			r.log.Info("deleting tokens httproute (url elicitation disabled)", "namespace", mcpExt.Namespace)
 			if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {

@@ -9,7 +9,7 @@
 # kubectl apply -f config/test-servers/broken-server-httproute.yaml
 # kubectl apply -f config/test-servers/broken-server-httproute-ext.yaml
 
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: test-broken-server

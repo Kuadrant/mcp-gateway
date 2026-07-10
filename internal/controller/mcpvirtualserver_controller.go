@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
@@ -53,7 +53,7 @@ var defaultRequeueTime = time.Second * 2
 func (r *MCPVirtualServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	mcpVS := &mcpv1alpha1.MCPVirtualServer{}
+	mcpVS := &mcpv1.MCPVirtualServer{}
 	if err := r.Get(ctx, req.NamespacedName, mcpVS); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -141,7 +141,7 @@ func (r *MCPVirtualServerReconciler) writeVirtualServerConfig(ctx context.Contex
 func (r *MCPVirtualServerReconciler) generateVirtualServerConfig(ctx context.Context) ([]config.VirtualServerConfig, error) {
 	log := log.FromContext(ctx)
 	virtualServers := []config.VirtualServerConfig{}
-	mcpVirtualServerList := &mcpv1alpha1.MCPVirtualServerList{}
+	mcpVirtualServerList := &mcpv1.MCPVirtualServerList{}
 	if err := r.List(ctx, mcpVirtualServerList); err != nil {
 		log.Error(err, "Failed to list MCPVirtualServers")
 		return virtualServers, err
@@ -166,10 +166,10 @@ func (r *MCPVirtualServerReconciler) SetupWithManager(_ context.Context, mgr ctr
 	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPVirtualServer{}).
+		For(&mcpv1.MCPVirtualServer{}).
 		// re-reconcile all MCPVirtualServers when an MCPGatewayExtension changes
 		// so config is immediately written to any newly added namespace.
-		Watches(&mcpv1alpha1.MCPGatewayExtension{},
+		Watches(&mcpv1.MCPGatewayExtension{},
 			handler.EnqueueRequestsFromMapFunc(r.findAllMCPVirtualServers)).
 		Named("mcpvirtualserver").
 		Complete(r)
@@ -178,7 +178,7 @@ func (r *MCPVirtualServerReconciler) SetupWithManager(_ context.Context, mgr ctr
 // findAllMCPVirtualServers enqueues all MCPVirtualServers for reconciliation.
 // Used when MCPGatewayExtension changes so every VS writes config to the updated namespace set.
 func (r *MCPVirtualServerReconciler) findAllMCPVirtualServers(ctx context.Context, _ client.Object) []reconcile.Request {
-	list := &mcpv1alpha1.MCPVirtualServerList{}
+	list := &mcpv1.MCPVirtualServerList{}
 	if err := r.List(ctx, list); err != nil {
 		log.FromContext(ctx).Error(err, "failed to list MCPVirtualServers for MCPGatewayExtension watch — VS reconciles will not be triggered")
 		return nil

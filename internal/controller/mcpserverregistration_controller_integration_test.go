@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
@@ -132,14 +132,14 @@ func createTestService(name, namespace string, port int32) *corev1.Service {
 }
 
 // createTestMCPServerRegistration creates an MCPServerRegistration for testing
-func createTestMCPServerRegistration(name, namespace, httpRouteName, prefix string) *mcpv1alpha1.MCPServerRegistration {
-	return &mcpv1alpha1.MCPServerRegistration{
+func createTestMCPServerRegistration(name, namespace, httpRouteName, prefix string) *mcpv1.MCPServerRegistration {
+	return &mcpv1.MCPServerRegistration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: mcpv1alpha1.MCPServerRegistrationSpec{
-			TargetRef: mcpv1alpha1.TargetReference{
+		Spec: mcpv1.MCPServerRegistrationSpec{
+			TargetRef: mcpv1.TargetReference{
 				Group: "gateway.networking.k8s.io",
 				Kind:  "HTTPRoute",
 				Name:  httpRouteName,
@@ -175,7 +175,7 @@ func setHTTPRouteAcceptedStatus(ctx context.Context, httpRoute *gatewayv1.HTTPRo
 // forceDeleteTestMCPServerRegistration removes finalizers and deletes
 func forceDeleteTestMCPServerRegistration(ctx context.Context, name, namespace string) {
 	nn := types.NamespacedName{Name: name, Namespace: namespace}
-	resource := &mcpv1alpha1.MCPServerRegistration{}
+	resource := &mcpv1.MCPServerRegistration{}
 	err := testK8sClient.Get(ctx, nn, resource)
 	if errors.IsNotFound(err) {
 		return
@@ -231,7 +231,7 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 // waitForMCPServerRegistrationCacheSync waits for cache to see the resource
 func waitForMCPServerRegistrationCacheSync(ctx context.Context, nn types.NamespacedName) {
 	Eventually(func(g Gomega) {
-		cached := &mcpv1alpha1.MCPServerRegistration{}
+		cached := &mcpv1.MCPServerRegistration{}
 		g.Expect(testIndexedClient.Get(ctx, nn, cached)).To(Succeed())
 	}, testTimeout, testRetryInterval).Should(Succeed())
 }
@@ -278,9 +278,9 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 			// set MCPGatewayExtension Ready status directly
 			Eventually(func(g Gomega) {
-				ext := &mcpv1alpha1.MCPGatewayExtension{}
+				ext := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: "test-ext", Namespace: "default"}, ext)).To(Succeed())
-				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "ready")
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
 				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
@@ -307,7 +307,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				g.Expect(controllerutil.ContainsFinalizer(updated, mcpGatewayFinalizer)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -328,13 +328,13 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// trigger deletion
-			resource := &mcpv1alpha1.MCPServerRegistration{}
+			resource := &mcpv1.MCPServerRegistration{}
 			Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, resource)).To(Succeed())
 			Expect(testK8sClient.Delete(ctx, resource)).To(Succeed())
 
 			// wait for cache to see deletion timestamp
 			Eventually(func(g Gomega) {
-				cached := &mcpv1alpha1.MCPServerRegistration{}
+				cached := &mcpv1.MCPServerRegistration{}
 				err := testIndexedClient.Get(ctx, mcpsrNamespacedName, cached)
 				if errors.IsNotFound(err) {
 					return
@@ -353,7 +353,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("%s/%s", "default", resourceName)))
 
 			Eventually(func(g Gomega) {
-				deleted := &mcpv1alpha1.MCPServerRegistration{}
+				deleted := &mcpv1.MCPServerRegistration{}
 				err := testK8sClient.Get(ctx, mcpsrNamespacedName, deleted)
 				g.Expect(errors.IsNotFound(err)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -420,7 +420,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
@@ -467,7 +467,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
@@ -512,9 +512,9 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				ext := &mcpv1alpha1.MCPGatewayExtension{}
+				ext := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: "test-ext-cacert", Namespace: "default"}, ext)).To(Succeed())
-				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1alpha1.ConditionReasonSuccess, "ready")
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
 				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
@@ -547,7 +547,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 		It("should include CA cert in config when caCertSecretRef is set", func() {
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: secretName,
 				Key:  "ca.crt",
 			}
@@ -592,7 +592,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}()
 
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: "unlabeled-ca",
 				Key:  "ca.crt",
 			}
@@ -610,7 +610,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
@@ -621,7 +621,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 		It("should use default key ca.crt when key is not specified", func() {
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: secretName,
 			}
 			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
@@ -651,7 +651,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 		It("should fail when CA cert secret does not exist", func() {
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: "nonexistent-secret",
 				Key:  "ca.crt",
 			}
@@ -669,7 +669,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
@@ -697,7 +697,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}()
 
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: "wrong-key-ca",
 				Key:  "ca.crt",
 			}
@@ -715,7 +715,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
@@ -743,11 +743,11 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}()
 
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CredentialRef = &mcpv1alpha1.SecretReference{
+			mcpsr.Spec.CredentialRef = &mcpv1.SecretReference{
 				Name: "test-cred-with-ca",
 				Key:  "token",
 			}
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: secretName,
 				Key:  "ca.crt",
 			}
@@ -796,7 +796,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}()
 
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: "invalid-pem-ca",
 				Key:  "ca.crt",
 			}
@@ -814,7 +814,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
+				mcpsrObj := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
 				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
 				g.Expect(readyCond).NotTo(BeNil())
@@ -846,7 +846,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}()
 
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
-			mcpsr.Spec.CACertSecretRef = &mcpv1alpha1.CACertSecretReference{
+			mcpsr.Spec.CACertSecretRef = &mcpv1.CACertSecretReference{
 				Name: "oversized-ca",
 				Key:  "ca.crt",
 			}
@@ -864,7 +864,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				mcpsrObj := &mcpv1alpha1.MCPServerRegistration{}
+				mcpsrObj := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, mcpsrObj)).To(Succeed())
 				readyCond := meta.FindStatusCondition(mcpsrObj.Status.Conditions, "Ready")
 				g.Expect(readyCond).NotTo(BeNil())
@@ -927,7 +927,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPServerRegistration{}
+				updated := &mcpv1.MCPServerRegistration{}
 				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())

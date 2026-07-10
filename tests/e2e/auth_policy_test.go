@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	goenv "github.com/caitlinelfring/go-env-default"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,13 +31,13 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		}
 
 		By("Enabling trusted headers on the MCPGatewayExtension")
-		ext := &mcpv1alpha1.MCPGatewayExtension{}
+		ext := &mcpv1.MCPGatewayExtension{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
 		if ext.Spec.TrustedHeadersKey == nil {
 			patch := client.MergeFrom(ext.DeepCopy())
-			ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+			ext.Spec.TrustedHeadersKey = &mcpv1.TrustedHeadersKey{
 				SecretName: "trusted-headers-public-key",
-				Generate:   mcpv1alpha1.KeyGenerationDisabled,
+				Generate:   mcpv1.KeyGenerationDisabled,
 			}
 			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
 

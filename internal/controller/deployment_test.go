@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -400,13 +400,13 @@ func TestBuildBrokerRouterDeployment_PublicHost(t *testing.T) {
 			r := &MCPGatewayExtensionReconciler{
 				BrokerRouterImage: "test-image:v1",
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
@@ -470,13 +470,13 @@ func TestBuildBrokerRouterDeployment_InternalHost(t *testing.T) {
 			r := &MCPGatewayExtensionReconciler{
 				BrokerRouterImage: "test-image:v1",
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: tt.extNamespace,
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      tt.targetRefName,
 						Namespace: tt.targetRefNS,
 					},
@@ -525,14 +525,14 @@ func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
 			r := &MCPGatewayExtensionReconciler{
 				BrokerRouterImage: "test-image:v1",
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
 					BackendPingIntervalSeconds: tt.backendPingInterval,
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
@@ -573,14 +573,14 @@ func TestBuildBrokerRouterDeployment_NoRouterKeyFlag(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",
 	}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",
 			UID:       types.UID("test-uid-12345"),
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:      "my-gateway",
 				Namespace: "gateway-system",
 			},
@@ -657,13 +657,13 @@ func TestBuildBrokerRouterDeployment_LogLevel(t *testing.T) {
 				BrokerRouterImage:    "test-image:v1",
 				BrokerRouterLogLevel: tt.logLevel,
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
@@ -693,33 +693,33 @@ func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 	tests := []struct {
 		name           string
 		brokerLogLevel string
-		specLogLevel   mcpv1alpha1.LogLevel
+		specLogLevel   mcpv1.LogLevel
 		want           string
 	}{
 		{
 			name:         "spec.logLevel debug maps to -4",
-			specLogLevel: mcpv1alpha1.LogLevelDebug,
+			specLogLevel: mcpv1.LogLevelDebug,
 			want:         "--log-level=-4",
 		},
 		{
 			name:         "spec.logLevel info maps to 0",
-			specLogLevel: mcpv1alpha1.LogLevelInfo,
+			specLogLevel: mcpv1.LogLevelInfo,
 			want:         "--log-level=0",
 		},
 		{
 			name:         "spec.logLevel warn maps to 4",
-			specLogLevel: mcpv1alpha1.LogLevelWarn,
+			specLogLevel: mcpv1.LogLevelWarn,
 			want:         "--log-level=4",
 		},
 		{
 			name:         "spec.logLevel error maps to 8",
-			specLogLevel: mcpv1alpha1.LogLevelError,
+			specLogLevel: mcpv1.LogLevelError,
 			want:         "--log-level=8",
 		},
 		{
 			name:           "spec.logLevel overrides operator-wide BrokerRouterLogLevel",
 			brokerLogLevel: "-4",
-			specLogLevel:   mcpv1alpha1.LogLevelError,
+			specLogLevel:   mcpv1.LogLevelError,
 			want:           "--log-level=8",
 		},
 		{
@@ -738,13 +738,13 @@ func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 				BrokerRouterImage:    "test-image:v1",
 				BrokerRouterLogLevel: tt.brokerLogLevel,
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
@@ -769,7 +769,7 @@ func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 	tests := []struct {
 		name             string
-		trustedHeaderKey *mcpv1alpha1.TrustedHeadersKey
+		trustedHeaderKey *mcpv1.TrustedHeadersKey
 		wantTrustedEnv   bool
 		wantSecretName   string
 	}{
@@ -780,7 +780,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 		},
 		{
 			name: "trusted header env var set when TrustedHeadersKey has SecretName",
-			trustedHeaderKey: &mcpv1alpha1.TrustedHeadersKey{
+			trustedHeaderKey: &mcpv1.TrustedHeadersKey{
 				SecretName: "my-trusted-key-secret",
 			},
 			wantTrustedEnv: true,
@@ -793,14 +793,14 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			r := &MCPGatewayExtensionReconciler{
 				BrokerRouterImage: "test-image:v1",
 			}
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ext",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
 					TrustedHeadersKey: tt.trustedHeaderKey,
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:      "my-gateway",
 						Namespace: "gateway-system",
 					},
@@ -931,7 +931,7 @@ func TestServiceAccountNeedsUpdate(t *testing.T) {
 
 func TestBuildBrokerRouterServiceAccount(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",
@@ -961,13 +961,13 @@ func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",
 	}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:      "my-gateway",
 				Namespace: "gateway-system",
 			},
@@ -987,38 +987,38 @@ func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
 func TestDerivePublicHost(t *testing.T) {
 	tests := []struct {
 		name               string
-		listenerConfig     *mcpv1alpha1.ListenerConfig
+		listenerConfig     *mcpv1.ListenerConfig
 		annotationOverride string
 		want               string
 		wantErr            bool
 	}{
 		{
 			name:               "annotation overrides listener hostname",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "override.example.com",
 			want:               "override.example.com",
 		},
 		{
 			name:               "uses listener hostname when no annotation",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "",
 			want:               "listener.example.com",
 		},
 		{
 			name:               "handles wildcard hostname",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "*.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "*.example.com"},
 			annotationOverride: "",
 			want:               "mcp.example.com",
 		},
 		{
 			name:               "handles double-wildcard hostname",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "*.team-a.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "*.team-a.example.com"},
 			annotationOverride: "",
 			want:               "mcp.team-a.example.com",
 		},
 		{
 			name:               "empty hostname returns error",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: ""},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: ""},
 			annotationOverride: "",
 			wantErr:            true,
 		},
@@ -1030,37 +1030,37 @@ func TestDerivePublicHost(t *testing.T) {
 		},
 		{
 			name:               "annotation takes precedence even with wildcard",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "*.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "*.example.com"},
 			annotationOverride: "specific.example.com",
 			want:               "specific.example.com",
 		},
 		{
 			name:               "strips port from annotation override",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "mcp.127-0-0-1.sslip.io:8001",
 			want:               "mcp.127-0-0-1.sslip.io",
 		},
 		{
 			name:               "annotation without port unchanged",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "mcp.127-0-0-1.sslip.io",
 			want:               "mcp.127-0-0-1.sslip.io",
 		},
 		{
 			name:               "invalid hostname with path returns error",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "example.com/path"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "example.com/path"},
 			annotationOverride: "",
 			wantErr:            true,
 		},
 		{
 			name:               "annotation with scheme should error",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "https://example.com",
 			wantErr:            true,
 		},
 		{
 			name:               "annotation with path should error",
-			listenerConfig:     &mcpv1alpha1.ListenerConfig{Hostname: "listener.example.com"},
+			listenerConfig:     &mcpv1.ListenerConfig{Hostname: "listener.example.com"},
 			annotationOverride: "example.com/path",
 			wantErr:            true,
 		},
@@ -1089,102 +1089,102 @@ func TestDerivePublicHost(t *testing.T) {
 func TestDerivePrivateHost(t *testing.T) {
 	tests := []struct {
 		name             string
-		spec             mcpv1alpha1.MCPGatewayExtensionSpec
-		listenerConfig   *mcpv1alpha1.ListenerConfig
+		spec             mcpv1.MCPGatewayExtensionSpec
+		listenerConfig   *mcpv1.ListenerConfig
 		gatewayClassName string
 		want             string
 	}{
 		{
 			name: "HTTP listener: bare host, no scheme prefix (backwards compatible)",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
 			want:             "my-gw-istio.gateway-system.svc.cluster.local:8080",
 		},
 		{
 			name: "HTTPS listener: scheme is prepended (issue #917)",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
 			want:             "https://my-gw-istio.gateway-system.svc.cluster.local:443",
 		},
 		{
 			name: "HTTPS listener with mixed-case protocol value still detected",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "https"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 443, Protocol: "https"},
 			want:             "https://my-gw-istio.gateway-system.svc.cluster.local:443",
 		},
 		{
 			name: "openshift-default gateway class uses correct service name",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gateway",
 					Namespace: "gateway-system",
 				},
 			},
 			gatewayClassName: "openshift-default",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
 			want:             "https://my-gateway-openshift-default.gateway-system.svc.cluster.local:443",
 		},
 		{
 			name: "PrivateHost override is honoured verbatim (no scheme injection)",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 				PrivateHost: "my-gw-istio.gateway-system.svc.cluster.local:8081",
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 443, Protocol: "HTTPS"},
 			want:             "my-gw-istio.gateway-system.svc.cluster.local:8081",
 		},
 		{
 			name: "PrivateHost override may carry its own scheme",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 				PrivateHost: "https://custom.example.com:443",
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 8080, Protocol: "HTTP"},
 			want:             "https://custom.example.com:443",
 		},
 		{
 			name: "TCP listener (no recognised TLS): fallback to plain host (no scheme)",
-			spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name:      "my-gw",
 					Namespace: "gateway-system",
 				},
 			},
 			gatewayClassName: "istio",
-			listenerConfig:   &mcpv1alpha1.ListenerConfig{Port: 9090, Protocol: "TCP"},
+			listenerConfig:   &mcpv1.ListenerConfig{Port: 9090, Protocol: "TCP"},
 			want:             "my-gw-istio.gateway-system.svc.cluster.local:9090",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{Spec: tt.spec}
+			mcpExt := &mcpv1.MCPGatewayExtension{Spec: tt.spec}
 			got := derivePrivateHost(mcpExt, tt.listenerConfig, tt.gatewayClassName)
 			if got != tt.want {
 				t.Errorf("derivePrivateHost() = %q, want %q", got, tt.want)
@@ -1449,19 +1449,19 @@ func TestBuildGatewayHTTPRoute(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		mcpExt         *mcpv1alpha1.MCPGatewayExtension
+		mcpExt         *mcpv1.MCPGatewayExtension
 		publicHost     string
 		expectHostname string
 	}{
 		{
 			name: "exact hostname",
-			mcpExt: &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt: &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:        "my-gateway",
 						Namespace:   "gateway-ns",
 						SectionName: "mcp",
@@ -1473,13 +1473,13 @@ func TestBuildGatewayHTTPRoute(t *testing.T) {
 		},
 		{
 			name: "wildcard resolved to mcp subdomain",
-			mcpExt: &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt: &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
 					Namespace: "test-ns",
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:        "my-gateway",
 						Namespace:   "gateway-ns",
 						SectionName: "wildcard",
@@ -1905,13 +1905,13 @@ func TestDeploymentNeedsUpdate_UserEnvVarsIgnored(t *testing.T) {
 // server (GHSA-g53w-w6mj-hrpp).
 func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 	reconciler := &MCPGatewayExtensionReconciler{}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:        "my-gateway",
 				Namespace:   "gateway-ns",
 				SectionName: "mcp",
@@ -1970,13 +1970,13 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 
 func TestHTTPRouteNeedsUpdate(t *testing.T) {
 	reconciler := &MCPGatewayExtensionReconciler{}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:        "my-gateway",
 				Namespace:   "gateway-ns",
 				SectionName: "mcp",
@@ -2033,13 +2033,13 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 
 func TestBuildTokensHTTPRoute(t *testing.T) {
 	reconciler := &MCPGatewayExtensionReconciler{}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:        "my-gateway",
 				Namespace:   "gateway-ns",
 				SectionName: "mcp",
@@ -2073,17 +2073,17 @@ func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		policy   mcpv1alpha1.URLElicitationPolicy
+		policy   string
 		wantFlag bool
 	}{
 		{
 			name:     "enabled",
-			policy:   mcpv1alpha1.URLElicitationEnabled,
+			policy:   "Enabled",
 			wantFlag: true,
 		},
 		{
 			name:     "disabled",
-			policy:   mcpv1alpha1.URLElicitationDisabled,
+			policy:   "Disabled",
 			wantFlag: false,
 		},
 		{
@@ -2095,19 +2095,22 @@ func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test",
-					Namespace: "test-ns",
+					Name:        "test",
+					Namespace:   "test-ns",
+					Annotations: map[string]string{},
 				},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
+					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 						Name:        "my-gateway",
 						Namespace:   "gateway-ns",
 						SectionName: "mcp",
 					},
-					URLElicitation: tt.policy,
 				},
+			}
+			if tt.policy != "" {
+				mcpExt.Spec.URLElicitation = mcpv1.URLElicitationPolicy(tt.policy)
 			}
 
 			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
@@ -2124,13 +2127,13 @@ func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",
 	}
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Name:      "my-gateway",
 				Namespace: "gateway-system",
 			},
@@ -2245,11 +2248,11 @@ func TestDeploymentNeedsUpdate_Probe(t *testing.T) {
 func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 	reconciler := &MCPGatewayExtensionReconciler{BrokerRouterImage: "test-image:latest"}
 
-	base := func() *mcpv1alpha1.MCPGatewayExtension {
-		return &mcpv1alpha1.MCPGatewayExtension{
+	base := func() *mcpv1.MCPGatewayExtension {
+		return &mcpv1.MCPGatewayExtension{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "mcp-system", UID: "test-uid"},
-			Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-				TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+			Spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 					Name: "mcp-gateway", Namespace: "gateway-system", SectionName: "mcp",
 				},
 			},
@@ -2268,7 +2271,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 
 	t.Run("all defaults applied when only authorizationServers set", func(t *testing.T) {
 		mcpExt := base()
-		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
 		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
@@ -2295,7 +2298,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 
 	t.Run("explicit values override defaults", func(t *testing.T) {
 		mcpExt := base()
-		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			ResourceName:           "My MCP",
 			Resource:               "http://mcp.127-0-0-1.sslip.io:8001/mcp",
 			AuthorizationServers:   []string{"https://auth1.example.com", "https://auth2.example.com"},
@@ -2326,13 +2329,13 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 
 	t.Run("oauth env change triggers deployment update", func(t *testing.T) {
 		mcpExt := base()
-		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
 		desired := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
 
 		mcpExt2 := base()
-		mcpExt2.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+		mcpExt2.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://other-auth.example.com/realms/mcp"},
 		}
 		existing := reconciler.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", "internal:8080")
@@ -2345,7 +2348,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 
 	t.Run("removing oauth config triggers deployment update", func(t *testing.T) {
 		mcpExt := base()
-		mcpExt.Spec.OAuthProtectedResource = &mcpv1alpha1.OAuthProtectedResource{
+		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
 		desired := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")

@@ -25,7 +25,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 const (
@@ -97,7 +97,7 @@ func createTestReferenceGrant(name, namespace, fromNamespace string, gatewayName
 		Spec: gatewayv1beta1.ReferenceGrantSpec{
 			From: []gatewayv1beta1.ReferenceGrantFrom{
 				{
-					Group:     gatewayv1beta1.Group(mcpv1alpha1.GroupVersion.Group),
+					Group:     gatewayv1beta1.Group(mcpv1.GroupVersion.Group),
 					Kind:      "MCPGatewayExtension",
 					Namespace: gatewayv1beta1.Namespace(fromNamespace),
 				},
@@ -115,14 +115,14 @@ func createTestReferenceGrant(name, namespace, fromNamespace string, gatewayName
 }
 
 // createTestMCPGatewayExtension creates an MCPGatewayExtension targeting a Gateway listener
-func createTestMCPGatewayExtension(name, namespace, gatewayName, gatewayNamespace string) *mcpv1alpha1.MCPGatewayExtension {
-	resource := &mcpv1alpha1.MCPGatewayExtension{
+func createTestMCPGatewayExtension(name, namespace, gatewayName, gatewayNamespace string) *mcpv1.MCPGatewayExtension {
+	resource := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Group:       "gateway.networking.k8s.io",
 				Kind:        "Gateway",
 				Name:        gatewayName,
@@ -147,7 +147,7 @@ func deleteTestGateway(ctx context.Context, name, namespace string) {
 // It also cleans up the session signing key secret since envtest does not run garbage collection.
 func forceDeleteTestMCPGatewayExtension(ctx context.Context, name, namespace string) {
 	nn := types.NamespacedName{Name: name, Namespace: namespace}
-	resource := &mcpv1alpha1.MCPGatewayExtension{}
+	resource := &mcpv1.MCPGatewayExtension{}
 	err := testK8sClient.Get(ctx, nn, resource)
 	if err != nil {
 		Expect(client.IgnoreNotFound(err)).To(Succeed())
@@ -228,7 +228,7 @@ func newTestReconciler() *MCPGatewayExtensionReconciler {
 // waitForCacheSync waits for the cache to see an MCPGatewayExtension
 func waitForCacheSync(ctx context.Context, nn types.NamespacedName) {
 	Eventually(func(g Gomega) {
-		cached := &mcpv1alpha1.MCPGatewayExtension{}
+		cached := &mcpv1.MCPGatewayExtension{}
 		g.Expect(testIndexedClient.Get(ctx, nn, cached)).To(Succeed())
 	}, testTimeout, testRetryInterval).Should(Succeed())
 }
@@ -344,7 +344,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPGatewayExtension{}
+				updated := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
 				g.Expect(controllerutil.ContainsFinalizer(updated, mcpGatewayFinalizer)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -360,13 +360,13 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// trigger deletion
-			resource := &mcpv1alpha1.MCPGatewayExtension{}
+			resource := &mcpv1.MCPGatewayExtension{}
 			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, resource)).To(Succeed())
 			Expect(testK8sClient.Delete(ctx, resource)).To(Succeed())
 
 			// wait for cache to see deletion timestamp
 			Eventually(func(g Gomega) {
-				cached := &mcpv1alpha1.MCPGatewayExtension{}
+				cached := &mcpv1.MCPGatewayExtension{}
 				err := testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)
 				if errors.IsNotFound(err) {
 					return
@@ -382,7 +382,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				deleted := &mcpv1alpha1.MCPGatewayExtension{}
+				deleted := &mcpv1.MCPGatewayExtension{}
 				err := testK8sClient.Get(ctx, mcpExtNamespacedName, deleted)
 				g.Expect(errors.IsNotFound(err)).To(BeTrue())
 			}, testTimeout, testRetryInterval).Should(Succeed())
@@ -431,12 +431,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				g.Expect(err).NotTo(HaveOccurred())
 
-				updated1 := &mcpv1alpha1.MCPGatewayExtension{}
+				updated1 := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName1, updated1)).To(Succeed())
-				condition := meta.FindStatusCondition(updated1.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated1.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonDeploymentNotReady))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonDeploymentNotReady))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// ensure distinct CreationTimestamp for second extension
@@ -447,9 +447,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 			// wait for cache to sync and see both extensions via field index
 			Eventually(func(g Gomega) {
-				cached := &mcpv1alpha1.MCPGatewayExtension{}
+				cached := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testIndexedClient.Get(ctx, mcpExtNamespacedName2, cached)).To(Succeed())
-				extList := &mcpv1alpha1.MCPGatewayExtensionList{}
+				extList := &mcpv1.MCPGatewayExtensionList{}
 				g.Expect(testIndexedClient.List(ctx, extList,
 					client.MatchingFields{gatewayIndexKey: fmt.Sprintf("%s/%s", "default", gatewayName)},
 				)).To(Succeed())
@@ -462,12 +462,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				g.Expect(err).NotTo(HaveOccurred())
 
-				updated2 := &mcpv1alpha1.MCPGatewayExtension{}
+				updated2 := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName2, updated2)).To(Succeed())
-				condition := meta.FindStatusCondition(updated2.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated2.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonInvalid))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonInvalid))
 				g.Expect(condition.Message).To(ContainSubstring("conflict"))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
@@ -509,12 +509,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				g.Expect(err).NotTo(HaveOccurred())
 
-				updated := &mcpv1alpha1.MCPGatewayExtension{}
+				updated := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonRefGrantRequired))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonRefGrantRequired))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})
@@ -579,12 +579,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					})
 					g.Expect(err).NotTo(HaveOccurred())
 
-					updated := &mcpv1alpha1.MCPGatewayExtension{}
+					updated := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 					g.Expect(condition).NotTo(BeNil())
 					g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-					g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSuccess))
+					g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonSuccess))
 				}, testTimeout, testRetryInterval).Should(Succeed())
 			})
 		})
@@ -625,12 +625,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					})
 					g.Expect(err).NotTo(HaveOccurred())
 
-					updated := &mcpv1alpha1.MCPGatewayExtension{}
+					updated := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 					g.Expect(condition).NotTo(BeNil())
 					g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-					g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSuccess))
+					g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonSuccess))
 				}, testTimeout, testRetryInterval).Should(Succeed())
 			})
 		})
@@ -667,12 +667,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				})
 				g.Expect(err).NotTo(HaveOccurred())
 
-				updated := &mcpv1alpha1.MCPGatewayExtension{}
+				updated := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonInvalid))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonInvalid))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})
@@ -731,12 +731,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPGatewayExtension{}
+				updated := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSuccess))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonSuccess))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			Expect(testK8sClient.Delete(ctx, gateway)).To(Succeed())
@@ -763,12 +763,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				updated := &mcpv1alpha1.MCPGatewayExtension{}
+				updated := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
-				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonInvalid))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonInvalid))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})
@@ -857,7 +857,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// get the MCPGatewayExtension to check UID
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{}
+			mcpExt := &mcpv1.MCPGatewayExtension{}
 			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, mcpExt)).To(Succeed())
 
 			// verify deployment owner reference
@@ -991,13 +991,13 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// trigger deletion
-			resource := &mcpv1alpha1.MCPGatewayExtension{}
+			resource := &mcpv1.MCPGatewayExtension{}
 			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, resource)).To(Succeed())
 			Expect(testK8sClient.Delete(ctx, resource)).To(Succeed())
 
 			// wait for cache to see deletion timestamp
 			Eventually(func(g Gomega) {
-				cached := &mcpv1alpha1.MCPGatewayExtension{}
+				cached := &mcpv1.MCPGatewayExtension{}
 				err := testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)
 				if errors.IsNotFound(err) {
 					return
@@ -1043,9 +1043,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				Expect(testK8sClient.Create(ctx, refGrant)).To(Succeed())
 
 				ext := createTestMCPGatewayExtension(resourceName, namespace, gatewayName, namespace)
-				ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+				ext.Spec.TrustedHeadersKey = &mcpv1.TrustedHeadersKey{
 					SecretName: secretName,
-					Generate:   mcpv1alpha1.KeyGenerationEnabled,
+					Generate:   mcpv1.KeyGenerationEnabled,
 				}
 				Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
 			})
@@ -1132,9 +1132,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 				Expect(testK8sClient.Create(ctx, badSecret)).To(Succeed())
 
 				ext := createTestMCPGatewayExtension(resourceName, namespace, gatewayName, namespace)
-				ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+				ext.Spec.TrustedHeadersKey = &mcpv1.TrustedHeadersKey{
 					SecretName: secretName,
-					Generate:   mcpv1alpha1.KeyGenerationDisabled,
+					Generate:   mcpv1.KeyGenerationDisabled,
 				}
 				Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
 			})
@@ -1165,12 +1165,12 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 					_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNN})
 					g.Expect(err).NotTo(HaveOccurred())
 
-					updated := &mcpv1alpha1.MCPGatewayExtension{}
+					updated := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, mcpExtNN, updated)).To(Succeed())
-					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1alpha1.ConditionTypeReady)
+					condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
 					g.Expect(condition).NotTo(BeNil())
 					g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-					g.Expect(condition.Reason).To(Equal(mcpv1alpha1.ConditionReasonSecretInvalid))
+					g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonSecretInvalid))
 				}, testTimeout, testRetryInterval).Should(Succeed())
 			})
 		})
@@ -1243,7 +1243,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(string(*httpRoute.Spec.ParentRefs[0].SectionName)).To(Equal("http"))
 
 			// verify owner reference
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{}
+			mcpExt := &mcpv1.MCPGatewayExtension{}
 			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, mcpExt)).To(Succeed())
 			Expect(httpRoute.OwnerReferences).To(HaveLen(1))
 			Expect(httpRoute.OwnerReferences[0].UID).To(Equal(mcpExt.UID))
@@ -1251,9 +1251,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 		It("should not create HTTPRoute when disabled by spec", func() {
 			// set HTTPRouteManagement to Disabled before reconciling
-			ext := &mcpv1alpha1.MCPGatewayExtension{}
+			ext := &mcpv1.MCPGatewayExtension{}
 			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, ext)).To(Succeed())
-			ext.Spec.HTTPRouteManagement = mcpv1alpha1.HTTPRouteManagementDisabled
+			ext.Spec.HTTPRouteManagement = mcpv1.HTTPRouteManagementDisabled
 			Expect(testK8sClient.Update(ctx, ext)).To(Succeed())
 
 			reconciler := newTestReconciler()
@@ -1261,9 +1261,9 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 
 			// wait for cache to see the spec update
 			Eventually(func(g Gomega) {
-				cached := &mcpv1alpha1.MCPGatewayExtension{}
+				cached := &mcpv1.MCPGatewayExtension{}
 				g.Expect(testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)).To(Succeed())
-				g.Expect(cached.Spec.HTTPRouteManagement).To(Equal(mcpv1alpha1.HTTPRouteManagementDisabled))
+				g.Expect(cached.Spec.HTTPRouteManagement).To(Equal(mcpv1.HTTPRouteManagementDisabled))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
 			// reconcile multiple times to ensure HTTPRoute is never created

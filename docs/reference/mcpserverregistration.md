@@ -96,7 +96,7 @@ type: Opaque
 data:
   ca.crt: <base64-encoded-PEM-CA-bundle>
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: my-server

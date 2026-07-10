@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,7 +23,7 @@ const (
 
 // reconcileSessionSigningKey ensures a secret containing a random JWT signing
 // key exists. Corrupted or misconfigured secrets are repaired in-place.
-func (r *MCPGatewayExtensionReconciler) reconcileSessionSigningKey(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) error {
+func (r *MCPGatewayExtensionReconciler) reconcileSessionSigningKey(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	existing := &corev1.Secret{}
 	err := r.DirectAPIReader.Get(ctx, client.ObjectKey{
 		Name:      sessionSigningKeySecretName,
@@ -112,7 +112,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileSessionSigningKey(ctx context.C
 	return nil
 }
 
-func hasOwnerReference(secret *corev1.Secret, owner *mcpv1alpha1.MCPGatewayExtension) bool {
+func hasOwnerReference(secret *corev1.Secret, owner *mcpv1.MCPGatewayExtension) bool {
 	for _, ref := range secret.OwnerReferences {
 		if ref.UID == owner.UID {
 			return true

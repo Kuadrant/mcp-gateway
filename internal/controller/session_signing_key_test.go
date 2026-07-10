@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,7 +17,7 @@ import (
 func testReconciler(objs ...client.Object) *MCPGatewayExtensionReconciler {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -32,8 +32,8 @@ func testReconciler(objs ...client.Object) *MCPGatewayExtensionReconciler {
 	}
 }
 
-func testMCPExt() *mcpv1alpha1.MCPGatewayExtension {
-	return &mcpv1alpha1.MCPGatewayExtension{
+func testMCPExt() *mcpv1.MCPGatewayExtension {
+	return &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",

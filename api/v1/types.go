@@ -1,4 +1,4 @@
-package v1alpha1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +29,7 @@ const (
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:deprecatedversion
+// +kubebuilder:storageversion
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
 // +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.prefix",description="Prefix for federation"
 // +kubebuilder:printcolumn:name="Target",type="string",JSONPath=".spec.targetRef.name",description="Target HTTPRoute.  MCP Gateway only supports routes with a single BackendRef"
@@ -229,7 +229,7 @@ type MCPServerRegistrationList struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:deprecatedversion
+// +kubebuilder:storageversion
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpvs
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Ready condition"
 // +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".spec.tools.length()"

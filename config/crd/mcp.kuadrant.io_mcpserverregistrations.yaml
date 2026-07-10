@@ -44,7 +44,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: MCPServerRegistration registers an upstream MCP server for tool
@@ -297,5 +297,289 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - description: Prefix for federation
+      jsonPath: .spec.prefix
+      name: Prefix
+      type: string
+    - description: Target HTTPRoute.  MCP Gateway only supports routes with a single
+        BackendRef
+      jsonPath: .spec.targetRef.name
+      name: Target
+      type: string
+    - description: MCP endpoint path
+      jsonPath: .spec.path
+      name: Path
+      type: string
+    - description: Ready status
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - description: Server categories for discovery
+      jsonPath: .spec.category
+      name: Category
+      type: string
+    - jsonPath: .spec.credentialRef.name
+      name: Credentials
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    deprecated: true
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MCPServerRegistration registers an upstream MCP server for tool
+          federation through the gateway.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of MCPServerRegistration.
+            properties:
+              caCertSecretRef:
+                description: |-
+                  caCertSecretRef references a Secret containing a PEM-encoded CA certificate bundle.
+                  The broker uses this CA to verify TLS connections to the upstream MCP server.
+                  The referenced Secret must have the label mcp.kuadrant.io/secret=true.
+                  If key is not specified, defaults to "ca.crt".
+                properties:
+                  key:
+                    default: ca.crt
+                    description: |-
+                      key is the key within the Secret that contains the CA certificate PEM data.
+                      If not specified, defaults to "ca.crt".
+                    type: string
+                  name:
+                    description: name is the name of the Secret resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              category:
+                default:
+                - uncategorised
+                description: |-
+                  category assigns one or more categories to this MCP server for tool discovery.
+                  Used by the discover_tools meta-tool to allow agents to filter servers by category.
+                items:
+                  maxLength: 128
+                  minLength: 1
+                  type: string
+                maxItems: 3
+                type: array
+                x-kubernetes-list-type: atomic
+              credentialRef:
+                description: |-
+                  credentialRef references a Secret containing authentication credentials for the MCP server.
+                  The Secret should contain a key with the authentication token or credentials.
+                  The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
+                  Used exclusively by the broker for tool discovery and session management. Never injected into client tools/call requests.
+                properties:
+                  key:
+                    default: token
+                    description: |-
+                      key is the key within the Secret that contains the credential value.
+                      If not specified, defaults to "token".
+                    type: string
+                  name:
+                    description: name is the name of the Secret resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              hint:
+                description: |-
+                  hint provides a short description of what this MCP server offers.
+                  Returned by the discover_tools meta-tool to help agents decide which tools to select.
+                maxLength: 256
+                type: string
+              path:
+                default: /mcp
+                description: |-
+                  path specifies the URL path where the MCP server endpoint is exposed.
+                  If not specified, defaults to "/mcp".
+                  This allows connecting to MCP servers that use custom paths like "/v1/mcp" or "/api/mcp".
+                type: string
+              prefix:
+                description: |-
+                  prefix is the prefix to add to all federated capabilities from referenced servers.
+                  This helps avoid naming conflicts when aggregating tools from multiple sources.
+                  For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
+                pattern: ^[a-z0-9][a-z0-9_]*$
+                type: string
+                x-kubernetes-validations:
+                - message: prefix is immutable once set
+                  rule: self == oldSelf
+              state:
+                default: Enabled
+                description: |-
+                  state dictates whether the broker should maintain a connection to this server.
+                  When set to Disabled, the broker will remove any registered tools and stop connecting to the server.
+                  The server can be re-enabled at any time by setting this field back to Enabled.
+                  Defaults to Enabled.
+                enum:
+                - Enabled
+                - Disabled
+                type: string
+              tags:
+                description: |-
+                  tags is an optional list of arbitrary labels for this MCP server.
+                  Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+                items:
+                  maxLength: 128
+                  minLength: 1
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: atomic
+              targetRef:
+                description: |-
+                  targetRef specifies an HTTPRoute that points to a backend MCP server.
+                  The referenced HTTPRoute should have a backend service that implements the MCP protocol.
+                  The controller will discover the backend service from this HTTPRoute and configure
+                  the broker to federate tools from that MCP server.
+                properties:
+                  group:
+                    default: gateway.networking.k8s.io
+                    description: group is the group of the target resource.
+                    enum:
+                    - gateway.networking.k8s.io
+                    type: string
+                  kind:
+                    default: HTTPRoute
+                    description: kind is the kind of the target resource.
+                    enum:
+                    - HTTPRoute
+                    type: string
+                  name:
+                    description: name is the name of the target resource.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace of the target resource (optional, defaults
+                      to same namespace).
+                    type: string
+                required:
+                - name
+                type: object
+              tokenURLElicitation:
+                description: |-
+                  tokenURLElicitation enables per-user token collection via URL elicitation.
+                  When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+                  to collect tokens from capable clients at tool-call time.
+                properties:
+                  url:
+                    description: |-
+                      url overrides the default broker token page URL.
+                      When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+                    pattern: ^https?://
+                    type: string
+                type: object
+              userSpecificList:
+                default: Disabled
+                description: |-
+                  userSpecificList indicates that this MCP server returns different tools
+                  per user based on their credentials. When Enabled, the broker fetches tools
+                  from this server on each tools/list request using the user's session
+                  headers, rather than caching the service account's tool list.
+                enum:
+                - Enabled
+                - Disabled
+                type: string
+            required:
+            - targetRef
+            type: object
+            x-kubernetes-validations:
+            - message: prefix is required when userSpecificList is Enabled
+              rule: 'self.userSpecificList != "Enabled" || self.prefix != "" '
+          status:
+            description: status defines the observed state of MCPServerRegistration.
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the latest available observations of the MCPServerRegistration's state.
+                  Common conditions include 'Ready' to indicate if all referenced servers are accessible.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+            type: object
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}

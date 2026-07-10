@@ -299,6 +299,7 @@ func SetURLElicitation(namespace, name string, enabled bool) error {
 		value = "Enabled"
 	}
 	ctx := context.Background()
+	// With v1 and v1alpha1 being structurally identical, we can patch the spec directly.
 	patch := fmt.Sprintf(`{"spec":{"urlElicitation":"%s"}}`, value)
 	cmd := exec.CommandContext(ctx, "kubectl", "patch", "mcpgatewayextension", name,
 		"-n", namespace, "--type=merge", "-p", patch)

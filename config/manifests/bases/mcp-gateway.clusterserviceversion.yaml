@@ -5,7 +5,7 @@ metadata:
     alm-examples: |-
       [
         {
-          "apiVersion": "mcp.kuadrant.io/v1alpha1",
+          "apiVersion": "mcp.kuadrant.io/v1",
           "kind": "MCPGatewayExtension",
           "metadata": {
             "name": "mcp-gateway-extension",
@@ -22,7 +22,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "mcp.kuadrant.io/v1alpha1",
+          "apiVersion": "mcp.kuadrant.io/v1",
           "kind": "MCPServerRegistration",
           "metadata": {
             "name": "example-server",
@@ -38,7 +38,7 @@ metadata:
           }
         },
         {
-          "apiVersion": "mcp.kuadrant.io/v1alpha1",
+          "apiVersion": "mcp.kuadrant.io/v1",
           "kind": "MCPVirtualServer",
           "metadata": {
             "name": "example-vs",
