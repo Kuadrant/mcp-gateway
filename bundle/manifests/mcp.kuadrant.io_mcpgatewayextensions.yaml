@@ -352,6 +352,8 @@ spec:
       name: Age
       type: date
     deprecated: true
+    deprecationWarning: mcp.kuadrant.io/v1alpha1 MCPGatewayExtension is deprecated;
+      migrate to mcp.kuadrant.io/v1
     name: v1alpha1
     schema:
       openAPIV3Schema:

@@ -328,6 +328,8 @@ spec:
       name: Age
       type: date
     deprecated: true
+    deprecationWarning: mcp.kuadrant.io/v1alpha1 MCPServerRegistration is deprecated;
+      migrate to mcp.kuadrant.io/v1
     name: v1alpha1
     schema:
       openAPIV3Schema:
