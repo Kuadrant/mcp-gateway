@@ -40,13 +40,15 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	"github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/controller"
 )
 
 func init() {
-	runtime.Must(v1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(mcpv1.AddToScheme(scheme.Scheme))
+	runtime.Must(mcpv1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
 	runtime.Must(gatewayv1beta1.Install(scheme.Scheme))
 	runtime.Must(istionetv1alpha3.AddToScheme(scheme.Scheme))

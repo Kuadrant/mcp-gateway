@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	jwt "github.com/golang-jwt/jwt/v5"
@@ -61,7 +61,7 @@ func createTestManager(t *testing.T, serverName, prefix string, tools []mcp.Tool
 		Prefix: prefix,
 		URL:    "http://test.local/mcp",
 	}, "", nil)
-	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1alpha1.InvalidToolPolicyFilterOut)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, mcpv1.InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	// populate tools directly for testing (this requires accessing internal state)
 	manager.SetToolsForTesting(tools)

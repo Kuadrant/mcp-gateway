@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +55,7 @@ func connectTo(t *testing.T, url string) (*MCPServer, error) {
 	up := NewUpstreamMCP(&config.MCPServer{
 		Name:     "pinned",
 		URL:      url,
-		State:    string(mcpv1alpha1.ServerStateEnabled),
+		State:    string(mcpv1.ServerStateEnabled),
 		Hostname: "pinned",
 	}, "", nil)
 	return up, up.Connect(t.Context(), func() {})

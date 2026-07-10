@@ -3,7 +3,7 @@ package controller
 import (
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -89,11 +89,11 @@ func testGateway() *gatewayv1.Gateway {
 	}
 }
 
-func testExtension(sectionName string) *mcpv1alpha1.MCPGatewayExtension {
-	return &mcpv1alpha1.MCPGatewayExtension{
+func testExtension(sectionName string) *mcpv1.MCPGatewayExtension {
+	return &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ext", Namespace: "team-a"},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Group:       "gateway.networking.k8s.io",
 				Kind:        "Gateway",
 				Name:        "shared-gateway",
@@ -110,7 +110,7 @@ func TestHTTPRouteAttachesToListener(t *testing.T) {
 	tests := []struct {
 		name  string
 		route *gatewayv1.HTTPRoute
-		ext   *mcpv1alpha1.MCPGatewayExtension
+		ext   *mcpv1.MCPGatewayExtension
 		want  bool
 	}{
 		{

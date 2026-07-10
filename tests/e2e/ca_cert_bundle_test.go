@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 const (
@@ -31,8 +31,8 @@ const (
 // patchExtensionCACertBundle patches the existing MCPGatewayExtension in-place to
 // set or clear the caCertBundleRef. This avoids recreating the extension and losing
 // deployment patches (e.g. --gateway-ca-cert for hairpin requests).
-func patchExtensionCACertBundle(ref *mcpv1alpha1.CACertBundleReference) {
-	ext := &mcpv1alpha1.MCPGatewayExtension{}
+func patchExtensionCACertBundle(ref *mcpv1.CACertBundleReference) {
+	ext := &mcpv1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{
 		Name: MCPExtensionName, Namespace: SystemNamespace,
 	}, ext)).To(Succeed())
@@ -90,7 +90,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 	setupBundleRef := func() {
 		By("Patching MCPGatewayExtension with caCertBundleRef")
-		ref := &mcpv1alpha1.CACertBundleReference{Name: caBundleSecretName, Key: "ca.crt"}
+		ref := &mcpv1.CACertBundleReference{Name: caBundleSecretName, Key: "ca.crt"}
 		patchExtensionCACertBundle(ref)
 
 		Eventually(func(g Gomega) {
@@ -288,13 +288,13 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 
 	It("[HTTPS] [Full,CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error", func() {
 		By("Patching MCPGatewayExtension to reference non-existent secret")
-		ref := &mcpv1alpha1.CACertBundleReference{Name: "nonexistent-secret", Key: "ca.crt"}
+		ref := &mcpv1.CACertBundleReference{Name: "nonexistent-secret", Key: "ca.crt"}
 		patchExtensionCACertBundle(ref)
 
 		By("Verifying MCPGatewayExtension reports SecretNotFound")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient,
-				MCPExtensionName, SystemNamespace, string(mcpv1alpha1.ConditionReasonSecretNotFound))).To(Succeed())
+				MCPExtensionName, SystemNamespace, string(mcpv1.ConditionReasonSecretNotFound))).To(Succeed())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 
 		By("Creating secret WITHOUT required label")
@@ -312,13 +312,13 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		testResources = append(testResources, unlabeled)
 
 		By("Patching extension to reference unlabeled secret")
-		ref = &mcpv1alpha1.CACertBundleReference{Name: "cab-no-label", Key: "ca.crt"}
+		ref = &mcpv1.CACertBundleReference{Name: "cab-no-label", Key: "ca.crt"}
 		patchExtensionCACertBundle(ref)
 
 		By("Verifying MCPGatewayExtension reports SecretInvalid for missing label")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient,
-				MCPExtensionName, SystemNamespace, string(mcpv1alpha1.ConditionReasonSecretInvalid))).To(Succeed())
+				MCPExtensionName, SystemNamespace, string(mcpv1.ConditionReasonSecretInvalid))).To(Succeed())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 

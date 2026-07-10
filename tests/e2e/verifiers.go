@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 // Verifier provides helper methods for verifying resource states in tests
@@ -33,8 +33,8 @@ func NewVerifier(ctx context.Context, k8sClient client.Client) *Verifier {
 }
 
 // getMCPServerRegistration fetches an MCPServerRegistration by name and namespace
-func (v *Verifier) getMCPServerRegistration(name, namespace string) (*mcpv1alpha1.MCPServerRegistration, error) {
-	mcpServer := &mcpv1alpha1.MCPServerRegistration{}
+func (v *Verifier) getMCPServerRegistration(name, namespace string) (*mcpv1.MCPServerRegistration, error) {
+	mcpServer := &mcpv1.MCPServerRegistration{}
 	err := v.k8sClient.Get(v.ctx, types.NamespacedName{Name: name, Namespace: namespace}, mcpServer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MCPServerRegistration %s/%s: %w", namespace, name, err)
@@ -302,8 +302,8 @@ func verifyMCPServerRegistrationToolPresent(toolName string, toolsList *mcp.List
 }
 
 // getMCPGatewayExtension fetches an MCPGatewayExtension by name and namespace
-func (v *Verifier) getMCPGatewayExtension(name, namespace string) (*mcpv1alpha1.MCPGatewayExtension, error) {
-	ext := &mcpv1alpha1.MCPGatewayExtension{}
+func (v *Verifier) getMCPGatewayExtension(name, namespace string) (*mcpv1.MCPGatewayExtension, error) {
+	ext := &mcpv1.MCPGatewayExtension{}
 	err := v.k8sClient.Get(v.ctx, types.NamespacedName{Name: name, Namespace: namespace}, ext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MCPGatewayExtension %s/%s: %w", namespace, name, err)

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -178,7 +178,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 
 // IsEnabled returns true if the server should be connected to and have its tools registered.
 func (up *MCPServer) IsEnabled() bool {
-	return up.State == "" || up.State == string(mcpv1alpha1.ServerStateEnabled)
+	return up.State == "" || up.State == string(mcpv1.ServerStateEnabled)
 }
 
 // ProtocolInfo returns the initialize result with the protocol information stored in it

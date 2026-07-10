@@ -15,7 +15,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -193,7 +193,7 @@ type MCPManager struct {
 	logger *slog.Logger
 
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
-	invalidToolPolicy mcpv1alpha1.InvalidToolPolicy
+	invalidToolPolicy mcpv1.InvalidToolPolicy
 
 	// toolEvents and promptEvents funnel notifications into the Start() loop.
 	// Separate channels with buffer of 1 each ensure a tool notification cannot
@@ -222,7 +222,7 @@ const maxConsecutiveFailures = 3
 // NewUpstreamMCPManager creates a new MCPManager for managing a single upstream MCP server.
 // The addTools and removeTools callbacks are used to update the gateway's tool registry.
 // The tickerInterval controls how often the manager checks backend health (use 0 for default).
-func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, promptsServer PromptsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1alpha1.InvalidToolPolicy) (*MCPManager, error) {
+func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, promptsServer PromptsAdderDeleter, logger *slog.Logger, tickerInterval time.Duration, policy mcpv1.InvalidToolPolicy) (*MCPManager, error) {
 	if gatewayServer == nil {
 		return nil, fmt.Errorf("gateway server is required for upstream MCP manager")
 	}
@@ -428,7 +428,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.logger.ErrorContext(ctx, "invalid tool", "upstream mcp server", man.mcp.ID(), "tool", info.Name, "errors", info.Errors)
 				}
 				invalidTools = invalids
-				if man.invalidToolPolicy == mcpv1alpha1.InvalidToolPolicyRejectServer {
+				if man.invalidToolPolicy == mcpv1.InvalidToolPolicyRejectServer {
 					toolErr = fmt.Errorf("upstream mcp %s rejected: %d invalid tools found", man.mcp.ID(), len(invalids))
 					man.recordBackendError(span, toolErr)
 					man.removeAllTools()

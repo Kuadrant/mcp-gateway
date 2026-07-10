@@ -22,7 +22,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ func TestNewUpstreamMCP(t *testing.T) {
 		Name:     "test-server",
 		URL:      "http://localhost:8088/mcp",
 		Prefix:   "",
-		State:    string(mcpv1alpha1.ServerStateEnabled),
+		State:    string(mcpv1.ServerStateEnabled),
 		Hostname: "dummy",
 	}
 	up := NewUpstreamMCP(&testServer, "", nil)
@@ -53,12 +53,12 @@ func TestMCPServer_IsEnabled(t *testing.T) {
 		},
 		{
 			name:     "Enabled state returns true",
-			state:    string(mcpv1alpha1.ServerStateEnabled),
+			state:    string(mcpv1.ServerStateEnabled),
 			expected: true,
 		},
 		{
 			name:     "Disabled state returns false",
-			state:    string(mcpv1alpha1.ServerStateDisabled),
+			state:    string(mcpv1.ServerStateDisabled),
 			expected: false,
 		},
 		{
@@ -84,7 +84,7 @@ func TestNewUpstreamMCP_WithCACert(t *testing.T) {
 		Name:     "test-server",
 		URL:      "https://localhost:8443/mcp",
 		Prefix:   "",
-		State:    string(mcpv1alpha1.ServerStateEnabled),
+		State:    string(mcpv1.ServerStateEnabled),
 		Hostname: "dummy",
 		CACert:   "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 	}

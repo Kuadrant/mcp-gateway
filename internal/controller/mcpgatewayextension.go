@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -23,7 +23,7 @@ type MCPGatewayExtensionValidator struct {
 
 // HasValidReferenceGrant checks if a valid ReferenceGrant exists that allows the MCPGatewayExtension
 // to reference a Gateway in a different namespace
-func (r *MCPGatewayExtensionValidator) HasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error) {
+func (r *MCPGatewayExtensionValidator) HasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (bool, error) {
 	// list ReferenceGrants in the target Gateway's namespace
 	refGrantList := &gatewayv1beta1.ReferenceGrantList{}
 	if err := r.List(ctx, refGrantList, client.InNamespace(mcpExt.Spec.TargetRef.Namespace)); err != nil {
@@ -40,13 +40,13 @@ func (r *MCPGatewayExtensionValidator) HasValidReferenceGrant(ctx context.Contex
 }
 
 // referenceGrantAllows checks if a ReferenceGrant permits the MCPGatewayExtension to reference a Gateway
-func (r *MCPGatewayExtensionValidator) referenceGrantAllows(rg *gatewayv1beta1.ReferenceGrant, mcpExt *mcpv1alpha1.MCPGatewayExtension) bool {
+func (r *MCPGatewayExtensionValidator) referenceGrantAllows(rg *gatewayv1beta1.ReferenceGrant, mcpExt *mcpv1.MCPGatewayExtension) bool {
 	fromAllowed := false
 	toAllowed := false
 
 	// check if 'from' allows MCPGatewayExtension from its namespace
 	for _, from := range rg.Spec.From {
-		if string(from.Group) == mcpv1alpha1.GroupVersion.Group &&
+		if string(from.Group) == mcpv1.GroupVersion.Group &&
 			string(from.Kind) == "MCPGatewayExtension" &&
 			string(from.Namespace) == mcpExt.Namespace {
 			fromAllowed = true
@@ -77,10 +77,10 @@ func (r *MCPGatewayExtensionValidator) referenceGrantAllows(rg *gatewayv1beta1.R
 }
 
 // FindValidMCPGatewayExtsForGateway will find all MCPGatewayExtensions indexed against passed Gateway instance
-func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1alpha1.MCPGatewayExtension, error) {
+func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1.MCPGatewayExtension, error) {
 	logger := logf.FromContext(ctx).WithName("findValidMCPGatewayExtsForGateway")
-	validExtensions := []*mcpv1alpha1.MCPGatewayExtension{}
-	mcpGatewayExtList := &mcpv1alpha1.MCPGatewayExtensionList{}
+	validExtensions := []*mcpv1.MCPGatewayExtension{}
+	mcpGatewayExtList := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, mcpGatewayExtList,
 		client.MatchingFields{gatewayIndexKey: gatewayToMCPExtIndexValue(*g)},
 	); err != nil {
@@ -102,7 +102,7 @@ func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx con
 			// we have to exit here
 			return validExtensions, fmt.Errorf("failed to check if mcpgatewayextension is valid %w", err)
 		}
-		if has && meta.IsStatusConditionTrue(mg.Status.Conditions, mcpv1alpha1.ConditionTypeReady) {
+		if has && meta.IsStatusConditionTrue(mg.Status.Conditions, mcpv1.ConditionTypeReady) {
 			validExtensions = append(validExtensions, &mg)
 		}
 	}
@@ -111,15 +111,15 @@ func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx con
 
 // MCPGatewayExtensionFinderValidator finds and validates MCPGatewayExtensions
 type MCPGatewayExtensionFinderValidator interface {
-	HasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1alpha1.MCPGatewayExtension) (bool, error)
-	FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1alpha1.MCPGatewayExtension, error)
+	HasValidReferenceGrant(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (bool, error)
+	FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1.MCPGatewayExtension, error)
 }
 
 // ListMCPGatewayExtensionNamespaces returns the namespace of every active MCPGatewayExtension.
 // VirtualServer config must be written to all of them so every gateway instance receives the
 // full virtual server list regardless of which namespace the MCPVirtualServer lives in.
 func (r *MCPGatewayExtensionValidator) ListMCPGatewayExtensionNamespaces(ctx context.Context) ([]string, error) {
-	list := &mcpv1alpha1.MCPGatewayExtensionList{}
+	list := &mcpv1.MCPGatewayExtensionList{}
 	if err := r.List(ctx, list); err != nil {
 		return nil, fmt.Errorf("failed to list MCPGatewayExtensions: %w", err)
 	}
@@ -139,7 +139,7 @@ func (r *MCPGatewayExtensionValidator) ListMCPGatewayExtensionNamespaces(ctx con
 //     the same port as the extension's target listener, OR
 //  2. The HTTPRoute has no sectionName but its hostnames match a listener hostname
 //     on the same port
-func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.Gateway, ext *mcpv1alpha1.MCPGatewayExtension) bool {
+func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.Gateway, ext *mcpv1.MCPGatewayExtension) bool {
 	// find the port for the extension's target listener
 	targetPort, ok := listenerPort(gateway, ext.Spec.TargetRef.SectionName)
 	if !ok {

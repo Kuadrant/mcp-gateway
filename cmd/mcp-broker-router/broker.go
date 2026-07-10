@@ -6,15 +6,15 @@ import (
 	"os"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
 
 func (a *app) createBroker() {
-	invalidToolPolicy := mcpv1alpha1.InvalidToolPolicy(a.brokerCfg.invalidToolPolicy)
-	if invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyFilterOut && invalidToolPolicy != mcpv1alpha1.InvalidToolPolicyRejectServer {
+	invalidToolPolicy := mcpv1.InvalidToolPolicy(a.brokerCfg.invalidToolPolicy)
+	if invalidToolPolicy != mcpv1.InvalidToolPolicyFilterOut && invalidToolPolicy != mcpv1.InvalidToolPolicyRejectServer {
 		panic("--invalid-tool-policy must be FilterOut or RejectServer")
 	}
 

@@ -1,5 +1,5 @@
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: test-server1
@@ -15,7 +15,7 @@ spec:
     kind: HTTPRoute
     name: mcp-server1-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: test-server2

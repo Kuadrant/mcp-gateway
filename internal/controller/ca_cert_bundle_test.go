@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -67,13 +67,13 @@ func (c *capturingConfigWriter) WriteCACertBundle(_ context.Context, caCertPEM s
 func TestReconcileCACertBundle(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1.AddToScheme(scheme)
 
 	validPEM := generateTestCACertPEM(t)
 
 	tests := []struct {
 		name        string
-		bundleRef   *mcpv1alpha1.CACertBundleReference
+		bundleRef   *mcpv1.CACertBundleReference
 		secrets     []corev1.Secret
 		wantErr     bool
 		errContains string
@@ -86,13 +86,13 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:        "secret not found",
-			bundleRef:   &mcpv1alpha1.CACertBundleReference{Name: "missing"},
+			bundleRef:   &mcpv1.CACertBundleReference{Name: "missing"},
 			wantErr:     true,
 			errContains: "not found",
 		},
 		{
 			name:      "missing label",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "no-label"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "no-label"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{Name: "no-label", Namespace: "test-ns"},
 				Data:       map[string][]byte{"ca.crt": validPEM},
@@ -102,7 +102,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:      "missing key",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "good-secret", Key: "wrong-key"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "good-secret", Key: "wrong-key"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "good-secret", Namespace: "test-ns",
@@ -115,7 +115,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:      "invalid PEM",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "bad-pem"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "bad-pem"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "bad-pem", Namespace: "test-ns",
@@ -128,7 +128,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:      "exceeds size limit",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "big-secret"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "big-secret"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "big-secret", Namespace: "test-ns",
@@ -141,7 +141,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:      "valid bundle with default key",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "valid-ca"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "valid-ca"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "valid-ca", Namespace: "test-ns",
@@ -153,7 +153,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		},
 		{
 			name:      "valid bundle with custom key",
-			bundleRef: &mcpv1alpha1.CACertBundleReference{Name: "custom-key", Key: "bundle.pem"},
+			bundleRef: &mcpv1.CACertBundleReference{Name: "custom-key", Key: "bundle.pem"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "custom-key", Namespace: "test-ns",
@@ -179,9 +179,9 @@ func TestReconcileCACertBundle(t *testing.T) {
 				ConfigWriterDeleter: writer,
 			}
 
-			mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+			mcpExt := &mcpv1.MCPGatewayExtension{
 				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
-				Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
+				Spec: mcpv1.MCPGatewayExtensionSpec{
 					CACertBundleRef: tt.bundleRef,
 				},
 			}

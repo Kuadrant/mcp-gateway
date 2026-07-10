@@ -20,7 +20,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 // SetupTrustedHeadersAuth configures trusted headers for JWT validation on the MCPGateway.
@@ -51,13 +51,13 @@ func SetupTrustedHeadersAuthInNamespace(ctx context.Context, k8sClient client.Cl
 	gen, err := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
 	Expect(err).NotTo(HaveOccurred())
 
-	ext := &mcpv1alpha1.MCPGatewayExtension{}
+	ext := &mcpv1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, client.ObjectKey{
 		Name: extName, Namespace: namespace,
 	}, ext)).To(Succeed())
 
 	patch := client.MergeFrom(ext.DeepCopy())
-	ext.Spec.TrustedHeadersKey = &mcpv1alpha1.TrustedHeadersKey{
+	ext.Spec.TrustedHeadersKey = &mcpv1.TrustedHeadersKey{
 		SecretName: "trusted-headers-public-key",
 	}
 	Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
@@ -66,7 +66,7 @@ func SetupTrustedHeadersAuthInNamespace(ctx context.Context, k8sClient client.Cl
 		gen, err := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
 		Expect(err).NotTo(HaveOccurred())
 
-		ext := &mcpv1alpha1.MCPGatewayExtension{}
+		ext := &mcpv1.MCPGatewayExtension{}
 		err = k8sClient.Get(ctx, client.ObjectKey{
 			Name: extName, Namespace: namespace,
 		}, ext)
@@ -105,12 +105,12 @@ type TestResourcesBuilder struct {
 	hint                string
 	credential          *corev1.Secret
 	credentialKey       string
-	caCertSecretRef     *mcpv1alpha1.CACertSecretReference
+	caCertSecretRef     *mcpv1.CACertSecretReference
 	sectionName         string
-	tokenURLElicitation *mcpv1alpha1.TokenURLElicitationConfig
-	userSpecificList    mcpv1alpha1.UserSpecificListPolicy
+	tokenURLElicitation *mcpv1.TokenURLElicitationConfig
+	userSpecificList    mcpv1.UserSpecificListPolicy
 	httpRoute           *gatewayapiv1.HTTPRoute
-	mcpServer           *mcpv1alpha1.MCPServerRegistration
+	mcpServer           *mcpv1.MCPServerRegistration
 	serviceEntry        *istionetv1beta1.ServiceEntry
 	destinationRule     *istionetv1beta1.DestinationRule
 	isExternal          bool
@@ -234,13 +234,13 @@ func (b *TestResourcesBuilder) WithCredential(secret *corev1.Secret, key string)
 // WithTokenURLElicitation enables per-user token collection via URL elicitation.
 // Pass an empty string for url to use the default broker token page.
 func (b *TestResourcesBuilder) WithTokenURLElicitation(url string) *TestResourcesBuilder {
-	b.tokenURLElicitation = &mcpv1alpha1.TokenURLElicitationConfig{URL: url}
+	b.tokenURLElicitation = &mcpv1.TokenURLElicitationConfig{URL: url}
 	return b
 }
 
 // WithCACertSecretRef sets the CA certificate secret reference for TLS connections to the upstream
 func (b *TestResourcesBuilder) WithCACertSecretRef(name, key string) *TestResourcesBuilder {
-	b.caCertSecretRef = &mcpv1alpha1.CACertSecretReference{Name: name, Key: key}
+	b.caCertSecretRef = &mcpv1.CACertSecretReference{Name: name, Key: key}
 	return b
 }
 
@@ -252,7 +252,7 @@ func (b *TestResourcesBuilder) WithSectionName(name string) *TestResourcesBuilde
 
 // WithUserSpecificList marks this server for per-user tool fetching.
 func (b *TestResourcesBuilder) WithUserSpecificList() *TestResourcesBuilder {
-	b.userSpecificList = mcpv1alpha1.UserSpecificListEnabled
+	b.userSpecificList = mcpv1.UserSpecificListEnabled
 	return b
 }
 
@@ -271,16 +271,16 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	if regName == "" {
 		regName = UniqueName("e2e-mcp-" + b.testName)
 	}
-	b.mcpServer = &mcpv1alpha1.MCPServerRegistration{
+	b.mcpServer = &mcpv1.MCPServerRegistration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      regName,
 			Namespace: b.namespace,
 			Labels:    map[string]string{"e2e": "test", "test": b.testName},
 		},
-		Spec: mcpv1alpha1.MCPServerRegistrationSpec{
+		Spec: mcpv1.MCPServerRegistrationSpec{
 			Prefix: b.prefix,
 			Path:   b.path,
-			TargetRef: mcpv1alpha1.TargetReference{
+			TargetRef: mcpv1.TargetReference{
 				Group: "gateway.networking.k8s.io",
 				Kind:  "HTTPRoute",
 				Name:  routeName,
@@ -289,7 +289,7 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	}
 
 	if b.credential != nil {
-		b.mcpServer.Spec.CredentialRef = &mcpv1alpha1.SecretReference{
+		b.mcpServer.Spec.CredentialRef = &mcpv1.SecretReference{
 			Name: b.credential.Name,
 			Key:  b.credentialKey,
 		}
@@ -487,7 +487,7 @@ func (b *TestResourcesBuilder) buildExternalResources(routeName string) {
 
 // Register creates all resources in the cluster and returns the MCPServerRegistration.
 // Build() must be called before Register().
-func (b *TestResourcesBuilder) Register(ctx context.Context) *mcpv1alpha1.MCPServerRegistration {
+func (b *TestResourcesBuilder) Register(ctx context.Context) *mcpv1.MCPServerRegistration {
 	if b.credential != nil {
 		GinkgoWriter.Println("creating credential", b.credential.Name)
 		Expect(b.k8sClient.Create(ctx, b.credential)).To(Succeed())
@@ -551,7 +551,7 @@ func (b *TestResourcesBuilder) GetHTTPRouteName() string {
 }
 
 // GetMCPServer returns the MCPServerRegistration (after build)
-func (b *TestResourcesBuilder) GetMCPServer() *mcpv1alpha1.MCPServerRegistration {
+func (b *TestResourcesBuilder) GetMCPServer() *mcpv1.MCPServerRegistration {
 	return b.mcpServer
 }
 
@@ -591,13 +591,13 @@ func (b *MCPVirtualServerBuilder) WithPrompts(prompts []string) *MCPVirtualServe
 }
 
 // Build creates the MCPVirtualServer resource
-func (b *MCPVirtualServerBuilder) Build() *mcpv1alpha1.MCPVirtualServer {
-	return &mcpv1alpha1.MCPVirtualServer{
+func (b *MCPVirtualServerBuilder) Build() *mcpv1.MCPVirtualServer {
+	return &mcpv1.MCPVirtualServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      UniqueName(b.name),
 			Namespace: b.namespace,
 		},
-		Spec: mcpv1alpha1.MCPVirtualServerSpec{
+		Spec: mcpv1.MCPVirtualServerSpec{
 			Description: b.description,
 			Tools:       b.tools,
 			Prompts:     b.prompts,
@@ -640,11 +640,11 @@ type MCPGatewayExtensionSetup struct {
 	publicHost       string
 	listenerPort     int32
 	pollInterval     string
-	extension        *mcpv1alpha1.MCPGatewayExtension
+	extension        *mcpv1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
 	httpRoute        *gatewayapiv1.HTTPRoute
 	urlElicitation   bool
-	caCertBundleRef  *mcpv1alpha1.CACertBundleReference
+	caCertBundleRef  *mcpv1.CACertBundleReference
 	disableHTTPRoute bool
 	createHTTPRoute  bool
 	createdNamespace bool
@@ -734,14 +734,14 @@ func (s *MCPGatewayExtensionSetup) WithHTTPRoute() *MCPGatewayExtensionSetup {
 
 // WithCACertBundleRef sets the CA cert bundle reference on the MCPGatewayExtension
 func (s *MCPGatewayExtensionSetup) WithCACertBundleRef(name, key string) *MCPGatewayExtensionSetup {
-	s.caCertBundleRef = &mcpv1alpha1.CACertBundleReference{Name: name, Key: key}
+	s.caCertBundleRef = &mcpv1.CACertBundleReference{Name: name, Key: key}
 	return s
 }
 
 // Build creates the MCPGatewayExtension and ReferenceGrant objects (without registering them)
 func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
-	spec := mcpv1alpha1.MCPGatewayExtensionSpec{
-		TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+	spec := mcpv1.MCPGatewayExtensionSpec{
+		TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 			Group:       "gateway.networking.k8s.io",
 			Kind:        "Gateway",
 			Name:        s.gatewayName,
@@ -761,16 +761,16 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 		spec.BackendPingIntervalSeconds = ptr.To(int32(interval))
 	}
 	if s.urlElicitation {
-		spec.URLElicitation = mcpv1alpha1.URLElicitationEnabled
+		spec.URLElicitation = mcpv1.URLElicitationEnabled
 	}
 	if s.disableHTTPRoute {
-		spec.HTTPRouteManagement = mcpv1alpha1.HTTPRouteManagementDisabled
+		spec.HTTPRouteManagement = mcpv1.HTTPRouteManagementDisabled
 	}
 	if s.caCertBundleRef != nil {
 		spec.CACertBundleRef = s.caCertBundleRef
 	}
 
-	s.extension = &mcpv1alpha1.MCPGatewayExtension{
+	s.extension = &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s.name,
 			Namespace: s.namespace,
@@ -861,13 +861,13 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 func (s *MCPGatewayExtensionSetup) Clean(ctx context.Context) *MCPGatewayExtensionSetup {
 	// delete MCPGatewayExtension if it exists and wait for it to be gone
 	if s.name != "" && s.namespace != "" {
-		ext := &mcpv1alpha1.MCPGatewayExtension{}
+		ext := &mcpv1.MCPGatewayExtension{}
 		err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, ext)
 		if err == nil {
 			GinkgoWriter.Printf("Deleting existing MCPGatewayExtension %s/%s\n", s.namespace, s.name)
 			CleanupResource(ctx, s.k8sClient, ext)
 			Eventually(func() bool {
-				err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1alpha1.MCPGatewayExtension{})
+				err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1.MCPGatewayExtension{})
 				return apierrors.IsNotFound(err)
 			}, TestTimeoutMedium, TestRetryInterval).Should(BeTrue(), "MCPGatewayExtension should be deleted")
 		}
@@ -967,7 +967,7 @@ func (s *MCPGatewayExtensionSetup) TearDown(ctx context.Context) {
 		CleanupResource(ctx, s.k8sClient, s.extension)
 		// wait for finalizer to complete before deleting namespace
 		Eventually(func() bool {
-			err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1alpha1.MCPGatewayExtension{})
+			err := s.k8sClient.Get(ctx, client.ObjectKey{Name: s.name, Namespace: s.namespace}, &mcpv1.MCPGatewayExtension{})
 			return apierrors.IsNotFound(err)
 		}, TestTimeoutMedium, TestRetryInterval).Should(BeTrue(), "MCPGatewayExtension should be fully deleted before namespace cleanup")
 	}
@@ -990,7 +990,7 @@ func (s *MCPGatewayExtensionSetup) TearDown(ctx context.Context) {
 }
 
 // GetExtension returns the MCPGatewayExtension object
-func (s *MCPGatewayExtensionSetup) GetExtension() *mcpv1alpha1.MCPGatewayExtension {
+func (s *MCPGatewayExtensionSetup) GetExtension() *mcpv1.MCPGatewayExtension {
 	return s.extension
 }
 
@@ -1047,20 +1047,20 @@ func (b *MCPGatewayExtensionBuilder) WithSectionName(sectionName string) *MCPGat
 }
 
 // Build creates the MCPGatewayExtension resource
-func (b *MCPGatewayExtensionBuilder) Build() *mcpv1alpha1.MCPGatewayExtension {
+func (b *MCPGatewayExtensionBuilder) Build() *mcpv1.MCPGatewayExtension {
 	var privateHost string
 	if gatewayClassName != "istio" {
 		privateHost = fmt.Sprintf("%s-%s.%s.svc.cluster.local:%d",
 			b.targetGateway, gatewayClassName, b.targetNamespace, b.listenerPort)
 	}
-	return &mcpv1alpha1.MCPGatewayExtension{
+	return &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    map[string]string{"e2e": "test"},
 		},
-		Spec: mcpv1alpha1.MCPGatewayExtensionSpec{
-			TargetRef: mcpv1alpha1.MCPGatewayExtensionTargetReference{
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
 				Group:       "gateway.networking.k8s.io",
 				Kind:        "Gateway",
 				Name:        b.targetGateway,

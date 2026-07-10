@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -21,34 +21,34 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 	tests := []struct {
 		name       string
 		secretName string
-		credRef    *mcpv1alpha1.SecretReference
-		caCertRef  *mcpv1alpha1.CACertSecretReference
+		credRef    *mcpv1.SecretReference
+		caCertRef  *mcpv1.CACertSecretReference
 		wantMatch  bool
 	}{
 		{
 			name:       "matches caCertSecretRef",
 			secretName: "my-ca",
-			caCertRef:  &mcpv1alpha1.CACertSecretReference{Name: "my-ca", Key: "ca.crt"},
+			caCertRef:  &mcpv1.CACertSecretReference{Name: "my-ca", Key: "ca.crt"},
 			wantMatch:  true,
 		},
 		{
 			name:       "matches credentialRef",
 			secretName: "my-cred",
-			credRef:    &mcpv1alpha1.SecretReference{Name: "my-cred", Key: "token"},
+			credRef:    &mcpv1.SecretReference{Name: "my-cred", Key: "token"},
 			wantMatch:  true,
 		},
 		{
 			name:       "matches either ref",
 			secretName: "shared-secret",
-			credRef:    &mcpv1alpha1.SecretReference{Name: "other"},
-			caCertRef:  &mcpv1alpha1.CACertSecretReference{Name: "shared-secret"},
+			credRef:    &mcpv1.SecretReference{Name: "other"},
+			caCertRef:  &mcpv1.CACertSecretReference{Name: "shared-secret"},
 			wantMatch:  true,
 		},
 		{
 			name:       "no match",
 			secretName: "unrelated",
-			credRef:    &mcpv1alpha1.SecretReference{Name: "my-cred"},
-			caCertRef:  &mcpv1alpha1.CACertSecretReference{Name: "my-ca"},
+			credRef:    &mcpv1.SecretReference{Name: "my-cred"},
+			caCertRef:  &mcpv1.CACertSecretReference{Name: "my-ca"},
 			wantMatch:  false,
 		},
 		{
@@ -60,7 +60,7 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := mcpv1alpha1.MCPServerRegistrationSpec{
+			spec := mcpv1.MCPServerRegistrationSpec{
 				CredentialRef:   tt.credRef,
 				CACertSecretRef: tt.caCertRef,
 			}

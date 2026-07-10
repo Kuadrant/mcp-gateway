@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
@@ -182,9 +182,9 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	validTools, invalids := upstream.ValidateTools(valueTools)
 	if len(invalids) > 0 {
 		switch broker.invalidToolPolicy {
-		case mcpv1alpha1.InvalidToolPolicyFilterOut:
+		case mcpv1.InvalidToolPolicyFilterOut:
 			broker.logger.Error("invalid user-specific tools filtered", "server", srv.name, "count", len(invalids))
-		case mcpv1alpha1.InvalidToolPolicyRejectServer:
+		case mcpv1.InvalidToolPolicyRejectServer:
 			broker.logger.Error("user-specific server rejected due to invalid tools", "server", srv.name, "count", len(invalids))
 			return nil, fmt.Errorf("server %s rejected: %d invalid tools", srv.id, len(invalids))
 		}

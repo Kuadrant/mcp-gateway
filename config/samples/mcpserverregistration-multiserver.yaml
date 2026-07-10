@@ -1,5 +1,5 @@
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: weather-service
@@ -12,7 +12,7 @@ spec:
     name: weather-route
     namespace: mcp-system
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: calendar-service
@@ -24,7 +24,7 @@ spec:
     kind: HTTPRoute
     name: calendar-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: search-service
@@ -36,7 +36,7 @@ spec:
     kind: HTTPRoute
     name: search-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: knowledge-service
@@ -48,7 +48,7 @@ spec:
     kind: HTTPRoute
     name: knowledge-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: docs-service
