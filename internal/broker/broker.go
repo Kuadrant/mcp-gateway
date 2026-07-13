@@ -53,6 +53,10 @@ type MCPBroker interface {
 	// ValidateAllServers performs comprehensive validation of all registered servers and returns status
 	ValidateAllServers() StatusResponse
 
+	// ValidateSingleServer returns the status of a single server by name (namespace/name format).
+	// Returns the status and true if found, or an empty status and false if not found.
+	ValidateSingleServer(name string) (upstream.ServerValidationStatus, bool)
+
 	// IsReady reports whether the broker can serve traffic.
 	// Returns true when no upstream servers are configured (empty tool list is valid),
 	// or when at least one configured upstream is healthy.
@@ -721,4 +725,18 @@ func (m *mcpBrokerImpl) IsReady() bool {
 		}
 	}
 	return false
+}
+
+// ValidateSingleServer returns the status of a single registered server by name.
+// Accesses m.mcpServers directly rather than calling ValidateAllServers to avoid
+// building the full aggregate response for a single-server lookup.
+func (m *mcpBrokerImpl) ValidateSingleServer(name string) (upstream.ServerValidationStatus, bool) {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	for _, srv := range m.mcpServers {
+		if status := srv.GetStatus(); status.Name == name {
+			return status, true
+		}
+	}
+	return upstream.ServerValidationStatus{}, false
 }
