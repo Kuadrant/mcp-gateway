@@ -63,24 +63,34 @@ func SetupTrustedHeadersAuthInNamespace(ctx context.Context, k8sClient client.Cl
 	Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
 
 	DeferCleanup(func() {
-		gen, err := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
-		Expect(err).NotTo(HaveOccurred())
-
+		// for namespaced extensions the container's AfterAll may have already
+		// torn down the extension and its deployment (It-registered cleanup
+		// runs after AfterAll for the last spec in an Ordered container)
 		ext := &mcpv1.MCPGatewayExtension{}
-		err = k8sClient.Get(ctx, client.ObjectKey{
+		err := k8sClient.Get(ctx, client.ObjectKey{
 			Name: extName, Namespace: namespace,
 		}, ext)
-		if err == nil {
-			patch := client.MergeFrom(ext.DeepCopy())
-			ext.Spec.TrustedHeadersKey = nil
-			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
-
-			Eventually(func(g Gomega) {
-				g.Expect(IsTrustedHeadersEnabledInNamespace(ctx, namespace)).To(BeFalse())
-			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-			Expect(WaitForDeploymentReplicas(ctx, namespace, "mcp-gateway", 1, gen)).To(Succeed())
+		if apierrors.IsNotFound(err) {
+			return
 		}
+		Expect(err).NotTo(HaveOccurred())
+
+		gen, genErr := GetDeploymentGeneration(ctx, namespace, "mcp-gateway")
+
+		patch := client.MergeFrom(ext.DeepCopy())
+		ext.Spec.TrustedHeadersKey = nil
+		Expect(client.IgnoreNotFound(k8sClient.Patch(ctx, ext, patch))).To(Succeed())
+
+		if genErr != nil {
+			// deployment already gone, no rollout to wait for
+			return
+		}
+
+		Eventually(func(g Gomega) {
+			g.Expect(IsTrustedHeadersEnabledInNamespace(ctx, namespace)).To(BeFalse())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		Expect(WaitForDeploymentReplicas(ctx, namespace, "mcp-gateway", 1, gen)).To(Succeed())
 	})
 
 	Eventually(func(g Gomega) {

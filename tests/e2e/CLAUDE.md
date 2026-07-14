@@ -1,35 +1,23 @@
 # E2E Tests
 
-## Test tiers (PR gate vs nightly)
+## Functional Suites
 
-Specs carry bracket tags in their Ginkgo `It` titles. The PR gate (`make test-e2e-ci`) runs the
-whole suite **except** the slow tier 2 suites tagged `[Full]` (e.g. Redis persistence across pod
-restarts) and `[multi-gateway]` (deploys multiple gateways). The full suite runs via
-`make test-e2e-ci-full` from the nightly workflow and the `/test-e2e full` on-demand comment.
+Specs use Ginkgo `Label()` for suite membership. See [docs/ci.md](../../docs/ci.md) for the full suite reference, Make targets, CI commands, and labelling instructions.
 
-Untagged specs run on the PR gate by default; only tag a spec `[Full]` or `[multi-gateway]` to
-defer a genuinely slow or heavy suite to nightly. For a quick local happy-path run use
-`make test-e2e-happy`.
-
-Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[CACertBundle]`,
-`[Elicitation]`, `[Negative]`, `[URLElicitation]`, `[UserSpecificList]`, `[Security]`. Tags can
-combine, e.g. `[Happy,URLElicitation]`.
-
-## E2E Test Reliability
+## Test Patterns
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)
 - Port-forwards target deployments directly: `deployment/mcp-gateway`
 - Tests clean up existing resources before creating to avoid conflicts
 - Structured JSON responses provide better debugging when tests fail
+- Test servers live in `tests/servers/` -- create new ones for specific scenarios
+- Test server images are built and pushed in `.github/workflows/test-images.yaml`
 
 ## Conformance Tests
-MCP conformance tests verify that the gateway correctly implements the Model Context Protocol specification. These tests are sourced from the official `@modelcontextprotocol/conformance` npm package maintained by Anthropic.
 
-## Useful test servers for inspecting responses
-
-Server1 and Server2 both offer tools for inspecting headers, which is useful for validating what was passed through to the backend MCP.
+MCP conformance tests verify the gateway correctly implements the Model Context Protocol specification. Tests are sourced from the official `@modelcontextprotocol/conformance` npm package maintained by Anthropic.
 
 **Test scenarios currently run in CI** (`.github/workflows/conformance.yaml`):
-- `server-initialize`: Server initialization handshake
+- `server-initialize`: Server initialisation handshake
 - `tools-list`: Tool listing and discovery
 - `tools-call-simple-text`: Simple text tool responses
 - `tools-call-image`: Image content in tool responses
@@ -80,8 +68,8 @@ To isolate a test suite for parallel execution:
    with `WithSectionName("my-test-suite")`.
 
 3. **All MCPServerRegistrations must set both**:
-   - `WithSectionName("my-test-suite")` — so the HTTPRoute parentRef targets the correct listener
-   - `WithHostname("server.my-test-suite.127-0-0-1.sslip.io")` — so the HTTPRoute hostname
+   - `WithSectionName("my-test-suite")` -- so the HTTPRoute parentRef targets the correct listener
+   - `WithHostname("server.my-test-suite.127-0-0-1.sslip.io")` -- so the HTTPRoute hostname
      matches the listener's wildcard pattern; the gateway rejects routes whose hostname doesn't
      match the listener
 
@@ -89,7 +77,7 @@ To isolate a test suite for parallel execution:
    `http://mcp.my-test-suite.127-0-0-1.sslip.io:8001/mcp` (port 8001 maps to gateway port 8080
    via nodeport 30080).
 
-Both the sectionName and hostname are required — the controller uses `httpRouteAttachesToListener`
+Both the sectionName and hostname are required -- the controller uses `httpRouteAttachesToListener`
 which checks sectionName against listeners on the same port, and the gateway itself only accepts
 HTTPRoutes whose hostname matches the listener's hostname pattern. Missing either causes "no valid
 gateways for httproute" or "no valid mcpgatewayextensions configured" errors.
@@ -122,8 +110,8 @@ pattern.
 
 - Every `MCPServerRegistration` must use a unique prefix (e.g. `WithPrefix("mytest_")`)
 - Assertions must check only the test's own prefix via `WaitForToolsWithPrefix` or
-  `verifyMCPServerRegistrationToolsPresent` — never assert exact tool counts on the shared gateway
-- Clean up resources per-test with `deferCleanupResources` or `AfterEach`, not per-suite
+  `verifyMCPServerRegistrationToolsPresent` -- never assert exact tool counts on the shared gateway
+- Clean up resources per-test: append created objects to the container's `testResources` slice, deleted in `AfterEach` -- not per-suite
 
 ### Make helper functions idempotent
 
@@ -136,6 +124,10 @@ already been applied before re-applying. A crashed prior run may leave state beh
 Tests that would conflict with parallel registrations on the shared gateway should use the
 dedicated listener pattern (see "Parallel test isolation via dedicated listeners" above).
 Only register on the shared gateway when testing shared-gateway-specific behaviour.
+
+## Useful Test Servers
+
+Server1 and Server2 both offer tools for inspecting headers, which is useful for validating what was passed through to the backend MCP.
 
 ## Known Issues: Flaky E2E Tests
 **Problem**: Tests timeout waiting for broker to register servers due to:

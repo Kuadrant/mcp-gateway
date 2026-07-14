@@ -10,3 +10,5 @@
 - Mark tests `Serial` when they scale deployments, patch shared infrastructure, or modify the shared MCPGatewayExtension
 - Never use shared bools for async notification callbacks — use buffered channels
 - Helpers that patch deployments must be idempotent (check before patching)
+- New specs must have Ginkgo `Label()` with a functional suite name (see `tests/e2e/CLAUDE.md` for the list)
+- Add the `pr` label to include a spec in the PR gate; omit it for on-demand/nightly only

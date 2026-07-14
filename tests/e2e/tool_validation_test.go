@@ -34,7 +34,7 @@ var _ = Describe("Tool Schema Validation", func() {
 		testResources = []client.Object{}
 	})
 
-	It("[Happy] tool schema validation filters invalid tools", func() {
+	It("[Happy] tool schema validation filters invalid tools", Label("core", "pr"), func() {
 		By("Registering the custom-response-server which has an invalid tool schema")
 		// the custom-response-server has a tool "custom response code" with inputSchema
 		// property "responseCode" using "type": "int" which is not a valid JSON Schema type

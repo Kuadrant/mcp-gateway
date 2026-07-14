@@ -53,10 +53,11 @@ jobs:
         id: ci-node
         env:
           GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           hit=false
           if image="$(make -s print-ci-node-image 2>/dev/null)"; then
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null 2>&1 || true
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               hit=true
             fi
@@ -72,10 +73,14 @@ jobs:
 
       # create with the pinned bin/kind and node image so the make load
       # targets (same bin/kind) can always load into the node's containerd
+      # image comes from the checked-out branch's Makefile: env var, never inline
       - name: Create Kind cluster
+        env:
+          CI_NODE_HIT: ${{ steps.ci-node.outputs.hit }}
+          CI_NODE_IMAGE: ${{ steps.ci-node.outputs.image }}
         run: |
-          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
-            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
+          if [ "$CI_NODE_HIT" = "true" ]; then
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="$CI_NODE_IMAGE"
           else
             make kind-create-cluster-ci
           fi

@@ -256,7 +256,7 @@ type discoverServerInfo struct {
 }
 
 // mcpCallDiscoverTools calls discover_tools via tools/call and parses the response
-func mcpCallDiscoverTools(ctx context.Context, url, sessionID string, args map[string]any, headers map[string]string) (int, *discoverToolsResponse, error) { //nolint:unparam
+func mcpCallDiscoverTools(ctx context.Context, url, sessionID string, args map[string]any, headers map[string]string) (int, *discoverToolsResponse, error) {
 	status, content, err := mcpCallTool(ctx, url, sessionID, "discover_tools", args, headers)
 	if err != nil {
 		return status, nil, err
@@ -279,7 +279,7 @@ type selectToolsResult struct {
 }
 
 // mcpCallSelectTools calls select_tools via tools/call and parses the response
-func mcpCallSelectTools(ctx context.Context, url, sessionID string, tools []string, headers map[string]string) (int, *selectToolsResult, error) { //nolint:unparam
+func mcpCallSelectTools(ctx context.Context, url, sessionID string, tools []string, headers map[string]string) (int, *selectToolsResult, error) {
 	args := map[string]any{"tools": toAnySlice(tools)}
 	status, content, err := mcpCallTool(ctx, url, sessionID, "select_tools", args, headers)
 	if err != nil {
@@ -386,7 +386,7 @@ func mcpInitializeWithElicitation(mcpURL string, headers map[string]string) (str
 
 // mcpCallToolRaw calls a tool and returns the raw SSE body without parsing the result.
 // This is needed for tests that expect -32042 errors which readJSONRPCResult treats as failures.
-func mcpCallToolRaw(mcpURL, sessionID, toolName string, args map[string]any, headers map[string]string) (int, string, http.Header, error) { //nolint:unparam
+func mcpCallToolRaw(mcpURL, sessionID, toolName string, args map[string]any, headers map[string]string) (int, string, http.Header, error) {
 	params := map[string]any{"name": toolName}
 	if len(args) > 0 {
 		params["arguments"] = args
@@ -498,7 +498,7 @@ func rawHTTPGetFull(targetURL string, headers map[string]string) (int, string, [
 }
 
 // rawHTTPPostForm performs a POST with form-encoded values
-func rawHTTPPostForm(targetURL string, values url.Values, headers map[string]string, cookies ...*http.Cookie) (int, string, error) { //nolint:unparam
+func rawHTTPPostForm(targetURL string, values url.Values, headers map[string]string, cookies ...*http.Cookie) (int, string, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, targetURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return 0, "", err

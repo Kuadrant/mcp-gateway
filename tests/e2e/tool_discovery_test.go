@@ -107,7 +107,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			newGatewayClient()
 		})
 
-		It("returns correct metadata for registered servers with category and hint", func() {
+		It("returns correct metadata for registered servers with category and hint", Label("discovery"), func() {
 			By("registering a server with category and hint")
 			reg := NewTestResources("discover-metadata", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -157,7 +157,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("filters servers by category: case-insensitive match, multi-category match by either value, no match for unknown category", func() {
+		It("filters servers by category: case-insensitive match, multi-category match by either value, no match for unknown category", Label("discovery"), func() {
 			By("registering a multi-category server and a messaging server")
 			regMulti := NewTestResources("multi-cat", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -233,7 +233,9 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("[Full] respects auth filtering in discover_tools", func() {
+		// nightly-only: discover_tools shares applyAuthorizedCapabilitiesFilter
+		// with tools/list, which the PR-gate JWT filtering spec exercises
+		It("[Full] respects auth filtering in discover_tools", Label("discovery"), func() {
 			SetupTrustedHeadersAuthInNamespace(ctx, k8sClient, toolDiscNamespace, toolDiscExtName)
 
 			By("registering a server")
@@ -286,7 +288,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("respects MCPVirtualServer scoping in discover_tools", func() {
+		It("respects MCPVirtualServer scoping in discover_tools", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("disc-vs", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -338,7 +340,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	})
 
 	Context("select_tools", func() {
-		It("scopes tools/list to the selection, replaces the scope on re-select, and resets on empty list", func() {
+		It("scopes tools/list to the selection, replaces the scope on re-select, and resets on empty list", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("select-scope", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -432,7 +434,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("returns error for invalid tool name (all-or-nothing)", func() {
+		It("returns error for invalid tool name (all-or-nothing)", Label("discovery"), func() {
 			By("establishing a raw session")
 			sessionID, err := mcpInitialize(ctx, toolDiscURL, nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -446,7 +448,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(content[0].Text).To(ContainSubstring("not available"))
 		})
 
-		It("fails entirely when partial valid list contains one invalid tool", func() {
+		It("fails entirely when partial valid list contains one invalid tool", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("select-partial", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -493,7 +495,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	})
 
 	Context("notifications", func() {
-		It("delivers notifications/tools/list_changed over SSE after select_tools", func() {
+		It("delivers notifications/tools/list_changed over SSE after select_tools", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("notif-select", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -537,7 +539,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	})
 
 	Context("flags", func() {
-		It("[Full] hides meta-tools when discovery-tools-enabled=false", func() {
+		It("[Full] hides meta-tools when discovery-tools-enabled=false", Label("discovery"), func() {
 			deploymentName := "mcp-gateway"
 
 			By("adding --discovery-tools-enabled=false flag to deployment")
@@ -583,7 +585,8 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(respBody).To(Or(ContainSubstring(`"error"`), ContainSubstring(`"isError":true`)), "discover_tools should return an error when disabled")
 		})
 
-		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", func() {
+		It("[Full] threshold=0 means never hide (all tools visible alongside meta-tools)", Label("discovery"), func() {
+			// threshold defaults to 0, so all real tools plus meta-tools should be visible
 			By("registering a server")
 			reg := NewTestResources("thresh-zero", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -624,7 +627,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	})
 
 	Context("threshold", func() {
-		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", func() {
+		It("[Full] above threshold: only meta-tools shown; below threshold: all tools visible", Label("discovery"), func() {
 			deploymentName := "mcp-gateway"
 
 			By("registering a server so we have tools to count")
@@ -696,7 +699,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	})
 
 	Context("isolation and concurrency", func() {
-		It("session scope does not leak across sessions", func() {
+		It("session scope does not leak across sessions", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("iso-test", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -756,7 +759,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
 		})
 
-		It("concurrent select_tools calls on same session do not corrupt state", func() {
+		It("concurrent select_tools calls on same session do not corrupt state", Label("discovery"), func() {
 			By("registering a server")
 			reg := NewTestResources("conc-test", k8sClient).
 				InNamespace(toolDiscNamespace).
@@ -837,7 +840,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			newGatewayClient()
 		})
 
-		It("[Full] controller re-reconciles when category and hint are updated", func() {
+		It("[Full] controller re-reconciles when category and hint are updated", Label("discovery"), func() {
 			By("registering a server with initial category and hint")
 			reg := NewTestResources("reconfig-test", k8sClient).
 				InNamespace(toolDiscNamespace).

@@ -220,30 +220,3 @@ var _ = SynchronizedAfterSuite(func() {
 		defaultMCPGatewayExt.TearDown(ctx)
 	}
 })
-
-// newTestGatewayClient creates an MCP gateway client targeting the shared gateway
-// (gatewayURL). Isolated suites (elicitation, tool-discovery) should create
-// clients with their own URLs instead of using this helper.
-func newTestGatewayClient() *NotifyingMCPClient {
-	var c *NotifyingMCPClient
-	Eventually(func(g Gomega) {
-		var err error
-		c, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
-		g.Expect(err).NotTo(HaveOccurred())
-	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-	DeferCleanup(func() {
-		if c != nil {
-			_ = c.Close()
-		}
-	})
-	return c
-}
-
-// deferCleanupResources registers DeferCleanup to delete all objects in reverse order.
-func deferCleanupResources(resources *[]client.Object) {
-	DeferCleanup(func() {
-		for i := len(*resources) - 1; i >= 0; i-- {
-			CleanupResource(ctx, k8sClient, (*resources)[i])
-		}
-	})
-}
