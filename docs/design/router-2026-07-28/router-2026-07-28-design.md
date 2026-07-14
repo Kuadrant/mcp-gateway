@@ -4,7 +4,7 @@
 
 The router is tightly coupled to `2025-11-25` protocol semantics — body parsing for every routing decision, session management, hairpin initialization, elicitation ID rewriting. The `2026-07-28` spec makes most of this unnecessary: `Mcp-Method` and `Mcp-Name` headers enable header-based routing, sessions are removed, and elicitation is stateless. The router needs to support both protocols during a transition period while isolating the `2025-11-25` code for eventual removal.
 
-Additionally, the router imports `internal/broker` for the `MCPBroker` interface (4 methods) to resolve tool names to servers. This coupling prevents independent deployment and complicates the future Praxis port.
+The 2026 version of the protocol, offers a TTL type timeout on tools etc rather than relying on notifications. This change makes it easier for the router to query the broker based on TTL rather than relying on notifications sent by the backend MCP Servers. Currently the router imports `internal/broker` for the `MCPBroker` interface (4 methods) to resolve tool names to servers. This coupling prevents independent deployment and can be removed with the new protocol. 
 
 ## Summary
 
@@ -28,29 +28,19 @@ Extract routing logic behind a `Router` interface with two implementations: one 
 
 ## Job Stories
 
-### When a `2026-07-28` client calls a tool
+### When deploying gateways for different protocol versions
 
-When an MCP client sends `tools/call` with `MCP-Protocol-Version: 2026-07-28`, `Mcp-Method: tools/call`, and `Mcp-Name: github_search`, the router wants to route the request to the github backend using only headers so that no body parsing is needed for the routing decision.
+When a platform admin needs to support both `2025-11-25` and `2026-07-28` MCP clients, they want to deploy separate gateway instances — one for each protocol version — so that each instance handles a single protocol cleanly without translation overhead.
 
-### When a `2026-07-28` client calls a tool with a prefix
+### When migrating MCP servers between gateway instances
 
-When the MCPServerRegistration has `prefix: github_` and the client sends `Mcp-Name: github_search`, the router wants to strip the prefix from both the `Mcp-Name` header and the body `name` field, rewriting both to `search`, so that the upstream receives the unprefixed tool name and headers match the body (spec requirement).
+When a platform admin is transitioning from a `2025-11-25` gateway to a `2026-07-28` gateway, they want to understand how to move their MCPServerRegistrations between instances so that they can migrate servers incrementally as upstream servers adopt the new protocol.
 
-### When a `2026-07-28` client calls a tool without a prefix
+## Constraints
 
-When the MCPServerRegistration has no prefix and the client sends `Mcp-Name: search`, the router wants to route entirely on headers without entering the body phase so that latency is minimized.
+### Single protocol per gateway instance
 
-### When a `2025-11-25` client calls a tool
-
-When an MCP client sends a request without `MCP-Protocol-Version` or with `MCP-Protocol-Version: 2025-11-25`, the router wants to use the existing body-based routing and session management so that backward compatibility is preserved.
-
-### When headers and body disagree
-
-When a `2026-07-28` client sends `Mcp-Name: search` in the header but `"name": "get_weather"` in the body, the router wants to reject the request with a `HeaderMismatch` error so that the spec's header-body consistency requirement is enforced.
-
-### When a tool is not in the routing table
-
-When the router receives a `tools/call` for a tool name not found in the routing table and not matching any prefix, the router wants to return a tool-not-found error so that the client gets a clear error.
+A single gateway instance cannot support both `2025-11-25` and `2026-07-28` simultaneously. From a client's perspective, the gateway appears as a single MCP server. If the gateway federates a mix of upstream servers running different protocol versions, it would need to translate between protocols depending on which server a given request targets. This translation is complex — the protocols differ in session management, transport semantics, header contracts, and capability negotiation — and the translation layer would become a persistent source of bugs and edge cases rather than a transitional shim. Each gateway instance binds to one protocol version at deployment time.
 
 ## Design
 
@@ -58,97 +48,37 @@ When the router receives a `tools/call` for a tool name not found in the routing
 
 - `mcp-go` SDK must support `2026-07-28` types (or the router must handle new types independently of the SDK for the routing path)
 
-### Router interface
+
+### Routing table
+
+The `RoutingTable` interface (`internal/routing/table.go`) decouples the router from the broker. The broker populates the table; the router reads it. The `2025-11-25` router accesses it via a `RoutingTableFunc` closure; the `2026-07-28` router will use the same interface.
 
 ```go
-// RoutingDecision is the output of a routing decision
-type RoutingDecision struct {
-    Authority    string            // :authority header value (backend HTTPRoute hostname)
-    Path         string            // :path override (backend path)
-    SetHeaders   map[string]string // headers to set on the request
-    UnsetHeaders []string          // headers to remove
-    BodyMutation []byte            // nil if no body change needed
-    Error        *RoutingError     // non-nil if the request should be rejected
-}
-
-// RoutingError represents a rejection
-type RoutingError struct {
-    StatusCode int
-    Message    string
-    JSONRPCErr string // optional JSON-RPC error body for SSE responses
-}
-
-// Router defines the routing contract independent of any transport adapter
-type Router interface {
-    // RouteRequest makes a routing decision from request metadata.
-    // For header-only routing (2026-07-28 without prefix), body is nil.
-    RouteRequest(ctx context.Context, req *RoutingRequest) *RoutingDecision
-}
-
-// RoutingRequest is a transport-agnostic representation of an incoming request
-type RoutingRequest struct {
-    // from headers
-    MCPMethod       string // Mcp-Method header (2026-07-28) or parsed from body (2025-11-25)
-    MCPName         string // Mcp-Name header (2026-07-28) or parsed from body (2025-11-25)
-    ProtocolVersion string // MCP-Protocol-Version header
-    Authority       string // :authority header (for validation)
-    SessionID       string // mcp-session-id header (2025-11-25 only)
-    Path            string // :path header
-    RequestID       string // x-request-id
-
-    // from body (only populated when body phase is entered)
-    Body     []byte         // raw body bytes
-    Parsed   *MCPRequest    // parsed JSON-RPC (nil if body not parsed)
-
-    // all headers for pass-through
-    RawHeaders map[string]string
-}
-```
-
-### Routing table (replaces `MCPBroker` interface)
-
-The router currently imports `internal/broker` for the `MCPBroker` interface to resolve tool names to servers. The `2026-07-28` spec enables replacing this with a routing table — a cached dataset the broker publishes and the router consumes locally.
-
-Why this works now:
-- **No sessions.** The `SessionCache` mapping gateway-session → backend-session is gone. No shared state requiring co-location.
-- **`ttlMs` on `tools/list`.** The broker can publish the mapping with a spec-defined refresh interval derived from upstream TTLs.
-
-The routing table replaces each `MCPBroker` method:
-
-| Current interface | Routing table equivalent |
-|---|---|
-| `GetServerInfo(toolName)` | `LookupTool(toolName)` → `ServerRoute` |
-| `GetServerInfoByPrompt(promptName)` | `LookupPrompt(promptName)` → `ServerRoute` |
-| `IsBrokerToolName(toolName)` | `IsBrokerTool(toolName)` — tool not in table means broker owns it |
-| `ToolAnnotations(serverID, toolName)` | `ToolAnnotations(serverID, toolName)` |
-
-```go
-// RoutingTable is the lookup structure the router uses to resolve tool/prompt names to servers
+// internal/routing/table.go
 type RoutingTable interface {
     LookupTool(name string) (*ServerRoute, bool)
     LookupPrompt(name string) (*ServerRoute, bool)
-    LookupPrefix(name string) (*ServerRoute, bool) // prefix match for userSpecificList
+    LookupPrefix(name string) (*ServerRoute, bool)
     IsBrokerTool(name string) bool
     ToolAnnotations(serverID, toolName string) (*ToolAnnotation, bool)
 }
 
 type ServerRoute struct {
-    Name     string // server name
-    Host     string // HTTPRoute hostname for :authority
-    Prefix   string // tool name prefix (empty if not configured)
-    Path     string // backend path
+    Name                string
+    Host                string
+    Prefix              string
+    Path                string
+    URL                 string
+    TokenURLElicitation *TokenURLElicitationRoute
+    UserSpecificList    bool
 }
 ```
 
-The `Prefixes` map in the underlying implementation exists for `userSpecificList` servers where per-user tools may not appear in the tool lookup. The router falls back to prefix matching when a tool name is not found via `LookupTool`.
+`LookupPrefix` exists for `UserSpecificList` servers where per-user tools may not appear in the tool lookup. The router falls back to prefix matching when a tool name is not found via `LookupTool`.
 
-**Delivery:**
-- **Co-located (default):** broker writes the routing table to an in-memory reference the router reads. No network call. Single binary behavior unchanged.
-- **Independent deployment (future):** broker exposes the routing table via a lightweight HTTP endpoint. The router fetches on startup and refreshes based on the TTL.
+**Delivery (current):** co-located — the broker builds the table in-memory and the router accesses it via `RoutingTableFunc`. Both protocol implementations share the same lookup mechanism.
 
-**TTL:** derived from the shortest upstream `ttlMs` returned in `tools/list` responses. When any upstream's TTL expires, the broker rebuilds the table and the router picks up the new version on its next refresh.
-
-> Note: the `2025-11-25` router implementation also uses the `RoutingTable` interface, replacing its current `broker.MCPBroker` dependency. Both protocol paths share the same lookup mechanism.
+**Delivery (future):** broker exposes the routing table via a lightweight HTTP endpoint. The router fetches on startup and refreshes based on the TTL derived from upstream `ttlMs` values.
 
 ### Protocol implementations
 
@@ -156,13 +86,13 @@ The `Prefixes` map in the underlying implementation exists for `userSpecificList
 
 ```go
 type Router202607 struct {
-    table           RoutingTable
-    gatewayHostname string
-    logger          *slog.Logger
+    Table           RoutingTableFunc
+    RoutingConfig   *atomic.Pointer[config.MCPServersConfig]
+    Logger          *slog.Logger
 }
 
-func (r *Router202607) RouteRequest(ctx context.Context, req *RoutingRequest) *RoutingDecision {
-    // validate authority matches gateway hostname
+func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision {
+    // validate authority matches gateway hostname (from RoutingConfig)
     // lookup tool/prompt in routing table by Mcp-Name header
     // if not found, try prefix match
     // if not found and not a broker tool, return error
@@ -181,21 +111,22 @@ Key properties:
 
 #### `2025-11-25` router
 
-Wraps the existing logic with minimal changes. The current `RouteMCPRequest`, `HandleToolCall`, `HandlePromptGet`, `HandleNoneToolCall`, `HandleElicitationResponse`, `initializeMCPSeverSession` methods move behind the interface. Session management, hairpin init, and elicitation stay as-is.
+Already implemented in `internal/routing/router_202511.go`. Implements `Router` with body-based routing, session management, hairpin init, and elicitation handling.
 
 ```go
+// internal/routing/router_202511.go
 type Router202511 struct {
-    table            RoutingTable
-    sessionCache     SessionCache
-    jwtManager       *session.JWTManager
-    initForClient    InitForClient
-    elicitationMap   idmap.Map
-    tokenElicMap     elicitation.Map
-    gatewayHostname  string
-    gatewayInternal  string
-    elicitationOn    bool
-    logger           *slog.Logger
-    initGroup        singleflight.Group
+    RoutingConfig       *atomic.Pointer[config.MCPServersConfig]
+    Table               RoutingTableFunc
+    SessionCache        SessionCache
+    JWTManager          *session.JWTManager
+    InitForClient       InitForClient
+    HairpinClientPool   *clients.HairpinClientPool
+    ElicitationMap      idmap.Map
+    TokenElicitationMap elicitation.Map
+    ElicitationEnabled  bool
+    Logger              *slog.Logger
+    initGroup           singleflight.Group
 }
 ```
 
@@ -206,11 +137,11 @@ This implementation is explicitly temporary — removed when `2025-11-25` suppor
 The `Process` loop in `server.go` becomes the adapter. It:
 
 1. Receives the ext_proc stream
-2. In the header phase: reads `MCP-Protocol-Version`, constructs a `RoutingRequest` from headers
+2. In the header phase: reads `MCP-Protocol-Version`, constructs a `Request` from headers
 3. Selects the `Router` implementation based on protocol version
 4. For `2026-07-28` without prefix: calls `RouteRequest` with headers only, skips body phase if `BodyMutation` is nil
-5. For `2026-07-28` with prefix or `2025-11-25`: enters body phase, populates `RoutingRequest.Body`/`RoutingRequest.Parsed`, calls `RouteRequest`
-6. Translates `RoutingDecision` to ext_proc `ProcessingResponse`
+5. For `2026-07-28` with prefix or `2025-11-25`: enters body phase, populates `Request.Body`/`Request.Parsed`, calls `RouteRequest`
+6. Translates `Decision` to ext_proc `ProcessingResponse`
 
 ```go
 type ExtProcAdapter struct {
@@ -223,7 +154,7 @@ func (a *ExtProcAdapter) Process(stream extProcV3.ExternalProcessor_ProcessServe
     // header phase: read MCP-Protocol-Version, select router
     // body phase (conditional): parse body if router needs it
     // call router.RouteRequest()
-    // translate RoutingDecision → ProcessingResponse
+    // translate Decision → ProcessingResponse
     // response phase: unchanged (session ID mapping for 2025-11-25, pass-through for 2026-07-28)
 }
 ```
@@ -242,23 +173,23 @@ sequenceDiagram
     Client->>Envoy: POST /mcp (Mcp-Method: tools/call, Mcp-Name: github_search)
     Envoy->>Adapter: ProcessingRequest_RequestHeaders
     Adapter->>Adapter: Read MCP-Protocol-Version, select Router
-    Adapter->>Adapter: Build RoutingRequest from headers
+    Adapter->>Adapter: Build Request from headers
 
     alt 2026-07-28 without prefix
         Adapter->>Router: RouteRequest(req) [headers only]
         Router->>Table: LookupTool("github_search")
         Table-->>Router: ServerRoute{Host: "github.mcp.local"}
-        Router-->>Adapter: RoutingDecision{Authority: "github.mcp.local", BodyMutation: nil}
+        Router-->>Adapter: Decision{Authority: "github.mcp.local", BodyMutation: nil}
         Adapter-->>Envoy: Set :authority, skip body phase
     else 2026-07-28 with prefix
         Adapter-->>Envoy: Continue to body phase
         Envoy->>Adapter: ProcessingRequest_RequestBody
-        Adapter->>Adapter: Parse body, populate RoutingRequest
+        Adapter->>Adapter: Parse body, populate Request
         Adapter->>Router: RouteRequest(req) [headers + body]
         Router->>Table: LookupTool("github_search")
         Table-->>Router: ServerRoute{Host: "github.mcp.local", Prefix: "github_"}
         Router->>Router: Strip prefix, rewrite body, validate header-body match
-        Router-->>Adapter: RoutingDecision{Authority: "github.mcp.local", BodyMutation: rewritten}
+        Router-->>Adapter: Decision{Authority: "github.mcp.local", BodyMutation: rewritten}
         Adapter-->>Envoy: Set :authority, replace body
     end
 
@@ -269,7 +200,7 @@ sequenceDiagram
 
 | Component | Responsibility |
 |-----------|---------------|
-| **ExtProcAdapter** | ext_proc stream handling, protocol version selection, `RoutingRequest` construction, `RoutingDecision` → `ProcessingResponse` translation |
+| **ExtProcAdapter** | ext_proc stream handling, protocol version selection, `Request` construction, `Decision` → `ProcessingResponse` translation |
 | **Router202607** | header-based routing, prefix stripping, header-body validation, routing table lookup |
 | **Router202511** | body-based routing, session management, hairpin init, elicitation handling (existing logic) |
 | **RoutingTable** | tool/prompt → server mapping, prefix matching, annotations. Populated by broker, consumed by router |
@@ -293,7 +224,7 @@ The `HandleResponseHeaders` and response body SSE rewriter in `server.go` are `2
 
 ## Future Considerations
 
-- **Praxis adapter.** The `Router` interface is designed to be implementable from a Praxis `HttpFilter`. The `RoutingRequest`/`RoutingDecision` types are transport-agnostic. A `PraxisAdapter` would translate between Praxis's `HttpFilterContext` and these types, then call the same `Router` interface (reimplemented in Rust).
+- **Praxis adapter.** The `Router` interface is designed to be implementable from a Praxis `HttpFilter`. The `Request`/`Decision` types are transport-agnostic. A `PraxisAdapter` would translate between Praxis's `HttpFilterContext` and these types, then call the same `Router` interface (reimplemented in Rust).
 - **Body phase skip.** When no prefix is configured on any MCPServerRegistration, the ext_proc could be configured with `request_body_mode: NONE` for `2026-07-28` routes, eliminating the body phase entirely at the Envoy level.
 - **`2025-11-25` removal.** When support is dropped, `Router202511` and all its dependencies (SessionCache, JWTManager, singleflight, InitForClient, ElicitationMap) are deleted. The `ExtProcAdapter` simplifies to a single router.
 
