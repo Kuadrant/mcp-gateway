@@ -210,6 +210,7 @@ This phase delivers metrics, not dashboards. Grafana dashboard definitions are a
 - Router metrics for native MCP-aware request rate and latency
 - Grafana dashboard definitions
 - Tool response size metrics (requires response body access in the router)
+- Per-tool schema size metrics for identifying individual outlier tool definitions within a server
 - Alerting rule templates (e.g., discovery failure rate > threshold)
 
 ## Execution
