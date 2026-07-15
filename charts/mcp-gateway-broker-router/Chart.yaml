@@ -1,0 +1,20 @@
+apiVersion: v2
+name: mcp-gateway-broker-router
+description: Broker-router deployment for MCP Gateway
+type: application
+version: 0.7.1
+appVersion: "0.7.1"
+home: https://github.com/Kuadrant/mcp-gateway
+sources:
+  - https://github.com/Kuadrant/mcp-gateway
+maintainers:
+  - name: Kuadrant Team
+    url: https://github.com/Kuadrant
+keywords:
+  - mcp
+  - model-context-protocol
+  - gateway
+  - broker
+  - router
+annotations:
+  category: Infrastructure

@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "broker-router.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "broker-router.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "broker-router.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "broker-router.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "broker-router.fullname" . }}
+      automountServiceAccountToken: false
+      containers:
+        - name: {{ include "broker-router.fullname" . }}
+          image: {{ include "broker-router.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - ./mcp_gateway
+            - --mcp-broker-public-address=0.0.0.0:8080
+            - --mcp-gateway-private-host={{ .Values.privateHost }}
+            - --mcp-gateway-config=/config/config.yaml
+            - --mcp-gateway-public-host={{ .Values.publicHost }}
+            {{- if .Values.backendPingIntervalSeconds }}
+            - --mcp-check-interval={{ .Values.backendPingIntervalSeconds }}
+            {{- end }}
+            {{- if .Values.urlElicitation }}
+            - --enable-url-elicitation
+            {{- end }}
+            {{- if .Values.logLevel }}
+            - --log-level={{ .Values.logLevel }}
+            {{- end }}
+          env:
+            - name: GATEWAY_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: session-signing-key
+                  key: signing-key
+            {{- if .Values.trustedHeadersKey.secretName }}
+            - name: TRUSTED_HEADER_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.trustedHeadersKey.secretName }}
+                  key: key
+            {{- end }}
+            {{- if .Values.sessionStore.secretName }}
+            - name: CACHE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sessionStore.secretName }}
+                  key: CACHE_CONNECTION_STRING
+            {{- end }}
+            {{- with .Values.oauthProtectedResource }}
+            {{- if .authorizationServers }}
+            - name: OAUTH_RESOURCE_NAME
+              value: {{ .resourceName | default "MCP Server" | quote }}
+            - name: OAUTH_RESOURCE
+              {{- if .resource }}
+              value: {{ .resource | quote }}
+              {{- else }}
+              value: {{ printf "https://%s/mcp" $.Values.publicHost | quote }}
+              {{- end }}
+            - name: OAUTH_AUTHORIZATION_SERVERS
+              value: {{ join "," .authorizationServers | quote }}
+            - name: OAUTH_BEARER_METHODS_SUPPORTED
+              value: {{ join "," (.bearerMethodsSupported | default (list "header")) | quote }}
+            - name: OAUTH_SCOPES_SUPPORTED
+              value: {{ join "," (.scopesSupported | default (list "basic")) | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: config
+              containerPort: 8181
+              protocol: TCP
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+      volumes:
+        - name: config-volume
+          secret:
+            secretName: mcp-gateway-config
+            defaultMode: 0644
