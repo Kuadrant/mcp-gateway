@@ -80,3 +80,10 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+    - name: protocol-2026
+      hostname: '*.protocol-2026.127-0-0-1.sslip.io'
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All

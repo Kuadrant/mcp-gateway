@@ -60,3 +60,8 @@ test-e2e-auth-ci: test-e2e-deps ## Run auth e2e tests only (requires ci-auth-set
 test-e2e-https: test-e2e-deps ## Run HTTPS-focused E2E tests (requires cert-manager + MCP_PAT)
 	@echo "Running HTTPS MCP backend E2E tests..."
 	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[HTTPS\]" ./tests/e2e
+
+.PHONY: test-e2e-protocol2026
+test-e2e-protocol2026: test-e2e-deps ## Run 2026-07-28 stateless protocol E2E tests only
+	@echo "Running 2026-07-28 protocol E2E tests..."
+	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[Protocol2026\]" ./tests/e2e

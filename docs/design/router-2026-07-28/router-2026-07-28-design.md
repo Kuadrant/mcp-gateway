@@ -21,10 +21,17 @@ Extract routing logic behind a `Router` interface with two implementations: one 
 ## Non-Goals
 
 - Praxis filter implementation (Phase 2, separate design)
-- Broker changes for `2026-07-28` (`server/discover`, `InputRequiredResult`, `ttlMs` — separate design)
+- Full broker `2026-07-28` redesign (`InputRequiredResult`, `ttlMs`/`cacheScope` cache semantics, identity-keyed scope store — separate design, scoped in `tasks/broker-2026-scope.md`)
 - `2025-11-25` deprecation or removal
 - Independent deployment of router and broker
-- Changes to controller or operator
+
+> **Note:** Minimal broker changes were made to unblock the steel thread:
+> - `protocolRouter` in `MCPHandler()` dispatches 2026-07-28 requests to a stateless `StreamableHTTPHandler`, bypassing the compat layer and session management. Only active when `--protocol-mode=stateless`.
+> - `discover_tools`/`select_tools` disabled in stateless mode (scope store keyed by session ID).
+> - Upstream `Ping()` skipped for 2026-07-28 upstreams (SDK bug: `_meta` not injected on ping).
+> - `protocolMode` field added to MCPGatewayExtension CRD; controller passes `--protocol-mode` flag.
+>
+> These are not a broker redesign — they are the minimum changes to make the router's stateless path functional end-to-end. The remaining broker work is documented in `tasks/broker-2026-scope.md`.
 
 ## Job Stories
 
@@ -224,9 +231,65 @@ The `HandleResponseHeaders` and response body SSE rewriter in `server.go` are `2
 
 ## Future Considerations
 
+### Dual-path with server cards
+
+The current implementation uses `protocolMode` on MCPGatewayExtension to select a single protocol per gateway instance. A better approach is dual-path: a single gateway serves both protocols on different path prefixes, with a server card advertising the available remotes.
+
+**Model:** The controller creates a single HTTPRoute with two rules — one for each protocol path:
+
+```yaml
+rules:
+- matches:
+  - path:
+      type: PathPrefix
+      value: /mcp/2026
+  backendRefs:
+  - name: mcp-gateway
+    port: 8080
+- matches:
+  - path:
+      type: PathPrefix
+      value: /mcp
+  backendRefs:
+  - name: mcp-gateway
+    port: 8080
+```
+
+Both rules route to the same broker-router service. The router already branches by `MCP-Protocol-Version` header. The path prefix is a hint for clients to set the right version — Envoy can also apply different ext_proc config per path (e.g. skip session management for `/mcp/2026`).
+
+**Server card:** The gateway serves a server card (SEP-2127) that advertises both remotes:
+
+```json
+{
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://gateway.example.com/mcp/2026",
+      "supportedProtocolVersions": ["2026-07-28"]
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://gateway.example.com/mcp",
+      "supportedProtocolVersions": ["2025-11-25"]
+    }
+  ]
+}
+```
+
+Clients that understand `2026-07-28` pick the first remote. Older clients fall back to the second. This eliminates the need for separate gateway instances during migration.
+
+**What changes from current implementation:**
+- `protocolMode` field becomes optional — both routers are always constructed
+- Controller adds the `/mcp/2026` rule to the existing HTTPRoute (no second HTTPRoute or listener needed)
+- Broker serves server card metadata at a well-known endpoint
+- Discovery tools re-keyed by identity (`sub` claim) instead of session ID, so they work across both protocol paths
+
+### Other future work
+
 - **Praxis adapter.** The `Router` interface is designed to be implementable from a Praxis `HttpFilter`. The `Request`/`Decision` types are transport-agnostic. A `PraxisAdapter` would translate between Praxis's `HttpFilterContext` and these types, then call the same `Router` interface (reimplemented in Rust).
 - **Body phase skip.** When no prefix is configured on any MCPServerRegistration, the ext_proc could be configured with `request_body_mode: NONE` for `2026-07-28` routes, eliminating the body phase entirely at the Envoy level.
 - **`2025-11-25` removal.** When support is dropped, `Router202511` and all its dependencies (SessionCache, JWTManager, singleflight, InitForClient, ElicitationMap) are deleted. The `ExtProcAdapter` simplifies to a single router.
+- **Discovery tools via scope key header.** The `scopeStore` currently keys by session ID, which doesn't exist in stateless mode. Rather than re-keying by `sub` claim (requires authentication, couples identity to scope), the gateway can use the `endpoints` mechanism from the spec. The `server/discover` response declares a required header (e.g. `Mcp-Scope-Key`) that the client must send on every request. The gateway generates an opaque scope key on `select_tools` and the client sends it back via this header. The scope store keys by scope key instead of session ID. Advantages over `sub`-keying: works without authentication, no JWT parsing on the hot path, multiple clients with the same identity can have independent tool selections, and it maps directly to the spec's `requiredHeaders` mechanism on endpoints.
 
 ## Execution
 

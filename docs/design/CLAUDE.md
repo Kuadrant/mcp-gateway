@@ -9,7 +9,8 @@ docs/design/<feature-name>/
 ├── <feature-name>-design.md       # design document
 └── tasks/
     ├── tasks.md                   # implementation plan with ordered tasks
-    └── e2e_test_cases.md          # e2e test cases
+    ├── e2e_test_cases.md          # e2e test cases
+    └── documentation.md           # documentation plan (required for user-facing features)
 ```
 
 Standalone design docs (e.g. `auth-phase-1.md`, `routing.md`) are older designs that predate this convention.
@@ -86,10 +87,25 @@ When <actor> <context>, they want <action/outcome> so that <benefit>.
 
 Organize by use cases rather than capabilities. Address underlying needs, not implementation details. Group by doc type (user guide, security architecture, API reference) with sections within each.
 
+## Documentation is required for features
+
+Every feature that adds or changes user-facing behaviour needs a documentation plan. Before starting implementation, ask: "does this feature need documentation?" If any of these are true, create `tasks/documentation.md`:
+
+- New CRD field or API change
+- New configuration option (CLI flag, env var, annotation)
+- New user-facing behaviour or workflow
+- Changed semantics of an existing feature
+- New limitation or deprecation
+
+If none apply (pure internal refactoring, test-only changes), document why in the design doc's non-goals.
+
+The documentation plan uses job stories (see the `Documentation Plan` section above) and should be created alongside the implementation plan and e2e test cases — not deferred to "after implementation". See `gateway-url-token-elicitation/tasks/documentation.md` for a reference example.
+
 ## Workflow
 
 1. Write the design doc first — get agreement on approach before planning tasks
 2. Create the implementation plan from the approved design
 3. Define e2e test cases alongside the plan
-4. Create GitHub sub-issues from the tasks, linked to the parent feature issue
-5. Implement tasks in order, verifying each before moving to the next
+4. Create the documentation plan alongside the implementation plan
+5. Create GitHub sub-issues from the tasks, linked to the parent feature issue
+6. Implement tasks in order, verifying each before moving to the next

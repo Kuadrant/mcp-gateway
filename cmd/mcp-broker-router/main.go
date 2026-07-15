@@ -46,6 +46,7 @@ type commonConfig struct {
 	configFile            string
 	enableURLElicitation  bool
 	gatewayCACert         string
+	protocolMode          string
 }
 
 type routerConfig struct {
@@ -123,6 +124,7 @@ func parseFlags() *app {
 	flag.StringVar(&bc.configFile, "mcp-gateway-config", "./config/samples/config.yaml", "where to locate the mcp server config")
 	flag.Int64Var(&bc.sessionDurationMins, "session-length", 60*24, "default session length with the gateway in minutes. Default 24h")
 	flag.BoolVar(&bc.enableURLElicitation, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
+	flag.StringVar(&bc.protocolMode, "protocol-mode", "stateful", "MCP protocol mode: stateful (2025-11-25) or stateless (2026-07-28)")
 	flag.StringVar(&bc.gatewayCACert, "gateway-ca-cert", "",
 		"path to a PEM CA certificate for the gateway's TLS listener (private CA support for hairpin requests)")
 

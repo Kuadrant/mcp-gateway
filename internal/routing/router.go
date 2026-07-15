@@ -37,7 +37,8 @@ type Decision struct {
 
 // Error represents a rejection with optional JSON-RPC error body.
 type Error struct {
-	StatusCode int
-	Message    string
-	JSONRPCErr string // optional JSON-RPC error body for SSE responses
+	StatusCode  int
+	Message     string
+	JSONRPCErr  string // optional JSON-RPC error body
+	ContentType string // response content type; defaults to text/event-stream if empty
 }

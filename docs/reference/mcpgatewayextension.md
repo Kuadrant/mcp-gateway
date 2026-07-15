@@ -31,6 +31,7 @@
 | `urlElicitation` | String | No | Controls URL-based token elicitation. `Enabled`: creates a separate `/tokens` HTTPRoute and passes `--enable-url-elicitation` to the broker. `Disabled` (default): no `/tokens` route is created |
 | `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle used as the base trust pool for all upstream MCP server connections. Per-server `caCertSecretRef` on MCPServerRegistration appends to this pool. The Secret must have the label `mcp.kuadrant.io/secret: "true"` and must not exceed 256 KiB |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
+| `protocolMode` | String | No | Selects the MCP protocol version for this gateway instance. `Stateful` (default): uses the 2025-11-25 protocol with session-based routing. `Stateless`: uses the 2026-07-28 protocol with header-based stateless routing. A single gateway instance supports one protocol mode. Deploy separate instances for mixed client populations |
 
 ## MCPGatewayExtensionTargetReference
 

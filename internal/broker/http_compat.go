@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
@@ -30,26 +31,63 @@ import (
 // this layer restores the old observable surface at the HTTP boundary; the
 // SDK handler only ever sees requests it agrees with.
 
-// MCPHandler returns the full /mcp HTTP handler: the SDK streamable handler
-// wrapped with session resurrection and the mark3labs compatibility layer.
-// JSONResponse matches mark3labs, which answered POSTs with application/json
-// and delivered server-initiated notifications on the standalone GET stream.
+// MCPHandler returns the full /mcp HTTP handler. Requests with
+// MCP-Protocol-Version: 2026-07-28 go directly to a stateless SDK handler.
+// All other requests go through the mark3labs compatibility layer with
+// session resurrection.
 func (m *mcpBrokerImpl) MCPHandler() http.Handler {
-	opts := &mcp.StreamableHTTPOptions{
+	statefulOpts := &mcp.StreamableHTTPOptions{
 		DisableLocalhostProtection: true, // behind envoy
 		JSONResponse:               true,
 	}
 	if m.sessionValidator != nil {
-		// cache hygiene: evict idle session table entries. invisible to
-		// clients because a valid JWT resurrects the session on the next
-		// request, so only set when resurrection is available.
-		opts.SessionTimeout = SessionIdleTimeout
+		statefulOpts.SessionTimeout = SessionIdleTimeout
 	}
-	handler := mcp.NewStreamableHTTPHandler(
+	statefulHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return m.MCPServer() },
-		opts,
+		statefulOpts,
 	)
-	return &compatHandler{next: m.SessionResurrectionHandler(handler), broker: m}
+	legacyHandler := &compatHandler{
+		next:   m.SessionResurrectionHandler(statefulHandler),
+		broker: m,
+	}
+
+	if !m.statelessMode {
+		return legacyHandler
+	}
+
+	statelessHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return m.MCPServer() },
+		&mcp.StreamableHTTPOptions{
+			Stateless:                  true,
+			DisableLocalhostProtection: true,
+		},
+	)
+
+	return &protocolRouter{
+		legacy:    legacyHandler,
+		stateless: statelessHandler,
+		logger:    m.logger.With("component", "protocol-router"),
+	}
+}
+
+// protocolRouter dispatches to legacy (2025-11-25) or stateless (2026-07-28)
+// handlers based on the MCP-Protocol-Version header.
+type protocolRouter struct {
+	legacy    *compatHandler
+	stateless http.Handler
+	logger    *slog.Logger
+}
+
+func (p *protocolRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	pv := r.Header.Get(protocolVersionHeader)
+	if pv == "2026-07-28" {
+		p.logger.Debug("dispatching to stateless handler", "protocol-version", pv, "method", r.Method, "path", r.URL.Path)
+		p.stateless.ServeHTTP(w, r)
+		return
+	}
+	p.logger.Debug("dispatching to legacy handler", "protocol-version", pv, "method", r.Method, "path", r.URL.Path)
+	p.legacy.ServeHTTP(w, r)
 }
 
 // mark3labs error message and status constants, byte-for-byte.

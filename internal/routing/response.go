@@ -15,6 +15,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ResponseHandler202607 handles response-phase logic for the 2026-07-28 protocol.
+// Pass-through: no session mapping, no elicitation rewriting, no SSE streaming.
+type ResponseHandler202607 struct {
+	Logger *slog.Logger
+}
+
+// HandleResponse returns a pass-through decision for 2026-07-28 responses.
+func (h *ResponseHandler202607) HandleResponse(_ context.Context, _ *ResponseInput) *ResponseDecision {
+	return &ResponseDecision{
+		SetHeaders: make(map[string]string),
+	}
+}
+
 // ResponseDecision is the output of response-phase routing logic.
 type ResponseDecision struct {
 	SetHeaders map[string]string

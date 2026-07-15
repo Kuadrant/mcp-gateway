@@ -427,6 +427,26 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - When a client sends a tools/call request with a body approaching the default `--max-request-body-size` limit (5MB, test with ~1MB), the gateway should forward the full request to the backend without truncation. The ext_proc body phase must handle the complete payload and the backend should receive and process it successfully.
 
+### [Happy,Protocol2026] Test tool call via stateless gateway
+
+- When `protocolMode: Stateless` is set on MCPGatewayExtension, a client sends a tools/call request with `mcp-method` and `mcp-name` headers. The gateway routes the request to the correct backend MCP server using header-based routing. The upstream receives the tool call with prefix stripped and returns a successful response.
+
+### [Happy,Protocol2026] Test prompt get via stateless gateway
+
+- When `protocolMode: Stateless` is set, a client sends a prompts/get request with `mcp-method: prompts/get` and `mcp-name` headers. The gateway routes the request to the correct backend. The upstream receives the prompt request with prefix stripped.
+
+### [Protocol2026] Test header-body mismatch rejection
+
+- When `protocolMode: Stateless` is set, a client sends a tools/call request where the `mcp-name` header disagrees with the body `params.name` field. The gateway returns a JSON-RPC error with code `-32602` and message containing `HeaderMismatch`.
+
+### [Happy] Test default protocolMode preserves existing behavior
+
+- When MCPGatewayExtension does not specify `protocolMode` (defaults to Stateful), all existing e2e tests pass unchanged. Session management, hairpin initialization, and elicitation continue working.
+
+### [Protocol2026] Test protocolMode switch triggers deployment update
+
+- When MCPGatewayExtension is updated from `protocolMode: Stateful` to `protocolMode: Stateless`, the mcp-gateway deployment restarts with `--protocol-mode=stateless` in the container command. Reverting to Stateful removes the flag.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

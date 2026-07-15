@@ -383,8 +383,20 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}
 }
 
-// Ping sends a ping request to the upstream MCP server to check connectivity
+// UsesStatelessProtocol returns true if the upstream negotiated protocol
+// version 2026-07-28 or later (stateless, no sessions).
+func (up *MCPServer) UsesStatelessProtocol() bool {
+	return up.init != nil && up.init.ProtocolVersion >= "2026-07-28"
+}
+
+// Ping sends a ping request to the upstream MCP server to check connectivity.
+// Returns nil for stateless (2026-07-28) upstreams: the SDK does not inject
+// the required _meta fields on ping requests (SDK bug), and a successful
+// Connect via server/discover is sufficient proof of connectivity.
 func (up *MCPServer) Ping(ctx context.Context) error {
+	if up.UsesStatelessProtocol() {
+		return nil
+	}
 	session := up.currentSession()
 	if session == nil {
 		return fmt.Errorf("client not connected")

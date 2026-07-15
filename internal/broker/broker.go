@@ -149,6 +149,9 @@ type mcpBrokerImpl struct {
 
 	// sessionTerminator cleans up backend session cache on session end
 	sessionTerminator func(sessionID string) (bool, error)
+
+	// statelessMode enables the 2026-07-28 stateless protocol handler
+	statelessMode bool
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -207,6 +210,13 @@ func WithDiscoveryToolThreshold(threshold int) Option {
 }
 
 // WithSessionCache sets the session cache used for user-specific tool fetches
+// WithStatelessMode enables the 2026-07-28 stateless protocol handler
+func WithStatelessMode(enabled bool) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.statelessMode = enabled
+	}
+}
+
 func WithSessionCache(cache *session.Cache) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.sessionCache = cache
