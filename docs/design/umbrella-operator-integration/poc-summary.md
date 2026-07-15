@@ -229,6 +229,11 @@ The outstanding question is when this runs in CI — on kuadrant-operator releas
 mcp-gateway release, or both. Likely both, with the kuadrant-operator side pinning a
 specific mcp-gateway release tag.
 
+> **Local dev note:** `utils/pull-child-chart.sh` uses `tar --wildcards` which is a
+> GNU tar flag not supported by macOS BSD tar. The script works correctly in Linux CI
+> but will fail locally on a Mac. Use `brew install gnu-tar` and ensure `gtar` is on
+> your PATH, or run the sync step in a Linux container.
+
 ### 2. mcp-gateway ClusterRole naming and kindToResource fix
 
 Mike's implementation stripped the ClusterRole from `charts/mcp-gateway/templates/rbac.yaml`
