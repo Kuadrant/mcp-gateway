@@ -1,5 +1,10 @@
 # Zero-Downtime Upgrade: kuadrant-operator + mcp-gateway via OLM
 
+> **Status:** This guide documents the POC upgrade path tested against
+> `quay.io/pstefans/kuadrant-full-catalog:latest`. The canonical implementation is Mike
+> Nairn's `olmv1-umbrella-poc-phase1` branch. The procedure and zero-downtime properties
+> remain valid; env var names and image references will differ in production.
+
 This guide walks through upgrading from kuadrant-operator v1.5.0 + mcp-gateway v0.7.1
 (both installed via OLM) to kuadrant-operator v1.5.1-poc (which takes over mcp-gateway CRD
 and controller management), with no interruption to MCP traffic.
@@ -459,14 +464,10 @@ spec:
   sourceNamespace: openshift-marketplace
   startingCSV: kuadrant-operator.v1.5.1
   installPlanApproval: Automatic
+  # POC-specific env vars — production names will differ once Mike's branch
+  # replaces the env-var-based image config with chart-synced values
   config:
     env:
-    - name: MCP_CONTROLLER_IMAGE_REPO
-      value: quay.io/pstefans/mcp-controller
-    - name: MCP_CONTROLLER_IMAGE_TAG
-      value: latest
-    - name: MCP_GATEWAY_CHART_PATH
-      value: /charts/mcp-gateway
     - name: RELATED_IMAGE_WASMSHIM
       value: quay.io/kuadrant/wasm-shim:latest
     - name: RELATED_IMAGE_CONSOLE_PLUGIN_LATEST
@@ -490,9 +491,17 @@ done
 oc wait csv/kuadrant-operator.v1.5.1 -n mcp-system \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
 
-# No Kuadrant CR needed — MCPGatewayReconciler fires on MCPGatewayExtension events.
-# The existing MCPGatewayExtension in mcp-system triggers the controller deployment
-# automatically when kuadrant-operator v1.5.1 starts (Independent CR pattern).
+# Create a Kuadrant CR to trigger mcp-gateway controller deployment.
+# Under Mike's olmv1-umbrella-poc-phase1 approach, all child controllers
+# (including mcp-gateway) are deployed when the Kuadrant CR is created.
+oc apply -f - <<EOF
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: mcp-system
+spec: {}
+EOF
 
 # Verify new controller running
 oc get deployment mcp-gateway-controller -n mcp-system

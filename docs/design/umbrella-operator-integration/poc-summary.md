@@ -36,8 +36,14 @@ uninterrupted throughout.
 | `mcp-gateway-controller` ClusterRoleBinding | cluster | kuadrant-operator (Helm chart SSA) |
 | `mcp-gateway-controller` Deployment | operator namespace | kuadrant-operator (Helm chart SSA) |
 
-Trigger: MCPGatewayExtension CR exists in any namespace (Independent CR pattern —
-no Kuadrant CR needed).
+Trigger: Kuadrant CR creation (same pattern as Authorino, Limitador, and DNS Operator).
+The mcp-gateway controller is deployed as the fourth child operator alongside the others.
+
+> **Note:** Our initial POC used MCPGatewayExtension as the trigger (independent CR
+> pattern, no Kuadrant CR required). Mike Nairn's `olmv1-umbrella-poc-phase1` branch
+> instead gates all child operators on the Kuadrant CR, which is the agreed direction.
+> The zero-downtime properties are identical either way — the broker-router ownerRef is
+> what matters, not the controller trigger.
 
 ### mcp-gateway controller deploys per MCPGatewayExtension
 
@@ -206,27 +212,38 @@ This fix is in the feature branch.
 
 ## Outstanding Decisions for Production
 
-### 1. CRD sync mechanism between mcp-gateway and kuadrant-operator
+### 1. CRD and ClusterRole sync mechanism between mcp-gateway and kuadrant-operator
 
-**Problem:** The mcp CRDs (`mcpgatewayextensions`, `mcpserverregistrations`,
-`mcpvirtualservers`) live in the mcp-gateway repo but must be bundled into the
-kuadrant-operator OLM bundle. Currently they are manually copied.
+**Resolved.** Mike Nairn's `olmv1-umbrella-poc-phase1` branch introduces
+`make sync-child-operator-charts` with a `MCP_GATEWAY_GITREF` variable. This pulls the
+mcp-gateway Helm chart (including CRDs and ClusterRoles) from a pinned git ref and
+commits it into `charts/mcp-gateway/`. The same target extracts CRDs and ClusterRoles
+into `config/dependencies/child-operators/` for inclusion in the OLM bundle and Helm
+chart. To sync from a specific branch:
 
-**Options:**
-- `make sync-mcp-crds` target that fetches from a pinned mcp-gateway release tag and
-  updates `bundle/manifests/mcp.kuadrant.io_*.yaml` atomically
-- CI check that diffs the committed files against a fresh fetch and fails if they diverge
-- Git submodule or subtree for the mcp-gateway `api/` directory
+```bash
+make sync-child-operator-charts MCP_GATEWAY_VERSION=feature/umbrella-operator-integration
+```
 
-**Decision needed:** who owns the sync process and when does it run (on kuadrant release,
-on mcp-gateway release, or both)?
+The outstanding question is when this runs in CI — on kuadrant-operator release, on
+mcp-gateway release, or both. Likely both, with the kuadrant-operator side pinning a
+specific mcp-gateway release tag.
 
-### 2. mcp-gateway ClusterRole sync
+### 2. mcp-gateway ClusterRole naming and kindToResource fix
 
-Same problem as CRDs — the `kuadrant-operator-mcp-gateway-controller` ClusterRole in
-`bundle/manifests/` is a copy of the mcp-gateway chart's RBAC. If the mcp-gateway
-controller gains new permissions (e.g. for a new CRD), the bundle ClusterRole must be
-updated too. The sync target above should cover this.
+Mike's implementation stripped the ClusterRole from `charts/mcp-gateway/templates/rbac.yaml`
+due to an SSA apply failure he attributed to a naming mismatch. The root cause is
+`kindToResource("ClusterRole")` returning `"ClusterRoles"` (capital C) via the default
+`kind + "s"` path — the Kubernetes API rejects this resource name.
+
+Our branch fixes this in `helm_helpers.go`:
+- Adds `case "ClusterRole": return "clusterroles"`
+- Adds `case "NetworkPolicy": return "networkpolicies"`
+- Changes the default to `strings.ToLower(kind) + "s"`
+
+Once this fix is merged into Mike's branch, the ClusterRole can be restored to the chart
+templates and applied via SSA normally without manual workaround. The ClusterRole name
+itself (`mcp-gateway-controller`, from the chart's `fullname` helper) is correct.
 
 ### 3. Downstream image compatibility
 
@@ -245,10 +262,11 @@ and tested as part of downstream release validation.
 
 | Repo | Branch | Description |
 |---|---|---|
-| `github.com/Kuadrant/mcp-gateway` | `feature/umbrella-operator-integration` | mcp-gateway controller changes |
-| `github.com/Patryk-Stefanski/kuadrant-operator` | `feature/mcp-gateway-umbrella-poc` | kuadrant-operator integration |
+| `github.com/Kuadrant/mcp-gateway` | `feature/umbrella-operator-integration` | mcp-gateway controller changes (headless mode, NetworkPolicy chart templates) |
+| `github.com/Kuadrant/kuadrant-operator` | `olmv1-umbrella-poc-phase1` | Mike Nairn's umbrella operator implementation (canonical direction) |
+| `github.com/Kuadrant/kuadrant-operator` | `feature/mcp-gateway-umbrella-poc` (PR #2111) | our fixes rebased on top of Mike's branch (kindToResource, Authorino naming) |
 
-### Key images (all `quay.io/pstefans/`, public)
+### Key images (all `quay.io/pstefans/`, public — POC only)
 
 | Image | Content |
 |---|---|
