@@ -471,3 +471,52 @@ func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
+
+func TestMCPServer_ListResources(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddResource(&mcp.Resource{
+		Name: "template",
+		URI:  "ui://template.html",
+	}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{URI: "ui://template.html", Text: "<html></html>"}},
+		}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.True(t, up.SupportsResources())
+
+	result, err := up.ListResources(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Resources, 1)
+	require.Equal(t, "ui://template.html", result.Resources[0].URI)
+}
+
+func TestMCPServer_SupportsResources_NoCapability(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.False(t, up.SupportsResources())
+}
+
+func TestMCPServer_ListResources_NotConnected(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", Prefix: "up_"}, "", nil)
+	_, err := up.ListResources(context.Background())
+	require.Error(t, err)
+}
