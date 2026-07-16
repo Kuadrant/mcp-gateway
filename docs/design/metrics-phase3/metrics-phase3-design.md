@@ -196,16 +196,19 @@ sum(mcp_broker_tools_discovered) by (server_name)
 #### Upstream stability
 
 ```
-mcp_broker_upstream_reconnections_total
+mcp_broker_upstream_connection_failures_total
   type: counter
   labels: server_name
-  description: number of upstream reconnection attempts.
-               frequent reconnections signal instability.
+  description: number of upstream connection failures. incremented each time
+               manage() enters handleConnectionFailure, covering both failed
+               Connect() and failed Ping() on an existing connection.
+               frequency decays during sustained outages due to exponential
+               backoff on the health check ticker.
 ```
 
 ```promql
-# servers currently experiencing reconnections
-sum(rate(mcp_broker_upstream_reconnections_total[5m])) by (server_name) > 0
+# servers currently experiencing connection failures
+sum(rate(mcp_broker_upstream_connection_failures_total[5m])) by (server_name) > 0
 ```
 
 #### Context contribution
@@ -268,4 +271,4 @@ This phase delivers metrics, not dashboards. Grafana dashboard definitions are a
 
 ## Execution
 
-See [tasks/tasks.md](tasks/tasks.md) for the implementation plan.
+Implementation plan to follow after design approval.
