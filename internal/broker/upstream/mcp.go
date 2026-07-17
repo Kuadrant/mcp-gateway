@@ -13,6 +13,7 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -402,7 +403,7 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 // UsesStatelessProtocol returns true if the upstream negotiated protocol
 // version 2026-07-28 or later (stateless, no sessions).
 func (up *MCPServer) UsesStatelessProtocol() bool {
-	return up.init != nil && up.init.ProtocolVersion >= "2026-07-28"
+	return up.init != nil && up.init.ProtocolVersion >= protocol.Version2026
 }
 
 // SupportedVersions returns the list of protocol versions this upstream supports.

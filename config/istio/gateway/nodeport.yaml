@@ -33,6 +33,12 @@ spec:
     port: 8002
     protocol: TCP
     targetPort: 8002
+  - appProtocol: http
+    name: protocol-2026
+    nodePort: 30083
+    port: 8081
+    protocol: TCP
+    targetPort: 8081
   selector:
     gateway.networking.k8s.io/gateway-name: mcp-gateway
   sessionAffinity: None

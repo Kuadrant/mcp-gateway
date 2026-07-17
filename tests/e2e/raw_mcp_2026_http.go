@@ -9,7 +9,7 @@ import (
 
 // MCP 2026-07-28 raw HTTP helpers for tests that need to send deliberately
 // malformed requests (e.g. header-body mismatch) that the SDK client would
-// not allow. Most tests should use the SDK client via NewMCPGatewayClient.
+// not allow. Most tests should use the SDK client via NewStatefulClient.
 
 // mcp2026Headers returns the MCP 2026-07-28 protocol headers for a given method and name.
 func mcp2026Headers(method, name string) map[string]string {

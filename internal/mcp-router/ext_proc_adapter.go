@@ -12,6 +12,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -338,9 +339,18 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				Parsed:    mcpRequest,
 			}
 
+			// path-based protocol override: /mcp/stateful forces 2025,
+			// /mcp/stateless forces 2026, regardless of header
+			effectiveVersion := protocolVersion
+			if strings.HasSuffix(requestPath, protocol.PathSuffixStateless) {
+				effectiveVersion = protocol.Version2026
+			} else if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
+				effectiveVersion = protocol.Version2025
+			}
+
 			router := s.Router
 			routerName := "202511"
-			if s.Router202607 != nil && protocolVersion == "2026-07-28" {
+			if s.Router202607 != nil && effectiveVersion == protocol.Version2026 {
 				routerName = "202607"
 				routingReq.MCPMethod = mcpMethodHeader
 				routingReq.MCPName = mcpNameHeader
@@ -390,7 +400,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			respHandler := s.ResponseHandler
-			if s.ResponseHandler2026 != nil && protocolVersion == "2026-07-28" {
+			if s.ResponseHandler2026 != nil && protocolVersion == protocol.Version2026 {
 				respHandler = s.ResponseHandler2026
 			} else {
 				if mcpRequest != nil && mcpRequest.IsToolCall() {

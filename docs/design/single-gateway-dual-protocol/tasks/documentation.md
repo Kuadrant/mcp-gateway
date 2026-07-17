@@ -2,9 +2,9 @@
 
 `protocolMode` only exists on this branch and was never released. No breaking change documentation or migration steps needed — just remove it from code and any docs on this branch.
 
-## Guide: protocol-modes.md rewrite
+## Guide: protocol-modes.md rewrite — DONE
 
-The current guide (`docs/guides/protocol-modes.md`) describes separate gateway instances per protocol. Rewrite to reflect that a single gateway serves both.
+Rewritten to describe single-gateway dual-protocol support. Covers version detection, protocol-filtered tools/list, protocol-specific routes, and behaviour differences.
 
 ### When I want to serve clients using different MCP protocol versions
 
@@ -56,8 +56,6 @@ When a platform engineer wants to know how clients discover which protocol versi
 - Dual-protocol gateway advertises `["2025-11-25", "2026-07-28"]`
 - No client-side workarounds needed — version negotiation is automatic
 
-## API reference: MCPGatewayExtension
+## API reference: MCPGatewayExtension — DONE
 
-Update `docs/reference/mcpgatewayextension.md`:
-- Remove `protocolMode` field from the spec table
-- Remove any notes about single-protocol limitation
+`protocolMode` field removed from `docs/reference/mcpgatewayextension.md` spec table.

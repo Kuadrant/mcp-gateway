@@ -145,7 +145,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		var elicitClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, ElicitationGatewayURL, handler)
+			elicitClient, err = NewStatefulClientWithElicitation(ctx, ElicitationGatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = elicitClient.Close() }()
@@ -186,7 +186,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		var elicitClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			elicitClient, err = NewMCPGatewayClientWithElicitation(ctx, ElicitationGatewayURL, handler)
+			elicitClient, err = NewStatefulClientWithElicitation(ctx, ElicitationGatewayURL, handler)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = elicitClient.Close() }()
@@ -226,7 +226,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		var standardClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			standardClient, err = NewMCPGatewayClient(ctx, ElicitationGatewayURL)
+			standardClient, err = NewStatefulClient(ctx, ElicitationGatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = standardClient.Close() }()

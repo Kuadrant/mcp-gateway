@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,6 +31,7 @@ type userSpecificServer struct {
 	name   string
 	url    string
 	prefix string
+	caCert string
 }
 
 // userSessionKey builds the pool key for a per-user upstream session.
@@ -58,11 +62,11 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		return
 	}
 
-	clientVersion := protocolVersion2025
-	if headers.Get("MCP-Protocol-Version") == protocolVersion2026 {
-		clientVersion = protocolVersion2026
+	clientVersion := protocol.Version2025
+	if headers.Get(protocolVersionHeader) == protocol.Version2026 {
+		clientVersion = protocol.Version2026
 	}
-	isStateless := clientVersion == protocolVersion2026
+	isStateless := clientVersion == protocol.Version2026
 
 	// filter to servers supporting the client's protocol
 	var matching []userSpecificServer
@@ -249,9 +253,14 @@ func (broker *mcpBrokerImpl) doFetchToolsStateless(ctx context.Context, srv user
 	fetchCtx, cancel := context.WithTimeout(ctx, broker.userSpecificFetchTimeout)
 	defer cancel()
 
+	base, err := broker.buildStatelessTransport(srv.caCert)
+	if err != nil {
+		span.SetStatus(codes.Error, "tls setup failed")
+		return nil, fmt.Errorf("failed to build TLS transport for %s: %w", srv.name, err)
+	}
 	httpClient := &http.Client{
 		Transport: &transport.DynamicHeaderRoundTripper{
-			Base:    http.DefaultTransport,
+			Base:    base,
 			Headers: func() map[string]string { return userHeaders },
 		},
 	}
@@ -272,7 +281,7 @@ func (broker *mcpBrokerImpl) doFetchToolsStateless(ctx context.Context, srv user
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	toolsResult, err := session.ListTools(fetchCtx, nil)
 	if err != nil {
@@ -290,9 +299,9 @@ func (broker *mcpBrokerImpl) doFetchToolsStateless(ctx context.Context, srv user
 	validTools, invalids := upstream.ValidateTools(valueTools)
 	if len(invalids) > 0 {
 		switch broker.invalidToolPolicy {
-		case mcpv1.InvalidToolPolicyFilterOut:
+		case upstream.InvalidToolPolicyFilterOut:
 			broker.logger.Error("invalid user-specific tools filtered", "server", srv.name, "count", len(invalids))
-		case mcpv1.InvalidToolPolicyRejectServer:
+		case upstream.InvalidToolPolicyRejectServer:
 			span.SetStatus(codes.Error, "invalid tools")
 			return nil, fmt.Errorf("server %s rejected: %d invalid tools", srv.id, len(invalids))
 		}
@@ -432,11 +441,23 @@ var sensitiveForwardHeaders = map[string]struct{}{
 // stripping internal gateway headers and gateway-scoped credentials. the
 // client's Authorization header is intentionally preserved: user-specific
 // servers rely on it to return a per-user tool list.
+// transportHeaders are set by the SDK transport and must not be overridden
+// by user headers forwarded to upstream servers.
+var transportHeaders = map[string]struct{}{
+	"accept":               {},
+	"content-type":         {},
+	"content-length":       {},
+	"mcp-protocol-version": {},
+	"mcp-session-id":       {},
+	"mcp-method":           {},
+	"mcp-name":             {},
+}
+
 func filterUserHeaders(h http.Header) map[string]string {
 	headers := make(map[string]string, len(h))
 	for key, vals := range h {
 		lower := strings.ToLower(key)
-		if lower == "mcp-session-id" {
+		if _, skip := transportHeaders[lower]; skip {
 			continue
 		}
 		if strings.HasPrefix(lower, "x-mcp-") {
@@ -450,4 +471,33 @@ func filterUserHeaders(h http.Header) map[string]string {
 		}
 	}
 	return headers
+}
+
+// buildStatelessTransport returns an http.RoundTripper with the gateway CA
+// bundle and per-server CA appended to the system trust pool.
+func (broker *mcpBrokerImpl) buildStatelessTransport(serverCACert string) (http.RoundTripper, error) {
+	gatewayCACert := broker.gatewayCACertPEM
+	if gatewayCACert == "" && serverCACert == "" {
+		return http.DefaultTransport, nil
+	}
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if gatewayCACert != "" {
+		if !rootCAs.AppendCertsFromPEM([]byte(gatewayCACert)) {
+			return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+		}
+	}
+	if serverCACert != "" {
+		if !rootCAs.AppendCertsFromPEM([]byte(serverCACert)) {
+			return nil, fmt.Errorf("failed to parse per-server CA certificate PEM")
+		}
+	}
+	base.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+	return base, nil
 }

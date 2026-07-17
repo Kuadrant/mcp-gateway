@@ -10,6 +10,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func mustMarshalArgs(m map[string]any) json.RawMessage {
 func populateTestVersions(b *mcpBrokerImpl) {
 	for _, mgr := range b.mcpServers {
 		cfg := mgr.Config()
-		b.serverVersions.Store(cfg.ID(), []string{protocolVersion2025})
+		b.serverVersions.Store(cfg.ID(), []string{protocol.Version2025})
 	}
 }
 

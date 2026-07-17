@@ -202,13 +202,10 @@ func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]st
 		}
 	}
 
-	var filtered []*mcp.Tool
-	for _, tool := range tools {
-		if _, ok := allowed[tool.Name]; ok {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
+	return slices.DeleteFunc(tools, func(t *mcp.Tool) bool {
+		_, ok := allowed[t.Name]
+		return !ok
+	})
 }
 
 // applyVirtualServerFilter filters tools to only those specified in the virtual server.
@@ -233,14 +230,10 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 		filteredSet[name] = struct{}{}
 	}
 
-	var filtered []*mcp.Tool
-	for _, tool := range tools {
-		if _, inFilter := filteredSet[tool.Name]; inFilter {
-			filtered = append(filtered, tool)
-		}
-	}
-
-	return filtered
+	return slices.DeleteFunc(tools, func(t *mcp.Tool) bool {
+		_, inFilter := filteredSet[t.Name]
+		return !inFilter
+	})
 }
 
 // validateJWTHeader validates the JWT header using ES256 algorithm.

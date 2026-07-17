@@ -1,16 +1,13 @@
 package broker
 
 import (
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-)
-
-const (
-	protocolVersion2025 = "2025-11-25"
-	protocolVersion2026 = "2026-07-28"
 )
 
 // computeGatewaySupportedVersions returns the union of protocol versions
@@ -28,12 +25,7 @@ func (m *mcpBrokerImpl) computeGatewaySupportedVersions() []string {
 	if len(seen) == 0 {
 		return nil
 	}
-	versions := make([]string, 0, len(seen))
-	for v := range seen {
-		versions = append(versions, v)
-	}
-	sort.Strings(versions)
-	return versions
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // rebuildProtocolToolCache partitions the current gateway server tool list
@@ -67,10 +59,10 @@ func (m *mcpBrokerImpl) rebuildProtocolToolCache() {
 		}
 		serverID := config.UpstreamMCPID(serverIDStr)
 
-		if m.ServerSupportsVersion(serverID, protocolVersion2025) {
+		if m.ServerSupportsVersion(serverID, protocol.Version2025) {
 			stateful = append(stateful, tool)
 		}
-		if m.ServerSupportsVersion(serverID, protocolVersion2026) {
+		if m.ServerSupportsVersion(serverID, protocol.Version2026) {
 			stateless = append(stateless, tool)
 		}
 	}
@@ -85,8 +77,8 @@ func (m *mcpBrokerImpl) rebuildProtocolToolCache() {
 // toolsForProtocol returns the pre-cached tool set for the client's protocol version.
 // Returns a shallow copy to avoid mutation by downstream filters.
 func (m *mcpBrokerImpl) toolsForProtocol(headers http.Header) []*mcp.Tool {
-	version := headers.Get("MCP-Protocol-Version")
-	if version == protocolVersion2026 {
+	version := headers.Get(protocolVersionHeader)
+	if version == protocol.Version2026 {
 		if cached := m.statelessTools.Load(); cached != nil {
 			tools := make([]*mcp.Tool, len(*cached))
 			copy(tools, *cached)

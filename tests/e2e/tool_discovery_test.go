@@ -71,16 +71,12 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
-	AfterAll(func() {
-		if toolDiscExt != nil {
-			toolDiscExt.TearDown(ctx)
-		}
-	})
+	// no AfterAll teardown — leave state for debugging; BeforeAll Clean() handles cleanup on next run
 
 	newGatewayClient := func() {
 		Eventually(func(g Gomega) {
 			var err error
-			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, toolDiscURL, nil)
+			mcpGatewayClient, err = NewStatefulClientWithNotifications(ctx, toolDiscURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	}
@@ -90,15 +86,13 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			_ = mcpGatewayClient.Close()
 			mcpGatewayClient = nil
 		}
-		for _, obj := range testResources {
-			CleanupResource(ctx, k8sClient, obj)
-		}
+		// leave testResources for post-failure debugging; BeforeAll Clean() handles cleanup on next run
 		testResources = []client.Object{}
 	})
 
 	JustAfterEach(func() {
 		if CurrentSpecReport().Failed() {
-			GinkgoWriter.Println("failure detected in tool discovery test")
+			DumpClusterState(ctx, toolDiscNamespace, dualProtoNamespace, SystemNamespace, GatewayNamespace)
 		}
 	})
 
@@ -132,9 +126,8 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "disc_meta_")
 
 			By("calling discover_tools and verifying metadata")
-			sessionID := mcpGatewayClient.ID()
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, nil, nil)
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), nil, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(resp).NotTo(BeNil())
 
@@ -194,9 +187,8 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "multicat_")
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "catmsg_")
 
-			sessionID := mcpGatewayClient.ID()
 			discoverByCategory := func(g Gomega, category string) (hasMulti, hasMsg bool) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, map[string]any{"category": category}, nil)
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), map[string]any{"category": category}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(resp).NotTo(BeNil())
 				for _, s := range resp.Servers {
@@ -270,7 +262,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, nil, map[string]string{"X-Mcp-Authorized": jwtToken})
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), nil, map[string]string{"X-Mcp-Authorized": jwtToken})
 				g.Expect(err).NotTo(HaveOccurred())
 
 				var serverTools []string
@@ -319,7 +311,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("discover_tools should only return the virtual server's allowed tools")
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, nil, map[string]string{"X-Mcp-Virtualserver": vsHeader})
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), nil, map[string]string{"X-Mcp-Virtualserver": vsHeader})
 				g.Expect(err).NotTo(HaveOccurred())
 
 				var serverTools []string
@@ -512,7 +504,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			notifCh := make(chan struct{}, 1)
-			client, err := NewMCPGatewayClientWithNotifications(ctx, toolDiscURL, func(method string) {
+			client, err := NewStatefulClientWithNotifications(ctx, toolDiscURL, func(method string) {
 				if method == "notifications/tools/list_changed" {
 					select {
 					case notifCh <- struct{}{}:
@@ -859,11 +851,9 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			WaitForToolsWithPrefix(ctx, mcpGatewayClient, "reconf_")
 
-			sessionID := mcpGatewayClient.ID()
-
 			By("verifying initial category and hint via discover_tools")
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, map[string]any{"category": "initial-category"}, nil)
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), map[string]any{"category": "initial-category"}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				hasTools := false
 				for _, s := range resp.Servers {
@@ -891,7 +881,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("waiting for reconciliation to propagate the updated metadata")
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, map[string]any{"category": "updated-category"}, nil)
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), map[string]any{"category": "updated-category"}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				hasTools := false
 				for _, s := range resp.Servers {
@@ -907,7 +897,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying old category no longer matches")
 			Eventually(func(g Gomega) {
-				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, sessionID, map[string]any{"category": "initial-category"}, nil)
+				_, resp, err := mcpCallDiscoverTools(ctx, toolDiscURL, mcpGatewayClient.ID(), map[string]any{"category": "initial-category"}, nil)
 				g.Expect(err).NotTo(HaveOccurred())
 				for _, s := range resp.Servers {
 					for _, t := range s.Tools {

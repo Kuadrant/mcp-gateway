@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -133,12 +134,7 @@ func (s *scopeStore) getScope(sessionID string) (scopeState, map[string]struct{}
 	if sc.state != scopeFiltered {
 		return sc.state, nil
 	}
-	// defensive copy
-	cpy := make(map[string]struct{}, len(sc.tools))
-	for k := range sc.tools {
-		cpy[k] = struct{}{}
-	}
-	return sc.state, cpy
+	return sc.state, maps.Clone(sc.tools)
 }
 
 // deleteScope removes a session's scope (e.g. on disconnect)

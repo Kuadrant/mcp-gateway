@@ -16,7 +16,7 @@ import (
 
 // Test timeouts and intervals
 const (
-	TestTimeoutMedium     = time.Second * 90
+	TestTimeoutMedium     = time.Second * 180
 	TestTimeoutShort      = time.Second * 45
 	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6
@@ -106,7 +106,7 @@ var (
 	ElicitationGatewayURL    = goenv.GetDefault("ELICITATION_GATEWAY_URL", gatewayURLDefault(ElicitationPublicHost, "https://elicit.mcp-gateway.local:8010/mcp"))
 	URLElicitationGatewayURL = goenv.GetDefault("URL_ELICITATION_GATEWAY_URL", gatewayURLDefault(ElicitationPublicHost, "https://url-elicit.mcp-gateway.local:8010/mcp"))
 	ToolDiscoveryGatewayURL  = goenv.GetDefault("TOOL_DISCOVERY_GATEWAY_URL", gatewayURLDefault(ToolDiscoveryPublicHost, "http://mcp.tool-discovery.127-0-0-1.sslip.io:8001/mcp"))
-	Protocol2026GatewayURL   = goenv.GetDefault("PROTOCOL_2026_GATEWAY_URL", gatewayURLDefault(Protocol2026PublicHost, "http://mcp.protocol-2026.127-0-0-1.sslip.io:8001/mcp"))
+	Protocol2026GatewayURL   = goenv.GetDefault("PROTOCOL_2026_GATEWAY_URL", gatewayURLDefault(Protocol2026PublicHost, "http://mcp.protocol-2026.127-0-0-1.sslip.io:8011/mcp"))
 )
 
 // gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,

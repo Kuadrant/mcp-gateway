@@ -8,7 +8,7 @@
 - Installing the MCP Gateway
     - [Helm Install](./how-to-install-and-configure.md)
 - [Configure MCP Gateway Listener and Router](./configure-mcp-gateway-listener-and-router.md)
-- [Protocol Modes](./protocol-modes.md)
+- [Protocol Modes](./multi-protocol-support.md)
 - Configuring MCP Servers
     - [MCP Server Configuration](./register-mcp-servers.md)
     - [Virtual MCP Servers](./virtual-mcp-servers.md)

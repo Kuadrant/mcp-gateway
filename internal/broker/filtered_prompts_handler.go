@@ -137,12 +137,8 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilterForPrompts(headers http.Hea
 		filteredSet[name] = struct{}{}
 	}
 
-	var filtered []*mcp.Prompt
-	for _, prompt := range prompts {
-		if _, inFilter := filteredSet[prompt.Name]; inFilter {
-			filtered = append(filtered, prompt)
-		}
-	}
-
-	return filtered
+	return slices.DeleteFunc(prompts, func(p *mcp.Prompt) bool {
+		_, inFilter := filteredSet[p.Name]
+		return !inFilter
+	})
 }

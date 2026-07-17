@@ -529,6 +529,7 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 				name:   srv.Name,
 				url:    srv.URL,
 				prefix: srv.Prefix,
+				caCert: srv.CACert,
 			})
 		}
 	}

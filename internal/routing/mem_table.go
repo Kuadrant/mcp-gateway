@@ -3,7 +3,7 @@ package routing
 import (
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -88,11 +88,7 @@ func (b *TableBuilder) Build() *Table {
 
 // DumpTools returns a formatted string of all registered tools and their routes.
 func (t *Table) DumpTools() string {
-	names := make([]string, 0, len(t.tools))
-	for name := range t.tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(t.tools))
 	var sb strings.Builder
 	for _, name := range names {
 		r := t.tools[name]

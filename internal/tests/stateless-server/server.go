@@ -10,10 +10,21 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+const (
+	userAToken = "bearer user-a-token"
+	userBToken = "bearer user-b-token" //nolint:gosec // test credentials
+)
+
+var perUserTools = map[string][]string{
+	userAToken: {"list_repos"},
+	userBToken: {"run_pipeline"},
+}
 
 // StartupFunc is used for functions that will start a server and block until it is finished
 type StartupFunc func() error
@@ -49,6 +60,20 @@ func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
 			"type": "object",
 		},
 	}, headersToolHandler)
+
+	// user-specific tools (visible only to the matching bearer token)
+	s.AddTool(&mcp.Tool{
+		Name:        "list_repos",
+		Description: "List repositories for the authenticated user",
+		InputSchema: map[string]any{"type": "object"},
+	}, stubToolHandler("list_repos"))
+	s.AddTool(&mcp.Tool{
+		Name:        "run_pipeline",
+		Description: "Trigger a CI/CD pipeline run",
+		InputSchema: map[string]any{"type": "object"},
+	}, stubToolHandler("run_pipeline"))
+
+	s.AddReceivingMiddleware(userToolFilterMiddleware())
 
 	// greeting prompt
 	s.AddPrompt(&mcp.Prompt{
@@ -171,6 +196,46 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func stubToolHandler(name string) mcp.ToolHandler {
+	return func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%s: ok", name)}}}, nil
+	}
+}
+
+func userToolFilterMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != "tools/list" {
+				return result, err
+			}
+			toolsResult, ok := result.(*mcp.ListToolsResult)
+			if !ok || toolsResult == nil {
+				return result, nil
+			}
+			headers := http.Header{}
+			if extra := req.GetExtra(); extra != nil && extra.Header != nil {
+				headers = extra.Header
+			}
+			auth := strings.ToLower(headers.Get("Authorization"))
+			allowed := map[string]bool{"hello_world": true, "headers": true}
+			if extras, ok := perUserTools[auth]; ok {
+				for _, name := range extras {
+					allowed[name] = true
+				}
+			}
+			filtered := make([]*mcp.Tool, 0, len(allowed))
+			for _, tool := range toolsResult.Tools {
+				if allowed[tool.Name] {
+					filtered = append(filtered, tool)
+				}
+			}
+			toolsResult.Tools = filtered
+			return result, nil
+		}
+	}
 }
 
 // requireStringArg parses an argument with mark3labs RequireString

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -90,12 +91,7 @@ func (g *gatewayServer) DeleteTools(names ...string) {
 func (g *gatewayServer) ListTools() map[string]*upstream.GatewayTool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	// return a shallow copy to avoid callers holding the lock
-	result := make(map[string]*upstream.GatewayTool, len(g.tools))
-	for k, v := range g.tools {
-		result[k] = v
-	}
-	return result
+	return maps.Clone(g.tools)
 }
 
 // AddTool adds a single tool (convenience for broker-internal tools)
@@ -136,11 +132,7 @@ func (g *gatewayServer) DeletePrompts(names ...string) {
 func (g *gatewayServer) ListPrompts() map[string]*upstream.GatewayPrompt {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	result := make(map[string]*upstream.GatewayPrompt, len(g.prompts))
-	for k, v := range g.prompts {
-		result[k] = v
-	}
-	return result
+	return maps.Clone(g.prompts)
 }
 
 // MCPServer returns the underlying mcp.Server

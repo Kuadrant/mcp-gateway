@@ -13,6 +13,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -334,9 +335,9 @@ func (m *mcpBrokerImpl) getVisibleToolNames(headers http.Header) map[string]stru
 	allTools := m.collectAllPrefixedTools()
 
 	// filter by client protocol version
-	clientVersion := protocolVersion2025
-	if headers.Get("MCP-Protocol-Version") == protocolVersion2026 {
-		clientVersion = protocolVersion2026
+	clientVersion := protocol.Version2025
+	if headers.Get(protocolVersionHeader) == protocol.Version2026 {
+		clientVersion = protocol.Version2026
 	}
 	var protoFiltered []*mcp.Tool
 	for _, t := range allTools {
@@ -404,17 +405,13 @@ func (m *mcpBrokerImpl) applyScopeFilter(_ context.Context, sessionID string, to
 
 // filterByScope keeps only tools that are in the scoped set, plus broker meta-tools.
 func filterByScope(tools []*mcp.Tool, scope map[string]struct{}) []*mcp.Tool {
-	filtered := make([]*mcp.Tool, 0, len(tools))
-	for _, t := range tools {
+	return slices.DeleteFunc(tools, func(t *mcp.Tool) bool {
 		if IsBrokerTool(t) {
-			filtered = append(filtered, t)
-			continue
+			return false
 		}
-		if _, ok := scope[t.Name]; ok {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
+		_, ok := scope[t.Name]
+		return !ok
+	})
 }
 
 // applyThresholdFilter hides real tools when count exceeds the threshold, leaving only meta-tools.
@@ -443,13 +440,9 @@ func (m *mcpBrokerImpl) applyThresholdFilter(tools []*mcp.Tool) []*mcp.Tool {
 
 // matchesCategory checks if any element in serverCategories matches the filter (case-insensitive)
 func matchesCategory(serverCategories []string, filter string) bool {
-	lowerFilter := strings.ToLower(filter)
-	for _, cat := range serverCategories {
-		if strings.ToLower(cat) == lowerFilter {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(serverCategories, func(cat string) bool {
+		return strings.EqualFold(cat, filter)
+	})
 }
 
 // parseToolNames extracts a []string from the raw tools argument

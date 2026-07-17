@@ -29,7 +29,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 	JustAfterEach(func() {
 		if CurrentSpecReport().Failed() {
-			GinkgoWriter.Println("failure detected")
+			DumpClusterState(ctx, SystemNamespace, GatewayNamespace)
 		}
 	})
 
@@ -197,7 +197,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			clientErr  error
 		)
 		Eventually(func(_ Gomega) {
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
+			e2e1Client, clientErr = NewStatefulClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
 			Expect(clientErr).Error().NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
@@ -255,7 +255,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Re-establishing MCP client connection")
 		Eventually(func(g Gomega) {
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
+			e2e1Client, clientErr = NewStatefulClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = e2e1Client.Close() }()
@@ -343,7 +343,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var mainGatewayClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			mainGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(_ string) {})
+			mainGatewayClient, clientErr = NewStatefulClientWithNotifications(ctx, gatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = mainGatewayClient.Close() }()
@@ -352,7 +352,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var e2e1Client *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
+			e2e1Client, clientErr = NewStatefulClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = e2e1Client.Close() }()
@@ -535,7 +535,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var teamAClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamAClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamAGatewayURL, func(_ string) {})
+			teamAClient, clientErr = NewStatefulClientWithNotifications(ctx, TeamAGatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = teamAClient.Close() }()
@@ -544,7 +544,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		var teamBClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamBClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(_ string) {})
+			teamBClient, clientErr = NewStatefulClientWithNotifications(ctx, TeamBGatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 		defer func() { _ = teamBClient.Close() }()

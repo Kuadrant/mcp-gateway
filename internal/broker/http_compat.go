@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -68,7 +69,7 @@ func (m *mcpBrokerImpl) MCPHandler() http.Handler {
 }
 
 // protocolRouter dispatches to legacy (2025-11-25) or stateless (2026-07-28)
-// handlers based on the MCP-Protocol-Version header.
+// handlers based on the MCP-Protocol-Version header or path suffix.
 type protocolRouter struct {
 	legacy    *compatHandler
 	stateless http.Handler
@@ -76,13 +77,30 @@ type protocolRouter struct {
 }
 
 func (p *protocolRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	pv := r.Header.Get(protocolVersionHeader)
-	if pv == "2026-07-28" {
-		p.logger.Debug("dispatching to stateless handler", "protocol-version", pv, "method", r.Method, "path", r.URL.Path)
+	// path-based protocol override takes precedence over header
+	path := r.URL.Path
+	if base, ok := strings.CutSuffix(path, protocol.PathSuffixStateless); ok {
+		r.URL.Path = base
+		r.Header.Set(protocolVersionHeader, protocol.Version2026)
+		p.logger.Debug("dispatching to stateless handler (path override)", "method", r.Method, "path", path)
 		p.stateless.ServeHTTP(w, r)
 		return
 	}
-	p.logger.Debug("dispatching to legacy handler", "protocol-version", pv, "method", r.Method, "path", r.URL.Path)
+	if base, ok := strings.CutSuffix(path, protocol.PathSuffixStateful); ok {
+		r.URL.Path = base
+		r.Header.Del(protocolVersionHeader)
+		p.logger.Debug("dispatching to legacy handler (path override)", "method", r.Method, "path", path)
+		p.legacy.ServeHTTP(w, r)
+		return
+	}
+
+	pv := r.Header.Get(protocolVersionHeader)
+	if pv == protocol.Version2026 {
+		p.logger.Debug("dispatching to stateless handler", "protocol-version", pv, "method", r.Method, "path", path)
+		p.stateless.ServeHTTP(w, r)
+		return
+	}
+	p.logger.Debug("dispatching to legacy handler", "protocol-version", pv, "method", r.Method, "path", path)
 	p.legacy.ServeHTTP(w, r)
 }
 
@@ -222,6 +240,15 @@ func (h *compatHandler) servePOST(w http.ResponseWriter, r *http.Request) {
 
 	if env.Method == "initialize" {
 		h.serveInitialize(w, r, body, &env)
+		return
+	}
+
+	// server/discover without a session: return method-not-found so the
+	// SDK falls back to initialize. checkSession would return text/plain
+	// which the SDK can't parse as a JSON-RPC error.
+	if env.Method == "server/discover" {
+		h.broker.logger.Debug("rejecting server/discover on legacy handler", "id", env.idValue(), "path", r.URL.Path)
+		writeMainJSONRPCError(w, http.StatusOK, env.idValue(), codeMethodNotFound, "Method server/discover not found")
 		return
 	}
 

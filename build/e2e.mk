@@ -65,3 +65,8 @@ test-e2e-https: test-e2e-deps ## Run HTTPS-focused E2E tests (requires cert-mana
 test-e2e-protocol2026: test-e2e-deps ## Run 2026-07-28 stateless protocol E2E tests only
 	@echo "Running 2026-07-28 protocol E2E tests..."
 	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[Protocol2026\]" ./tests/e2e
+
+.PHONY: test-e2e-dual-protocol
+test-e2e-dual-protocol: test-e2e-deps ## Run dual-protocol (2025+2026) E2E tests only
+	@echo "Running dual-protocol E2E tests..."
+	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) --fail-fast --focus="\[DualProtocol\]" ./tests/e2e

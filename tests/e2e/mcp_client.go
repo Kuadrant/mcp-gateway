@@ -40,10 +40,10 @@ func e2eHTTPClient(url string) *http.Client {
 	}
 }
 
-// newGatewayTransport builds the streamable transport shared by all e2e
-// clients: e2e marker plus custom headers injected via
-// transport.HeaderRoundTripper.
-func newGatewayTransport(gatewayHost string, headers map[string]string) *mcp.StreamableClientTransport {
+// buildGatewayTransport creates a streamable transport with e2e headers.
+// When block2026 is true, wraps with blockDiscoverTransport to force
+// 2025-11-25 negotiation. When false, allows 2026-07-28 via server/discover.
+func buildGatewayTransport(gatewayHost string, headers map[string]string, block2026 bool) *mcp.StreamableClientTransport {
 	allHeaders := map[string]string{"e2e": "client"}
 	maps.Copy(allHeaders, headers)
 
@@ -55,78 +55,60 @@ func newGatewayTransport(gatewayHost string, headers map[string]string) *mcp.Str
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	httpClient.Transport = &transport.HeaderRoundTripper{Base: base, Headers: allHeaders}
+	var rt http.RoundTripper = &transport.HeaderRoundTripper{Base: base, Headers: allHeaders}
+	if block2026 {
+		rt = &blockDiscoverTransport{base: rt}
+	}
+	httpClient.Transport = rt
 	return &mcp.StreamableClientTransport{
 		Endpoint:   gatewayHost,
 		HTTPClient: httpClient,
 	}
 }
 
-// blockDiscoverTransport wraps an http.RoundTripper and rejects server/discover
-// requests with 405, forcing the SDK to fall back to the legacy initialize
-// handshake (2025-11-25).
+// blockDiscoverTransport wraps an http.RoundTripper and strips the
+// Mcp-Protocol-Version header, forcing the SDK to fall back to the
+// legacy initialize handshake (2025-11-25).
 type blockDiscoverTransport struct {
 	base http.RoundTripper
 }
 
 func (t *blockDiscoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// strip the 2026 protocol version header so the SDK's server/discover
-	// attempt reaches the legacy handler which rejects it, forcing fallback
-	// to initialize with 2025-11-25
-	req.Header.Del("MCP-Protocol-Version")
+	req.Header.Del("Mcp-Protocol-Version")
 	return t.base.RoundTrip(req)
 }
 
-// NewMCPGatewayLegacyClient creates an MCP client that negotiates 2025-11-25.
-// It blocks server/discover so the SDK falls back to the initialize handshake.
-func NewMCPGatewayLegacyClient(ctx context.Context, gatewayHost string) (*mcp.ClientSession, error) {
-	return NewMCPGatewayLegacyClientWithHeaders(ctx, gatewayHost, nil)
+// NewStatelessClient creates an MCP client that negotiates 2026-07-28
+// via server/discover. Use for tests that explicitly need stateless protocol.
+func NewStatelessClient(ctx context.Context, gatewayHost string) (*mcp.ClientSession, error) {
+	return NewStatelessClientWithHeaders(ctx, gatewayHost, nil)
 }
 
-// NewMCPGatewayLegacyClientWithHeaders creates a 2025-11-25 MCP client with custom headers.
-func NewMCPGatewayLegacyClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcp.ClientSession, error) {
-	allHeaders := map[string]string{"e2e": "client"}
-	maps.Copy(allHeaders, headers)
-	httpClient := e2eHTTPClient(gatewayHost)
-	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
-	base := httpClient.Transport
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	httpClient.Transport = &blockDiscoverTransport{
-		base: &transport.HeaderRoundTripper{Base: base, Headers: allHeaders},
-	}
-
-	t := &mcp.StreamableClientTransport{
-		Endpoint:   gatewayHost,
-		HTTPClient: httpClient,
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-legacy", Version: "0.0.1"}, nil)
-	return client.Connect(ctx, t, nil)
+// NewStatelessClientWithHeaders creates a 2026-07-28 MCP client with custom headers.
+func NewStatelessClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcp.ClientSession, error) {
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-2026", Version: "0.0.1"}, nil)
+	return client.Connect(ctx, buildGatewayTransport(gatewayHost, headers, false), nil)
 }
 
 // NotifyingMCPClient wraps an MCP client session with notification handling
 type NotifyingMCPClient struct {
 	*mcp.ClientSession
-	sessionID string
 }
 
-// NewMCPGatewayClient creates a new MCP client connected to the gateway
-func NewMCPGatewayClient(ctx context.Context, gatewayHost string) (*mcp.ClientSession, error) {
-	return NewMCPGatewayClientWithHeaders(ctx, gatewayHost, nil)
+// NewStatefulClient creates a new MCP client connected to the gateway
+func NewStatefulClient(ctx context.Context, gatewayHost string) (*mcp.ClientSession, error) {
+	return NewStatefulClientWithHeaders(ctx, gatewayHost, nil)
 }
 
-// NewMCPGatewayClientWithHeaders creates a new MCP client with custom headers
-func NewMCPGatewayClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcp.ClientSession, error) {
+// NewStatefulClientWithHeaders creates a new MCP client with custom headers
+func NewStatefulClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "0.0.1"}, nil)
-	return client.Connect(ctx, newGatewayTransport(gatewayHost, headers), nil)
+	return client.Connect(ctx, buildGatewayTransport(gatewayHost, headers, true), nil)
 }
 
-// NewMCPGatewayClientWithNotifications creates an MCP client that reports tools
+// NewStatefulClientWithNotifications creates an MCP client that reports tools
 // and prompts list_changed notifications to notificationFunc by method name.
-func NewMCPGatewayClientWithNotifications(ctx context.Context, gatewayHost string, notificationFunc func(string)) (*NotifyingMCPClient, error) {
+func NewStatefulClientWithNotifications(ctx context.Context, gatewayHost string, notificationFunc func(string)) (*NotifyingMCPClient, error) {
 	notify := func(method string) {
 		if notificationFunc != nil {
 			notificationFunc(method)
@@ -143,21 +125,20 @@ func NewMCPGatewayClientWithNotifications(ctx context.Context, gatewayHost strin
 		},
 	})
 
-	session, err := client.Connect(ctx, newGatewayTransport(gatewayHost, nil), nil)
+	session, err := client.Connect(ctx, buildGatewayTransport(gatewayHost, nil, true), nil)
 	if err != nil {
 		return nil, err
 	}
 
 	return &NotifyingMCPClient{
 		ClientSession: session,
-		sessionID:     session.ID(),
 	}, nil
 }
 
-// NewMCPGatewayClientWithElicitation creates an MCP client with an elicitation handler.
-func NewMCPGatewayClientWithElicitation(ctx context.Context, gatewayHost string, handler func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) (*mcp.ClientSession, error) {
+// NewStatefulClientWithElicitation creates an MCP client with an elicitation handler.
+func NewStatefulClientWithElicitation(ctx context.Context, gatewayHost string, handler func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-elicitation", Version: "0.0.1"}, &mcp.ClientOptions{
 		ElicitationHandler: handler,
 	})
-	return client.Connect(ctx, newGatewayTransport(gatewayHost, nil), nil)
+	return client.Connect(ctx, buildGatewayTransport(gatewayHost, nil, true), nil)
 }

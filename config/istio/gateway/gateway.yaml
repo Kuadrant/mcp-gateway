@@ -82,7 +82,7 @@ spec:
           from: All
     - name: protocol-2026
       hostname: '*.protocol-2026.127-0-0-1.sslip.io'
-      port: 8080
+      port: 8081
       protocol: HTTP
       allowedRoutes:
         namespaces:

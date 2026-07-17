@@ -471,3 +471,80 @@ func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
+
+func TestUsesStatelessProtocol(t *testing.T) {
+	tests := []struct {
+		name     string
+		init     *mcp.InitializeResult
+		expected bool
+	}{
+		{"nil init", nil, false},
+		{"2025", &mcp.InitializeResult{ProtocolVersion: "2025-11-25"}, false},
+		{"2026", &mcp.InitializeResult{ProtocolVersion: "2026-07-28"}, true},
+		{"future version", &mcp.InitializeResult{ProtocolVersion: "2027-01-01"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := &MCPServer{init: tt.init}
+			if got := up.UsesStatelessProtocol(); got != tt.expected {
+				t.Errorf("UsesStatelessProtocol() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSupportedVersions(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []string
+		expected []string
+	}{
+		{"not connected", nil, nil},
+		{"empty", []string{}, nil},
+		{"2025 only", []string{"2025-11-25"}, []string{"2025-11-25"}},
+		{"2026 only", []string{"2026-07-28"}, []string{"2026-07-28"}},
+		{"both", []string{"2025-11-25", "2026-07-28"}, []string{"2025-11-25", "2026-07-28"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := &MCPServer{supportedVersions: tt.versions}
+			got := up.SupportedVersions()
+			if tt.expected == nil {
+				if got != nil {
+					t.Errorf("SupportedVersions() = %v, want nil", got)
+				}
+				return
+			}
+			if len(got) != len(tt.expected) {
+				t.Fatalf("SupportedVersions() len = %d, want %d", len(got), len(tt.expected))
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("SupportedVersions()[%d] = %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSupportedVersions_ReturnsCopy(t *testing.T) {
+	up := &MCPServer{supportedVersions: []string{"2025-11-25"}}
+	got := up.SupportedVersions()
+	got[0] = "mutated"
+	if up.supportedVersions[0] != "2025-11-25" {
+		t.Error("SupportedVersions() should return a copy, not a reference")
+	}
+}
+
+func TestSupportsVersion(t *testing.T) {
+	up := &MCPServer{supportedVersions: []string{"2025-11-25", "2026-07-28"}}
+	if !up.SupportsVersion("2025-11-25") {
+		t.Error("should support 2025-11-25")
+	}
+	if !up.SupportsVersion("2026-07-28") {
+		t.Error("should support 2026-07-28")
+	}
+	if up.SupportsVersion("9999-01-01") {
+		t.Error("should not support unknown version")
+	}
+}

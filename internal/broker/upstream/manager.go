@@ -17,6 +17,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,7 +33,7 @@ const (
 	// legacy initialize to upstreams (the SDK client's fallback proposal),
 	// reported as /status expectedVersion exactly as mark3labs' constant
 	// was. drift on SDK bumps is caught by TestExpectedVersionMatchesSDKProposal.
-	expectedProtocolVersion = "2025-11-25"
+	expectedProtocolVersion = protocol.Version2025
 )
 
 type eventType int

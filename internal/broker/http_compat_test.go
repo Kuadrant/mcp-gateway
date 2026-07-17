@@ -3,6 +3,7 @@ package broker
 // TODO: remove with http_compat.go when we adopt native SDK protocol behaviour.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -574,4 +575,156 @@ func TestToolsListUnpaginated(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, res.NextCursor, "list must not paginate")
 	require.Len(t, res.Tools, total)
+}
+
+func TestProtocolRouter_Dispatch(t *testing.T) {
+	var legacyCalled, statelessCalled bool
+	var legacyPath, statelessPath string
+	var legacyHeader, statelessHeader string
+
+	legacy := &compatHandler{
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			legacyCalled = true
+			legacyPath = r.URL.Path
+			legacyHeader = r.Header.Get("Mcp-Protocol-Version")
+			w.WriteHeader(http.StatusOK)
+		}),
+		broker: &mcpBrokerImpl{
+			logger: logger,
+		},
+	}
+
+	stateless := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		statelessCalled = true
+		statelessPath = r.URL.Path
+		statelessHeader = r.Header.Get("Mcp-Protocol-Version")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router := &protocolRouter{
+		legacy:    legacy,
+		stateless: stateless,
+		logger:    logger.With("component", "test"),
+	}
+
+	reset := func() {
+		legacyCalled, statelessCalled = false, false
+		legacyPath, statelessPath = "", ""
+		legacyHeader, statelessHeader = "", ""
+	}
+
+	cases := []struct {
+		name            string
+		path            string
+		header          string
+		expectLegacy    bool
+		expectPath      string
+		expectHeader    string
+		expectHeaderDel bool
+	}{
+		{
+			name:         "default no header",
+			path:         "/mcp",
+			header:       "",
+			expectLegacy: true,
+			expectPath:   "/mcp",
+		},
+		{
+			name:         "2026 header stateless",
+			path:         "/mcp",
+			header:       "2026-07-28",
+			expectLegacy: false,
+			expectPath:   "/mcp",
+			expectHeader: "2026-07-28",
+		},
+		{
+			name:         "non-2026 header legacy",
+			path:         "/mcp",
+			header:       "2025-11-25",
+			expectLegacy: true,
+			expectPath:   "/mcp",
+		},
+		{
+			name:         "/stateless path override",
+			path:         "/mcp/stateless",
+			header:       "",
+			expectLegacy: false,
+			expectPath:   "/mcp",
+			expectHeader: "2026-07-28",
+		},
+		{
+			name:            "/stateful path override",
+			path:            "/mcp/stateful",
+			header:          "",
+			expectLegacy:    true,
+			expectPath:      "/mcp",
+			expectHeaderDel: true,
+		},
+		{
+			name:            "/stateful overrides header",
+			path:            "/mcp/stateful",
+			header:          "2026-07-28",
+			expectLegacy:    true,
+			expectPath:      "/mcp",
+			expectHeaderDel: true,
+		},
+		{
+			name:         "/stateless overrides non-2026 header",
+			path:         "/mcp/stateless",
+			header:       "2025-11-25",
+			expectLegacy: false,
+			expectPath:   "/mcp",
+			expectHeader: "2026-07-28",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reset()
+
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tc.path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			if tc.header != "" {
+				req.Header.Set("Mcp-Protocol-Version", tc.header)
+			}
+
+			rec := &testRecorder{header: make(http.Header)}
+			router.ServeHTTP(rec, req)
+
+			if tc.expectLegacy {
+				require.True(t, legacyCalled, "legacy handler should be called")
+				require.False(t, statelessCalled, "stateless handler should not be called")
+				require.Equal(t, tc.expectPath, legacyPath, "path should be stripped correctly")
+				if tc.expectHeaderDel {
+					require.Empty(t, legacyHeader, "header should be removed")
+				}
+			} else {
+				require.False(t, legacyCalled, "legacy handler should not be called")
+				require.True(t, statelessCalled, "stateless handler should be called")
+				require.Equal(t, tc.expectPath, statelessPath, "path should be stripped correctly")
+				if tc.expectHeader != "" {
+					require.Equal(t, tc.expectHeader, statelessHeader, "header should be set correctly")
+				}
+			}
+		})
+	}
+}
+
+type testRecorder struct {
+	header     http.Header
+	statusCode int
+	body       bytes.Buffer
+}
+
+func (r *testRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *testRecorder) WriteHeader(status int) {
+	r.statusCode = status
+}
+
+func (r *testRecorder) Write(b []byte) (int, error) {
+	return r.body.Write(b)
 }

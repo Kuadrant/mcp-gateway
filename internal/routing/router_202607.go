@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -30,7 +31,7 @@ func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision
 		trace.WithAttributes(
 			componentAttr,
 			attribute.String("mcp.method.name", req.MCPMethod),
-			attribute.String("protocol.version", "2026-07-28"),
+			attribute.String("protocol.version", protocol.Version2026),
 		),
 	)
 	defer span.End()
