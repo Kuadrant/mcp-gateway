@@ -48,6 +48,7 @@ type cachedUserSession struct {
 
 // FetchUserSpecificTools fetches tools from userSpecificList servers using the
 // caller's session headers and merges them into the result before FilterTools runs.
+// Only servers supporting the client's protocol version are queried.
 func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
 	broker.mcpLock.RLock()
 	servers := broker.userSpecificServers
@@ -57,47 +58,82 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		return
 	}
 
+	clientVersion := protocolVersion2025
+	if headers.Get("MCP-Protocol-Version") == protocolVersion2026 {
+		clientVersion = protocolVersion2026
+	}
+	isStateless := clientVersion == protocolVersion2026
+
+	// filter to servers supporting the client's protocol
+	var matching []userSpecificServer
+	for _, srv := range servers {
+		if broker.ServerSupportsVersion(srv.id, clientVersion) {
+			matching = append(matching, srv)
+		}
+	}
+	if len(matching) == 0 {
+		return
+	}
+
 	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-all",
 		trace.WithAttributes(
-			attribute.Int("mcp.user_specific.server_count", len(servers)),
+			attribute.Int("mcp.user_specific.server_count", len(matching)),
+			attribute.String("mcp.user_specific.client_version", clientVersion),
 		),
 	)
 	defer span.End()
 
-	broker.logger.Debug("fetching user-specific tools", "serverCount", len(servers))
-
-	gatewaySessionID := headers.Get(gatewaySessionHeader)
-	if gatewaySessionID == "" {
-		broker.logger.Error("no gateway session ID for user-specific tool fetch")
-		span.SetStatus(codes.Error, "missing gateway session ID")
-		return
-	}
+	broker.logger.Debug("fetching user-specific tools", "serverCount", len(matching), "clientVersion", clientVersion)
 
 	userHeaders := filterUserHeaders(headers)
 
 	var mu sync.Mutex
 	var allTools []mcp.Tool
 
-	g, gCtx := errgroup.WithContext(ctx)
-	for _, srv := range servers {
-		g.Go(func() error {
-			tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
-			if err != nil {
-				broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
-				return nil // graceful degradation
-			}
-			broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
-			mu.Lock()
-			allTools = append(allTools, tools...)
-			mu.Unlock()
-			return nil
-		})
+	if isStateless {
+		g, gCtx := errgroup.WithContext(ctx)
+		for _, srv := range matching {
+			g.Go(func() error {
+				tools, err := broker.doFetchToolsStateless(gCtx, srv, userHeaders)
+				if err != nil {
+					broker.logger.Error("failed to fetch user-specific tools (stateless)", "server", srv.name, "error", err)
+					return nil
+				}
+				broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
+				mu.Lock()
+				allTools = append(allTools, tools...)
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = g.Wait()
+	} else {
+		gatewaySessionID := headers.Get(gatewaySessionHeader)
+		if gatewaySessionID == "" {
+			broker.logger.Error("no gateway session ID for user-specific tool fetch")
+			span.SetStatus(codes.Error, "missing gateway session ID")
+			return
+		}
+		g, gCtx := errgroup.WithContext(ctx)
+		for _, srv := range matching {
+			g.Go(func() error {
+				tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
+				if err != nil {
+					broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
+					return nil
+				}
+				broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
+				mu.Lock()
+				allTools = append(allTools, tools...)
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = g.Wait()
 	}
-	_ = g.Wait()
 
 	span.SetAttributes(attribute.Int("mcp.user_specific.tools_fetched", len(allTools)))
 
-	// convert value tools to pointers for ListToolsResult
 	for i := range allTools {
 		result.Tools = append(result.Tools, &allTools[i])
 	}
@@ -197,6 +233,80 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	}
 
 	return &fetchResult{tools: validTools, sessionID: session.ID()}, nil
+}
+
+// doFetchToolsStateless creates a fresh connection, lists tools, and closes
+// immediately. no session pool, no caching — each call is independent.
+func (broker *mcpBrokerImpl) doFetchToolsStateless(ctx context.Context, srv userSpecificServer, userHeaders map[string]string) ([]mcp.Tool, error) {
+	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-server-stateless",
+		trace.WithAttributes(
+			attribute.String("mcp.server.name", srv.name),
+			attribute.String("mcp.server.url", srv.url),
+		),
+	)
+	defer span.End()
+
+	fetchCtx, cancel := context.WithTimeout(ctx, broker.userSpecificFetchTimeout)
+	defer cancel()
+
+	httpClient := &http.Client{
+		Transport: &transport.DynamicHeaderRoundTripper{
+			Base:    http.DefaultTransport,
+			Headers: func() map[string]string { return userHeaders },
+		},
+	}
+
+	t := &mcp.StreamableClientTransport{
+		Endpoint:             srv.url,
+		HTTPClient:           httpClient,
+		DisableStandaloneSSE: true,
+	}
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-broker",
+		Version: "0.0.1",
+	}, nil)
+
+	session, err := mcpClient.Connect(fetchCtx, t, nil)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer session.Close()
+
+	toolsResult, err := session.ListTools(fetchCtx, nil)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("list tools: %w", err)
+	}
+
+	valueTools := make([]mcp.Tool, 0, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		if tool != nil {
+			valueTools = append(valueTools, *tool)
+		}
+	}
+
+	validTools, invalids := upstream.ValidateTools(valueTools)
+	if len(invalids) > 0 {
+		switch broker.invalidToolPolicy {
+		case mcpv1.InvalidToolPolicyFilterOut:
+			broker.logger.Error("invalid user-specific tools filtered", "server", srv.name, "count", len(invalids))
+		case mcpv1.InvalidToolPolicyRejectServer:
+			span.SetStatus(codes.Error, "invalid tools")
+			return nil, fmt.Errorf("server %s rejected: %d invalid tools", srv.id, len(invalids))
+		}
+	}
+
+	for i := range validTools {
+		validTools[i].Name = srv.prefix + validTools[i].Name
+		validTools[i].Meta = mcp.Meta{
+			"kuadrant/id": string(srv.id),
+		}
+	}
+
+	span.SetAttributes(attribute.Int("mcp.user_specific.tools_count", len(validTools)))
+	return validTools, nil
 }
 
 // getOrCreateUserSession returns a cached upstream session or creates a new

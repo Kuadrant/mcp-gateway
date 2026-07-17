@@ -62,6 +62,51 @@ func newGatewayTransport(gatewayHost string, headers map[string]string) *mcp.Str
 	}
 }
 
+// blockDiscoverTransport wraps an http.RoundTripper and rejects server/discover
+// requests with 405, forcing the SDK to fall back to the legacy initialize
+// handshake (2025-11-25).
+type blockDiscoverTransport struct {
+	base http.RoundTripper
+}
+
+func (t *blockDiscoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// strip the 2026 protocol version header so the SDK's server/discover
+	// attempt reaches the legacy handler which rejects it, forcing fallback
+	// to initialize with 2025-11-25
+	req.Header.Del("MCP-Protocol-Version")
+	return t.base.RoundTrip(req)
+}
+
+// NewMCPGatewayLegacyClient creates an MCP client that negotiates 2025-11-25.
+// It blocks server/discover so the SDK falls back to the initialize handshake.
+func NewMCPGatewayLegacyClient(ctx context.Context, gatewayHost string) (*mcp.ClientSession, error) {
+	return NewMCPGatewayLegacyClientWithHeaders(ctx, gatewayHost, nil)
+}
+
+// NewMCPGatewayLegacyClientWithHeaders creates a 2025-11-25 MCP client with custom headers.
+func NewMCPGatewayLegacyClientWithHeaders(ctx context.Context, gatewayHost string, headers map[string]string) (*mcp.ClientSession, error) {
+	allHeaders := map[string]string{"e2e": "client"}
+	maps.Copy(allHeaders, headers)
+	httpClient := e2eHTTPClient(gatewayHost)
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+	base := httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	httpClient.Transport = &blockDiscoverTransport{
+		base: &transport.HeaderRoundTripper{Base: base, Headers: allHeaders},
+	}
+
+	t := &mcp.StreamableClientTransport{
+		Endpoint:   gatewayHost,
+		HTTPClient: httpClient,
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-legacy", Version: "0.0.1"}, nil)
+	return client.Connect(ctx, t, nil)
+}
+
 // NotifyingMCPClient wraps an MCP client session with notification handling
 type NotifyingMCPClient struct {
 	*mcp.ClientSession

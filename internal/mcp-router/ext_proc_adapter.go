@@ -330,12 +330,12 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				// use the configured hostname, not the original :authority from the
 				// client request which may include a port. HandleRequestHeaders
 				// already rewrites :authority to this value for Envoy.
-				Authority:       s.RoutingConfig.Load().MCPGatewayExternalHostname,
-				SessionID:       mcpRequest.GetSessionID(),
-				Path:            requestPath,
-				RequestID:       requestID,
-				Body:            body,
-				Parsed:          mcpRequest,
+				Authority: s.RoutingConfig.Load().MCPGatewayExternalHostname,
+				SessionID: mcpRequest.GetSessionID(),
+				Path:      requestPath,
+				RequestID: requestID,
+				Body:      body,
+				Parsed:    mcpRequest,
 			}
 
 			router := s.Router

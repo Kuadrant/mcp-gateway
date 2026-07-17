@@ -1,7 +1,9 @@
 package routing
 
 import (
+	"fmt"
 	"maps"
+	"sort"
 	"strings"
 )
 
@@ -82,6 +84,21 @@ func (b *TableBuilder) Build() *Table {
 	b.brokerTools = nil
 	b.annotations = nil
 	return t
+}
+
+// DumpTools returns a formatted string of all registered tools and their routes.
+func (t *Table) DumpTools() string {
+	names := make([]string, 0, len(t.tools))
+	for name := range t.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	for _, name := range names {
+		r := t.tools[name]
+		fmt.Fprintf(&sb, "  %s → %s (prefix=%q host=%q)\n", name, r.Name, r.Prefix, r.Host)
+	}
+	return sb.String()
 }
 
 // LookupTool finds server route for tool name

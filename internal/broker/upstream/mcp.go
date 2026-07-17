@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -55,6 +56,13 @@ type MCPServer struct {
 	// session connects, leaving no registration gap.
 	notifyMu      sync.RWMutex
 	notifyHandler func(method string)
+
+	// supportedVersions lists all protocol versions this upstream supports.
+	// populated after Connect based on the negotiated version. servers
+	// negotiating 2026-07-28 are assumed to support both that and 2025-11-25
+	// during the transition period; pre-2026 servers support only their
+	// declared version.
+	supportedVersions []string
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided
@@ -275,6 +283,14 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
+	// populate supported versions based on negotiated protocol.
+	// the SDK doesn't expose DiscoverResult.SupportedVersions, so we infer:
+	// - 2026-07-28+ servers are assumed to support both 2026-07-28 and 2025-11-25
+	//   during the transition (the spec encourages backward compat)
+	// default to only the negotiated version; server/discover probing
+	// (future work) will detect servers that support multiple versions
+	up.supportedVersions = []string{up.init.ProtocolVersion}
+
 	up.startNotificationWatcher(ctx, httpC, session)
 
 	// register notification and connection-lost handlers after session is
@@ -387,6 +403,23 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 // version 2026-07-28 or later (stateless, no sessions).
 func (up *MCPServer) UsesStatelessProtocol() bool {
 	return up.init != nil && up.init.ProtocolVersion >= "2026-07-28"
+}
+
+// SupportedVersions returns the list of protocol versions this upstream supports.
+// Returns nil if not yet connected (init is nil).
+func (up *MCPServer) SupportedVersions() []string {
+	if len(up.supportedVersions) == 0 {
+		return nil
+	}
+	// return a copy to prevent mutation
+	result := make([]string, len(up.supportedVersions))
+	copy(result, up.supportedVersions)
+	return result
+}
+
+// SupportsVersion returns true if this upstream supports the given protocol version.
+func (up *MCPServer) SupportsVersion(v string) bool {
+	return slices.Contains(up.supportedVersions, v)
 }
 
 // Ping sends a ping request to the upstream MCP server to check connectivity.

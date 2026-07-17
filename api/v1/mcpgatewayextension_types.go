@@ -19,10 +19,6 @@ type KeyGenerationPolicy string
 // +kubebuilder:validation:Enum=Enabled;Disabled
 type URLElicitationPolicy string
 
-// ProtocolMode selects the MCP protocol version for the gateway instance.
-// +kubebuilder:validation:Enum=Stateful;Stateless
-type ProtocolMode string
-
 // LogLevel controls the broker-router log verbosity. It maps to the broker's
 // --log-level flag using Go's slog level convention: debug=-4, info=0, warn=4, error=8.
 // +kubebuilder:validation:Enum=debug;info;warn;error
@@ -58,11 +54,6 @@ const (
 	URLElicitationEnabled URLElicitationPolicy = "Enabled"
 	// URLElicitationDisabled disables URL-based token elicitation (default)
 	URLElicitationDisabled URLElicitationPolicy = "Disabled"
-
-	// ProtocolModeStateful uses the <= 2025-11-25 MCP protocol (session-based, body-parsed routing).
-	ProtocolModeStateful ProtocolMode = "Stateful"
-	// ProtocolModeStateless uses the >= 2026-07-28 MCP protocol (header-based, stateless routing).
-	ProtocolModeStateless ProtocolMode = "Stateless"
 
 	// LogLevelDebug sets the broker-router --log-level flag to -4
 	LogLevelDebug LogLevel = "debug"
@@ -146,15 +137,6 @@ type MCPGatewayExtensionSpec struct {
 	// The Secret must have the label mcp.kuadrant.io/secret=true.
 	// +optional
 	CACertBundleRef *CACertBundleReference `json:"caCertBundleRef,omitempty"`
-
-	// protocolMode selects the MCP protocol version for this gateway instance.
-	// Stateful: uses the 2025-11-25 protocol or older (session-based, body-parsed routing). Default.
-	// Stateless: uses the 2026-07-28 protocol or later (header-based, stateless routing).
-	// A single gateway instance supports one protocol mode. Deploy separate instances
-	// for mixed client populations.
-	// +optional
-	// +default="Stateful"
-	ProtocolMode ProtocolMode `json:"protocolMode,omitempty"`
 }
 
 // OAuthProtectedResource configures the OAuth protected resource metadata

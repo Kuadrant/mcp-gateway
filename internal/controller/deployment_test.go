@@ -2123,60 +2123,6 @@ func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
 	}
 }
 
-func TestBuildBrokerRouterDeployment_ProtocolMode(t *testing.T) {
-	r := &MCPGatewayExtensionReconciler{
-		BrokerRouterImage: "test-image:v1",
-	}
-
-	tests := []struct {
-		name     string
-		mode     mcpv1.ProtocolMode
-		wantFlag bool
-	}{
-		{
-			name:     "stateless adds flag",
-			mode:     mcpv1.ProtocolModeStateless,
-			wantFlag: true,
-		},
-		{
-			name:     "stateful does not add flag",
-			mode:     mcpv1.ProtocolModeStateful,
-			wantFlag: false,
-		},
-		{
-			name:     "empty (default) does not add flag",
-			mode:     "",
-			wantFlag: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mcpExt := &mcpv1.MCPGatewayExtension{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test",
-					Namespace: "test-ns",
-				},
-				Spec: mcpv1.MCPGatewayExtensionSpec{
-					TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
-						Name:        "my-gateway",
-						Namespace:   "gateway-ns",
-						SectionName: "mcp",
-					},
-					ProtocolMode: tt.mode,
-				},
-			}
-
-			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
-			cmd := dep.Spec.Template.Spec.Containers[0].Command
-			hasFlag := slices.Contains(cmd, "--protocol-mode=stateless")
-			if hasFlag != tt.wantFlag {
-				t.Errorf("--protocol-mode=stateless present = %v, want %v", hasFlag, tt.wantFlag)
-			}
-		})
-	}
-}
-
 func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
 	r := &MCPGatewayExtensionReconciler{
 		BrokerRouterImage: "test-image:v1",

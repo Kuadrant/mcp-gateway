@@ -150,8 +150,12 @@ type mcpBrokerImpl struct {
 	// sessionTerminator cleans up backend session cache on session end
 	sessionTerminator func(sessionID string) (bool, error)
 
-	// statelessMode enables the 2026-07-28 stateless protocol handler
-	statelessMode bool
+	// serverVersions maps upstream server ID to supported protocol versions
+	serverVersions sync.Map // map[config.UpstreamMCPID][]string
+
+	// statefulTools and statelessTools cache pre-filtered tool sets for each protocol version
+	statefulTools  atomic.Pointer[[]*mcp.Tool]
+	statelessTools atomic.Pointer[[]*mcp.Tool]
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -210,13 +214,6 @@ func WithDiscoveryToolThreshold(threshold int) Option {
 }
 
 // WithSessionCache sets the session cache used for user-specific tool fetches
-// WithStatelessMode enables the 2026-07-28 stateless protocol handler
-func WithStatelessMode(enabled bool) Option {
-	return func(mb *mcpBrokerImpl) {
-		mb.statelessMode = enabled
-	}
-}
-
 func WithSessionCache(cache *session.Cache) Option {
 	return func(mb *mcpBrokerImpl) {
 		mb.sessionCache = cache
@@ -310,6 +307,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		mcpBkr.mcpLock.RLock()
 		defer mcpBkr.mcpLock.RUnlock()
 		mcpBkr.refreshRoutingTable()
+		mcpBkr.rebuildProtocolToolCache()
 	}
 	srv.AddSendingMiddleware(mcpBkr.gatewayServer.notifyTargetMiddleware())
 
@@ -388,6 +386,10 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 				if extra := req.GetExtra(); extra != nil {
 					headers = extra.Header
 				}
+
+				// filter by protocol version before user-specific fetches
+				toolsResult.Tools = m.toolsForProtocol(headers)
+
 				var sessionID string
 				if s := req.GetSession(); s != nil {
 					sessionID = s.ID()
@@ -469,6 +471,7 @@ func (m *mcpBrokerImpl) deregisterStaleManagers(ctx context.Context, servers []*
 			m.logger.InfoContext(ctx, "un-register upstream server", "server id", serverID)
 			toStop = append(toStop, man)
 			delete(m.mcpServers, serverID)
+			m.serverVersions.Delete(serverID)
 		}
 	}
 
@@ -482,6 +485,7 @@ func (m *mcpBrokerImpl) deregisterStaleManagers(ctx context.Context, servers []*
 			m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 			toStop = append(toStop, man)
 			delete(m.mcpServers, mcpServer.ID())
+			m.serverVersions.Delete(mcpServer.ID())
 		}
 	}
 	return toStop
@@ -745,4 +749,35 @@ func (m *mcpBrokerImpl) IsReady() bool {
 		}
 	}
 	return false
+}
+
+// ServerSupportsVersion returns true if the given upstream server supports the specified protocol version.
+// Returns false if the server is not found or version info is unavailable. Lazily populates the cache
+// from the manager on first access.
+func (m *mcpBrokerImpl) ServerSupportsVersion(id config.UpstreamMCPID, version string) bool {
+	// try cached value first
+	val, ok := m.serverVersions.Load(id)
+	if ok {
+		versions, ok := val.([]string)
+		if ok {
+			return slices.Contains(versions, version)
+		}
+	}
+
+	// cache miss: query the manager and populate cache
+	m.mcpLock.RLock()
+	mgr, found := m.mcpServers[id]
+	m.mcpLock.RUnlock()
+	if !found {
+		return false
+	}
+
+	versions := mgr.SupportedVersions()
+	if versions == nil {
+		return false
+	}
+
+	// cache for next time
+	m.serverVersions.Store(id, versions)
+	return slices.Contains(versions, version)
 }

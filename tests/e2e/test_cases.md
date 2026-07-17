@@ -427,25 +427,79 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - When a client sends a tools/call request with a body approaching the default `--max-request-body-size` limit (5MB, test with ~1MB), the gateway should forward the full request to the backend without truncation. The ext_proc body phase must handle the complete payload and the backend should receive and process it successfully.
 
-### [Happy,Protocol2026] Test tool call via stateless gateway
+## Dual Protocol Gateway
 
-- When `protocolMode: Stateless` is set on MCPGatewayExtension, a client sends a tools/call request with `mcp-method` and `mcp-name` headers. The gateway routes the request to the correct backend MCP server using header-based routing. The upstream receives the tool call with prefix stripped and returns a successful response.
+### [Happy,DualProtocol] 2026 client sees only stateless backend tools
 
-### [Happy,Protocol2026] Test prompt get via stateless gateway
+- A single gateway has both a 2025-only server (prefix `sf_`) and a 2026-only server (prefix `sl_`) registered. A 2026 client connects and calls `tools/list`. Only `sl_` prefixed tools appear. No `sf_` tools are visible.
 
-- When `protocolMode: Stateless` is set, a client sends a prompts/get request with `mcp-method: prompts/get` and `mcp-name` headers. The gateway routes the request to the correct backend. The upstream receives the prompt request with prefix stripped.
+### [Happy,DualProtocol] 2025 client sees only stateful backend tools
 
-### [Protocol2026] Test header-body mismatch rejection
+- Same gateway setup. A 2025 client connects and calls `tools/list`. Only `sf_` prefixed tools appear. No `sl_` tools are visible.
 
-- When `protocolMode: Stateless` is set, a client sends a tools/call request where the `mcp-name` header disagrees with the body `params.name` field. The gateway returns a JSON-RPC error with code `-32602` and message containing `HeaderMismatch`.
+### [Happy,DualProtocol] 2025 client can call tools on stateful backend
 
-### [Happy] Test default protocolMode preserves existing behavior
+- Same gateway setup. A 2025 client lists tools, then calls `sf_hello_world`. The call succeeds and returns the expected response.
 
-- When MCPGatewayExtension does not specify `protocolMode` (defaults to Stateful), all existing e2e tests pass unchanged. Session management, hairpin initialization, and elicitation continue working.
+### [Happy,DualProtocol] 2026 client can call tools on stateless backend
 
-### [Protocol2026] Test protocolMode switch triggers deployment update
+- Same gateway setup. A 2026 client lists tools, then calls `sl_hello_world`. The call succeeds and returns the expected response.
 
-- When MCPGatewayExtension is updated from `protocolMode: Stateful` to `protocolMode: Stateless`, the mcp-gateway deployment restarts with `--protocol-mode=stateless` in the container command. Reverting to Stateful removes the flag.
+### [DualProtocol] 2025 client sees discover_tools and select_tools
+
+- Same gateway setup. A 2025 client calls `tools/list`. The result includes `discover_tools` and `select_tools` broker meta-tools.
+
+### [DualProtocol] 2026 client does not see discover_tools or select_tools
+
+- Same gateway setup. A 2026 client calls `tools/list`. The result does not include `discover_tools` or `select_tools`.
+
+### [Happy,Protocol2026] server/discover returns capabilities
+
+- A 2026 client connects to the dual-protocol gateway. The SDK auto-negotiates via `server/discover`. The negotiated protocol version is `2026-07-28`.
+
+### [Happy,Protocol2026] tool call without prefix via stateless gateway
+
+- A 2026 server is registered with no prefix. A 2026 client calls `hello_world` directly (no prefix). The call succeeds.
+
+### [Protocol2026] header-body mismatch rejection
+
+- A 2026 client sends a `tools/call` where the `mcp-name` header disagrees with the body `params.name` field. The gateway returns a JSON-RPC error containing `HeaderMismatch`.
+
+### [Protocol2026] unknown tool error
+
+- A 2026 client calls a non-existent tool. The gateway returns an error containing `unknown tool`.
+
+### [Happy,Protocol2026] prompt listing and get via stateless gateway
+
+- A 2026 client lists prompts (prefixed with `sl_`), then calls `prompts/get` on `sl_greeting`. The prompt response contains the expected greeting.
+
+## Version-aware server/discover
+
+### [Happy,DualProtocol] 2025-only gateway negotiates 2025 with SDK client
+
+- Gateway with only 2025 backends. SDK client connects, `server/discover` returns `supportedVersions: ["2025-11-25"]`, client negotiates 2025 naturally. `tools/list` returns 2025 tools.
+
+### [Happy,DualProtocol] Dual-protocol gateway negotiates 2026 with SDK client
+
+- Gateway with both 2025 and 2026 backends. SDK client connects, negotiates 2026. `tools/list` returns only 2026-compatible tools.
+
+## Protocol-specific routes
+
+### [Happy,DualProtocol] /mcp/stateful returns only 2025 tools
+
+- Dual-protocol gateway. Client connects to `/mcp/stateful`. Returns only 2025-compatible tools regardless of client version. `discover_tools` and `select_tools` available.
+
+### [Happy,DualProtocol] /mcp/stateless returns only 2026 tools
+
+- Same gateway. Client connects to `/mcp/stateless`. Returns only 2026-compatible tools. No `discover_tools`/`select_tools`.
+
+### [DualProtocol] /mcp/stateful tools/call routes through 2025 router
+
+- Client connects to `/mcp/stateful`, calls a 2025 tool. Routes through Router202511. Call succeeds.
+
+### [DualProtocol] /mcp/stateless tools/call routes through 2026 router
+
+- Client connects to `/mcp/stateless`, calls a 2026 tool. Routes through Router202607. Call succeeds.
 
 ## Common pitfalls
 

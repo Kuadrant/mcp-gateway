@@ -52,10 +52,6 @@ func (m *mcpBrokerImpl) MCPHandler() http.Handler {
 		broker: m,
 	}
 
-	if !m.statelessMode {
-		return legacyHandler
-	}
-
 	statelessHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return m.MCPServer() },
 		&mcp.StreamableHTTPOptions{

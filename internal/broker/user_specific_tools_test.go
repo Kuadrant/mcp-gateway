@@ -129,12 +129,14 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 
 	cfg := mockServer.configPtr()
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(*cfg)}
 	broker := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(*cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 5 * time.Second,
 	}
+	withStatefulVersions(broker, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing-tool"}},
@@ -149,6 +151,14 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 
 func toUserSpecificServer(cfg config.MCPServer) userSpecificServer {
 	return userSpecificServer{id: cfg.ID(), name: cfg.Name, url: cfg.URL, prefix: cfg.Prefix}
+}
+
+// withStatefulVersions populates serverVersions for test servers so
+// ServerSupportsVersion returns true for 2025-11-25 (stateful).
+func withStatefulVersions(b *mcpBrokerImpl, servers []userSpecificServer) {
+	for _, srv := range servers {
+		b.serverVersions.Store(srv.id, []string{"2025-11-25"})
+	}
 }
 
 // newTestMCPServer returns a test HTTP server that handles MCP initialize and
@@ -223,12 +233,14 @@ func TestFetchUserSpecificTools_FetchesAndMergesTools(t *testing.T) {
 
 	cfg := mockServer.configPtr()
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(*cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(*cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "cached-tool"}},
@@ -266,12 +278,14 @@ func TestFetchUserSpecificTools_GracefulDegradation(t *testing.T) {
 	}
 
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 2 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing"}},
@@ -331,12 +345,14 @@ func TestFetchUserSpecificTools_SessionCaching(t *testing.T) {
 	}
 
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	makeHeaders := func() http.Header {
 		return http.Header{

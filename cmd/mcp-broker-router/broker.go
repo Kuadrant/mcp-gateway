@@ -23,22 +23,15 @@ func (a *app) createBroker() {
 		panic("flag mcp-check-interval cannot be 0 or less seconds")
 	}
 
-	discoveryToolsEnabled := a.brokerCfg.discoveryToolsEnabled
-	if a.brokerCfg.protocolMode == "stateless" {
-		discoveryToolsEnabled = false
-		a.logger.Info("discovery tools disabled in stateless protocol mode (no session for scope store)")
-	}
-
 	brokerOpts := []broker.Option{
 		broker.WithEnforceCapabilityFilter(a.brokerCfg.enforceCapabilityFiltering),
 		broker.WithTrustedHeadersPublicKey(os.Getenv("TRUSTED_HEADER_PUBLIC_KEY")),
 		broker.WithManagerTickerInterval(managerTickerInterval),
 		broker.WithInvalidToolPolicy(invalidToolPolicy),
 		broker.WithElicitationEnabled(a.brokerCfg.enableURLElicitation),
-		broker.WithDiscoveryToolsEnabled(discoveryToolsEnabled),
+		broker.WithDiscoveryToolsEnabled(a.brokerCfg.discoveryToolsEnabled),
 		broker.WithDiscoveryToolThreshold(a.brokerCfg.discoveryToolThreshold),
 		broker.WithSessionCache(a.sessionCache),
-		broker.WithStatelessMode(a.brokerCfg.protocolMode == "stateless"),
 	}
 	if a.jwtMgr != nil {
 		brokerOpts = append(brokerOpts,

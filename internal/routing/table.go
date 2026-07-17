@@ -12,6 +12,7 @@ type RoutingTable interface {
 	LookupPrefix(name string) (*ServerRoute, bool)
 	IsBrokerTool(name string) bool
 	ToolAnnotations(serverID, toolName string) (*ToolAnnotation, bool)
+	DumpTools() string
 }
 
 // ServerRoute identifies the upstream server that handles a tool or prompt.

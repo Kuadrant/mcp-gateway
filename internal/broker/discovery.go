@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
@@ -328,11 +329,25 @@ func (m *mcpBrokerImpl) sendToolsListChanged(sessionID string) {
 }
 
 // getVisibleToolNames returns a set of tool names visible to the current request,
-// after applying auth and virtual server filtering. caller must hold mcpLock.
+// after applying protocol version, auth and virtual server filtering. caller must hold mcpLock.
 func (m *mcpBrokerImpl) getVisibleToolNames(headers http.Header) map[string]struct{} {
 	allTools := m.collectAllPrefixedTools()
 
-	filtered := m.applyAuthorizedCapabilitiesFilter(headers, allTools)
+	// filter by client protocol version
+	clientVersion := protocolVersion2025
+	if headers.Get("MCP-Protocol-Version") == protocolVersion2026 {
+		clientVersion = protocolVersion2026
+	}
+	var protoFiltered []*mcp.Tool
+	for _, t := range allTools {
+		if idVal, ok := t.Meta["kuadrant/id"]; ok {
+			if id, ok := idVal.(string); ok && m.ServerSupportsVersion(config.UpstreamMCPID(id), clientVersion) {
+				protoFiltered = append(protoFiltered, t)
+			}
+		}
+	}
+
+	filtered := m.applyAuthorizedCapabilitiesFilter(headers, protoFiltered)
 	filtered = m.applyVirtualServerFilter(headers, filtered)
 
 	visible := make(map[string]struct{}, len(filtered))

@@ -50,7 +50,6 @@ var managedCommandFlags = []string{
 	"--mcp-router-key",
 	"--enable-url-elicitation",
 	"--log-level",
-	"--protocol-mode",
 }
 
 // managedVolumeNames are the volume names the controller owns and reconciles.
@@ -104,9 +103,6 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 	urlElicitationEnabled := mcpExt.Spec.URLElicitation == mcpv1.URLElicitationEnabled
 	if urlElicitationEnabled {
 		command = append(command, "--enable-url-elicitation")
-	}
-	if mcpExt.Spec.ProtocolMode == mcpv1.ProtocolModeStateless {
-		command = append(command, "--protocol-mode=stateless")
 	}
 	if v, ok := logLevelFlagValues[mcpExt.Spec.LogLevel]; ok {
 		command = append(command, "--log-level="+v)
