@@ -423,6 +423,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 			existingDeployment.Spec.Template.Spec.Volumes,
 		)
 		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
+		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
