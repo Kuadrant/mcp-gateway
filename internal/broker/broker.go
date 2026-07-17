@@ -377,6 +377,14 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 			}
 
 			switch method {
+			case "server/discover":
+				discoverResult, ok := result.(*mcp.DiscoverResult)
+				if ok && discoverResult != nil {
+					if versions := m.computeGatewaySupportedVersions(); versions != nil {
+						discoverResult.SupportedVersions = versions
+					}
+				}
+
 			case "tools/list":
 				toolsResult, ok := result.(*mcp.ListToolsResult)
 				if !ok || toolsResult == nil {

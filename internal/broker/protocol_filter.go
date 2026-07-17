@@ -2,6 +2,7 @@ package broker
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -11,6 +12,29 @@ const (
 	protocolVersion2025 = "2025-11-25"
 	protocolVersion2026 = "2026-07-28"
 )
+
+// computeGatewaySupportedVersions returns the union of protocol versions
+// supported by all registered upstream servers. Used to populate the
+// server/discover response so clients negotiate a version the gateway
+// can actually serve.
+func (m *mcpBrokerImpl) computeGatewaySupportedVersions() []string {
+	seen := make(map[string]struct{})
+	m.serverVersions.Range(func(_, val any) bool {
+		for _, v := range val.([]string) {
+			seen[v] = struct{}{}
+		}
+		return true
+	})
+	if len(seen) == 0 {
+		return nil
+	}
+	versions := make([]string, 0, len(seen))
+	for v := range seen {
+		versions = append(versions, v)
+	}
+	sort.Strings(versions)
+	return versions
+}
 
 // rebuildProtocolToolCache partitions the current gateway server tool list
 // into stateful (2025) and stateless (2026) sets based on each upstream
