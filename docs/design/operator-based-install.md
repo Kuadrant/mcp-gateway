@@ -225,7 +225,7 @@ New logic will be added to the existing controller to take the following actions
 - The deployment, service and main HTTPRoute for MCP Server access via the gateway will now be created and managed by the operator. The HTTPRoute will be created based on the targeted listener hostname. If it is a wildcard host, we will use the subdomain "mcp" by default. If it is not a wildcard the hostname in the HTTPRoute will match the hostname in the listener exactly.
 - The operator will discover the public host and set the router flag `--mcp-gateway-public-host` used to ensure no host header modification. This host will match the HTTPRoute host.
 - Auto set the private host flag `--mcp-gateway-private-host` this will be set to the service name of the gateway and allows hair pinning of initialize requests back through the gateway when a tool/call is made (existing behaviour).
-- Generate a unique internal key for hair pinning requests via the flag `--mcp-router-key` that is used to authenticate the internal hair pinning request is from the same gateway.
+- The router authenticates internal hair-pinning requests with a short-lived JWT (30s lifetime, host-bound) signed by the gateway's HMAC session signing key. No separate router-key flag or secret is needed; the previous `--mcp-router-key` flag has been removed (GHSA-g53w-w6mj-hrpp).
 - Generate the EnvoyFilter and apply it to the correct gateway and port
 - (optional) Generate a key pair for supporting the trusted-header signing. [see](../guides/user-based-tool-filter.md)
 

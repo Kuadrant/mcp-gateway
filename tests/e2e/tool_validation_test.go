@@ -3,7 +3,7 @@
 package e2e
 
 import (
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,7 +25,7 @@ var _ = Describe("Tool Schema Validation", func() {
 
 	AfterEach(func() {
 		if mcpGatewayClient != nil {
-			mcpGatewayClient.Close()
+			_ = mcpGatewayClient.Close()
 			mcpGatewayClient = nil
 		}
 		for _, to := range testResources {
@@ -40,7 +40,7 @@ var _ = Describe("Tool Schema Validation", func() {
 		// property "responseCode" using "type": "int" which is not a valid JSON Schema type
 		registration := NewTestResources("tool-validation", k8sClient).
 			ForInternalService("mcp-custom-response", 9090).
-			WithToolPrefix("custom_resp_").
+			WithPrefix("custom_resp_").
 			Build()
 		testResources = append(testResources, registration.GetObjects()...)
 		registeredServer := registration.Register(ctx)
@@ -52,7 +52,7 @@ var _ = Describe("Tool Schema Validation", func() {
 
 		By("Verifying the invalid tool is NOT served through the gateway")
 		Eventually(func(g Gomega) {
-			toolsList, err := mcpGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(hasToolWithName(toolsList, "custom_resp_custom response code")).To(BeFalse(),

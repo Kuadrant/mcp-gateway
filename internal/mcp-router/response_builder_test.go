@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
+func TestResponseBuilder_WithRequestHeadersResponse(t *testing.T) {
 	rb := NewResponse()
 	headers := []*basepb.HeaderValueOption{
 		{
@@ -25,7 +25,7 @@ func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
 		},
 	}
 
-	rb.WithRequestHeadersReponse(headers)
+	rb.WithRequestHeadersResponse(headers)
 	responses := rb.Build()
 	require.Len(t, responses, 1)
 	require.IsType(t, &eppb.ProcessingResponse_RequestHeaders{}, responses[0].Response)
@@ -39,7 +39,7 @@ func TestResponseBuilder_WithRequestHeadersReponse(t *testing.T) {
 	require.Equal(t, []byte("example.com"), rh.RequestHeaders.Response.HeaderMutation.SetHeaders[0].Header.RawValue)
 }
 
-func TestResponseBuilder_WithRequestBodyHeadersAndBodyReponse(t *testing.T) {
+func TestResponseBuilder_WithRequestBodyHeadersAndBodyResponse(t *testing.T) {
 	rb := NewResponse()
 	headers := []*basepb.HeaderValueOption{
 		{
@@ -51,7 +51,7 @@ func TestResponseBuilder_WithRequestBodyHeadersAndBodyReponse(t *testing.T) {
 	}
 	body := []byte(`{"test":"data"}`)
 
-	rb.WithRequestBodyHeadersAndBodyReponse(headers, body)
+	rb.WithRequestBodyHeadersAndBodyResponse(headers, body)
 	responses := rb.Build()
 	require.Len(t, responses, 1)
 
@@ -139,39 +139,12 @@ func TestResponseBuilder_WithImmediateResponse(t *testing.T) {
 			require.Equal(t, tc.StatusCode, int32(ir.ImmediateResponse.Status.Code))
 			require.Equal(t, []byte(tc.Message), ir.ImmediateResponse.Body)
 			require.Equal(t, "ext-proc error: "+tc.Message, ir.ImmediateResponse.Details)
+			require.NotNil(t, ir.ImmediateResponse.Headers)
+			require.Len(t, ir.ImmediateResponse.Headers.SetHeaders, 1)
+			require.Equal(t, "content-type", ir.ImmediateResponse.Headers.SetHeaders[0].Header.Key)
+			require.Equal(t, []byte("text/plain"), ir.ImmediateResponse.Headers.SetHeaders[0].Header.RawValue)
 		})
 	}
-}
-
-func TestResponseBuilder_WithStreamingResponse(t *testing.T) {
-	rb := NewResponse()
-	headers := []*basepb.HeaderValueOption{
-		{
-			Header: &basepb.HeaderValue{
-				Key:      "content-length",
-				RawValue: []byte("100"),
-			},
-		},
-	}
-	body := []byte(`{"streaming":"data"}`)
-
-	rb.WithStreamingResponse(headers, body)
-	responses := rb.Build()
-	require.Len(t, responses, 1)
-
-	require.IsType(t, &eppb.ProcessingResponse_RequestBody{}, responses[0].Response)
-	rbody := responses[0].Response.(*eppb.ProcessingResponse_RequestBody)
-	require.NotNil(t, rbody.RequestBody)
-	require.NotNil(t, rbody.RequestBody.Response)
-
-	require.NotNil(t, rbody.RequestBody.Response.HeaderMutation)
-	require.Len(t, rbody.RequestBody.Response.HeaderMutation.SetHeaders, 1)
-
-	require.NotNil(t, rbody.RequestBody.Response.BodyMutation)
-	streamedResponse := rbody.RequestBody.Response.BodyMutation.GetStreamedResponse()
-	require.NotNil(t, streamedResponse)
-	require.Equal(t, body, streamedResponse.Body)
-	require.True(t, streamedResponse.EndOfStream)
 }
 
 func TestResponseBuilder_WithDoNothingResponse(t *testing.T) {
@@ -220,7 +193,7 @@ func TestResponseBuilder_ChainedCalls(t *testing.T) {
 		},
 	}
 
-	rb.WithRequestHeadersReponse(headers).
+	rb.WithRequestHeadersResponse(headers).
 		WithImmediateResponse(400, "bad request")
 
 	responses := rb.Build()
@@ -234,7 +207,7 @@ func TestResponseBuilder_EmptyHeaders(t *testing.T) {
 	rb := NewResponse()
 	emptyHeaders := []*basepb.HeaderValueOption{}
 
-	rb.WithRequestHeadersReponse(emptyHeaders)
+	rb.WithRequestHeadersResponse(emptyHeaders)
 
 	responses := rb.Build()
 	require.Len(t, responses, 1)
@@ -250,7 +223,7 @@ func TestResponseBuilder_EmptyBody(t *testing.T) {
 	headers := []*basepb.HeaderValueOption{}
 	emptyBody := []byte{}
 
-	rb.WithRequestBodyHeadersAndBodyReponse(headers, emptyBody)
+	rb.WithRequestBodyHeadersAndBodyResponse(headers, emptyBody)
 
 	responses := rb.Build()
 	require.Len(t, responses, 1)

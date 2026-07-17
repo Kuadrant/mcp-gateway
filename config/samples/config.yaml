@@ -3,19 +3,19 @@ servers:
     url: http://localhost:9001
     hostname: server1.example.com
     enabled: true
-    toolPrefix: "s1_"
+    prefix: "s1_"
   - name: test-server2
     url: http://localhost:9002
     hostname: server2.example.com
     enabled: true
-    toolPrefix: "s2_"
+    prefix: "s2_"
   - name: test-server3
     url: http://localhost:9003
     hostname: server3.example.com
     enabled: true
-    toolPrefix: "s3_"
+    prefix: "s3_"
   - name: test-broken-server
     url: http://localhost:9094
     hostname: broken-server.example.com
     enabled: true
-    toolPrefix: "broken_"
+    prefix: "broken_"

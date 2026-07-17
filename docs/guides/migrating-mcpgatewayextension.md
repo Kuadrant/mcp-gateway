@@ -31,7 +31,7 @@ spec:
 Now:
 
 ```yaml
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: my-mcp-gateway
@@ -79,7 +79,7 @@ The controller now automatically creates an HTTPRoute named `mcp-gateway-route` 
 If you already have a manually created HTTPRoute for the MCP endpoint, you must disable automatic creation to avoid duplicate routes. Set `spec.httpRouteManagement` to `Disabled`:
 
 ```yaml
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: my-mcp-gateway
@@ -166,7 +166,7 @@ spec:
 ### After (spec fields)
 
 ```yaml
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: my-mcp-gateway

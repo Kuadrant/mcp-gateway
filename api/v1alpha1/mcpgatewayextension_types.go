@@ -15,9 +15,14 @@ type HTTPRouteManagementPolicy string
 // +kubebuilder:validation:Enum=Enabled;Disabled
 type KeyGenerationPolicy string
 
-// InvalidToolPolicy controls behavior when upstream MCP tools have invalid schemas
-// +kubebuilder:validation:Enum=FilterOut;RejectServer
-type InvalidToolPolicy string
+// URLElicitationPolicy controls whether URL-based token elicitation is enabled
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type URLElicitationPolicy string
+
+// LogLevel controls the broker-router log verbosity. It maps to the broker's
+// --log-level flag using Go's slog level convention: debug=-4, info=0, warn=4, error=8.
+// +kubebuilder:validation:Enum=debug;info;warn;error
+type LogLevel string
 
 const (
 	// ConditionTypeReady signals if a resource is ready
@@ -45,10 +50,19 @@ const (
 	// KeyGenerationDisabled means the operator does not generate keys
 	KeyGenerationDisabled KeyGenerationPolicy = "Disabled"
 
-	// InvalidToolPolicyFilterOut skips invalid tools and serves valid ones
-	InvalidToolPolicyFilterOut InvalidToolPolicy = "FilterOut"
-	// InvalidToolPolicyRejectServer rejects all tools from a server if any are invalid
-	InvalidToolPolicyRejectServer InvalidToolPolicy = "RejectServer"
+	// URLElicitationEnabled enables URL-based token elicitation and creates a /tokens HTTPRoute
+	URLElicitationEnabled URLElicitationPolicy = "Enabled"
+	// URLElicitationDisabled disables URL-based token elicitation (default)
+	URLElicitationDisabled URLElicitationPolicy = "Disabled"
+
+	// LogLevelDebug sets the broker-router --log-level flag to -4
+	LogLevelDebug LogLevel = "debug"
+	// LogLevelInfo sets the broker-router --log-level flag to 0
+	LogLevelInfo LogLevel = "info"
+	// LogLevelWarn sets the broker-router --log-level flag to 4
+	LogLevelWarn LogLevel = "warn"
+	// LogLevelError sets the broker-router --log-level flag to 8
+	LogLevelError LogLevel = "error"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -64,7 +78,11 @@ type MCPGatewayExtensionSpec struct {
 	PublicHost string `json:"publicHost,omitempty"`
 
 	// privateHost overrides the internal host used for hair-pinning requests
-	// back through the gateway. Defaults to <gateway>-istio.<ns>.svc.cluster.local:<port>.
+	// back through the gateway. Defaults to
+	// <gateway>-<gatewayClassName>.<ns>.svc.cluster.local:<port>, with an https://
+	// scheme prefix when the targeted Gateway listener uses the HTTPS protocol. The
+	// value supplied here is honoured verbatim, so an operator can include a
+	// scheme (e.g. "https://my-gw:443") or pin to a different port.
 	// +optional
 	PrivateHost string `json:"privateHost,omitempty"`
 
@@ -87,12 +105,90 @@ type MCPGatewayExtensionSpec struct {
 	// +default="Enabled"
 	HTTPRouteManagement HTTPRouteManagementPolicy `json:"httpRouteManagement,omitempty"`
 
+	// logLevel controls the broker-router log verbosity.
+	// Maps to the broker's --log-level flag: debug=-4, info=0, warn=4, error=8.
+	// When unset, the operator-wide BROKER_ROUTER_LOG_LEVEL default (if configured) is used.
+	// +optional
+	LogLevel LogLevel `json:"logLevel,omitempty"`
+
 	// sessionStore references a secret for redis-based session storage.
 	// The secret must exist in the MCPGatewayExtension namespace and contain a CACHE_CONNECTION_STRING key.
 	// The value is injected as CACHE_CONNECTION_STRING into the broker-router deployment.
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
+
+	// urlElicitation controls whether URL-based token elicitation is enabled.
+	// Enabled: creates a separate /tokens HTTPRoute and passes --enable-url-elicitation to the broker.
+	// Disabled: no /tokens route is created (default).
+	// +optional
+	// +default="Disabled"
+	URLElicitation URLElicitationPolicy `json:"urlElicitation,omitempty"`
+
+	// oauthProtectedResource configures the OAuth protected resource metadata
+	// served at /.well-known/oauth-protected-resource. When set, the controller
+	// injects the corresponding OAUTH_* env vars into the broker-router deployment.
+	// +optional
+	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
+
+	// caCertBundleRef references a Secret containing a PEM-encoded CA certificate
+	// bundle used as the base trust pool for all upstream MCP server connections.
+	// Per-server caCertSecretRef on MCPServerRegistration appends to this pool.
+	// The Secret must have the label mcp.kuadrant.io/secret=true.
+	// +optional
+	CACertBundleRef *CACertBundleReference `json:"caCertBundleRef,omitempty"`
+}
+
+// OAuthProtectedResource configures the OAuth protected resource metadata
+// served at /.well-known/oauth-protected-resource.
+type OAuthProtectedResource struct {
+	// authorizationServers lists the OAuth authorization server URLs.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:Pattern=`^https?://[^,]+$`
+	// +listType=atomic
+	AuthorizationServers []string `json:"authorizationServers,omitempty"`
+
+	// resourceName is the human-readable name for this resource.
+	// Defaults to "MCP Server".
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// resource is the URI of the protected resource.
+	// Defaults to https://<publicHost>/mcp.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	Resource string `json:"resource,omitempty"`
+
+	// bearerMethodsSupported lists the supported bearer token methods.
+	// Defaults to ["header"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	// +listType=atomic
+	BearerMethodsSupported []string `json:"bearerMethodsSupported,omitempty"`
+
+	// scopesSupported lists the supported OAuth scopes.
+	// Defaults to ["basic"].
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=atomic
+	ScopesSupported []string `json:"scopesSupported,omitempty"`
+}
+
+// CACertBundleReference identifies a Secret containing a PEM-encoded CA bundle.
+type CACertBundleReference struct {
+	// name is the name of the Secret resource.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
+
+	// key is the key within the Secret that contains the CA bundle PEM data.
+	// If not specified, defaults to "ca.crt".
+	// +optional
+	// +default="ca.crt"
+	Key string `json:"key,omitempty"`
 }
 
 // SessionStore references a secret containing a redis connection string for session storage.
@@ -143,6 +239,8 @@ type MCPGatewayExtensionStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPGatewayExtension is deprecated; migrate to mcp.kuadrant.io/v1"
+// +kubebuilder:resource:scope=Namespaced,shortName=mcpge
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
@@ -216,10 +314,6 @@ type MCPGatewayExtensionTargetReference struct {
 	SectionName string `json:"sectionName,omitempty"`
 }
 
-func init() {
-	SchemeBuilder.Register(&MCPGatewayExtension{}, &MCPGatewayExtensionList{})
-}
-
 // SetReadyCondition sets the Ready condition on the MCPGatewayExtension status
 func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&m.Status.Conditions, metav1.Condition{
@@ -231,8 +325,10 @@ func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, r
 	})
 }
 
-// InternalHost returns the internal/private host computed from the targetRef
-func (m *MCPGatewayExtension) InternalHost(port uint32) string {
+// InternalHost returns the internal/private host computed from the targetRef.
+// gatewayClassName is used to derive the Service name created by the Gateway controller,
+// which follows the convention <gateway-name>-<gatewayClassName>.<namespace>.svc.cluster.local.
+func (m *MCPGatewayExtension) InternalHost(port uint32, gatewayClassName string) string {
 	if m.Spec.PrivateHost != "" {
 		return m.Spec.PrivateHost
 	}
@@ -240,21 +336,10 @@ func (m *MCPGatewayExtension) InternalHost(port uint32) string {
 	if gatewayNamespace == "" {
 		gatewayNamespace = m.Namespace
 	}
-	return fmt.Sprintf(m.Spec.TargetRef.Name+"-istio."+gatewayNamespace+".svc.cluster.local:%v", port)
+	return fmt.Sprintf("%s-%s.%s.svc.cluster.local:%v", m.Spec.TargetRef.Name, gatewayClassName, gatewayNamespace, port)
 }
 
 // HTTPRouteDisabled returns true if HTTPRouteManagement is set to Disabled
 func (m *MCPGatewayExtension) HTTPRouteDisabled() bool {
 	return m.Spec.HTTPRouteManagement == HTTPRouteManagementDisabled
-}
-
-// ListenerConfig holds configuration extracted from a Gateway listener.
-// This is an internal type not exposed via CRD.
-type ListenerConfig struct {
-	// port is the port number from the Gateway listener
-	Port uint32 `json:"port,omitempty"`
-	// hostname is the hostname from the Gateway listener (may be empty or a wildcard)
-	Hostname string `json:"hostname,omitempty"`
-	// name is the listener name (sectionName)
-	Name string `json:"name,omitempty"`
 }

@@ -4,19 +4,42 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ServerState defines the desired operational state of an MCPServerRegistration.
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type ServerState string
+
+// ServerState constants define the valid operational states for an MCPServerRegistration.
+const (
+	// ServerStateEnabled indicates the broker should maintain a connection to this server.
+	ServerStateEnabled ServerState = "Enabled"
+	// ServerStateDisabled indicates the broker should not connect to this server and should remove any registered tools.
+	ServerStateDisabled ServerState = "Disabled"
+)
+
+// UserSpecificListPolicy controls whether the broker fetches tools per-user from this server
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type UserSpecificListPolicy string
+
+const (
+	// UserSpecificListEnabled enables per-user tool fetching
+	UserSpecificListEnabled UserSpecificListPolicy = "Enabled"
+	// UserSpecificListDisabled uses the shared cached tool list
+	UserSpecificListDisabled UserSpecificListPolicy = "Disabled"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPServerRegistration is deprecated; migrate to mcp.kuadrant.io/v1"
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpsr
-// +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.toolPrefix",description="Tool prefix for federation"
+// +kubebuilder:printcolumn:name="Prefix",type="string",JSONPath=".spec.prefix",description="Prefix for federation"
 // +kubebuilder:printcolumn:name="Target",type="string",JSONPath=".spec.targetRef.name",description="Target HTTPRoute.  MCP Gateway only supports routes with a single BackendRef"
 // +kubebuilder:printcolumn:name="Path",type="string",JSONPath=".spec.path",description="MCP endpoint path"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status",description="Ready status"
-// +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".status.discoveredTools",description="Number of discovered tools"
+// +kubebuilder:printcolumn:name="Category",type="string",JSONPath=".spec.category",description="Server categories for discovery"
 // +kubebuilder:printcolumn:name="Credentials",type="string",JSONPath=".spec.credentialRef.name"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// MCPServerRegistration defines a collection of MCP (Model Context Protocol) servers to be aggregated by the gateway.
-// It enables discovery and federation of tools from multiple backend MCP servers through HTTPRoute references, providing a declarative way to configure which MCP servers should be accessible through the gateway.
+// MCPServerRegistration registers an upstream MCP server for tool federation through the gateway.
 type MCPServerRegistration struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -35,6 +58,7 @@ type MCPServerRegistration struct {
 
 // MCPServerRegistrationSpec defines the desired state of MCPServerRegistration.
 // It specifies which HTTPRoutes point to MCP servers and how their tools should be federated.
+// +kubebuilder:validation:XValidation:rule="self.userSpecificList != \"Enabled\" || self.prefix != \"\" ",message="prefix is required when userSpecificList is Enabled"
 type MCPServerRegistrationSpec struct {
 	// targetRef specifies an HTTPRoute that points to a backend MCP server.
 	// The referenced HTTPRoute should have a backend service that implements the MCP protocol.
@@ -43,12 +67,13 @@ type MCPServerRegistrationSpec struct {
 	// +required
 	TargetRef TargetReference `json:"targetRef,omitzero"`
 
-	// toolPrefix is the prefix to add to all federated tools from referenced servers.
+	// prefix is the prefix to add to all federated capabilities from referenced servers.
 	// This helps avoid naming conflicts when aggregating tools from multiple sources.
 	// For example, if two servers both provide a 'search' tool, prefixes like 'server1_' and 'server2_' ensure they can coexist as 'server1_search' and 'server2_search'.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="toolPrefix is immutable once set"
-	ToolPrefix string `json:"toolPrefix,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="prefix is immutable once set"
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_]*$`
+	Prefix string `json:"prefix,omitempty"`
 
 	// path specifies the URL path where the MCP server endpoint is exposed.
 	// If not specified, defaults to "/mcp".
@@ -60,8 +85,71 @@ type MCPServerRegistrationSpec struct {
 	// credentialRef references a Secret containing authentication credentials for the MCP server.
 	// The Secret should contain a key with the authentication token or credentials.
 	// The controller will aggregate these credentials and make them available to the broker via environment variables following the pattern: KAGENTI_{MCP_NAME}_CRED
+	// Used exclusively by the broker for tool discovery and session management. Never injected into client tools/call requests.
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// state dictates whether the broker should maintain a connection to this server.
+	// When set to Disabled, the broker will remove any registered tools and stop connecting to the server.
+	// The server can be re-enabled at any time by setting this field back to Enabled.
+	// Defaults to Enabled.
+	// +optional
+	// +default="Enabled"
+	State ServerState `json:"state,omitempty"`
+
+	// caCertSecretRef references a Secret containing a PEM-encoded CA certificate bundle.
+	// The broker uses this CA to verify TLS connections to the upstream MCP server.
+	// The referenced Secret must have the label mcp.kuadrant.io/secret=true.
+	// If key is not specified, defaults to "ca.crt".
+	// +optional
+	CACertSecretRef *CACertSecretReference `json:"caCertSecretRef,omitempty"`
+	// tokenURLElicitation enables per-user token collection via URL elicitation.
+	// When set, the router uses the MCP spec's URLElicitationRequiredError (-32042) flow
+	// to collect tokens from capable clients at tool-call time.
+	// +optional
+	TokenURLElicitation *TokenURLElicitationConfig `json:"tokenURLElicitation,omitempty"`
+
+	// userSpecificList indicates that this MCP server returns different tools
+	// per user based on their credentials. When Enabled, the broker fetches tools
+	// from this server on each tools/list request using the user's session
+	// headers, rather than caching the service account's tool list.
+	// +optional
+	// +default="Disabled"
+	UserSpecificList UserSpecificListPolicy `json:"userSpecificList,omitempty"`
+
+	// category assigns one or more categories to this MCP server for tool discovery.
+	// Used by the discover_tools meta-tool to allow agents to filter servers by category.
+	// +optional
+	// +listType=atomic
+	// +default=["uncategorised"]
+	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	Category []string `json:"category,omitempty"`
+
+	// hint provides a short description of what this MCP server offers.
+	// Returned by the discover_tools meta-tool to help agents decide which tools to select.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Hint string `json:"hint,omitempty"`
+
+	// tags is an optional list of arbitrary labels for this MCP server.
+	// Tags are propagated to the broker and exposed via the gateway's list_tags and filter_tools_by_tags tools.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	Tags []string `json:"tags,omitempty"`
+}
+
+// TokenURLElicitationConfig configures per-user token collection via URL elicitation.
+type TokenURLElicitationConfig struct {
+	// url overrides the default broker token page URL.
+	// When set, users are directed to this external URL (e.g. a Vault UI) instead of the broker's built-in page.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://`
+	URL string `json:"url,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.
@@ -103,6 +191,20 @@ type SecretReference struct {
 	Key string `json:"key,omitempty"`
 }
 
+// CACertSecretReference identifies a Secret containing a PEM-encoded CA certificate bundle.
+type CACertSecretReference struct {
+	// name is the name of the Secret resource.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
+
+	// key is the key within the Secret that contains the CA certificate PEM data.
+	// If not specified, defaults to "ca.crt".
+	// +optional
+	// +default="ca.crt"
+	Key string `json:"key,omitempty"`
+}
+
 // MCPServerRegistrationStatus represents the observed state of the MCPServerRegistration resource.
 // It contains conditions that indicate whether the referenced servers have been successfully discovered and are ready for use.
 type MCPServerRegistrationStatus struct {
@@ -114,10 +216,6 @@ type MCPServerRegistrationStatus struct {
 	// +patchMergeKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
-
-	// discoveredTools is the number of tools discovered from this MCPServerRegistration.
-	// +optional
-	DiscoveredTools int32 `json:"discoveredTools,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -130,7 +228,10 @@ type MCPServerRegistrationList struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPVirtualServer is deprecated; migrate to mcp.kuadrant.io/v1"
 // +kubebuilder:resource:scope=Namespaced,shortName=mcpvs
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Ready condition"
 // +kubebuilder:printcolumn:name="Tools",type="integer",JSONPath=".spec.tools.length()"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
@@ -147,6 +248,10 @@ type MCPVirtualServer struct {
 	// spec defines the desired state of MCPVirtualServer.
 	// +optional
 	Spec MCPVirtualServerSpec `json:"spec,omitempty"`
+
+	// status defines the observed state of MCPVirtualServer.
+	// +optional
+	Status MCPVirtualServerStatus `json:"status,omitempty"`
 }
 
 // MCPVirtualServerSpec defines the desired state of MCPVirtualServer.
@@ -162,6 +267,23 @@ type MCPVirtualServerSpec struct {
 	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	Tools []string `json:"tools,omitempty"`
+
+	// prompts specifies the list of prompt names to expose through this virtual server.
+	// When omitted, all prompts are exposed.
+	// +optional
+	// +listType=atomic
+	Prompts []string `json:"prompts,omitempty"`
+}
+
+// MCPVirtualServerStatus defines the observed state of MCPVirtualServer.
+type MCPVirtualServerStatus struct {
+	// conditions represent the latest available observations of the MCPVirtualServer's state.
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 // +kubebuilder:object:root=true
@@ -171,8 +293,4 @@ type MCPVirtualServerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []MCPVirtualServer `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&MCPServerRegistration{}, &MCPServerRegistrationList{}, &MCPVirtualServer{}, &MCPVirtualServerList{})
 }

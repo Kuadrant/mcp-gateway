@@ -13,4 +13,6 @@ COPY *.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /api-key-server
 
+FROM alpine:latest
+COPY --from=builder /api-key-server /api-key-server
 CMD ["/api-key-server"]

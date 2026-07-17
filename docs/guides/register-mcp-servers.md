@@ -1,11 +1,21 @@
 # MCP Server Registration
 
-You must register your MCP servers to be discovered and routed by the MCP Gateway. To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that routes to your MCP server and an `MCPServerRegistration` resource that references the `HTTPRoute`.
+You must register your MCP servers to be discovered and routed by the MCP Gateway. When a server is registered, the gateway automatically discovers and federates its capabilities (tools and prompts), applying a prefix to avoid name collisions across multiple servers.
+
+## Overview
+
+MCP Gateway supports federating both MCP Tools and MCP Prompts.
+
+- **Discovery**: The gateway's broker automatically discovers available tools and prompts from registered upstream servers.
+- **Prefixing**: To prevent collisions between capabilities with the same name on different servers, the gateway applies the `prefix` defined in the `MCPServerRegistration` to each tool and prompt name (e.g., `greet` becomes `myserver_greet`).
+- **Routing**: When a client calls a tool or requests a prompt, the gateway identifies the target upstream server by the prefix, strips the prefix, and routes the request to the correct server.
+
+To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that routes to your MCP server and an `MCPServerRegistration` resource that references the `HTTPRoute`.
 
 ## Prerequisites
 
 - You installed and configured the MCP Gateway
-- You configured a gateway and `HTTPRoute` for the MCP Gateway
+- Your Gateway has both the `mcp` and `mcps` listeners configured (see [Configure MCP Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md))
 - An MCP server is running in your cluster
 
 ## Procedure
@@ -20,7 +30,7 @@ If you need to create one:
 
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: mcp-extension
@@ -63,7 +73,7 @@ kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test
 
 ## Step 2: Create an HTTPRoute
 
-Create an `HTTPRoute` that routes to your MCP server:
+Create an `HTTPRoute` that routes to your MCP server. The hostname must match the wildcard on the `mcps` listener of your Gateway (e.g. `*.mcp.local`). This is an internal-only hostname used for routing through the gateway and does not need to be publicly resolvable.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -76,8 +86,9 @@ spec:
   parentRefs:
     - name: mcp-gateway
       namespace: gateway-system
+      sectionName: mcps
   hostnames:
-    - 'my-mcp-server.mcp.local'  # Internal routing hostname
+    - 'my-mcp-server.mcp.local'  # must match the mcps listener wildcard
   rules:
     - matches:
         - path:
@@ -95,13 +106,13 @@ Create an `MCPServerRegistration` resource that references the HTTPRoute:
 
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: my-mcp-server
   namespace: mcp-test
 spec:
-  toolPrefix: "myserver_"
+  prefix: "myserver_"
   targetRef:
     group: "gateway.networking.k8s.io"
     kind: "HTTPRoute"
@@ -112,7 +123,7 @@ EOF
 
 ## Step 4: Verify Registration
 
-Wait for the MCPServerRegistration to become ready (the broker needs a moment to connect and discover tools):
+Wait for the MCPServerRegistration to become ready (Ready means the config has been written to the gateway config secret; the broker discovers tools asynchronously after that):
 
 ```bash
 kubectl wait --for=condition=Ready mcpsr/my-mcp-server -n mcp-test --timeout=120s
@@ -124,12 +135,14 @@ Then check the status:
 kubectl get mcpsr -A
 ```
 
-The `READY` column should show `True` and the `TOOLS` column should show the number of tools discovered. For example:
+The `READY` column should show `True`. For example:
 
 ```text
-NAMESPACE   NAME            PREFIX      TARGET               PATH   READY   TOOLS   CREDENTIALS   AGE
-mcp-test    my-mcp-server   myserver_   my-mcp-server-route   /mcp   True    5                     30s
+NAMESPACE   NAME            PREFIX      TARGET               PATH   READY   CATEGORY   CREDENTIALS   AGE
+mcp-test    my-mcp-server   myserver_   my-mcp-server-route   /mcp   True                             30s
 ```
+
+To check tool availability, query the broker's `/status` endpoint.
 
 If the status is not Ready, check the MCPServerRegistration conditions for details:
 
@@ -158,12 +171,65 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
   -H "Content-Type: application/json" \
   -H "mcp-session-id: $SESSION_ID" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
+```
+
+You should now see your MCP server tools in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+
+## Step 6: Test Prompt Discovery
+
+Verify that your MCP server prompts are also available through the gateway:
+
+```bash
+# Use the same SESSION_ID from the previous step
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "prompts/list"}'
+```
+
+You should see your MCP server prompts in the response, also prefixed with your configured `prefix`.
+
+## Step 7: Getting a Prompt
+
+To retrieve a specific prompt, use the `prompts/get` method with the federated (prefixed) name:
+
+```bash
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "prompts/get",
+    "params": {
+      "name": "myserver_gh_pr_review",
+      "arguments": {
+        "pr_number": "42"
+      }
+    }
+  }'
 
 # Clean up
 rm -f /tmp/mcp_headers
 ```
 
-You should now see your MCP server tools in the response, prefixed with your configured `toolPrefix` (e.g., `myserver_`).
+You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+
+## Disabling a Server
+
+You can temporarily disable a registered server without deleting it. Setting `state: Disabled` disconnects the broker from the upstream server and removes its tools and prompts from the gateway.
+
+```bash
+kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Disabled"}}'
+```
+
+The status condition will show `Ready: False` with reason `Disabled`. To re-enable:
+
+```bash
+kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Enabled"}}'
+```
+
+The broker reconnects and restores the server's tools and prompts. No other resources need to be recreated.
 
 ## Next Steps
 

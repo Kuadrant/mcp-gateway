@@ -3,7 +3,7 @@ package controller
 import (
 	"testing"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	istiov1alpha3 "istio.io/api/networking/v1alpha3"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -209,7 +209,7 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 }
 
 func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {
-	mcpExt := &mcpv1alpha1.MCPGatewayExtension{
+	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-ext",
 			Namespace: "test-ns",

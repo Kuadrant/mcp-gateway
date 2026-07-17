@@ -50,13 +50,13 @@ servers:
     url: http://weather.example.com:8080/mcp
     hostname: weather.example.com
     enabled: true
-    toolPrefix: "weather_"
+    prefix: "weather_"
 
   - name: calendar-service
     url: http://calendar.example.com:8080/mcp
     hostname: calendar.example.com
     enabled: true
-    toolPrefix: "cal_"
+    prefix: "cal_"
 ```
 
 **Configuration Fields**:
@@ -64,7 +64,7 @@ servers:
 - `url`: Full URL to the MCP server endpoint (including path)
 - `hostname`: Hostname used for routing decisions
 - `enabled`: Set to `false` to temporarily disable a server
-- `toolPrefix`: Prefix added to all tools from this server (helps avoid naming conflicts)
+- `prefix`: Prefix added to all tools from this server (helps avoid naming conflicts)
 
 Save this as `config/servers.yaml` or any location you prefer.
 

@@ -33,7 +33,7 @@ helm upgrade -i mcp-controller oci://ghcr.io/kuadrant/charts/mcp-gateway \
 ## Step 1: Install MCP Gateway CRDs
 
 ```bash
-export MCP_GATEWAY_VERSION=0.5.1
+export MCP_GATEWAY_VERSION=0.7.1
 kubectl apply -k "https://github.com/kuadrant/mcp-gateway/config/crd?ref=v${MCP_GATEWAY_VERSION}"
 ```
 
@@ -274,10 +274,10 @@ helm upgrade -i team-b-mcp-gateway ./charts/mcp-gateway \
   --set mcpGatewayExtension.gatewayRef.name=team-b-gateway \
   --set mcpGatewayExtension.gatewayRef.namespace=gateway-system \
   --set gateway.nodePort.create=true \
-  --set gateway.nodePort.mcpPort=30471
+  --set gateway.nodePort.mcpPort=30071
 ```
 
-> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30471) to host ports.
+> **Note:** Kind clusters require `extraPortMappings` in the cluster config for NodePorts to be reachable from the host. Your Kind config must map the chosen container ports (30080, 30071) to host ports. Pick NodePorts inside the Kubernetes static subrange (30000-30085 for the default port range) so dynamic NodePort allocation will not collide with them.
 
 ## Next Steps: Register MCP Servers
 
@@ -422,7 +422,7 @@ Create the MCPGatewayExtension to associate the team's namespace with a specific
 
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: team-a-gateway

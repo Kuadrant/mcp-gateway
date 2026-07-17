@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,9 +101,9 @@ func TestSSERewriter_Process(t *testing.T) {
 			w := &sseRewriter{
 				idMap:  m,
 				logger: logger,
-				req: &MCPRequest{
-					serverName:       "test-server",
-					backendSessionID: "test-session",
+				req: &routing.MCPRequest{
+					ServerName:       "test-server",
+					BackendSessionID: "test-session",
 				},
 			}
 
@@ -142,9 +143,9 @@ func TestSSERewriter_Process_RewrittenIDIsValid(t *testing.T) {
 	w := &sseRewriter{
 		idMap:  m,
 		logger: logger,
-		req: &MCPRequest{
-			serverName:       "weather-server",
-			backendSessionID: "session-abc",
+		req: &routing.MCPRequest{
+			ServerName:       "weather-server",
+			BackendSessionID: "session-abc",
 		},
 	}
 
@@ -179,9 +180,9 @@ func TestSSERewriter_Process_MultipleElicitations(t *testing.T) {
 	w := &sseRewriter{
 		idMap:  m,
 		logger: logger,
-		req: &MCPRequest{
-			serverName:       "multi-server",
-			backendSessionID: "session-multi",
+		req: &routing.MCPRequest{
+			ServerName:       "multi-server",
+			BackendSessionID: "session-multi",
 		},
 	}
 
@@ -213,9 +214,9 @@ func TestSSERewriter_Flush(t *testing.T) {
 		w := &sseRewriter{
 			idMap:  m,
 			logger: logger,
-			req: &MCPRequest{
-				serverName:       "test-server",
-				backendSessionID: "test-session",
+			req: &routing.MCPRequest{
+				ServerName:       "test-server",
+				BackendSessionID: "test-session",
 			},
 		}
 
@@ -234,9 +235,9 @@ func TestSSERewriter_Flush(t *testing.T) {
 		w := &sseRewriter{
 			idMap:  m,
 			logger: logger,
-			req: &MCPRequest{
-				serverName:       "test-server",
-				backendSessionID: "test-session",
+			req: &routing.MCPRequest{
+				ServerName:       "test-server",
+				BackendSessionID: "test-session",
 			},
 		}
 
@@ -260,14 +261,44 @@ func TestSSERewriter_Flush(t *testing.T) {
 		w := &sseRewriter{
 			idMap:  m,
 			logger: logger,
-			req: &MCPRequest{
-				serverName:       "test-server",
-				backendSessionID: "test-session",
+			req: &routing.MCPRequest{
+				ServerName:       "test-server",
+				BackendSessionID: "test-session",
 			},
 		}
 
 		flushed := w.Flush(ctx)
 		require.Nil(t, flushed)
+	})
+
+	t.Run("is idempotent across multiple calls", func(t *testing.T) {
+		m, err := idmap.New()
+		require.NoError(t, err)
+		w := &sseRewriter{
+			idMap:  m,
+			logger: logger,
+			req: &routing.MCPRequest{
+				ServerName:       "test-server",
+				BackendSessionID: "test-session",
+			},
+		}
+
+		input := `data: {"jsonrpc":"2.0","method":"elicitation/create","id":1,"params":{}}` + "\n"
+		w.Process(ctx, []byte(input))
+		require.Len(t, w.gatewayIDs, 1)
+		gatewayID := w.gatewayIDs[0]
+
+		// first flush cleans up
+		w.Flush(ctx)
+		require.Empty(t, w.gatewayIDs)
+		_, ok, err := m.Lookup(ctx, gatewayID)
+		require.NoError(t, err)
+		require.False(t, ok)
+
+		// subsequent flush is a no-op; no panic, no state change
+		require.NotPanics(t, func() { w.Flush(ctx) })
+		require.Empty(t, w.gatewayIDs)
+		require.Nil(t, w.buf)
 	})
 }
 
@@ -319,9 +350,9 @@ func TestSSERewriter_MaybeRewriteElicitation(t *testing.T) {
 			w := &sseRewriter{
 				idMap:  m,
 				logger: logger,
-				req: &MCPRequest{
-					serverName:       "test-server",
-					backendSessionID: "test-session",
+				req: &routing.MCPRequest{
+					ServerName:       "test-server",
+					BackendSessionID: "test-session",
 				},
 			}
 

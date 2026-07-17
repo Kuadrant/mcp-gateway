@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 
 WORKDIR /workspace
 
@@ -11,7 +11,7 @@ COPY internal/ internal/
 COPY api/ api/
 
 ARG LDFLAGS=""
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "${LDFLAGS}" -o mcp_gateway cmd/mcp-broker-router/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "${LDFLAGS}" -o mcp_gateway ./cmd/mcp-broker-router/
 
 FROM alpine:3.22.1
 

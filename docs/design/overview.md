@@ -71,7 +71,7 @@ The MCP Discovery Controller is a Kubernetes-based controller that will watch fo
 
 - Watching MCPServerRegistration resources labelled as MCP routes
 - Maintaining a config from the HTTPRoute and the MCPServerRegistration resources
-- Updating the MCP Broker and MCP Router config (configmap) based on discovered MCPServerRegistration resources and the HTTPRoutes it targets.
+- Updating the MCP Broker and MCP Router config (secret) based on discovered MCPServerRegistration resources and the HTTPRoutes it targets.
 - Reporting status of MCPServerRegistrations
 
 

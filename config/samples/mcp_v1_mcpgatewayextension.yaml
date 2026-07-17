@@ -1,0 +1,14 @@
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPGatewayExtension
+metadata:
+  labels:
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/managed-by: kustomize
+  name: mcpgatewayextension-sample
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    namespace: gateway-system
+    sectionName: mcp  # listener name on the Gateway

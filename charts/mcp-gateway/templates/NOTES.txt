@@ -12,13 +12,13 @@
 
 5. Connect MCP servers by creating MCPServerRegistration resources:
   kubectl apply -f - <<EOF
-  apiVersion: mcp.kuadrant.io/v1alpha1
+  apiVersion: mcp.kuadrant.io/v1
   kind: MCPServerRegistration
   metadata:
     name: my-mcp-server
     namespace: {{ .Release.Namespace }}
   spec:
-    toolPrefix: "myserver_"
+    prefix: "myserver_"
     targetRef:
       group: "gateway.networking.k8s.io"
       kind: "HTTPRoute"

@@ -8,7 +8,7 @@ This document captures the main request flows that involve the MCP Gateway.
 ## Table of Contents
 
 - [Components](#components)
-- [High Level Flow](#high-level-flows)
+- [High Level Flow](#high-level-flow)
 - [Initialize](#initialize)
 - [Aggregated Tools/List](#aggregated-toolslist)
 - [Tools/Call (no auth)](#toolscall-no-auth)
@@ -85,7 +85,7 @@ sequenceDiagram
   note left of MCPBroker: list is built via discovery phase. <br/> The MCPBroker applies filtering to this list. <br/> via signed x-authorised-tools header <br/> and client specified x-mcp-virtualserver headers.
 ```
 
-## Tools/Call
+## Tools/Call (no auth)
 
 ```mermaid
 sequenceDiagram

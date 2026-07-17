@@ -2,12 +2,12 @@ package controller
 
 import (
 	"context"
-	"errors"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,14 +25,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	mcpv1alpha1 "github.com/Kuadrant/mcp-gateway/api/v1alpha1"
-	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// errServerNotPresent indicates the MCP server config has not been loaded by the gateway yet
-var errServerNotPresent = errors.New("mcp server is not present in gateway yet")
 
 const (
 
@@ -41,10 +37,20 @@ const (
 	ManagedSecretLabel = "mcp.kuadrant.io/secret" //nolint:gosec // not a credential, just a label name
 	// ManagedSecretValue is the required value for the managed secret label
 	ManagedSecretValue = "true"
+	// maxCACertSize is the maximum allowed size for CA certificate PEM data (64 KiB)
+	// single CA cert; see maxCACertBundleSize for multi-cert bundles
+	maxCACertSize = 64 * 1024
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
 	ProgrammedHTTPRouteIndex = "status.hasProgrammedCondition"
+
+	// conditionReasonReady is the reason used when the MCPServerRegistration is ready
+	conditionReasonReady = "Ready"
+	// conditionReasonNotReady is the reason used when the MCPServerRegistration is not ready
+	conditionReasonNotReady = "NotReady"
+	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
+	conditionReasonDisabled = "Disabled"
 )
 
 // ServerInfo holds server information
@@ -52,7 +58,7 @@ type ServerInfo struct {
 	ID                 string
 	Endpoint           string
 	Hostname           string
-	ToolPrefix         string
+	Prefix             string
 	HTTPRouteName      string
 	HTTPRouteNamespace string
 	Credential         string
@@ -88,7 +94,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	logger := logf.FromContext(ctx).WithValues("resource", "mcpserverregistration")
 	logger.V(1).Info("Reconciling", "mcpregistrationname", req.Name, "namespace", req.Namespace)
 
-	mcpsr := &mcpv1alpha1.MCPServerRegistration{}
+	mcpsr := &mcpv1.MCPServerRegistration{}
 	if err := r.Get(ctx, req.NamespacedName, mcpsr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -135,7 +141,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -149,7 +155,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// find gateways that have accepted the httproute
 	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -163,7 +169,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -175,11 +181,12 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
+	hasGatewayCACertBundle := false
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
 			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
-			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -189,7 +196,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 		if len(mcpGatewayExtensions) == 0 {
 			// this is not an error so we are going to exit
-			if err := r.updateStatus(ctx, mcpsr, false, "no valid mcpgatewayextensions configured", 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -206,12 +213,25 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
+			if vext.Spec.CACertBundleRef != nil {
+				hasGatewayCACertBundle = true
+			}
 		}
 	}
 
-	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
+	if len(validNamespaces) == 0 {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no matching mcpgatewayextensions for attached listener"); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr, hasGatewayCACertBundle)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -222,9 +242,8 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
-			if err := r.updateStatus(ctx, mcpsr, false, err.Error(), 0); err != nil {
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
-					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
 				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
@@ -233,19 +252,28 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	// Everything is in place now so we will now poll the gateway to check the registration status of the mcpserver
-	// NOTE We loop here but there should only ever be one
-	for _, mcpExtensionNS := range validNamespaces {
-		if err := r.setMCPServerRegistrationStatus(ctx, mcpExtensionNS, mcpsr, string(mcpServerconfig.ID())); err != nil {
-			if errors.Is(err, errServerNotPresent) {
-				logger.V(1).Info("config not loaded in gateway yet. Will retry status check", "mcpserverregistration", mcpsr.Name)
-				// no point hammering the gateway when we know we are waiting for the config to be loaded
-				return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	// config written, set status to ready
+	if mcpsr.Spec.State == mcpv1.ServerStateDisabled {
+		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonDisabled, "server is disabled"); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
-			logger.Error(err, "failed to set mcpserverregistration status", "mcpserverregistration", mcpsr.Name)
-			// TODO: handle persistent failures with specific error types
-			return reconcile.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 		}
+	} else {
+		if err := r.updateStatus(ctx, mcpsr, true, conditionReasonReady, "config written successfully"); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		}
+	}
+
+	if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed: HTTPRoute status update failed %w", err)
 	}
 
 	return reconcile.Result{}, nil
@@ -253,7 +281,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 }
 
 // TODO: share this format with the broker package
-func mcpServerName(mcp *mcpv1alpha1.MCPServerRegistration) string {
+func mcpServerName(mcp *mcpv1.MCPServerRegistration) string {
 	return fmt.Sprintf(
 		"%s/%s",
 		mcp.Namespace,
@@ -292,7 +320,7 @@ func (r *MCPReconciler) findValidGatewaysForMCPServer(ctx context.Context, targe
 	return validGateways, nil
 }
 
-func (r *MCPReconciler) getTargetHTTPRoute(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration) (*gatewayv1.HTTPRoute, error) {
+func (r *MCPReconciler) getTargetHTTPRoute(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) (*gatewayv1.HTTPRoute, error) {
 	namespaceName := types.NamespacedName{Namespace: mcpsr.Namespace, Name: mcpsr.Spec.TargetRef.Name}
 	logger := logf.FromContext(ctx).WithValues("method", "getTargetHTTPRoute")
 	logger.V(1).Info("httproute target ", "namespacename ", namespaceName)
@@ -313,60 +341,7 @@ func (r *MCPReconciler) getTargetGatewaysFromParentRef(ctx context.Context, pare
 	return g, nil
 }
 
-// setMCPServerRegistrationStatus polls the broker to check registration status and updates the MCPServerRegistration status
-func (r *MCPReconciler) setMCPServerRegistrationStatus(ctx context.Context, mcpGatewayExtNS string, mcpsr *mcpv1alpha1.MCPServerRegistration, serverID string) error {
-	log := logf.FromContext(ctx)
-	log.V(1).Info("setMCPServerRegistrationStatus", "mcpregistrationname", mcpsr.Name, "valid gateway extension namespace", mcpGatewayExtNS)
-
-	validator := NewServerValidator(r.Client)
-	// TODO this currently lists all servers in the extension
-	statusResponse, err := validator.ValidateServers(ctx, mcpGatewayExtNS)
-	if err != nil {
-		log.Error(err, "Failed to validate server status via broker")
-		ready, message := false, fmt.Sprintf("Validation failed: %v", err)
-		if err := r.updateStatus(ctx, mcpsr, ready, message, 0); err != nil {
-			log.Error(err, "Failed to update status")
-			return err
-		}
-		return err
-	}
-
-	var gatewayServerStatus upstream.ServerValidationStatus
-	for _, sr := range statusResponse.Servers {
-		log.Info("server response ", "id", sr.ID, "controller id ", serverID)
-		if sr.ID == serverID {
-			gatewayServerStatus = sr
-			break
-		}
-	}
-
-	log.Info("server status ", "mcpregistrationname", mcpsr.Name, "status", gatewayServerStatus)
-	// if there is an id that matches then the gateway is registering the mcp
-	if gatewayServerStatus.ID != "" {
-		if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, gatewayServerStatus.Message, int32(gatewayServerStatus.TotalTools)); err != nil { //nolint:gosec // tool count won't overflow int32
-			log.Error(err, "Failed to update status")
-			return err
-		}
-
-		if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
-			log.Error(err, "Failed to update HTTPRoute status")
-		}
-		if !gatewayServerStatus.Ready {
-			return errServerNotPresent
-		}
-		log.V(1).Info("server is ready")
-		return nil
-	}
-	// otherwise it hasn't picked up the config yet
-
-	if err := r.updateStatus(ctx, mcpsr, gatewayServerStatus.Ready, errServerNotPresent.Error(), 0); err != nil {
-		return err
-	}
-
-	return errServerNotPresent
-}
-
-func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1alpha1.MCPServerRegistration) (*config.MCPServer, error) {
+func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1.MCPServerRegistration, hasGatewayCACertBundle bool) (*config.MCPServer, error) {
 	if mcpsr.DeletionTimestamp != nil {
 		// don't add deleting mcpserver
 		return nil, fmt.Errorf("cant generate config for deleting server %s/%s", mcpsr.Namespace, mcpsr.Name)
@@ -376,14 +351,39 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		return nil, err
 	}
 
+	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
+	// if a CA cert is configured (per-server or gateway-level), the upstream must be HTTPS
+	endpoint := serverInfo.Endpoint
+	if mcpsr.Spec.CACertSecretRef != nil || hasGatewayCACertBundle {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse endpoint URL %q: %w", endpoint, err)
+		}
+		if strings.EqualFold(u.Scheme, "http") {
+			u.Scheme = "https"
+			endpoint = u.String()
+		}
+	}
+
+	userSpecificListEnabled := mcpsr.Spec.UserSpecificList == mcpv1.UserSpecificListEnabled
+
 	serverConfig := config.MCPServer{
-		Name:       serverName,
-		URL:        serverInfo.Endpoint,
-		Hostname:   serverInfo.Hostname,
-		ToolPrefix: mcpsr.Spec.ToolPrefix,
-		// TODO implement add to MCPServerRegistration CRD
-		Enabled: true,
+		Name:             serverName,
+		URL:              endpoint,
+		Hostname:         serverInfo.Hostname,
+		Prefix:           mcpsr.Spec.Prefix,
+		State:            string(mcpsr.Spec.State),
+		Category:         append([]string(nil), mcpsr.Spec.Category...),
+		Hint:             mcpsr.Spec.Hint,
+		UserSpecificList: userSpecificListEnabled,
+		Tags:             append([]string(nil), mcpsr.Spec.Tags...),
+	}
+
+	if mcpsr.Spec.TokenURLElicitation != nil {
+		serverConfig.TokenURLElicitation = &config.TokenURLElicitationConfig{
+			URL: mcpsr.Spec.TokenURLElicitation.URL,
+		}
 	}
 
 	// add credential env var if configured
@@ -413,6 +413,42 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		serverConfig.Credential = string(val)
 
 	}
+
+	if mcpsr.Spec.CACertSecretRef != nil {
+		caSecret := &corev1.Secret{}
+		err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
+			Name:      mcpsr.Spec.CACertSecretRef.Name,
+			Namespace: mcpsr.Namespace,
+		}, caSecret)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("CA certificate secret %s not found", mcpsr.Spec.CACertSecretRef.Name)
+			}
+			return nil, fmt.Errorf("failed to get CA certificate secret: %w", err)
+		}
+
+		if caSecret.Labels == nil || caSecret.Labels[ManagedSecretLabel] != ManagedSecretValue {
+			return nil, fmt.Errorf("CA certificate secret %s is missing required label %s=%s",
+				mcpsr.Spec.CACertSecretRef.Name, ManagedSecretLabel, ManagedSecretValue)
+		}
+
+		key := mcpsr.Spec.CACertSecretRef.Key
+		if key == "" {
+			key = "ca.crt"
+		}
+		val, ok := caSecret.Data[key]
+		if !ok {
+			return nil, fmt.Errorf("CA certificate secret %s missing key %s", mcpsr.Spec.CACertSecretRef.Name, key)
+		}
+		if len(val) > maxCACertSize {
+			return nil, fmt.Errorf("CA certificate data in secret %s exceeds maximum size (%d bytes)", mcpsr.Spec.CACertSecretRef.Name, maxCACertSize)
+		}
+		if err := validateCACertPEM(val); err != nil {
+			return nil, fmt.Errorf("CA certificate in secret %s is invalid: %w", mcpsr.Spec.CACertSecretRef.Name, err)
+		}
+		serverConfig.CACert = string(val)
+	}
+
 	return &serverConfig, nil
 }
 
@@ -495,7 +531,10 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 	return endpoint, routingHostname
 }
 
-// determineProtocol determines the protocol (http/https) for the service endpoint
+// determineProtocol determines the protocol (http/https) for the service endpoint.
+// For external services it checks the appProtocol on the matching port.
+// For internal services it defaults to http; TLS upstreams are handled by the
+// caCertSecretRef or caCertBundleRef scheme upgrade in buildMCPServerConfig.
 func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
 	if isExternal {
 		for _, port := range service.Spec.Ports {
@@ -506,11 +545,6 @@ func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *core
 				break
 			}
 		}
-		return "http"
-	}
-
-	if route.UsesHTTPS() {
-		return "https"
 	}
 	return "http"
 }
@@ -527,7 +561,7 @@ func isValidHostname(hostname string) bool {
 	return u.Host == hostname
 }
 
-func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1alpha1.MCPServerRegistration) error {
+func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
 	targetRef := mcpsr.Spec.TargetRef
 
 	if targetRef.Kind != "HTTPRoute" {
@@ -580,22 +614,22 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1a
 
 func (r *MCPReconciler) updateStatus(
 	ctx context.Context,
-	mcpsr *mcpv1alpha1.MCPServerRegistration,
+	mcpsr *mcpv1.MCPServerRegistration,
 	ready bool,
+	reason string,
 	message string,
-	toolCount int32,
 ) error {
 	condition := metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionFalse,
-		Reason:             "NotReady",
+		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
 	}
 
 	if ready {
 		condition.Status = metav1.ConditionTrue
-		condition.Reason = "Ready"
+		condition.Reason = conditionReasonReady
 	}
 
 	statusChanged := false
@@ -603,12 +637,9 @@ func (r *MCPReconciler) updateStatus(
 	for i, cond := range mcpsr.Status.Conditions {
 		if cond.Type == condition.Type {
 			// only update LastTransitionTime if the STATUS actually changed (True->False or False->True)
-			// this ensures we track the time when we first entered a state, not when messages change
 			if cond.Status == condition.Status {
-				// status hasn't changed, preserve existing LastTransitionTime
 				condition.LastTransitionTime = cond.LastTransitionTime
 			}
-			// check if anything actually changed
 			if cond.Status != condition.Status || cond.Reason != condition.Reason || cond.Message != condition.Message {
 				statusChanged = true
 			}
@@ -621,12 +652,7 @@ func (r *MCPReconciler) updateStatus(
 		mcpsr.Status.Conditions = append(mcpsr.Status.Conditions, condition)
 		statusChanged = true
 	}
-	if mcpsr.Status.DiscoveredTools != toolCount {
-		mcpsr.Status.DiscoveredTools = toolCount
-		statusChanged = true
-	}
 
-	// only update if something actually changed
 	if !statusChanged {
 		return nil
 	}
@@ -645,7 +671,7 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 	}
 
 	controller := ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPServerRegistration{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&mcpv1.MCPServerRegistration{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForHTTPRoute),
@@ -661,7 +687,7 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 			})),
 		).
 		Watches(
-			&mcpv1alpha1.MCPGatewayExtension{},
+			&mcpv1.MCPGatewayExtension{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForMCPGatewayExtension),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		)
@@ -691,8 +717,8 @@ func setupIndexProgrammedHTTPRoutes(ctx context.Context, indexer client.FieldInd
 }
 
 func setupIndexMCPRegistrationToHTTPRoute(ctx context.Context, indexer client.FieldIndexer) error {
-	if err := indexer.IndexField(ctx, &mcpv1alpha1.MCPServerRegistration{}, HTTPRouteIndex, func(rawObj client.Object) []string {
-		mcpsr := rawObj.(*mcpv1alpha1.MCPServerRegistration)
+	if err := indexer.IndexField(ctx, &mcpv1.MCPServerRegistration{}, HTTPRouteIndex, func(rawObj client.Object) []string {
+		mcpsr := rawObj.(*mcpv1.MCPServerRegistration)
 		targetRef := mcpsr.Spec.TargetRef
 		if targetRef.Kind == "HTTPRoute" {
 			namespace := targetRef.Namespace
@@ -714,7 +740,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Conte
 	log := logf.FromContext(ctx).WithValues("HTTPRoute", httpRoute.Name, "namespace", httpRoute.Namespace)
 
 	indexKey := httpRouteIndexValue(httpRoute.Namespace, httpRoute.Name)
-	mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+	mcpsrList := &mcpv1.MCPServerRegistrationList{}
 	if err := r.List(ctx, mcpsrList, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
 		log.Error(err, "Failed to list MCPServerRegistrations using index")
 		return nil
@@ -736,13 +762,44 @@ func (r *MCPReconciler) findMCPServerRegistrationsForHTTPRoute(ctx context.Conte
 	return requests
 }
 
+// validateCACertPEM checks that the data contains at least one valid PEM-encoded certificate.
+func validateCACertPEM(data []byte) error {
+	rest := data
+	found := false
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return fmt.Errorf("unexpected PEM block type %q, expected CERTIFICATE", block.Type)
+		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return fmt.Errorf("failed to parse certificate: %w", err)
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("no valid PEM certificate blocks found")
+	}
+	return nil
+}
+
+// mcpsrReferencesSecret checks whether a MCPServerRegistration references the named secret
+// via either credentialRef or caCertSecretRef.
+func mcpsrReferencesSecret(spec mcpv1.MCPServerRegistrationSpec, secretName string) bool {
+	return (spec.CredentialRef != nil && spec.CredentialRef.Name == secretName) ||
+		(spec.CACertSecretRef != nil && spec.CACertSecretRef.Name == secretName)
+}
+
 // findMCPServerRegistrationsForSecret finds MCPServerRegistrations referencing the given secret
 func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
 	log := logf.FromContext(ctx).WithValues("Secret", secret.Name, "namespace", secret.Namespace)
 
 	// list mcpservers in same namespace
-	mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+	mcpsrList := &mcpv1.MCPServerRegistrationList{}
 	if err := r.List(ctx, mcpsrList, client.InNamespace(secret.Namespace)); err != nil {
 		log.Error(err, "Failed to list MCPServerRegistrations")
 		return nil
@@ -750,8 +807,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 	log.Info("findMCPServerRegistrationsForSecret", "total mcpserverregistrations", len(mcpsrList.Items))
 	var requests []reconcile.Request
 	for _, mcpsr := range mcpsrList.Items {
-		// check if references this secret
-		if mcpsr.Spec.CredentialRef != nil && mcpsr.Spec.CredentialRef.Name == secret.Name {
+		if mcpsrReferencesSecret(mcpsr.Spec, secret.Name) {
 			log.Info("findMCPServerRegistrationsForSecret", "requeue", mcpsr.Name)
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -772,7 +828,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 // changes (created, updated, deleted), the associated MCPServerRegistrations need to be reconciled
 // to ensure their config is written to the correct namespaces.
 func (r *MCPReconciler) findMCPServerRegistrationsForMCPGatewayExtension(ctx context.Context, obj client.Object) []reconcile.Request {
-	mcpExt := obj.(*mcpv1alpha1.MCPGatewayExtension)
+	mcpExt := obj.(*mcpv1.MCPGatewayExtension)
 	logger := logf.FromContext(ctx).WithValues("MCPGatewayExtension", mcpExt.Name, "namespace", mcpExt.Namespace)
 
 	// get the gateway this extension targets
@@ -809,7 +865,7 @@ func (r *MCPReconciler) findMCPServerRegistrationsForMCPGatewayExtension(ctx con
 			if string(parentRef.Name) == gateway.Name && parentNs == gateway.Namespace {
 				// find MCPServerRegistrations targeting this HTTPRoute
 				indexKey := httpRouteIndexValue(httpRoute.Namespace, httpRoute.Name)
-				mcpsrList := &mcpv1alpha1.MCPServerRegistrationList{}
+				mcpsrList := &mcpv1.MCPServerRegistrationList{}
 				if err := r.List(ctx, mcpsrList, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
 					logger.Error(err, "Failed to list MCPServerRegistrations for HTTPRoute",
 						"HTTPRoute", httpRoute.Name, "namespace", httpRoute.Namespace)

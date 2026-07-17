@@ -33,6 +33,8 @@ patches:
         path: /subjects/0/namespace
         value: mcp-system
   # use locally-built broker image in CI (kustomize images: only patches image: fields)
+  # and enable debug logging on the controller and the broker-router it deploys,
+  # so CI needs no post-deploy patches and rollouts to turn it on
   - target:
       group: apps
       version: v1
@@ -48,6 +50,11 @@ patches:
           spec:
             containers:
               - name: mcp-controller
+                command:
+                  - ./mcp_controller
+                  - --log-level=-4
                 env:
                   - name: RELATED_IMAGE_ROUTER_BROKER
                     value: ghcr.io/kuadrant/mcp-gateway:latest
+                  - name: BROKER_ROUTER_LOG_LEVEL
+                    value: "-4"

@@ -6,7 +6,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -33,7 +33,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}
 	})
 
-	It("[Happy] MCPGatewayExtension with invalid sectionName is rejected", func() {
+	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", Serial, func() {
 		// Use TestServerNameSpace (mcp-test) which doesn't have an existing MCPGatewayExtension
 		// We need to create a ReferenceGrant first to allow cross-namespace reference
 		By("Creating a ReferenceGrant to allow cross-namespace reference")
@@ -64,7 +64,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("listener"))
 	})
 
-	It("[Happy] Second MCPGatewayExtension in same namespace is rejected", func() {
+	It("[Full] Second MCPGatewayExtension in same namespace is rejected", Serial, func() {
 		// The default MCPGatewayExtension in SystemNamespace (mcp-system) is already running
 		// Creating a second one in the same namespace should fail
 
@@ -89,7 +89,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("already has MCPGatewayExtension"))
 	})
 
-	It("[Happy] MCPGatewayExtension targeting non-existent Gateway should report invalid status", func() {
+	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", Serial, func() {
 		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", TestServerNameSpace).
 			WithTarget("non-existent-gateway", GatewayNamespace).
@@ -111,8 +111,8 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("invalid"))
 	})
 
-	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", func() {
-		// Note: The existing MCPGatewayExtension in mcp-system already owns the gateway.
+	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", Serial, func() {
+		// Note: The existing MCPGatewayExtension in SystemNamespace (mcp-system) already owns the gateway.
 		// After adding a ReferenceGrant, this MCPGatewayExtension will get a conflict status
 		// because only one MCPGatewayExtension can own a gateway (the oldest one wins).
 		By("Creating an MCPGatewayExtension in mcp-test namespace targeting Gateway in gateway-system without ReferenceGrant")
@@ -136,7 +136,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		testResources = append(testResources, refGrant)
 		Expect(k8sClient.Create(ctx, refGrant)).To(Succeed())
 
-		By("Verifying MCPGatewayExtension gets conflict status (existing mcp-system MCPGatewayExtension owns the gateway)")
+		By("Verifying MCPGatewayExtension gets conflict status (existing mcp-system-extension MCPGatewayExtension owns the gateway)")
 		Eventually(func(g Gomega) {
 			err := VerifyMCPGatewayExtensionNotReadyWithReason(ctx, k8sClient, mcpExt.Name, mcpExt.Namespace, "Invalid")
 			g.Expect(err).NotTo(HaveOccurred())
@@ -196,21 +196,21 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			e2e1Client *NotifyingMCPClient
 			clientErr  error
 		)
-		Eventually(func(g Gomega) {
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
+		Eventually(func(_ Gomega) {
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
 			Expect(clientErr).Error().NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 
 		By("Verifying gateway is accessible")
 		Eventually(func(g Gomega) {
-			toolsList, err := e2e1Client.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := e2e1Client.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Closing the MCP client before deleting MCPGatewayExtension")
-		e2e1Client.Close()
+		_ = e2e1Client.Close()
 
 		By("Deleting the MCPGatewayExtension")
 		ext := e2e1Setup.GetExtension()
@@ -254,13 +254,15 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Re-establishing MCP client connection")
-		e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
-		Expect(clientErr).Error().NotTo(HaveOccurred())
-		defer e2e1Client.Close()
+		Eventually(func(g Gomega) {
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
+			g.Expect(clientErr).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		defer func() { _ = e2e1Client.Close() }()
 
 		By("Verifying gateway is accessible again")
 		Eventually(func(g Gomega) {
-			toolsList, err := e2e1Client.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := e2e1Client.ListTools(ctx, nil)
 			g.Expect(err).Error().NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
@@ -306,7 +308,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Creating MCPServerRegistration for team A (targeting mcp-gateway)")
 		teamAResources := NewTestResources("team-a-server", k8sClient).
-			WithToolPrefix(teamAPrefix).
+			WithPrefix(teamAPrefix).
 			ForInternalService("mcp-test-server1", 9090).
 			WithParentGateway(GatewayName, GatewayNamespace).
 			Build()
@@ -316,7 +318,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for team B (targeting e2e-1 gateway)")
 		teamBResources := NewTestResources("team-b-server", k8sClient).
 			InNamespace(e2e1ExtNamespace).
-			WithToolPrefix(teamBPrefix).
+			WithPrefix(teamBPrefix).
 			ForInternalService("mcp-test-server2", 9090).
 			WithHostname("team-b.e2e-1.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).
@@ -329,35 +331,35 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamAResources.GetMCPServer().Name, TestServerNameSpace)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for team B server to be registered with e2e-1 gateway")
 		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamBResources.GetMCPServer().Name, e2e1ExtNamespace)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Connecting to main gateway (team A)")
 		var mainGatewayClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			mainGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(j mcp.JSONRPCNotification) {})
+			mainGatewayClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer mainGatewayClient.Close()
+		defer func() { _ = mainGatewayClient.Close() }()
 
 		By("Connecting to e2e-1 gateway (team B)")
 		var e2e1Client *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(j mcp.JSONRPCNotification) {})
+			e2e1Client, clientErr = NewMCPGatewayClientWithNotifications(ctx, E2E1GatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer e2e1Client.Close()
+		defer func() { _ = e2e1Client.Close() }()
 
 		By("Verifying main gateway sees team_a_ tools and NOT team_b_ tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := mainGatewayClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := mainGatewayClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
@@ -377,7 +379,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Verifying e2e-1 gateway sees team_b_ tools and NOT team_a_ tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := e2e1Client.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := e2e1Client.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
@@ -397,12 +399,9 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Invoking a tool on main gateway (team_a_greet from server1)")
 		Eventually(func(g Gomega) {
-			result, err := mainGatewayClient.CallTool(ctx, mcp.CallToolRequest{
-				Request: mcp.Request{},
-				Params: mcp.CallToolParams{
-					Name:      teamAPrefix + "greet",
-					Arguments: map[string]any{"name": "TeamA"},
-				},
+			result, err := mainGatewayClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      teamAPrefix + "greet",
+				Arguments: map[string]any{"name": "TeamA"},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(result).NotTo(BeNil())
@@ -411,12 +410,9 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Invoking a tool on e2e-1 gateway (team_b_hello_world from server2)")
 		Eventually(func(g Gomega) {
-			result, err := e2e1Client.CallTool(ctx, mcp.CallToolRequest{
-				Request: mcp.Request{},
-				Params: mcp.CallToolParams{
-					Name:      teamBPrefix + "hello_world",
-					Arguments: map[string]any{},
-				},
+			result, err := e2e1Client.CallTool(ctx, &mcp.CallToolParams{
+				Name:      teamBPrefix + "hello_world",
+				Arguments: map[string]any{},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(result).NotTo(BeNil())
@@ -457,6 +453,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			TargetingGateway(SharedGatewayName, GatewayNamespace).
 			WithSectionName(TeamBMCPListenerName).
 			WithPublicHost(TeamBPublicHost).
+			WithListenerPort(8081).
 			Build()
 		teamBSetup.Clean(ctx).Register(ctx)
 		defer teamBSetup.TearDown(ctx)
@@ -501,7 +498,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for Team A (using server1)")
 		teamAResources := NewTestResources("team-a-shared", k8sClient).
 			InNamespace(TeamANamespace).
-			WithToolPrefix(teamAPrefix).
+			WithPrefix(teamAPrefix).
 			ForInternalService("mcp-test-server1", 9090).
 			WithHostname("team-a-server.team-a.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).
@@ -513,7 +510,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		By("Creating MCPServerRegistration for Team B (using server2)")
 		teamBResources := NewTestResources("team-b-shared", k8sClient).
 			InNamespace(TeamBNamespace).
-			WithToolPrefix(teamBPrefix).
+			WithPrefix(teamBPrefix).
 			ForInternalService("mcp-test-server2", 9090).
 			WithHostname("team-b-server.team-b.mcp.local").
 			WithBackendNamespace(TestServerNameSpace).
@@ -526,35 +523,35 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamAResources.GetMCPServer().Name, TeamANamespace)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Waiting for Team B server to be registered")
 		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, teamBResources.GetMCPServer().Name, TeamBNamespace)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Connecting to Team A gateway")
 		var teamAClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamAClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamAGatewayURL, func(j mcp.JSONRPCNotification) {})
+			teamAClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamAGatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer teamAClient.Close()
+		defer func() { _ = teamAClient.Close() }()
 
 		By("Connecting to Team B gateway")
 		var teamBClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var clientErr error
-			teamBClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(j mcp.JSONRPCNotification) {})
+			teamBClient, clientErr = NewMCPGatewayClientWithNotifications(ctx, TeamBGatewayURL, func(_ string) {})
 			g.Expect(clientErr).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
-		defer teamBClient.Close()
+		defer func() { _ = teamBClient.Close() }()
 
 		By("Verifying Team A gateway sees only team_a_ tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := teamAClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := teamAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
@@ -574,7 +571,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Verifying Team B gateway sees only team_b_ tools")
 		Eventually(func(g Gomega) {
-			toolsList, err := teamBClient.ListTools(ctx, mcp.ListToolsRequest{})
+			toolsList, err := teamBClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 
@@ -594,12 +591,9 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Invoking a tool on Team A gateway (team_a_greet from server1)")
 		Eventually(func(g Gomega) {
-			result, err := teamAClient.CallTool(ctx, mcp.CallToolRequest{
-				Request: mcp.Request{},
-				Params: mcp.CallToolParams{
-					Name:      teamAPrefix + "greet",
-					Arguments: map[string]any{"name": "TeamA"},
-				},
+			result, err := teamAClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      teamAPrefix + "greet",
+				Arguments: map[string]any{"name": "TeamA"},
 			})
 			GinkgoWriter.Println("tool call a ", "err", err)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -609,12 +603,9 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 
 		By("Invoking a tool on Team B gateway (team_b_hello_world from server2)")
 		Eventually(func(g Gomega) {
-			result, err := teamBClient.CallTool(ctx, mcp.CallToolRequest{
-				Request: mcp.Request{},
-				Params: mcp.CallToolParams{
-					Name:      teamBPrefix + "hello_world",
-					Arguments: map[string]any{},
-				},
+			result, err := teamBClient.CallTool(ctx, &mcp.CallToolParams{
+				Name:      teamBPrefix + "hello_world",
+				Arguments: map[string]any{},
 			})
 			GinkgoWriter.Println("tool call b ", "err", err)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -753,6 +744,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			TargetingGateway(SharedGatewayName, GatewayNamespace).
 			WithSectionName(TeamBMCPListenerName).
 			WithPublicHost(TeamBPublicHost).
+			WithListenerPort(8081).
 			Build()
 		teamBSetup.Clean(ctx).Register(ctx)
 		defer teamBSetup.TearDown(ctx)

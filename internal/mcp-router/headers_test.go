@@ -2,30 +2,32 @@ package mcprouter
 
 import (
 	"testing"
+
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
 func Test_Headers(t *testing.T) {
 	headersBuilder := NewHeaders()
 
 	expected := map[string]string{
-		toolHeader:            "test_tool",
-		toolAnnotationsHeader: "destructive=true,idempotent=true,readOnly=false",
-		authorityHeader:       "mcp1.mcp.local",
-		"authorization":       "auth",
-		methodHeader:          "tools/call",
-		mcpServerNameHeader:   "mcp1",
-		sessionHeader:         "xxxx",
-		":path":               "/mcp1",
+		routing.ToolHeader:            "test_tool",
+		routing.ToolAnnotationsHeader: "destructive=true,idempotent=true,readOnly=false",
+		routing.AuthorityHeader:       "mcp1.mcp.local",
+		"authorization":               "auth",
+		routing.MethodHeader:          "tools/call",
+		routing.MCPServerNameHeader:   "mcp1",
+		routing.SessionHeader:         "xxxx",
+		":path":                       "/mcp1",
 	}
 
 	headers := headersBuilder.
-		WithAuthority(expected[authorityHeader]).
+		WithAuthority(expected[routing.AuthorityHeader]).
 		WithAuth(expected["authorization"]).
-		WithMCPMethod(expected[methodHeader]).
-		WithMCPServerName(expected[mcpServerNameHeader]).
-		WithMCPSession(expected[sessionHeader]).
-		WithMCPToolName(expected[toolHeader]).
-		WithToolAnnotations(expected[toolAnnotationsHeader]).
+		WithMCPMethod(expected[routing.MethodHeader]).
+		WithMCPServerName(expected[routing.MCPServerNameHeader]).
+		WithMCPSession(expected[routing.SessionHeader]).
+		WithMCPToolName(expected[routing.ToolHeader]).
+		WithToolAnnotations(expected[routing.ToolAnnotationsHeader]).
 		WithPath("/mcp1").
 		Build()
 

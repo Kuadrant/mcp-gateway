@@ -1,13 +1,32 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 )
+
+const testSigningKey = "test-signing-key-must-be-at-least-32-bytes"
+
+// blockingDeleter blocks DeleteSessions until the supplied context is canceled
+// or its deadline elapses, then returns ctx.Err().
+type blockingDeleter struct {
+	called chan struct{}
+}
+
+func (b *blockingDeleter) DeleteSessions(ctx context.Context, _ ...string) error {
+	if b.called != nil {
+		close(b.called)
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -15,7 +34,7 @@ func testLogger() *slog.Logger {
 
 func TestNewJWTManager(t *testing.T) {
 	t.Run("with custom key", func(t *testing.T) {
-		key := "test-signing-key"
+		key := testSigningKey
 		manager, err := NewJWTManager(key, 0, testLogger(), nil)
 
 		if err != nil {
@@ -33,7 +52,7 @@ func TestNewJWTManager(t *testing.T) {
 	})
 
 	t.Run("with custom session duration", func(t *testing.T) {
-		key := "test-signing-key"
+		key := testSigningKey
 		manager, err := NewJWTManager(key, 48, testLogger(), nil)
 
 		if err != nil {
@@ -55,10 +74,30 @@ func TestNewJWTManager(t *testing.T) {
 			t.Error("expected nil manager for empty key")
 		}
 	})
+
+	t.Run("with 31-byte key returns error", func(t *testing.T) {
+		manager, err := NewJWTManager(strings.Repeat("a", 31), 0, testLogger(), nil)
+		if err == nil {
+			t.Error("expected error for 31-byte signing key")
+		}
+		if manager != nil {
+			t.Error("expected nil manager")
+		}
+	})
+
+	t.Run("with 32-byte key returns success", func(t *testing.T) {
+		manager, err := NewJWTManager(strings.Repeat("a", 32), 0, testLogger(), nil)
+		if err != nil {
+			t.Fatalf("unexpected error for 32-byte signing key: %v", err)
+		}
+		if manager == nil {
+			t.Fatal("expected manager to be created")
+		}
+	})
 }
 
 func TestGenerate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("generates valid JWT", func(t *testing.T) {
 		token := manager.Generate()
@@ -109,7 +148,7 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("validates correct token", func(t *testing.T) {
 		token := manager.Generate()
@@ -124,7 +163,7 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("rejects token with wrong signing key", func(t *testing.T) {
-		otherManager, _ := NewJWTManager("different-key", 0, testLogger(), nil)
+		otherManager, _ := NewJWTManager("different-key-must-be-at-least-32-bytes", 0, testLogger(), nil)
 		token := otherManager.Generate()
 
 		isNotAllowed, err := manager.Validate(token)
@@ -148,7 +187,7 @@ func TestValidate(t *testing.T) {
 
 	t.Run("rejects expired token", func(t *testing.T) {
 		// create a manager with very short duration
-		shortManager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+		shortManager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 		shortManager.duration = 1 * time.Nanosecond
 
 		token := shortManager.Generate()
@@ -183,8 +222,226 @@ func TestValidate(t *testing.T) {
 	})
 }
 
+func TestBackendInitToken(t *testing.T) {
+	manager, err := NewJWTManager(testSigningKey, 0, testLogger(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Run("generate requires host", func(t *testing.T) {
+		if _, err := manager.GenerateBackendInitToken(""); err == nil {
+			t.Error("expected error when host is empty")
+		}
+	})
+
+	t.Run("validates own token", func(t *testing.T) {
+		token, err := manager.GenerateBackendInitToken("backend.example.com")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := manager.ValidateBackendInitToken(token, "backend.example.com"); err != nil {
+			t.Errorf("expected valid token, got error: %v", err)
+		}
+	})
+
+	t.Run("rejects host mismatch", func(t *testing.T) {
+		token, err := manager.GenerateBackendInitToken("backend.example.com")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		err = manager.ValidateBackendInitToken(token, "attacker.example.com")
+		if err == nil {
+			t.Fatal("expected error for host mismatch")
+		}
+		if !errors.Is(err, ErrInvalidBackendInitToken) {
+			t.Errorf("expected ErrInvalidBackendInitToken, got %v", err)
+		}
+	})
+
+	t.Run("rejects empty expected host", func(t *testing.T) {
+		token, err := manager.GenerateBackendInitToken("backend.example.com")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := manager.ValidateBackendInitToken(token, ""); err == nil {
+			t.Error("expected error when expected host is empty")
+		}
+	})
+
+	t.Run("rejects token signed with different key", func(t *testing.T) {
+		other, _ := NewJWTManager("different-key-must-be-at-least-32-bytes", 0, testLogger(), nil)
+		token, err := other.GenerateBackendInitToken("backend.example.com")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := manager.ValidateBackendInitToken(token, "backend.example.com"); err == nil {
+			t.Error("expected error for token signed with different key")
+		}
+	})
+
+	t.Run("rejects expired token", func(t *testing.T) {
+		expiredToken := func() string {
+			now := time.Now().Add(-2 * time.Minute)
+			claims := BackendInitClaims{
+				RegisteredClaims: jwt.RegisteredClaims{
+					IssuedAt:  jwt.NewNumericDate(now),
+					ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Second)),
+					NotBefore: jwt.NewNumericDate(now),
+					Issuer:    issuer,
+					Audience:  jwt.ClaimStrings{backendInitAudience},
+				},
+				Purpose: backendInitPurpose,
+				Host:    "backend.example.com",
+			}
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+			s, _ := tok.SignedString(manager.signingKey)
+			return s
+		}()
+		if err := manager.ValidateBackendInitToken(expiredToken, "backend.example.com"); err == nil {
+			t.Error("expected error for expired token")
+		}
+	})
+
+	t.Run("rejects HMAC token with wrong audience", func(t *testing.T) {
+		// hand-craft a token signed with the same key but with the client
+		// session audience claim. Must not be accepted as a backend-init token.
+		sessionToken := manager.Generate()
+		if err := manager.ValidateBackendInitToken(sessionToken, "backend.example.com"); err == nil {
+			t.Error("expected error: session token must not be accepted as backend-init token")
+		}
+	})
+
+	t.Run("rejects token signed with None algorithm", func(t *testing.T) {
+		claims := BackendInitClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
+				Issuer:    issuer,
+				Audience:  jwt.ClaimStrings{backendInitAudience},
+			},
+			Purpose: backendInitPurpose,
+			Host:    "backend.example.com",
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
+		s, _ := tok.SignedString(jwt.UnsafeAllowNoneSignatureType)
+		if err := manager.ValidateBackendInitToken(s, "backend.example.com"); err == nil {
+			t.Error("expected error for token signed with None algorithm")
+		}
+	})
+
+	t.Run("rejects wrong purpose claim", func(t *testing.T) {
+		// craft a token that has correct iss/aud/alg but wrong purpose
+		now := time.Now()
+		claims := BackendInitClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				IssuedAt:  jwt.NewNumericDate(now),
+				ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Second)),
+				Issuer:    issuer,
+				Audience:  jwt.ClaimStrings{backendInitAudience},
+			},
+			Purpose: "something-else",
+			Host:    "backend.example.com",
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		s, _ := tok.SignedString(manager.signingKey)
+		if err := manager.ValidateBackendInitToken(s, "backend.example.com"); err == nil {
+			t.Error("expected error for wrong purpose claim")
+		}
+	})
+}
+
+func TestValidate_RejectsTokenWithWrongIssuer(t *testing.T) {
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			Issuer:    "evil-issuer",
+			Audience:  jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, _ := tok.SignedString(manager.signingKey)
+	isNotAllowed, err := manager.Validate(s)
+	if err == nil {
+		t.Error("expected error for token with wrong issuer")
+	}
+	if !isNotAllowed {
+		t.Error("expected isNotAllowed true for token with wrong issuer")
+	}
+}
+
+func TestValidate_RejectsTokenWithWrongAudience(t *testing.T) {
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			Issuer:    issuer,
+			Audience:  jwt.ClaimStrings{"some-other-audience"},
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, _ := tok.SignedString(manager.signingKey)
+	isNotAllowed, err := manager.Validate(s)
+	if err == nil {
+		t.Error("expected error for token with wrong audience")
+	}
+	if !isNotAllowed {
+		t.Error("expected isNotAllowed true for token with wrong audience")
+	}
+}
+
+func TestValidate_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
+
+	// craft a token with no exp claim
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(testSigningKey))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	isNotAllowed, err := manager.Validate(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+	if !isNotAllowed {
+		t.Error("expected isNotAllowed to be true for token without exp")
+	}
+}
+
+func TestGetExpiresIn_RejectsTokenWithoutExp(t *testing.T) {
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
+
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{sessionAudience},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(testSigningKey))
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	_, err = manager.GetExpiresIn(tokenString)
+	if err == nil {
+		t.Error("expected error for token without exp claim")
+	}
+}
+
 func TestTerminate(t *testing.T) {
-	manager, _ := NewJWTManager("test-key", 0, testLogger(), nil)
+	manager, _ := NewJWTManager(testSigningKey, 0, testLogger(), nil)
 
 	t.Run("terminate returns no error", func(t *testing.T) {
 		token := manager.Generate()
@@ -195,6 +452,38 @@ func TestTerminate(t *testing.T) {
 		}
 		if isNotAllowed {
 			t.Error("expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("terminate bounds a stalled deleter via context deadline", func(t *testing.T) {
+		// Wire a deleter whose DeleteSessions blocks until the passed context
+		// is canceled. Without the WithTimeout fix, Terminate would block
+		// indefinitely; with it, Terminate must return within ~terminateTimeout.
+		deleter := &blockingDeleter{called: make(chan struct{})}
+		manager, err := NewJWTManager(testSigningKey, 0, testLogger(), deleter)
+		if err != nil {
+			t.Fatalf("unexpected error constructing manager: %v", err)
+		}
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := manager.Terminate("session-id")
+			errCh <- err
+		}()
+
+		select {
+		case <-deleter.called:
+		case <-time.After(2 * time.Second):
+			t.Fatal("DeleteSessions was not invoked")
+		}
+
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+			}
+		case <-time.After(terminateTimeout + 2*time.Second):
+			t.Fatalf("Terminate did not return within %v of the configured deadline", terminateTimeout)
 		}
 	})
 }

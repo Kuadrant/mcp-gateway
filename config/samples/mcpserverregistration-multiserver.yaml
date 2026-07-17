@@ -1,60 +1,60 @@
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: weather-service
   namespace: mcp-system
 spec:
-  toolPrefix: weather_
+  prefix: weather_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: weather-route
     namespace: mcp-system
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: calendar-service
   namespace: mcp-system
 spec:
-  toolPrefix: cal_
+  prefix: cal_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: calendar-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: search-service
   namespace: mcp-system
 spec:
-  toolPrefix: search_
+  prefix: search_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: search-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: knowledge-service
   namespace: mcp-system
 spec:
-  toolPrefix: kb_
+  prefix: kb_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: knowledge-route
 ---
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPServerRegistration
 metadata:
   name: docs-service
   namespace: mcp-system
 spec:
-  toolPrefix: docs_
+  prefix: docs_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute

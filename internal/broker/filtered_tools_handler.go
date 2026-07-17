@@ -12,77 +12,124 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-var authorizedToolsHeader = http.CanonicalHeaderKey("x-authorized-tools")
+var authorizedCapabilitiesHeader = http.CanonicalHeaderKey("x-mcp-authorized")
 var virtualMCPHeader = http.CanonicalHeaderKey("x-mcp-virtualserver")
 
-const allowedToolsClaimKey = "allowed-tools"
+const allowedCapabilitiesClaimKey = "allowed-capabilities"
 
 // FilterTools reduces the tool set based on authorization headers.
-// Priority: x-authorized-tools JWT filtering, then x-mcp-virtualserver filtering.
-func (broker *mcpBrokerImpl) FilterTools(_ context.Context, _ any, mcpReq *mcp.ListToolsRequest, mcpRes *mcp.ListToolsResult) {
-	broker.logger.Info("FilterTools called", "input_tools_count", len(mcpRes.Tools))
+// Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
+func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, headers http.Header, sessionID string, mcpRes *mcp.ListToolsResult) {
+	attrs := []attribute.KeyValue{brokerComponentAttr}
+	ctx, span := brokerTracer().Start(ctx, "mcp-broker.tools-list", trace.WithAttributes(attrs...))
+	defer span.End()
+
+	broker.logger.DebugContext(ctx, "FilterTools called", "input_tools_count", len(mcpRes.Tools))
 	tools := mcpRes.Tools
-	emptyTools := []mcp.Tool{}
 	if len(mcpRes.Tools) == 0 {
-		mcpRes.Tools = emptyTools
+		mcpRes.Tools = []*mcp.Tool{}
 		return
 	}
 
-	// step 1: apply x-authorized-tools filtering (JWT-based)
-	tools = broker.applyAuthorizedToolsFilter(mcpReq.Header, tools)
-	broker.logger.Debug("FilterTools authorized tools result", "output_tools_count", len(tools))
+	// step 1: apply x-mcp-authorized filtering (JWT-based)
+	tools = broker.applyAuthorizedCapabilitiesFilter(headers, tools)
+	broker.logger.DebugContext(ctx, "FilterTools authorized capabilities result", "output_tools_count", len(tools))
 
 	// step 2: apply virtual server filtering
-	tools = broker.applyVirtualServerFilter(mcpReq.Header, tools)
+	tools = broker.applyVirtualServerFilter(headers, tools)
+
+	// step 3: apply session scope filtering (discovery feature)
+	if broker.discovery.enabled {
+		tools = broker.applyScopeFilter(ctx, sessionID, tools)
+	}
+
+	// the scope-change sentinel is briefly present in the SDK's tool set
+	// during a notification cycle; never expose it to clients
+	tools = slices.DeleteFunc(tools, func(t *mcp.Tool) bool {
+		return t.Name == scopeChangeSentinelName
+	})
+
 	// filter out any gateway specific meta data we are storing internally before sending to clients
 	tools = broker.removeGatewayMeta(tools)
-	broker.logger.Debug("FilterTools virtual server result", "output_tools_count", len(tools))
+	broker.logger.DebugContext(ctx, "FilterTools final result", "output_tools_count", len(tools))
+
+	span.SetAttributes(attribute.Int("mcp.tools.count", len(tools)))
 
 	// ensure we never return nil (would serialize as null instead of [])
 	if tools == nil {
-		tools = emptyTools
+		tools = []*mcp.Tool{}
 	}
 	mcpRes.Tools = tools
 }
 
-func (broker *mcpBrokerImpl) removeGatewayMeta(tools []mcp.Tool) []mcp.Tool {
+func (broker *mcpBrokerImpl) removeGatewayMeta(tools []*mcp.Tool) []*mcp.Tool {
 	broker.logger.Debug("removing gateway specific meta")
+	// list results share Tool pointers with the server's stored tools, so we
+	// copy the struct before mutating. writing to the shared object would
+	// permanently strip kuadrant/id (breaking conflict detection and broker
+	// tool checks) and race with concurrent list calls.
+	out := make([]*mcp.Tool, 0, len(tools))
 	for _, t := range tools {
-		if t.Meta != nil {
-			delete(t.Meta.AdditionalFields, "kuadrant/id")
+		if len(t.Meta) == 0 {
+			out = append(out, t)
+			continue
 		}
+		cleaned := make(map[string]any, len(t.Meta))
+		for k, v := range t.Meta {
+			if k == "kuadrant/id" || k == brokerToolMetaKey {
+				continue
+			}
+			cleaned[k] = v
+		}
+		if len(cleaned) == 0 {
+			cleaned = nil
+		}
+		cp := *t
+		cp.Meta = mcp.Meta(cleaned)
+		out = append(out, &cp)
 	}
-	return tools
+	return out
 }
 
-// applyAuthorizedToolsFilter filters tools based on x-authorized-tools JWT header.
+// applyAuthorizedCapabilitiesFilter filters tools based on x-mcp-authorized JWT header.
 // Returns original tools if header not present and enforcement is off.
 // Returns empty slice if header validation fails or enforcement is on without header.
-func (broker *mcpBrokerImpl) applyAuthorizedToolsFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
-	headerValues, present := headers[authorizedToolsHeader]
+func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilter(headers http.Header, tools []*mcp.Tool) []*mcp.Tool {
+	headerValues, present := headers[authorizedCapabilitiesHeader]
 
 	if !present {
-		broker.logger.Debug("no x-authorized-tools header", "enforced", broker.enforceToolFilter)
-		if broker.enforceToolFilter {
-			return []mcp.Tool{}
+		broker.logger.Debug("no x-mcp-authorized header", "enforced", broker.enforceCapabilityFilter)
+		if broker.enforceCapabilityFilter {
+			return []*mcp.Tool{}
 		}
 		return tools
 	}
 
-	allowedTools, err := broker.parseAuthorizedToolsJWT(headerValues)
+	capabilities, err := broker.parseAuthorizedCapabilitiesJWT(headerValues)
 	if err != nil {
-		broker.logger.Error("failed to parse x-authorized-tools header", "error", err)
-		return []mcp.Tool{}
+		broker.logger.Error("failed to parse x-mcp-authorized header", "error", err)
+		return []*mcp.Tool{}
 	}
 
-	return broker.filterToolsByServerMap(allowedTools)
+	allowedTools, hasTools := capabilities["tools"]
+	if !hasTools {
+		broker.logger.Debug("no tools key in capabilities")
+		if broker.enforceCapabilityFilter {
+			return []*mcp.Tool{}
+		}
+		return tools
+	}
+
+	return broker.filterToolsByServerMap(allowedTools, tools)
 }
 
-// parseAuthorizedToolsJWT validates and extracts allowed tools from the JWT header.
-func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map[string][]string, error) {
+// parseAuthorizedCapabilitiesJWT validates and extracts allowed capabilities from the JWT header.
+func (broker *mcpBrokerImpl) parseAuthorizedCapabilitiesJWT(headerValues []string) (map[string]map[string][]string, error) {
 	if len(headerValues) != 1 {
 		return nil, fmt.Errorf("expected exactly 1 header value, got %d", len(headerValues))
 	}
@@ -106,26 +153,28 @@ func (broker *mcpBrokerImpl) parseAuthorizedToolsJWT(headerValues []string) (map
 		return nil, fmt.Errorf("failed to extract claims from JWT")
 	}
 
-	toolsClaim, ok := claims[allowedToolsClaimKey]
+	capabilitiesClaim, ok := claims[allowedCapabilitiesClaimKey]
 	if !ok {
-		return nil, fmt.Errorf("missing %s claim in JWT", allowedToolsClaimKey)
+		return nil, fmt.Errorf("missing %s claim in JWT", allowedCapabilitiesClaimKey)
 	}
 
-	toolsJSON, ok := toolsClaim.(string)
+	capabilitiesJSON, ok := capabilitiesClaim.(string)
 	if !ok {
-		return nil, fmt.Errorf("%s claim is not a string", allowedToolsClaimKey)
+		return nil, fmt.Errorf("%s claim is not a string", allowedCapabilitiesClaimKey)
 	}
 
-	var allowedTools map[string][]string
-	if err := json.Unmarshal([]byte(toolsJSON), &allowedTools); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allowed-tools JSON: %w", err)
+	var capabilities map[string]map[string][]string
+	if err := json.Unmarshal([]byte(capabilitiesJSON), &capabilities); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal allowed-capabilities JSON: %w", err)
 	}
 
-	broker.logger.Debug("parsed authorized tools", "tools", allowedTools)
-	return allowedTools, nil
+	broker.logger.Debug("parsed authorized capabilities", "capabilities", capabilities)
+	return capabilities, nil
 }
 
-func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager {
+func (broker *mcpBrokerImpl) findServerByName(name string) upstream.ActiveMCPServer {
+	broker.mcpLock.RLock()
+	defer broker.mcpLock.RUnlock()
 	for _, upstream := range broker.mcpServers {
 		if upstream.MCPName() == name {
 			return upstream
@@ -134,37 +183,36 @@ func (broker *mcpBrokerImpl) findServerByName(name string) *upstream.MCPManager 
 	return nil
 }
 
-// filterToolsByServerMap filters tools based on a map of server name to allowed tool names.
-func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]string) []mcp.Tool {
-	var filtered []mcp.Tool
-
+// filterToolsByServerMap keeps the tools whose (server, name) appears in the JWT's
+// allowed-capabilities map. It filters the already-merged tool slice rather than
+// rebuilding from each upstream's cached managed tools: userSpecificList servers
+// cache no managed tools (they are fetched per-request and merged in earlier), so
+// rebuilding would silently drop them.
+func (broker *mcpBrokerImpl) filterToolsByServerMap(allowedTools map[string][]string, tools []*mcp.Tool) []*mcp.Tool {
+	allowed := make(map[string]struct{})
 	for serverName, toolNames := range allowedTools {
 		upstream := broker.findServerByName(serverName)
 		if upstream == nil {
 			broker.logger.Error("upstream not found", "server", serverName)
 			continue
 		}
-		tools := upstream.GetManagedTools()
-		if tools == nil {
-			broker.logger.Debug("no tools registered for upstream server", "server", upstream.MCPName)
-			continue
-		}
-
-		for _, tool := range tools {
-			broker.logger.Debug("checking access", "tool", tool.Name, "against", toolNames)
-			if slices.Contains(toolNames, tool.Name) {
-				broker.logger.Debug("access granted", "tool", tool.Name)
-				tool.Name = fmt.Sprintf("%s%s", upstream.MCP.GetPrefix(), tool.Name)
-				filtered = append(filtered, tool)
-			}
+		prefix := upstream.Config().Prefix
+		for _, name := range toolNames {
+			allowed[prefix+name] = struct{}{}
 		}
 	}
 
+	var filtered []*mcp.Tool
+	for _, tool := range tools {
+		if _, ok := allowed[tool.Name]; ok {
+			filtered = append(filtered, tool)
+		}
+	}
 	return filtered
 }
 
 // applyVirtualServerFilter filters tools to only those specified in the virtual server.
-func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools []mcp.Tool) []mcp.Tool {
+func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools []*mcp.Tool) []*mcp.Tool {
 	headerValues, ok := headers[virtualMCPHeader]
 	if !ok || len(headerValues) != 1 {
 		return tools
@@ -173,7 +221,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 	virtualServerID := headerValues[0]
 	broker.logger.Debug("applying virtual server filter", "virtualServer", virtualServerID)
 
-	vs, err := broker.GetVirtualSeverByHeader(virtualServerID)
+	vs, err := broker.GetVirtualServerByHeader(virtualServerID)
 	if err != nil {
 		broker.logger.Error("failed to get virtual server", "error", err)
 		return tools
@@ -185,7 +233,7 @@ func (broker *mcpBrokerImpl) applyVirtualServerFilter(headers http.Header, tools
 		filteredSet[name] = struct{}{}
 	}
 
-	var filtered []mcp.Tool
+	var filtered []*mcp.Tool
 	for _, tool := range tools {
 		if _, inFilter := filteredSet[tool.Name]; inFilter {
 			filtered = append(filtered, tool)

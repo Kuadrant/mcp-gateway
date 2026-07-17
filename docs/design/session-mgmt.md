@@ -71,6 +71,18 @@ Clients can send a DELETE request to gateway, this will be handled by the MCP Br
 
 If the router intercepts a 404 response from an MCP server, as per the spec this is interpreted as a invalid session response. The associated MCP backend session, is removed from the cache in response.
 
+## Broker HTTP Handler Chain
+
+Gateway session JWTs are validated statelessly, but the MCP Go SDK's streamable handler keeps a pod-local session table and 404s IDs it has never seen. The broker composes its `/mcp` handler in three layers (`MCPHandler` in `internal/broker/http_compat.go`), outermost first:
+
+1. **Compatibility layer** (`compatHandler`, `internal/broker/http_compat.go`): restores the pre-SDK (mark3labs) observable HTTP surface: JSON-RPC error bodies at HTTP 200 for unknown methods and unsupported capabilities, plain-text 404 session gates before dispatch, 202s for stray notifications, and lenient `Accept`/`MCP-Protocol-Version` handling. It validates the session JWT before any dispatch and forwards only requests the SDK agrees with. Outermost because it gates every request and re-frames every response to the old wire shape; the layers beneath never see a request they would answer differently.
+2. **Session resurrection** (`sessionResurrectionHandler`, `internal/broker/session_resurrection.go`): intercepts the SDK's pod-local "session not found" 404. When the session ID is a valid gateway JWT, it connects a fresh server session with the same ID and synthesised initialize state, then serves the request through it, so sessions survive broker restarts and work across replicas. It sits inside the compat layer so only requests that passed the session gate reach it (it still re-validates before reconnecting), and outside the SDK handler because it must observe the SDK's 404 to know resurrection is needed. Invalid or expired JWTs still 404.
+3. **SDK streamable handler**: the MCP Go SDK's HTTP transport, which owns protocol negotiation and session dispatch.
+
+Notification targeting is not an HTTP layer: it is sending middleware on the SDK server that filters outbound `tools/list_changed` per session (see [notifications](./notifications.md)).
+
+Idle eviction is armed only when a session validator is configured, i.e. when resurrection is available: session table entries idle for 30 minutes (`SessionIdleTimeout`) are closed, and the next request with a valid JWT resurrects the session transparently. This is cache hygiene, not session expiry: the JWT remains the sole validity semantic.
+
 ## Lazy Initialization
 
 With this approach, when a server is registered with the gateway, the broker will initialize with it and ask for a tools/list which it caches and will return when a client asks for a tools/list.

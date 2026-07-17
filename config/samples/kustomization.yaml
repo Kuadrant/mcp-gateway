@@ -1,4 +1,4 @@
 ## Append samples of your project ##
 resources:
-- mcp_v1alpha1_mcpgatewayextension.yaml
+- mcp_v1_mcpgatewayextension.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

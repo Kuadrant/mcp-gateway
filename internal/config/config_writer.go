@@ -169,6 +169,12 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 		for i, existing := range existingConfig.Servers {
 
 			if existing.Name == server.Name {
+				if !server.ConfigChanged(existing) {
+					// config unchanged, skip write to avoid unnecessary secret updates
+					// that trigger broker config reloads
+					srw.Logger.Info("SecretReaderWriter UpsertMCPServer config unchanged, skipping write", "name", server.Name)
+					return nil
+				}
 				existingConfig.Servers[i] = server
 				found = true
 				break
@@ -244,6 +250,30 @@ func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName s
 	}
 
 	return lastErr
+}
+
+// WriteCACertBundle updates the gatewayCACertPEM field of the config secret.
+// It uses a read-modify-write pattern to preserve other sections.
+func (srw *SecretReaderWriter) WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
+		if err != nil {
+			return fmt.Errorf("write ca cert bundle failed to read config secret: %w", err)
+		}
+
+		if existingConfig.GatewayCACertPEM == caCertPEM {
+			return nil
+		}
+
+		existingConfig.GatewayCACertPEM = caCertPEM
+		updated, err := yaml.Marshal(existingConfig)
+		if err != nil {
+			return fmt.Errorf("write ca cert bundle failed to marshal config: %w", err)
+		}
+
+		backingSecret.StringData[configFileName] = string(updated)
+		return srw.Client.Update(ctx, backingSecret)
+	})
 }
 
 // DeleteConfig deletes the entire config secret. If the secret doesn't exist,

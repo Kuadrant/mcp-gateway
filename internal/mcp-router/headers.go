@@ -3,20 +3,8 @@ package mcprouter
 import (
 	"fmt"
 
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-)
-
-const (
-	mcpServerNameHeader   = "x-mcp-servername"
-	toolAnnotationsHeader = "x-mcp-annotation-hints"
-	toolHeader            = "x-mcp-toolname"
-	methodHeader          = "x-mcp-method"
-	sessionHeader         = "mcp-session-id"
-	authorityHeader       = ":authority"
-	authorizationHeader   = "authorization"
-	mcpTarget             = "mcp-target"
-	// RoutingKey is an internal header used to authenticate a request from the router
-	RoutingKey = "router-key"
 )
 
 func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
@@ -52,7 +40,7 @@ func (hb *HeadersBuilder) Build() []*basepb.HeaderValueOption {
 func (hb *HeadersBuilder) WithAuthority(authority string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      authorityHeader,
+			Key:      routing.AuthorityHeader,
 			RawValue: []byte(authority),
 		},
 	})
@@ -63,7 +51,7 @@ func (hb *HeadersBuilder) WithAuthority(authority string) *HeadersBuilder {
 func (hb *HeadersBuilder) WithAuth(cred string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      authorizationHeader,
+			Key:      routing.AuthorizationHeader,
 			RawValue: []byte(cred),
 		},
 	})
@@ -85,7 +73,7 @@ func (hb *HeadersBuilder) WithContentLength(length int) *HeadersBuilder {
 func (hb *HeadersBuilder) WithMCPToolName(toolName string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      toolHeader,
+			Key:      routing.ToolHeader,
 			RawValue: []byte(toolName),
 		},
 	})
@@ -96,7 +84,7 @@ func (hb *HeadersBuilder) WithMCPToolName(toolName string) *HeadersBuilder {
 func (hb *HeadersBuilder) WithMCPServerName(serverName string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      mcpServerNameHeader,
+			Key:      routing.MCPServerNameHeader,
 			RawValue: []byte(serverName),
 		},
 	})
@@ -107,7 +95,7 @@ func (hb *HeadersBuilder) WithMCPServerName(serverName string) *HeadersBuilder {
 func (hb *HeadersBuilder) WithMCPMethod(method string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      methodHeader,
+			Key:      routing.MethodHeader,
 			RawValue: []byte(method),
 		},
 	})
@@ -118,7 +106,7 @@ func (hb *HeadersBuilder) WithMCPMethod(method string) *HeadersBuilder {
 func (hb *HeadersBuilder) WithMCPSession(session string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      sessionHeader,
+			Key:      routing.SessionHeader,
 			RawValue: []byte(session),
 		},
 	})
@@ -129,8 +117,19 @@ func (hb *HeadersBuilder) WithMCPSession(session string) *HeadersBuilder {
 func (hb *HeadersBuilder) WithToolAnnotations(annotations string) *HeadersBuilder {
 	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{
-			Key:      toolAnnotationsHeader,
+			Key:      routing.ToolAnnotationsHeader,
 			RawValue: []byte(annotations),
+		},
+	})
+	return hb
+}
+
+// WithMCPPromptName will set the x-mcp-promptname header
+func (hb *HeadersBuilder) WithMCPPromptName(promptName string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      routing.PromptHeader,
+			RawValue: []byte(promptName),
 		},
 	})
 	return hb
@@ -153,6 +152,19 @@ func (hb *HeadersBuilder) WithPath(path string) *HeadersBuilder {
 		Header: &basepb.HeaderValue{
 			Key:      ":path",
 			RawValue: []byte(path),
+		},
+	})
+	return hb
+}
+
+// WithVerifiedSub sets the x-mcp-verified-sub header to the JWT sub claim
+// extracted by the router after AuthPolicy verification. The broker reads this
+// instead of decoding the raw JWT, so identity binding is always verified.
+func (hb *HeadersBuilder) WithVerifiedSub(sub string) *HeadersBuilder {
+	hb.headers = append(hb.headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{
+			Key:      routing.MCPVerifiedSubHeader,
+			RawValue: []byte(sub),
 		},
 	})
 	return hb

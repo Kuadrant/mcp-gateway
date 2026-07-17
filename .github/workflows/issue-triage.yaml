@@ -3,23 +3,23 @@ name: Issue Triage
 on:
   issues:
     types:
-      [opened, reopened, edited, labeled, unlabeled, milestoned, demilestoned]
+      [opened, reopened, edited, labeled, unlabeled, milestoned, demilestoned, closed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
 
 jobs:
   triage:
+    if: github.event.issue.pull_request == null
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
       - name: Triage issue
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
-            if (context.payload.issue.pull_request) {
-              console.log('Skipping pull request');
-              return;
-            }
-
             // ------------------------------------------------------
             // Vars
             // ------------------------------------------------------
@@ -28,6 +28,8 @@ jobs:
             const issueNumber = issue.number;
             const hasMilestone = !!issue.milestone;
             const currentLabels = issue.labels.map(label => label.name);
+            let action = context.payload.action;
+            const eventLabel = context.payload.label ? context.payload.label.name : null;
 
             // ------------------------------------------------------
             // Helper Functions
@@ -46,6 +48,7 @@ jobs:
             // ------------------------------------------------------
 
             console.log(`Processing issue #${issueNumber}`);
+            console.log(`Action: ${action}`);
             console.log(`Has milestone: ${hasMilestone}`);
             console.log(`Current labels: ${currentLabels.join(', ')}`);
 
@@ -54,75 +57,105 @@ jobs:
 
             // ------------------------------------------------------
             // Apply Rules
-            //
-            // 1. If an issue has no milestone:
-            //    a. Ensure it has the label 'triage/needs-triage'
-            //       (unless it already has a different triage label).
-            //    b. Remove 'triage/accepted' if present.
-            //    c. Remove all priority labels if present.
-            //
-            // 2. If an issue has a milestone:
-            //    a. Ensure it has the label 'triage/accepted' and
-            //       no other triage labels.
-            //    b. If no priority labels exist, assign
-            //       'priority/normal'.
-            //
-            // 3. If another triage label is added, remove the
-            //    'triage/needs-triage' label.
-            //
             // ------------------------------------------------------
 
-            if (!hasMilestone) {
-              // remove 'triage/accepted' when there's no milestone (e.g., milestone was removed)
-              if (currentLabels.includes('triage/accepted')) {
-                labelsToRemove.push('triage/accepted');
-                console.log('No milestone -> removing triage/accepted');
-              }
-
-              // remove all priority labels when there's no milestone
+            // Rule: Enforce single priority label
+            // When a new priority/* label is added, remove all other priority labels.
+            if (action === 'labeled' && eventLabel && eventLabel.startsWith('priority/')) {
               const priorityLabels = getLabelsStartingWith('priority/');
               priorityLabels.forEach(label => {
-                labelsToRemove.push(label);
-                console.log(`No milestone -> removing ${label}`);
-              });
-
-              // ensure 'triage/needs-triage' label (only if no other triage label exists)
-              // note: we need to account for triage/accepted being removed above
-              const remainingTriageLabels = currentLabels.filter(l =>
-                l.startsWith('triage/') &&
-                l !== 'triage/accepted' &&
-                !labelsToRemove.includes(l)
-              );
-
-              if (remainingTriageLabels.length === 0) {
-                labelsToAdd.push('triage/needs-triage');
-                console.log('No milestone and no triage label -> adding triage/needs-triage');
-              } else if (currentLabels.includes('triage/needs-triage')) {
-                // if another triage label exists, remove 'triage/needs-triage'
-                labelsToRemove.push('triage/needs-triage');
-                console.log('Other triage label found -> removing triage/needs-triage');
-              }
-
-            } else {
-              // ensure 'triage/accepted' and remove other triage labels
-              const triageLabels = getLabelsStartingWith('triage/');
-              if (!triageLabels.includes('triage/accepted')) {
-                labelsToAdd.push('triage/accepted');
-                console.log('Has milestone but missing triage/accepted -> adding it');
-              }
-
-              // remove all other triage labels
-              triageLabels.forEach(label => {
-                if (label !== 'triage/accepted') {
+                if (label !== eventLabel) {
                   labelsToRemove.push(label);
-                  console.log(`Has milestone -> removing ${label}`);
+                  console.log(`New priority added -> removing existing priority ${label}`);
                 }
               });
+            }
 
-              // ensure some priority is set
-              if (!hasLabelStartingWith('priority/')) {
-                labelsToAdd.push('priority/normal');
-                console.log('Has milestone but no priority label -> adding priority/normal');
+            // Rule: Triage Declined -> Auto-close
+            // If an issue is labeled 'triage/declined', close it as 'not_planned'.
+            if (action === 'labeled' && eventLabel === 'triage/declined' && issue.state === 'open') {
+              console.log('Issue marked as declined -> closing');
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                state: 'closed',
+                state_reason: 'not_planned'
+              });
+              
+              // Queue stale labels for removal
+              getLabelsStartingWith('triage/').forEach(label => {
+                if (label !== 'triage/declined') {
+                  labelsToRemove.push(label);
+                  console.log(`Issue declined -> removing stale label ${label}`);
+                }
+              });
+              getLabelsStartingWith('priority/').forEach(label => {
+                labelsToRemove.push(label);
+                console.log(`Issue declined -> removing stale label ${label}`);
+              });
+              
+              // Prevent milestone logic from running
+              action = 'closed';
+            }
+
+
+            // Rule: Issue closed -> remove triage/needs-triage
+            if (action === 'closed') {
+              if (currentLabels.includes('triage/needs-triage')) {
+                labelsToRemove.push('triage/needs-triage');
+                console.log('Issue closed -> removing triage/needs-triage');
+              }
+            }
+
+            // Rule: Milestone-based triage
+            // Skip milestone-based triage rules for closed events to avoid label mutation.
+            if (action !== 'closed') {
+              if (!hasMilestone) {
+                // 1. If an issue has no milestone:
+                // Only manage triage/needs-triage as a default.
+                // Do NOT strip triage/accepted or priority/* — maintainers
+                // can accept and prioritise before assigning a milestone.
+                const triageLabels = getLabelsStartingWith('triage/');
+                const nonNeedsTriageLabels = triageLabels.filter(l => l !== 'triage/needs-triage');
+
+                if (nonNeedsTriageLabels.length === 0 && !triageLabels.includes('triage/needs-triage')) {
+                  if (!labelsToAdd.includes('triage/needs-triage')) {
+                    labelsToAdd.push('triage/needs-triage');
+                    console.log('No triage label -> adding triage/needs-triage');
+                  }
+                } else if (nonNeedsTriageLabels.length > 0 && triageLabels.includes('triage/needs-triage')) {
+                  if (!labelsToRemove.includes('triage/needs-triage')) {
+                    labelsToRemove.push('triage/needs-triage');
+                    console.log('Other triage label found -> removing triage/needs-triage');
+                  }
+                }
+
+              } else {
+                // 2. If an issue has a milestone:
+
+                // a. Ensure 'triage/accepted'
+                if (!currentLabels.includes('triage/accepted')) {
+                  labelsToAdd.push('triage/accepted');
+                  console.log('Has milestone but missing triage/accepted -> adding it');
+                }
+
+                // b. Remove all other triage labels
+                const triageLabels = getLabelsStartingWith('triage/');
+                triageLabels.forEach(label => {
+                  if (label !== 'triage/accepted') {
+                    if (!labelsToRemove.includes(label)) {
+                      labelsToRemove.push(label);
+                      console.log(`Has milestone -> removing ${label}`);
+                    }
+                  }
+                });
+
+                // c. Ensure priority/normal if no priority exists
+                if (!hasLabelStartingWith('priority/')) {
+                  labelsToAdd.push('priority/normal');
+                  console.log('Has milestone but no priority label -> adding priority/normal');
+                }
               }
             }
 
@@ -130,13 +163,16 @@ jobs:
             // Apply Changes
             // ------------------------------------------------------
 
-            if (labelsToAdd.length > 0) {
-              console.log(`Adding labels: ${labelsToAdd.join(', ')}`);
+            // Filter out labels that are both added and removed
+            const finalLabelsToAdd = labelsToAdd.filter(l => !labelsToRemove.includes(l));
+
+            if (finalLabelsToAdd.length > 0) {
+              console.log(`Adding labels: ${finalLabelsToAdd.join(', ')}`);
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issueNumber,
-                labels: labelsToAdd
+                labels: finalLabelsToAdd
               });
             }
 
@@ -158,6 +194,6 @@ jobs:
               }
             }
 
-            if (labelsToAdd.length === 0 && labelsToRemove.length === 0) {
+            if (finalLabelsToAdd.length === 0 && labelsToRemove.length === 0) {
               console.log('No label changes needed');
             }

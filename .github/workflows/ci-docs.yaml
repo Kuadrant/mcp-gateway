@@ -1,0 +1,90 @@
+name: CI Docs
+
+# Provides pass statuses for required checks when only non-code files change.
+# Without this, PRs touching only these paths can never merge because the real
+# workflows use paths-ignore and never report a status for the required checks.
+# The paths list below is the union of all paths-ignore entries from
+# images.yaml, tests.yaml, and code-style.yaml.
+#
+# linkinator checks for broken links in changed markdown files.
+# Experimental: see https://github.com/Kuadrant/mcp-gateway/pull/952
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches: ['main']
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'LICENSE'
+      - 'charts/**'
+      - 'tests/servers/**'
+      - '.coderabbit.yaml'
+      - '.gitignore'
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  build:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: mcp-gateway
+          - image: mcp-controller
+    steps:
+      - run: echo "Docs-only change, skipping build"
+
+  unit-tests:
+    name: Unit Tests
+    strategy:
+      matrix:
+        go-version: ['1.26']
+        platform: [ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - run: echo "Docs-only change, skipping tests"
+
+  code-style:
+    name: Code Style Checks
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change, skipping code style"
+
+  documentation-links:
+    name: Documentation Links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed markdown files
+        id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            files=$(git diff --name-only --diff-filter=d "origin/${BASE_REF}...HEAD" -- '*.md')
+          else
+            files="**/*.md"
+          fi
+
+          if [ -z "$files" ]; then
+            echo "paths=" >> "$GITHUB_OUTPUT"
+            echo "No markdown files changed"
+          else
+            paths=$(echo "$files" | tr '\n' ' ')
+            echo "paths=$paths" >> "$GITHUB_OUTPUT"
+            echo "Scanning: $paths"
+          fi
+
+      - uses: JustinBeckwith/linkinator-action@v2
+        if: steps.changed.outputs.paths != ''
+        with:
+          paths: ${{ steps.changed.outputs.paths }}

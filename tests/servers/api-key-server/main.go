@@ -38,6 +38,11 @@ type authMiddleware struct {
 }
 
 func (a authMiddleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Header.Get("X-Force-Auth-Reject") == "true" {
+		log.Printf("Auth force-rejected via X-Force-Auth-Reject header")
+		http.Error(w, `{"error": "Unauthorized: token revoked"}`, http.StatusUnauthorized)
+		return
+	}
 	if a.ExpectedAuth != "" {
 		auth := req.Header.Get("Authorization")
 		if auth != a.ExpectedAuth {

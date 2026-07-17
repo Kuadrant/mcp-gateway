@@ -1,0 +1,102 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-tokens-oidc-callback
+  namespace: mcp-system
+spec:
+  overrides:
+    strategy: merge
+    rules:
+      authorization:
+        deny:
+          opa:
+            allValues: false
+            rego: allow = false
+          priority: 2
+        location:
+          opa:
+            allValues: true
+            rego: |-
+                # parse the Cookie header into a { name: value } object
+                # splits on ";", trims whitespace, splits each part on first "="
+                cookies := { name: value |
+                  raw_cookies := input.request.headers.cookie
+                  cookie_parts := split(raw_cookies, ";")
+                  part := cookie_parts[_]
+                  trimmed := trim_space(part)
+                  eq := indexof(trimmed, "=")
+                  eq > 0
+                  name := substring(trimmed, 0, eq)
+                  value := substring(trimmed, eq + 1, count(trimmed) - eq - 1)
+                }
+
+                # server-authoritative base URL — never derived from request.host
+                base := "{{ EXTERNAL_URL }}"
+
+                # build the OIDC auth URL using the pre-encoded redirect URI from the template
+                auth_url := "{{ ISSUER_URL }}/protocol/openid-connect/auth?client_id={{ CLIENT_ID }}&redirect_uri={{ REDIRECT_URI_ENCODED }}&response_type=code&scope=openid"
+
+                # intermediate vars for readability in the location rules below
+                authenticated := input.auth.metadata.token.id_token
+                has_target := cookies.target
+                # only allow relative paths to prevent open redirect via absolute URL in cookie
+                target_safe := startswith(cookies.target, "/")
+
+                # authenticated + valid target cookie → redirect to the saved target path
+                location := concat("", [base, cookies.target]) {
+                  authenticated
+                  has_target
+                  target_safe
+                }
+
+                # authenticated + unsafe target cookie → redirect to base URL
+                location := base {
+                  authenticated
+                  has_target
+                  not target_safe
+                }
+
+                # authenticated + no target cookie → redirect to base URL
+                location := base {
+                  authenticated
+                  not has_target
+                }
+
+                # not authenticated → redirect to OIDC login
+                location := auth_url {
+                  not authenticated
+                }
+
+                # always allow — access control is handled by the redirect logic above
+                # the AuthPolicy response section uses the 302 + location header to gate access
+                allow = true
+          priority: 1
+      metadata:
+        token:
+          http:
+            body:
+              expression: >-
+                "code=" + request.query.split("&").map(entry, entry.split("=")).filter(pair, pair[0] == "code").map(pair, pair[1])[0] + "&grant_type=authorization_code&redirect_uri={{ REDIRECT_URI_ENCODED }}&client_id={{ CLIENT_ID }}"
+            contentType: application/x-www-form-urlencoded
+            credentials: {}
+            method: POST
+            url: "{{ ISSUER_URL }}/protocol/openid-connect/token"
+          priority: 0
+          when:
+            - predicate: >-
+                request.query.split("&").map(entry, entry.split("=")).filter(pair, pair[0] == "code").map(pair, pair[1]).size() > 0
+      response:
+        success: {}
+        unauthorized:
+          code: 302
+          headers:
+            location:
+              expression: auth.authorization.location.location
+            # {{ COOKIE_SECURE }} is "Secure; " for HTTPS, empty for HTTP — browsers silently drop Secure cookies over plain HTTP
+            set-cookie:
+              expression: >-
+                "jwt=" + auth.metadata.token.id_token + "; domain={{ EXTERNAL_HOST }}; HttpOnly; SameSite=Lax; {{ COOKIE_SECURE }}Path=/; Max-Age=3600"
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-tokens-oidc-callback

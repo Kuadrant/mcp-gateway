@@ -18,18 +18,40 @@ AwEHoUQDQgAE7WdMdvC8hviEAL4wcebqaYbLEtVOVEiyi/nozagw7BaWXmzbOWyy
 95gZLirTkhUb1P4Z4lgKLU2rD5NCbGPHAA==
 -----END EC PRIVATE KEY-----`
 
+// testHeaderPublicKey is the EC public key corresponding to testHeaderSigningKey
+const testHeaderPublicKey = `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7WdMdvC8hviEAL4wcebqaYbLEtVO
+VEiyi/nozagw7BaWXmzbOWyy95gZLirTkhUb1P4Z4lgKLU2rD5NCbGPHAA==
+-----END PUBLIC KEY-----`
+
 // GetTestHeaderSigningKey returns the EC private key for signing test headers
 func GetTestHeaderSigningKey() string {
 	return testHeaderSigningKey
 }
 
-// CreateAuthorizedToolsJWT creates a signed JWT for the x-authorized-tools header
+// GetTestHeaderPublicKey returns the EC public key for verifying test header JWTs
+func GetTestHeaderPublicKey() string {
+	return testHeaderPublicKey
+}
+
+// CreateAuthorizedCapabilitiesJWT creates a signed JWT for the x-mcp-authorized header
 // allowedTools is a map of server namespace/name to list of tool names
-func CreateAuthorizedToolsJWT(allowedTools map[string][]string) (string, error) {
+func CreateAuthorizedCapabilitiesJWT(allowedTools map[string][]string) (string, error) {
+	return createCapabilitiesJWT(map[string]map[string][]string{"tools": allowedTools})
+}
+
+// CreateAuthorizedPromptsJWT creates a signed JWT for the x-mcp-authorized header
+// allowedPrompts is a map of server namespace/name to list of unprefixed prompt
+// names; the broker re-applies the server prefix when filtering prompts/list
+func CreateAuthorizedPromptsJWT(allowedPrompts map[string][]string) (string, error) {
+	return createCapabilitiesJWT(map[string]map[string][]string{"prompts": allowedPrompts})
+}
+
+func createCapabilitiesJWT(capabilities map[string]map[string][]string) (string, error) {
 	keyBytes := []byte(testHeaderSigningKey)
-	claimPayload, err := json.Marshal(allowedTools)
+	claimPayload, err := json.Marshal(capabilities)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal allowed tools: %w", err)
+		return "", fmt.Errorf("failed to marshal allowed capabilities: %w", err)
 	}
 
 	block, _ := pem.Decode(keyBytes)
@@ -43,7 +65,7 @@ func CreateAuthorizedToolsJWT(allowedTools map[string][]string) (string, error) 
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
-		"allowed-tools": string(claimPayload),
+		"allowed-capabilities": string(claimPayload),
 	})
 
 	jwtToken, err := token.SignedString(parsedKey)

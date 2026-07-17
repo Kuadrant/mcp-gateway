@@ -31,7 +31,7 @@ kubectl describe mcpserver api-key-server -n mcp-test
 **Example MCPServerRegistration spec:**
 ```yaml
 spec:
-  toolPrefix: test1_
+  prefix: test1_
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -40,7 +40,7 @@ spec:
 ```
 
 **Key fields:**
-- `toolPrefix`: Prefix added to all tools from this server
+- `prefix`: Prefix added to all tools from this server
 - `targetRef`: Reference to HTTPRoute that defines the backend
 
 ### Generated Configuration
@@ -60,7 +60,7 @@ data:
       - name: mcp-test/mcp-server1-route
         url: http://mcp-test-server1.mcp-test.svc.cluster.local:9090/mcp
         hostname: server1.mcp.local
-        toolPrefix: test1_
+        prefix: test1_
         enabled: true
 ```
 
@@ -68,7 +68,7 @@ data:
 - `name`: Unique identifier (namespace/route-name)
 - `url`: Full URL to backend MCP server
 - `hostname`: Used for routing decisions by Envoy
-- `toolPrefix`: Prefix for tool federation
+- `prefix`: Prefix for tool federation
 - `enabled`: Whether this server is active
 
 ### HTTPRoute Configuration
@@ -320,7 +320,7 @@ The `tools/call` method is where routing happens - this is the most complex flow
 
 **What happens:**
 
-The router intercepts the request via Envoy ext_proc, strips the tool prefix, and routes to the appropriate backend server.
+The router intercepts the request via Envoy ext_proc, strips the prefix, and routes to the appropriate backend server.
 
 **Expected logs with debug logging enabled:**
 ```
@@ -404,7 +404,7 @@ kubectl logs deployment/mcp-gateway -n mcp-system | grep -E "(routing|authority|
 
 2. **Verify prefix mappings in configuration:**
 ```bash
-kubectl get configmap mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | grep -A 5 toolPrefix
+kubectl get configmap mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | grep -A 5 prefix
 ```
 
 3. **Check Envoy routing configuration:**
