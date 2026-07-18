@@ -239,11 +239,11 @@ curl http://mcp.127-0-0-1.sslip.io:8001/.well-known/api-catalog
 - `internal/controller/broker_router.go`
 
 **Acceptance criteria:**
-- [ ] `isA2A` bool set in `Process()` at `RequestHeaders` phase via `strings.HasPrefix(requestPath, "/a2a")`
+- [ ] `isA2A` bool set in `Process()` at `RequestHeaders` phase via a **segment-aware** path match (`/a2a/` prefix or exact `/a2a` — a bare `HasPrefix("/a2a")` would also match `/a2ax`)
 - [ ] At `RequestHeaders` phase: extract (namespace, prefix) from `:path`, call `A2ABroker.GetAgentByPath()`, set `:authority` to agent hostname + `x-a2a-agent`. Method-specific work (ownership lookup, task-record binding) is deferred to `RequestBody` — the JSON-RPC method is known only there
 - [ ] A2A header constants defined in `internal/headers/headers.go`: `A2AAgentHeader`, `A2ATaskIDHeader`, `A2AMethodHeader`
 - [ ] `WithA2AAgent()`, `WithA2ATaskID()`, `WithA2AMethod()` added to `HeadersBuilder`
-- [ ] `x-a2a-agent` and `x-a2a-task-id` added to `internalOnlyHeaders`
+- [ ] `x-a2a-agent`, `x-a2a-task-id`, and `x-a2a-method` added to `internalOnlyHeaders` and the `stripRouterHeaders` filter
 - [ ] `buildGatewayHTTPRoute()` gains `/a2a` prefix rule with `stripRouterHeaders` and `/.well-known/api-catalog` rule
 - [ ] Stub `RouteA2ARequest()` returning empty pass-through
 - [ ] Unit tests: mock ext_proc stream with `/a2a/mcp-test/weather` path → `isA2A=true`, prefix "weather" extracted; `/mcp` path → `isA2A=false`
@@ -269,8 +269,8 @@ make lint
 - [ ] `A2ARequest` struct: `ID any`, `JSONRPC string`, `Method string`, `Params map[string]any`
 - [ ] `parseA2ARequest(body []byte) (*A2ARequest, error)`
 - [ ] `RouteA2ARequest()`: authenticates via OAuth principal (`ExtractSubClaim`), switches on `SendMessage`/`SendStreamingMessage`/`GetTask`/`CancelTask`/`SubscribeToTask`
-- [ ] `HandleA2ATaskSend()`: does not mint or rewrite any task ID (the agent assigns it); at `ResponseHeaders` the method picks the `ModeOverride` — `STREAMED` for `isStreamingMethod()` (`SendStreamingMessage`/`SubscribeToTask`), `BUFFERED` for non-streaming methods so the response body is observable at all (the filter's default `response_body_mode` is `NONE`)
-- [ ] Errors are `application/json` JSON-RPC (NOT SSE-framed): unknown method → `-32601`; an unknown task ID is **not** manufactured at the gateway — with no ownership record the call passes through and the agent returns its own `-32001 TaskNotFoundError`; missing/invalid bearer rejected by AuthPolicy at the edge, empty principal → fail closed
+- [ ] `HandleA2ATaskSend()`: does not mint or rewrite any task ID (the agent assigns it); a send whose `message.taskId`/`referenceTaskIds` name an existing task is ownership-checked like `GetTask` before forwarding; at `ResponseHeaders` the method picks the `ModeOverride` — `STREAMED` for `isStreamingMethod()` (`SendStreamingMessage`/`SubscribeToTask`), `BUFFERED` for `SendMessage` so the response body is observable at all (the filter's default `response_body_mode` is `NONE`); `GetTask`/`CancelTask` set no override
+- [ ] Errors are `application/json` JSON-RPC (NOT SSE-framed): unknown method → `-32601`; deferred v1.0 methods (`ListTasks`, extended card, `pushNotificationConfig`) → `-32004 UnsupportedOperationError`, never forwarded; missing/expired/mismatched ownership record → `-32001 TaskNotFoundError` (fail closed, nothing forwarded); missing/invalid bearer rejected by AuthPolicy at the edge, empty principal → fail closed
 - [ ] A2A spans carry `a2a.task.id` (the agent-assigned task ID), `a2a.method`, `a2a.agent` attributes (`a2aSpanAttributes`, analog of `spanAttributes`) so operators correlate an async task's lifecycle across separate requests; task ID is a span attribute only, never a metric label
 - [ ] MCP path (`/mcp` traffic) completely unaffected — regression tests pass
 - [ ] Unit tests cover all branches above
@@ -309,10 +309,11 @@ the owning principal rather than a route.
 - [ ] `LookupTaskRecord(ctx, agentName, taskID string) (TaskRecord, bool, error)` implemented for in-memory and Redis
 - [ ] `DeleteTaskRecord(ctx, agentName, taskID string) error` implemented for in-memory and Redis
 - [ ] `SessionCache` interface in `internal/mcp-router/server.go` updated with the above signatures
-- [ ] Redis key prefix `a2atask:{agent}/{taskID}`, **fixed safety-net TTL decoupled from the JWT** (idmap pattern); primary cleanup via `DeleteTaskRecord()` on a terminal `TaskState`
+- [ ] Redis key prefix `a2atask:{agent}/{taskID}`, **fixed retention TTL decoupled from the JWT** (idmap pattern), sized ≥ the agents' task-retention window; records are NOT deleted on terminal states (tasks stay retrievable after completion)
+- [ ] `StoreTaskRecord()` is insert-only — it never overwrites an existing record's principal
 - [ ] `TaskRecord.Principal` set from the OAuth `sub`; `LookupTaskRecord()` callers verify the requesting principal owns the task (routing is by path, so the record is used for ownership only)
-- [ ] `HandleA2ATaskSend()` updated: read `result.id` from the response, call `StoreTaskRecord()` to bind ownership; the response body is forwarded unchanged (no rewrite)
-- [ ] `HandleA2ATaskGet()`/`HandleA2ATaskCancel()`/`SubscribeToTask` call `LookupTaskRecord()` and verify principal ownership; on a lookup miss the call passes through to the agent (no ID rewrite anywhere)
+- [ ] `HandleA2ATaskSend()` updated: read `result.task.id` from the response (v1.0 `SendMessageResponse` oneof — the `result.message` variant creates no task and stores nothing), call `StoreTaskRecord()`; the response body is forwarded unchanged (no rewrite)
+- [ ] `HandleA2ATaskGet()`/`HandleA2ATaskCancel()`/`SubscribeToTask` — and sends naming an existing task — call `LookupTaskRecord()` and verify principal ownership; a missing/expired/mismatched record fails closed with `-32001` (no ID rewrite anywhere)
 - [ ] Concurrency test: 100 goroutines reading and writing task records with `-race`
 - [ ] `go test -race ./internal/session/...` passes
 
@@ -335,12 +336,12 @@ make test-unit
 
 **Acceptance criteria:**
 - [ ] `a2aSSEObserver` struct with `Process(ctx, chunk []byte) []byte` and `Flush(ctx) []byte`; `Process()` returns each `data:` line **unchanged** (read-only tap)
-- [ ] `Process()` reads the streaming event envelope identity field in `data:` lines — the task `id` on the initial `task` event, `taskId` on `statusUpdate`/`artifactUpdate` (v1.0 has no `kind` discriminator; the variant is which member is present) — and uses it only to `StoreTaskRecord()` on the first event and `DeleteTaskRecord()` on a terminal `TaskState`
+- [ ] `Process()` reads the streaming event identity field in `data:` lines — `result.task.id` on the initial `task` event, `result.statusUpdate.taskId`/`result.artifactUpdate.taskId` on updates (v1.0 has no `kind` discriminator; the variant is which oneof member is present) — and uses it only to `StoreTaskRecord()` (insert-only) on the first `task` event; terminal states end the stream, the record persists to the retention TTL
 - [ ] Envelope-only parsing: read the JSON-RPC envelope + result identity fields only; never decode `status`/`artifact`/`history`/`parts` (incl. `FilePart.file.bytes`/`DataPart.data`); no re-marshal, so cost is O(envelope) and Part content is untouched by construction
-- [ ] `HandleResponseHeaders()` sets `ModeOverride ResponseBodyMode=STREAMED` when `isA2A && isStreamingA2AMethod()` (`SendStreamingMessage`/`SubscribeToTask`), and `BUFFERED` for non-streaming A2A methods — required for observation because the filter's default `response_body_mode` is `NONE` (without the override the router never receives `ResponseBody`)
-- [ ] Non-streaming `SendMessage`/`GetTask`/`CancelTask` read `result.id` in `ResponseBody` for the ownership record (store on create, delete on terminal state), then forward the body unchanged — no `content-length` surgery, since nothing is mutated (the content-length removal the spike proved is needed only by a body rewrite; that half stays in reserve)
+- [ ] `HandleResponseHeaders()` sets `ModeOverride ResponseBodyMode=STREAMED` when `isA2A && isStreamingA2AMethod()` (`SendStreamingMessage`/`SubscribeToTask`), and `BUFFERED` for `SendMessage` — required for observation because the filter's default `response_body_mode` is `NONE` (without the override the router never receives `ResponseBody`); `GetTask`/`CancelTask` set no override (bare-`Task` responses, nothing to observe)
+- [ ] `SendMessage` reads `result.task.id` in `ResponseBody` for the ownership record (`result.message` variant stores nothing), then forwards the body unchanged — no `content-length` surgery, since nothing is mutated (the content-length removal the spike proved is needed only by a body rewrite; that half stays in reserve)
 - [ ] `Process()` loop invokes `a2aSSEObserver` in `ResponseBody` phase; an A2A flag gates it continuing into `ResponseBody` (today it only continues when `rewriter != nil`)
-- [ ] Unit tests: SSE chunks pass through byte-for-byte; the first-event ownership record is stored and the terminal-state record is deleted; non-SSE responses unaffected
+- [ ] Unit tests: SSE chunks pass through byte-for-byte; the first-event ownership record is stored (insert-only) and survives the terminal state; non-SSE responses unaffected
 
 **Verification:**
 ```bash

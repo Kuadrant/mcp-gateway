@@ -38,11 +38,13 @@ unchanged. A2A support is entirely additive.
   `CancelTask`, `SubscribeToTask` dispatched to the correct upstream agent based on request path
   prefix (`/a2a/{namespace}/{prefix}`).
 - Per-principal task ownership: the gateway records which principal created each task, keyed by
-  `(agent, taskID)`, and enforces ownership on `GetTask`/`CancelTask`/`SubscribeToTask` — without
-  minting or rewriting the agent-assigned task ID (routing is by path, not by ID).
+  `(agent, taskID)`, and enforces ownership on `GetTask`/`CancelTask`/`SubscribeToTask` **and** on
+  `SendMessage`/`SendStreamingMessage` continuations that name an existing task (`message.taskId`,
+  `referenceTaskIds`), failing closed on a missing or mismatched record — without minting or
+  rewriting the agent-assigned task ID (routing is by path, not by ID).
 - SSE streaming passthrough for `SendStreamingMessage` (the v1.0 streaming method) and
   `SubscribeToTask`; streamed events pass through unmodified — the router observes them read-only to
-  bind ownership and detect task completion, but never rewrites task IDs.
+  bind ownership, but never rewrites task IDs.
 - `A2AAgentRegistration` CRD and controller for registering upstream A2A agents via HTTPRoutes,
   consistent with the `MCPServerRegistration` pattern.
 - Authentication: A2A requests authenticate per request via an OAuth bearer (Kuadrant AuthPolicy on
@@ -67,6 +69,9 @@ unchanged. A2A support is entirely additive.
   authenticated extended agent card (`GetExtendedAgentCard`), and the `pushNotificationConfig` operations
   are out of scope for this design. The supported surface is `SendMessage`, `SendStreamingMessage`,
   `GetTask`, `CancelTask`, and `SubscribeToTask`; the rest are recorded as future work, not built here.
+  Deferred methods are **rejected at the router** (`-32004 UnsupportedOperationError`), never forwarded —
+  a forwarded `ListTasks` in particular could return tasks across principals, since the gateway's
+  per-principal ownership scoping does not exist upstream.
 
 ## Job Stories
 
@@ -127,6 +132,8 @@ cannot invoke tasks.
   The routing, task store, and policy design are version-agnostic; the version-specific surface —
   method names (`SendMessage` etc.), the well-known path (`/.well-known/agent-card.json`), and the card shape
   (`supportedInterfaces`, named `securitySchemes`, JWS signatures) — is isolated behind one mapping.
+  The `A2A-Version` header passes through untouched — version negotiation is between client and agent;
+  the gateway parses only the fields it needs and rejects requests it cannot parse.
 - HTTPRoutes targeting upstream A2A agents are programmed and accepted by the gateway.
 
 ### Flow
@@ -156,9 +163,13 @@ sequenceDiagram
 
 A stock A2A v1.0 client discovers agents via the catalog, then — per the spec's interface-selection
 rules — invokes each agent at the `url` of an interface in that agent's AgentCard `supportedInterfaces[]`.
-A catalog link alone cannot override that choice, so for a client to route through the gateway **both**
-the catalog link and the served card's JSONRPC interface URL must resolve to the agent's gateway path
-(`/a2a/{namespace}/{prefix}`). That drives the card-serving contract:
+A catalog link alone cannot override that choice (the catalog is discovery metadata, not a routing
+authority), so for a client to route through the gateway both the catalog link and the served card's
+interfaces must resolve to the agent's gateway path (`/a2a/{namespace}/{prefix}`). The gateway fronts
+only the JSONRPC binding, so validation covers **every** `supportedInterfaces[]` entry — an interface
+under any other binding (`GRPC`, `HTTP+JSON`) pointing at the upstream would be an unpoliced bypass —
+and the interface `tenant`, which a client echoes in requests and must be consistent with the gateway's
+routing. That drives the card-serving contract:
 
 - **Unsigned cards** — the broker rewrites the interface URL to the gateway path before serving (safe;
   no signature to break). This is the transparent-insertion trick that worked for v0.3.
@@ -237,28 +248,32 @@ sequenceDiagram
     Note over Router: isA2A = true (path prefix)<br/>extract (namespace, prefix) = (mcp-test, weather) from :path<br/>GetAgentByPath("mcp-test", "weather") → weather agent<br/>set :authority = agent hostname<br/>set x-a2a-agent header
     Router-->>Envoy: HeadersResponse with header mutations (continue)
     Envoy->>Router: ProcessingRequest_RequestBody
-    Note over Router: parse A2ARequest (method known only here)<br/>authenticate via OAuth principal (sub)<br/>method = "SendMessage" (task ID assigned by the agent, learned from the response)
+    Note over Router: parse A2ARequest (method known only here)<br/>authenticate via OAuth principal (sub)<br/>method = "SendMessage"; message.taskId absent → new task<br/>(a continuation naming an existing task is ownership-checked like GetTask)
     Router-->>Envoy: BodyResponse (continue)
     Envoy->>Upstream: POST /a2a (routed by :authority)
     Upstream-->>Envoy: HTTP 200 OK
     Envoy->>Router: ProcessingRequest_ResponseHeaders
     Note over Router: non-streaming A2A, status == 200<br/>set ModeOverride: ResponseBodyMode=BUFFERED<br/>(observation only — the filter's default response_body_mode is NONE,<br/>so without the override the router never sees the body)
     Router-->>Envoy: HeadersResponse with ModeOverride
-    Envoy->>Router: ProcessingRequest_ResponseBody<br/>body: {jsonrpc: "2.0", result: {id: "task-abc", ...}}
-    Note over Router: read task ID from result.id<br/>StoreTaskRecord(agentName, "task-abc", {principal})<br/>no rewrite — body forwarded byte-for-byte
-    Router-->>Client: BodyResponse: {result: {id: "task-abc", ...}} (unmodified)
+    Envoy->>Router: ProcessingRequest_ResponseBody<br/>body: {jsonrpc: "2.0", result: {task: {id: "task-abc", ...}}}
+    Note over Router: SendMessageResponse is a oneof — result.task or result.message<br/>task variant → read result.task.id, StoreTaskRecord(agentName, "task-abc", {principal}) (insert-only)<br/>message variant → no task created, nothing stored<br/>no rewrite — body forwarded byte-for-byte
+    Router-->>Client: BodyResponse: {result: {task: {id: "task-abc", ...}}} (unmodified)
 ```
 
 The ext_proc filter's default `response_body_mode` is `NONE` (`config/istio/envoyfilter.yaml`), so the
 router sees a response body **only** when it sets a `ModeOverride` at `ResponseHeaders`. Binding task
-ownership requires reading `result.id` from the `SendMessage` response — the only place the gateway
-learns which task the agent created — so the non-streaming path sets
-`ModeOverride: ResponseBodyMode=BUFFERED` for **observation, not mutation**. Because the router never
-mutates the body, its length is unchanged and no `content-length` surgery is needed. (The earlier spike
-validated this per-method `ModeOverride` end-to-end against Envoy under Istio 1.27 with
-`allow_mode_override: true`; the `content-length` removal it also proved is required only by a body
-**rewrite**, which passthrough drops — that half stays in reserve.) `GetTask`/`CancelTask` responses are
-observed the same way, so a terminal `TaskState` in a polled response can trigger record cleanup.
+ownership requires reading the agent-assigned task ID from the `SendMessage` response — the only place
+the gateway learns which task the agent created — so `SendMessage` sets
+`ModeOverride: ResponseBodyMode=BUFFERED` for **observation, not mutation**. The v1.0
+`SendMessageResponse` is a oneof: the ID is at `result.task.id` (the `result.message` variant creates no
+task and stores nothing). `StoreTaskRecord` is **insert-only** — a later call can never rebind an
+existing task's owner. Because the router never mutates the body, its length is unchanged and no
+`content-length` surgery is needed. (The earlier spike validated this per-method `ModeOverride`
+end-to-end against Envoy under Istio 1.27 with `allow_mode_override: true`; the `content-length` removal
+it also proved is required only by a body **rewrite**, which passthrough drops — that half stays in
+reserve.) `GetTask`/`CancelTask` return a **bare** `Task` (only `SendMessage` and stream events are
+oneof-wrapped) and need no response observation: ownership records persist for the retention window
+(see [Data Storage](#data-storage)), so nothing is read from their responses.
 
 #### SendStreamingMessage Routing (SSE streaming)
 
@@ -277,7 +292,7 @@ sequenceDiagram
     Note over Router: isA2A = true (path prefix)<br/>extract (namespace, prefix) = (mcp-test, weather) from :path<br/>GetAgentByPath("mcp-test", "weather") → weather agent<br/>set :authority = agent hostname<br/>set x-a2a-agent header
     Router-->>Envoy: HeadersResponse with header mutations (continue)
     Envoy->>Router: ProcessingRequest_RequestBody
-    Note over Router: parse A2ARequest<br/>authenticate via OAuth principal (sub)<br/>method = "SendStreamingMessage" (task ID assigned by the agent)
+    Note over Router: parse A2ARequest<br/>authenticate via OAuth principal (sub)<br/>method = "SendStreamingMessage"; message.taskId absent → new task<br/>(a continuation naming an existing task is ownership-checked like GetTask)
     Router-->>Envoy: BodyResponse (continue)
     Envoy->>Upstream: POST /a2a (routed by :authority)
     Upstream-->>Envoy: HTTP 200 OK
@@ -285,17 +300,17 @@ sequenceDiagram
     Note over Router: isA2AStreamingMethod() (SendStreamingMessage, SubscribeToTask), status == 200<br/>set ModeOverride: ResponseBodyMode=STREAMED<br/>init a2aSSEObserver(serverName) — read-only tap, no rewrite
     Router-->>Envoy: HeadersResponse with ModeOverride
     loop SSE chunks
-        Upstream-->>Envoy: data: {"result": {"id"/"taskId": "task-abc", ...}}
+        Upstream-->>Envoy: data: {"result": {"task": {"id": "task-abc", ...}}}
         Envoy->>Router: ProcessingRequest_ResponseBody
-        Note over Router: a2aSSEObserver.Process()<br/>first event (task variant): StoreTaskRecord(agentName, "task-abc", {principal})<br/>events forwarded unchanged (no rewrite)
+        Note over Router: a2aSSEObserver.Process()<br/>first event (task variant): StoreTaskRecord(agentName, "task-abc", {principal}) (insert-only)<br/>events forwarded unchanged (no rewrite)
         Router-->>Envoy: BodyResponse (chunk unmodified)
-        Envoy-->>Client: data: {"result": {"id": "task-abc", ...}}
+        Envoy-->>Client: data: {"result": {"task": {"id": "task-abc", ...}}}
     end
-    Upstream-->>Envoy: data: {"result": {"statusUpdate": {"taskId": "task-abc", "status": {"state": "completed"}}}}
+    Upstream-->>Envoy: data: {"result": {"statusUpdate": {"taskId": "task-abc", "status": {"state": "TASK_STATE_COMPLETED"}}}}
     Envoy->>Router: ProcessingRequest_ResponseBody
-    Note over Router: a2aSSEObserver.Process()<br/>terminal state → DeleteTaskRecord(agentName, "task-abc")
+    Note over Router: a2aSSEObserver.Process()<br/>terminal state ends the stream — the record is kept<br/>(retention TTL handles cleanup; the task stays retrievable)
     Router-->>Envoy: BodyResponse (chunk unmodified)
-    Envoy-->>Client: data: {"result": {"statusUpdate": {"taskId": "task-abc", "status": {"state": "completed"}}}}
+    Envoy-->>Client: data: {"result": {"statusUpdate": {"taskId": "task-abc", "status": {"state": "TASK_STATE_COMPLETED"}}}}
 ```
 
 #### SSE artifact passthrough — envelope-only parsing
@@ -304,22 +319,23 @@ A2A streaming events carry multi-modal Artifacts whose `parts` may include large
 `FilePart.file.bytes`, `DataPart.data`, and text. v1.0 streaming responses are a discriminated union
 with **no `kind` field** — the event is one of `task`, `message`, `statusUpdate`, or `artifactUpdate`,
 identified by which member is present. The task ID the gateway **reads** lives only at the **top of
-the event envelope** — the task's `id` on the initial `task` event, `taskId` on `statusUpdate` and
-`artifactUpdate` events — sibling to the heavy `status`/`artifact`/`history` fields, **never inside
-`parts`**. `a2aSSEObserver` exploits this so it never inspects payload bytes, and because it only reads,
-it never modifies them either:
+the present member** — `result.task.id` on the initial `task` event, `result.statusUpdate.taskId` /
+`result.artifactUpdate.taskId` on updates — sibling to the heavy `status`/`artifact`/`history` fields
+inside that member, **never inside `parts`**. `a2aSSEObserver` exploits this so it never inspects
+payload bytes, and because it only reads, it never modifies them either:
 
 - It works line-by-line over `data:` lines (buffering a partial line until newline-complete), like the
   elicitation `sseRewriter` (`internal/mcp-router/elicitation.go`), but read-only.
-- Per line it unmarshals **only the JSON-RPC envelope and the result's identity fields** (`id`,
-  `taskId`, `contextId`), leaving **every heavy subtree — `status`, `artifact`, `artifacts`, `history`,
-  `message`, and all `parts` — untouched**. The router **never unmarshals, decodes, or re-encodes Part
-  content**: `FilePart.file.bytes` (base64 images/files), `DataPart.data`, and `TextPart.text` are never
+- Per line it unmarshals **only the JSON-RPC envelope, the present union member, and that member's
+  identity fields** (`id`, `taskId`, `contextId`), leaving **every heavy subtree — `status`, `artifact`,
+  `artifacts`, `history`, `message`, and all `parts` — untouched**. The router **never unmarshals,
+  decodes, or re-encodes Part content**: base64 file bytes, data parts, and text parts are never
   read at all.
-- It uses the identity field for two side effects only — binding ownership (`StoreTaskRecord`) on the
-  first `task` event and detecting a terminal `TaskState` for cleanup (`DeleteTaskRecord`) — and then
-  **forwards the `data:` line to the client byte-for-byte**. There is no rewrite and no re-marshal, so
-  Part content cannot be corrupted by construction.
+- It uses the identity field for one side effect — binding ownership (`StoreTaskRecord`, insert-only)
+  on the first `task` event — and then **forwards the `data:` line to the client byte-for-byte**. A
+  terminal `TaskState` ends the stream but does **not** delete the record (tasks stay retrievable after
+  completion; the retention TTL is the cleanup). There is no rewrite and no re-marshal, so Part content
+  cannot be corrupted by construction.
 
 **Cost.** Per event the router does work proportional to the **envelope size, not the artifact size** —
 no base64 decode, no `Part` allocation, no re-encode, and no copy of the chunk (it is forwarded as
@@ -343,22 +359,21 @@ sequenceDiagram
     Note over Router: isA2A = true (path prefix)<br/>extract (namespace, prefix) = (mcp-test, weather)<br/>GetAgentByPath → set :authority = agent hostname
     Router-->>Envoy: HeadersResponse with header mutations (continue)
     Envoy->>Router: ProcessingRequest_RequestBody
-    Note over Router: authenticate (OAuth principal sub)<br/>read params.id = "task-abc" (agent-assigned, unchanged)<br/>LookupTaskRecord(agentName, "task-abc") + verify principal owns task<br/>no rewrite — body forwarded byte-for-byte
+    Note over Router: authenticate (OAuth principal sub)<br/>read params.id = "task-abc" (agent-assigned, unchanged)<br/>LookupTaskRecord(agentName, "task-abc") — missing/expired/mismatched<br/>→ -32001 TaskNotFoundError (fail closed, nothing forwarded)
     Router-->>Envoy: BodyResponse (continue, unmodified)
     Envoy->>Upstream: POST /a2a<br/>body: {method: "GetTask", params: {id: "task-abc"}}
-    Upstream-->>Envoy: HTTP 200 OK
-    Envoy->>Router: ProcessingRequest_ResponseHeaders
-    Note over Router: non-streaming A2A, status == 200<br/>set ModeOverride: ResponseBodyMode=BUFFERED (observation only)
-    Router-->>Envoy: HeadersResponse with ModeOverride
-    Envoy->>Router: ProcessingRequest_ResponseBody<br/>body: {result: {id: "task-abc", ...}}
-    Note over Router: terminal TaskState → DeleteTaskRecord(agentName, "task-abc")<br/>body forwarded byte-for-byte
-    Router-->>Client: BodyResponse: {result: {id: "task-abc", ...}} (unmodified)
+    Upstream-->>Envoy: HTTP 200 OK<br/>body: {result: {id: "task-abc", ...}} (bare Task — no oneof wrapper on GetTask/CancelTask)
+    Envoy-->>Client: response passes through (no ModeOverride — nothing to observe)
 ```
 
 Routing is by `:path` — the agent is already resolved at `RequestHeaders`, so `LookupTaskRecord` exists
 only to enforce ownership (does this principal own `task-abc` on this agent?), not to find the agent.
-When no record is found (e.g. after a crash and TTL expiry), the router passes the call through and lets
-the agent be the authority on its own task IDs, rather than manufacturing a `-32001`.
+The check **fails closed**: a missing, expired, or mismatched record returns `-32001 TaskNotFoundError` —
+the same error an unknown ID would produce, so a prober cannot distinguish "exists but not yours" from
+"does not exist". Fail-open pass-through was rejected: tasks remain retrievable after completion, so a
+record lost to restart or store failure would otherwise expose a completed task's results to any
+authenticated principal. The corollaries: multi-replica deployments MUST use the shared (Redis) record
+store, and the record retention TTL MUST be at least the agents' task-retention window.
 
 #### Task Lifecycle State Machine
 
@@ -379,9 +394,9 @@ stateDiagram-v2
     canceled --> [*]
     rejected --> [*]
 
-    note right of submitted: task ID assigned by the agent;\nStoreTaskRecord() binds ownership at ResponseBody
-    note right of rejected: A2A defines 9 task states;\n'unknown' is a sentinel for indeterminate state
-    note right of completed: task record deleted on terminal state;\nRedis safety-net TTL backstops crashes (idmap pattern)
+    note right of submitted: task ID assigned by the agent;\nStoreTaskRecord() binds ownership at ResponseBody (insert-only)
+    note right of rejected: A2A defines 9 task states; 'unknown' is a sentinel.\nWire values are ProtoJSON TASK_STATE_* (e.g. TASK_STATE_COMPLETED)
+    note right of completed: record KEPT after terminal states\n(tasks stay retrievable); the retention TTL is the cleanup
 ```
 
 ### Component Responsibilities
@@ -389,12 +404,12 @@ stateDiagram-v2
 | Component | Responsibility |
 |---|---|
 | Controller (`A2AReconciler`) | Watches `A2AAgentRegistration` CRDs. Resolves HTTPRoute → upstream endpoint → agent card URL. Writes `A2AAgent` config to the config Secret. Sets a `Ready` status condition (`Ready` = config written, mirroring `MCPServerRegistration` — no discovered-content in status). |
-| Broker (`a2a.Broker`) | Implements `config.Observer`. On config change, calls `SetAgents()`. `ServeAPICatalog()` serves `GET /.well-known/api-catalog` as an RFC 9264 Linkset (`Content-Type: application/linkset+json`, registered by RFC 9727) listing all enabled agent endpoints. `ServeAgentCard(namespace, prefix)` serves `GET /a2a/{namespace}/{prefix}/.well-known/agent-card.json` from a cached, ticker-refreshed copy of the upstream card (mirroring `MCPManager`; not a per-request proxy). Signed cards are served **verbatim** (a rewrite would invalidate the JWS signature) and MUST already advertise the gateway path; the broker validates the advertised interface on refresh and **fails closed** (agent not-`Ready`) on mismatch, so a signed card can't leak a gateway bypass. Unsigned cards have their interface URL rewritten to the gateway path (see [Discovery Flow](#flow) for the full contract). `GetAgentByPath(namespace, prefix)` resolves a namespace-qualified path to the upstream agent. |
-| Router (`ExtProcServer`) | At the `RequestHeaders` phase: detects A2A traffic by `:path` prefix. GET **discovery** requests (the card and catalog paths) also traverse ext_proc — the filter is listener-scoped — and the router passes them through untouched; the broker's HTTP mux serves them. For POST **invocation** traffic it extracts the `(namespace, prefix)` from `:path`, calls `A2ABroker.GetAgentByPath()`, sets `:authority` to the resolved agent hostname and the `x-a2a-agent` header. The JSON-RPC method is not known until the body, so **all method-specific work happens at `RequestBody`**, not here. At the `RequestBody` phase: authenticates via the OAuth principal (`sub`, read with `ExtractSubClaim`); for `GetTask`/`CancelTask`/`SubscribeToTask` reads the agent-assigned task ID from the body (unchanged), calls `LookupTaskRecord()`, and verifies the principal owns the task (fail closed on a mismatched record; pass through when no record exists). Request bodies are **never rewritten** — task IDs pass through, so routing is by `:path` alone. At the `ResponseHeaders` phase: sets a `ModeOverride` when `status == 200` — `STREAMED` for `SendStreamingMessage`/`SubscribeToTask` so the observer sees each event, `BUFFERED` for non-streaming methods so the router sees the response at all (the filter's default `response_body_mode` is `NONE`); observation-only, so no `content-length` change is needed. At the `ResponseBody` phase: for non-streaming methods, reads `result.id` and calls `StoreTaskRecord()` to bind ownership (or `DeleteTaskRecord()` on a terminal `TaskState`), then forwards the body byte-for-byte. `a2aSSEObserver.Process()` handles streaming read-only: on the first `task` event it calls `StoreTaskRecord()`, on a terminal `TaskState` it calls `DeleteTaskRecord()`, and it forwards every `data:` line unchanged — parsing only the event envelope's identity fields, with `parts` (incl. base64 `FilePart` bytes) never decoded (see [SSE artifact passthrough](#sse-artifact-passthrough--envelope-only-parsing)). |
+| Broker (`a2a.Broker`) | Implements `config.Observer`. On config change, calls `SetAgents()`. `ServeAPICatalog()` serves `GET /.well-known/api-catalog` as an RFC 9264 Linkset (`Content-Type: application/linkset+json`, registered by RFC 9727) listing all enabled agent endpoints. `ServeAgentCard(namespace, prefix)` serves `GET /a2a/{namespace}/{prefix}/.well-known/agent-card.json` from a cached, ticker-refreshed copy of the upstream card (mirroring `MCPManager`; not a per-request proxy). Signed cards are served **verbatim** (a rewrite would invalidate the JWS signature) and MUST already advertise the gateway path; the broker validates **every** advertised interface (all bindings, plus the interface `tenant`) on refresh and **fails closed** (agent not-`Ready`) on mismatch, so a signed card can't leak a gateway bypass through any interface entry. Unsigned cards have their interface URL rewritten to the gateway path (see [Discovery Flow](#flow) for the full contract). `GetAgentByPath(namespace, prefix)` resolves a namespace-qualified path to the upstream agent. |
+| Router (`ExtProcServer`) | At the `RequestHeaders` phase: detects A2A traffic by `:path` prefix. GET **discovery** requests (the card and catalog paths) also traverse ext_proc — the filter is listener-scoped — and the router passes them through untouched; the broker's HTTP mux serves them. For POST **invocation** traffic it extracts the `(namespace, prefix)` from `:path`, calls `A2ABroker.GetAgentByPath()`, sets `:authority` to the resolved agent hostname and the `x-a2a-agent` header. The JSON-RPC method is not known until the body, so **all method-specific work happens at `RequestBody`**, not here. At the `RequestBody` phase: authenticates via the OAuth principal (`sub`, read with `ExtractSubClaim`); for `GetTask`/`CancelTask`/`SubscribeToTask` — and for `SendMessage`/`SendStreamingMessage` continuations whose `message.taskId` or `referenceTaskIds` name an existing task — reads the agent-assigned task ID from the body (unchanged), calls `LookupTaskRecord()`, and verifies the principal owns the task; a missing, expired, or mismatched record **fails closed** with `-32001 TaskNotFoundError`. Deferred v1.0 methods (`ListTasks` etc.) are rejected with `-32004`, never forwarded. Request bodies are **never rewritten** — task IDs pass through, so routing is by `:path` alone. At the `ResponseHeaders` phase: sets a `ModeOverride` when `status == 200` — `STREAMED` for `SendStreamingMessage`/`SubscribeToTask` so the observer sees each event, `BUFFERED` for `SendMessage` so the router sees the response at all (the filter's default `response_body_mode` is `NONE`); observation-only, so no `content-length` change is needed. `GetTask`/`CancelTask` need no override (bare-`Task` responses, nothing to observe). At the `ResponseBody` phase: for `SendMessage`, reads `result.task.id` (the v1.0 `SendMessageResponse` oneof; the `result.message` variant creates no task and stores nothing) and calls `StoreTaskRecord()` — **insert-only**, never rebinding an existing owner — then forwards the body byte-for-byte. `a2aSSEObserver.Process()` handles streaming read-only: on the first `task` event it calls `StoreTaskRecord()` (insert-only) and it forwards every `data:` line unchanged; terminal states end the stream without deleting the record — parsing only the present union member's identity fields, with `parts` (incl. base64 file bytes) never decoded (see [SSE artifact passthrough](#sse-artifact-passthrough--envelope-only-parsing)). |
 | Config (`MCPServersConfig`) | Stores `A2AAgents []*A2AAgent` alongside `Servers`. `SetA2AAgents()`, `ListA2AAgents()` provide thread-safe access under the existing `sync.RWMutex`. `Notify()` delivers A2A agent list to observers. |
 | Config Secret (`SecretReaderWriter`) | `UpsertA2AAgent()` and `RemoveA2AAgent()` follow the existing read-modify-write pattern with `retry.RetryOnConflict()`. `BrokerConfig` YAML gains an `a2aAgents` key. |
-| Gateway HTTPRoute (`broker_router.go`) | `buildGatewayHTTPRoute()` gains two rules, both targeting the broker-router Service: an `a2a` rule (PathPrefix `/a2a`, with a `RequestHeaderModifier` filter removing `x-a2a-agent` and `x-a2a-task-id` so clients cannot inject them) and an `api-catalog` rule (`/.well-known/api-catalog`). Discovery GETs and invocation POSTs share the `/a2a` rule: every A2A request traverses ext_proc (the filter is listener-scoped, so a separate discovery rule could not bypass it anyway), and the **router** disambiguates — GETs to the card path pass through untouched to the broker's HTTP mux, POST invocations get method routing. `httpRouteNeedsUpdate()` via `DeepEqual` ensures automatic updates on existing deployments. |
-| Task record store (`session.Cache`) | New `taskRecords sync.Map` field (immutable `TaskRecord` values, no COW), keyed by `(agent, taskID)`. `StoreTaskRecord()`, `LookupTaskRecord()`, `DeleteTaskRecord()` follow the in-memory/Redis duality. The record holds the owning principal (and optional trace context) — **not** a routing target, since the path already resolves the agent. Redis key prefix: `a2atask:{agent}/{taskID}`. TTL is a **fixed safety-net decoupled from the JWT/session** (the `idmap` pattern, `idmap/redis.go`) — A2A tasks can outlive a 24h session, so a session-derived TTL would evict live records. Primary cleanup is `DeleteTaskRecord()` on a terminal `TaskState`; the TTL only backstops crashes, after which lookups miss and the call passes through to the agent. In-memory records are torn down with the owning principal's session (or documented dev-only). |
+| Gateway HTTPRoute (`broker_router.go`) | `buildGatewayHTTPRoute()` gains two rules, both targeting the broker-router Service: an `a2a` rule (PathPrefix `/a2a`, with a `RequestHeaderModifier` filter removing `x-a2a-agent`, `x-a2a-task-id`, and `x-a2a-method` so clients cannot inject them) and an `api-catalog` rule (`/.well-known/api-catalog`). Discovery GETs and invocation POSTs share the `/a2a` rule: every A2A request traverses ext_proc (the filter is listener-scoped, so a separate discovery rule could not bypass it anyway), and the **router** disambiguates — GETs to the card path pass through untouched to the broker's HTTP mux, POST invocations get method routing. `httpRouteNeedsUpdate()` via `DeepEqual` ensures automatic updates on existing deployments. |
+| Task record store (`session.Cache`) | New `taskRecords sync.Map` field (immutable `TaskRecord` values, no COW), keyed by `(agent, taskID)`. `StoreTaskRecord()`, `LookupTaskRecord()`, `DeleteTaskRecord()` follow the in-memory/Redis duality; `StoreTaskRecord()` is **insert-only** (never overwrites an existing record's principal). The record holds the owning principal (and optional trace context) — **not** a routing target, since the path already resolves the agent. Redis key prefix: `a2atask:{agent}/{taskID}`. Records are **not** deleted on terminal states (tasks stay retrievable after completion — deleting at terminal would leave exactly the result-carrying task unprotected); cleanup is a **fixed retention TTL decoupled from the JWT/session** (the `idmap` pattern, `idmap/redis.go`), sized to at least the agents' task-retention window. A lookup miss **fails closed** (`-32001`), so production multi-replica deployments MUST use the Redis store; the in-memory store is single-replica dev-only. |
 
 ### API Changes
 
@@ -485,9 +500,10 @@ const (
 )
 ```
 
-Both `x-a2a-agent` and `x-a2a-task-id` are added to `internalOnlyHeaders` in
+All three (`x-a2a-agent`, `x-a2a-task-id`, and `x-a2a-method`) are added to `internalOnlyHeaders` in
 `internal/mcp-router/headers.go` and to the `stripRouterHeaders` filter in
-`broker_router.go:buildGatewayHTTPRoute()`.
+`broker_router.go:buildGatewayHTTPRoute()` — any header a policy may key on must be router-derived,
+never client-suppliable.
 
 ### Data Storage
 
@@ -515,12 +531,18 @@ In-memory: new `taskRecords sync.Map` field on `Cache`, separate from `inmemory`
 collision. No COW needed — values are immutable `TaskRecord` structs stored and replaced atomically
 via `sync.Map.Store`, unlike the `inmemory` map whose values are `map[string]string` requiring COW.
 
-Redis: key `a2atask:{agent}/{taskID}`, with a **fixed safety-net TTL decoupled from the session JWT**
-(the `idmap` pattern — `idmap/redis.go` uses a 1h default safety net plus an explicit `Remove`). A2A
-tasks can run for "seconds or days" and routinely outlive a 24h session, so a JWT-derived TTL
-would evict live records. Primary cleanup is `DeleteTaskRecord()` on a terminal `TaskState`; the TTL
-only backstops process crashes, after which a lookup misses and the call passes through to the agent
-(which remains the authority on its own task IDs) rather than being rejected at the gateway.
+Redis: key `a2atask:{agent}/{taskID}`, with a **fixed retention TTL decoupled from the session JWT**
+(the `idmap` pattern — `idmap/redis.go`; a TTL, not a session-derived expiry). A2A tasks can run for
+"seconds or days" and routinely outlive a 24h session, so a JWT-derived TTL would evict live records.
+Records are **not** deleted on terminal states: tasks remain retrievable after completion, so deleting
+at terminal would leave exactly the completed, result-carrying task unprotected. The retention TTL is
+the cleanup and MUST be at least the upstream agents' task-retention window. A lookup miss **fails
+closed** with `-32001 TaskNotFoundError` — the same error an unknown ID produces — because a miss
+almost always means an expired record or a lost store, and forwarding in that state would expose the
+task to any authenticated principal. `StoreTaskRecord` is **insert-only**: a continuation or replay can
+never rebind an existing task's owner. Consequently the Redis store is REQUIRED for production
+multi-replica deployments; the in-memory store is single-replica dev-only (a restart forfeits records,
+and with fail-closed semantics that means clients re-create tasks rather than read someone else's).
 
 #### Agent card cache (pluggable backend)
 
@@ -565,9 +587,16 @@ gateway does not mint or rewrite them, because routing is by path and never depe
 Cross-agent ID collision is therefore not a gateway concern: path-per-agent routing means a task ID is
 only ever interpreted within its own agent, exactly as it would be if the client talked to the agent
 directly. Ownership is enforced instead: the router records `(agent, taskID) → principal` when the task
-is created, and `GetTask`/`CancelTask`/`SubscribeToTask` verify the requesting principal owns the task
-(SEP-2567 §Security: validate `(handle, auth_context)` on every call), so a client cannot probe or
-cancel another principal's task on the same agent by guessing its ID.
+is created (insert-only — no later request can rebind the owner), and every request that names an
+existing task — `GetTask`/`CancelTask`/`SubscribeToTask` **and** `SendMessage`/`SendStreamingMessage`
+continuations carrying `message.taskId` or `referenceTaskIds` — verifies the requesting principal owns
+it (SEP-2567 §Security: validate `(handle, auth_context)` on every call). The check **fails closed**
+with `-32001` on a missing, expired, or mismatched record, so a client cannot probe, cancel, or inject
+input into another principal's task, and completed tasks stay protected for the full retention window.
+These decisions are only as strong as the edge validation above — they consume the AuthPolicy-validated
+principal, never a client-asserted one. The principal is today the bare token `sub`, matching
+`ExtractSubClaim` usage across the gateway; scoping to `(issuer, sub)` for multi-issuer deployments is
+a gateway-wide follow-up, tracked once, not an A2A-only divergence.
 
 **Internal header stripping.** `x-a2a-agent` and `x-a2a-task-id` are stripped at both the
 HTTPRoute level (via `RequestHeaderModifier` filter in `buildGatewayHTTPRoute()`) and in
@@ -586,7 +615,10 @@ routing path were a bare `/a2a/{prefix}`, two agents in *different* namespaces c
 operational clash — and no timing-based tiebreaker (oldest-`creationTimestamp`-wins) would resolve it
 deterministically under reconcile and GitOps. **The routing path is therefore namespace-qualified as
 `/a2a/{namespace}/{prefix}`**, which makes cross-namespace collision structurally impossible: uniqueness
-reduces to a namespace-scoped check on `prefix`, and each tenant gets isolation by construction. The
+reduces to a namespace-scoped check on `prefix`, and each tenant gets isolation by construction. Within
+a namespace a duplicate `agentPrefix` is resolved deterministically: the oldest registration (by
+`creationTimestamp`, ties broken by name) holds the prefix, later claimants get `Ready=False` with a
+collision reason, and the loser is re-evaluated when the holder is deleted. The
 namespace is the registration's own namespace, so no CRD field changes — the broker and router derive
 the path from data they already hold. Cross-namespace registration is **allowed with consent**: the A2A
 controller honors `targetRef.namespace`, and a registration may target an HTTPRoute in another namespace
@@ -722,6 +754,14 @@ endpoint requires auth, the broker presents the static credential from `A2AAgent
 router never sees `credentialRef` — confirmed for MCP (`internal/mcp-router/` has no access to it), and
 the same isolation holds for A2A.
 
+The fetch itself is hardened as an SSRF surface: `agentCardURL` is an operator-set override (never
+client input), but a registration author can still point it at an arbitrary URL with a credential
+attached, so the fetcher enforces a response-size cap (1 MiB) and a fixed timeout, MUST NOT carry the
+`Authorization` header across cross-host redirects (Go's HTTP client strips it by default; the fetcher
+keeps that behavior explicit), and deployments that must not reach private/link-local ranges enforce
+that with network policy. TLS trust for card fetches follows the gateway's additive CA-bundle model
+(`caCertBundleRef`) rather than a per-agent trust root.
+
 ### Task invocation (client → agent): client identity, not `credentialRef`
 
 `SendMessage` / `tasks/*` carry a real client, so — exactly as MCP `tools/call` — the upstream credential
@@ -773,14 +813,15 @@ gateway **serves signed cards verbatim** and does not rewrite them; this is the 
 (reflected in the flows and [Component Responsibilities](#component-responsibilities)), not a fallback.
 
 The routing indirection lives in discovery, not in the card: the gateway routes by the namespace-qualified
-`:path` (`/a2a/{namespace}/{prefix}`, and where present v1.0's `tenant` field), and the RFC 9727 catalog
-advertises that per-agent gateway path. A client takes the endpoint from the **catalog link** and sends
-there. **Residual dependency:** a verbatim card's `supportedInterfaces[].url` points at whatever the agent
-signed — if that's the agent's own address, a client that routes off the card URL rather than the catalog
-would bypass the gateway. Two ways this resolves cleanly: the agent operator signs the card advertising
-the gateway endpoint (verbatim then points at the gateway), or clients treat the catalog as the discovery
-source of truth. For **unsigned** cards the broker may still rewrite the interface URL as a convenience,
-but the design does not depend on it.
+`:path` (`/a2a/{namespace}/{prefix}`), and the RFC 9727 catalog advertises that per-agent gateway path as
+**discovery metadata** — a stock client still invokes the URL of an interface in the served card's
+`supportedInterfaces[]`, and a catalog link cannot override that selection. There is therefore no residual
+dependency on client behavior: per the [discovery contract](#flow), the broker validates **every**
+advertised interface on refresh — any entry, under any binding (`JSONRPC`, `GRPC`, `HTTP+JSON`), whose
+URL does not resolve to the gateway path, or whose `tenant` is inconsistent with the gateway's routing,
+**fails closed** (the agent is not-`Ready` and never enters the catalog). A signed card must therefore be
+signed already advertising the gateway endpoint. For **unsigned** cards the broker may still rewrite the
+interface URL as a convenience, but the contract does not depend on it.
 
 The alternative — **re-signing at the gateway** (rewrite the URL, re-sign with a gateway key) — is correct
 for any client but makes the gateway a **card-signing trust authority** (key management, a trust-root

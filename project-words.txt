@@ -452,3 +452,9 @@ aproject
 atask
 goroutines
 kubeapilinter
+apicurio
+audienced
+forgeable
+limitador
+linkset
+unpoliced
