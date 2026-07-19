@@ -165,10 +165,16 @@ A stock A2A v1.0 client discovers agents via the catalog, then — per the spec'
 rules — invokes each agent at the `url` of an interface in that agent's AgentCard `supportedInterfaces[]`.
 A catalog link alone cannot override that choice (the catalog is discovery metadata, not a routing
 authority), so for a client to route through the gateway both the catalog link and the served card's
-interfaces must resolve to the agent's gateway path (`/a2a/{namespace}/{prefix}`). The gateway fronts
-only the JSONRPC binding, so validation covers **every** `supportedInterfaces[]` entry — an interface
-under any other binding (`GRPC`, `HTTP+JSON`) pointing at the upstream would be an unpoliced bypass —
-and the interface `tenant`, which a client echoes in requests and must be consistent with the gateway's
+interfaces must resolve to the agent's gateway path (`/a2a/{namespace}/{prefix}`). This is not just a
+spec reading — the reference `a2a-go` client behaves exactly this way: it binds to the card's
+`supportedInterfaces` (and errors when its endpoint leaves the list), and its default card resolution
+appends `/.well-known/agent-card.json` to the base URL, so a stock client pointed at an agent's gateway
+path resolves this design's card location with no configuration. The gateway fronts only the JSONRPC
+binding, so validation covers **every** `supportedInterfaces[]` entry — an interface under any other
+binding (`GRPC`, `HTTP+JSON`) pointing at the upstream would be an unpoliced bypass, and the reference
+client's transport selection actively picks among all advertised bindings by preference and semver
+compatibility, so a stray direct-upstream `GRPC` entry would be *selected*, not ignored — and the
+interface `tenant`, which a client echoes in requests and must be consistent with the gateway's
 routing. That drives the card-serving contract:
 
 - **Unsigned cards** — the broker rewrites the interface URL to the gateway path before serving (safe;
@@ -185,10 +191,16 @@ routing. That drives the card-serving contract:
   leaking a bypass.
 
 agentgateway (Solo.io, now under the Linux Foundation) uses per-agent routing similarly. Multi-agent
-discovery under one base URL is an active topic upstream; the RFC 9727 API Catalog (served as an RFC
-9264 Linkset) used here aligns with that direction.
-**[OPEN: discovery convention is held deliberately loose — commit to the RFC 9727 catalog now vs
-track upstream and keep it light. David endorsed holding it loosely; pending Jason/Craig.]**
+discovery under one base URL has since begun to settle upstream: the A2A project closed its
+RFC 9264-catalog discovery issue in favor of the emerging **AI Catalog** specification (Agent-Card,
+a Linux Foundation working group) — its own format at `/.well-known/ai-catalog.json`
+(`application/ai-catalog+json`), whose entries carry **both A2A agent cards and MCP server cards**,
+a natural fit for a gateway fronting both protocols. The catalog layer here is deliberately thin —
+one handler marshalling the broker's agent index — so serving `ai-catalog.json` alongside (or
+eventually instead of) the RFC 9727 catalog is an additive endpoint, not a redesign.
+**[OPEN: discovery convention held deliberately loose — the RFC 9727 catalog is implemented and
+running; upstream is converging on AI Catalog, which this design can serve additively once the
+working-group spec stabilizes. David endorsed holding it loosely; pending Jason/Craig.]**
 
 #### Upstream Agent Card sync (no card-change push)
 
@@ -536,7 +548,10 @@ Redis: key `a2atask:{agent}/{taskID}`, with a **fixed retention TTL decoupled fr
 "seconds or days" and routinely outlive a 24h session, so a JWT-derived TTL would evict live records.
 Records are **not** deleted on terminal states: tasks remain retrievable after completion, so deleting
 at terminal would leave exactly the completed, result-carrying task unprotected. The retention TTL is
-the cleanup and MUST be at least the upstream agents' task-retention window. A lookup miss **fails
+the cleanup and MUST be at least the upstream agents' task-retention window — with the honest caveat
+that A2A defines **no task-retention period and no way to discover an agent's**, so the TTL is an
+operator-configured bound, not a derived one; a retention-discovery mechanism (e.g. a card capability)
+is an open protocol question, not something this design can infer. A lookup miss **fails
 closed** with `-32001 TaskNotFoundError` — the same error an unknown ID produces — because a miss
 almost always means an expired record or a lost store, and forwarding in that state would expose the
 task to any authenticated principal. `StoreTaskRecord` is **insert-only**: a continuation or replay can
@@ -826,6 +841,14 @@ interface URL as a convenience, but the contract does not depend on it.
 The alternative — **re-signing at the gateway** (rewrite the URL, re-sign with a gateway key) — is correct
 for any client but makes the gateway a **card-signing trust authority** (key management, a trust-root
 decision), out of scope unless explicitly needed.
+
+Two honest observations that bound how much weight signatures carry today: the reference `a2a-go`
+client currently transports `signatures` without verifying them (client-side verification is not yet
+enforced anywhere in the reference SDK), so the verbatim discipline here is forward-looking rather
+than load-bearing for present clients; and `signatures` being a **list** leaves open whether an
+intermediary may *additively* counter-sign a card it serves — a lighter model than re-signing, since
+the agent's original signature would remain verifiable — which is an open protocol question rather
+than something this design can decide.
 
 And if a [pluggable card store](#agent-card-cache-pluggable-backend) (e.g. a registry) is the card source
 rather than the upstream agent, the store must stay out of the trust chain: it **preserves the agent's
