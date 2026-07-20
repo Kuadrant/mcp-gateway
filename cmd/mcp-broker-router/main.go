@@ -84,6 +84,7 @@ type app struct {
 	mcpBroker      broker.MCPBroker
 	tokenHandler   http.Handler
 	elicitHandler  http.Handler
+	metricsHandler http.Handler
 	brokerServer   *http.Server
 	grpcServer     *grpc.Server
 	server         *mcpRouter.ExtProcServer
@@ -179,11 +180,12 @@ func (a *app) setupLogger() (*slog.HandlerOptions, bool) {
 }
 
 func (a *app) setupTelemetry(ctx context.Context, logOpts *slog.HandlerOptions, jsonFormat bool) {
-	otelShutdown, loggerProvider, err := mcpotel.SetupOTelSDK(ctx, gitSHA, dirty, version, a.logger)
+	otelShutdown, loggerProvider, metricsHandler, err := mcpotel.SetupOTelSDK(ctx, gitSHA, dirty, version, a.logger)
 	if err != nil {
 		a.logger.Error("failed to setup OpenTelemetry", "error", err)
 	}
 	a.otelShutdown = otelShutdown
+	a.metricsHandler = metricsHandler
 
 	if loggerProvider != nil {
 		a.logger = mcpotel.NewTracingLogger(os.Stdout, logOpts, jsonFormat, loggerProvider)
