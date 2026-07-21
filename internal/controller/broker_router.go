@@ -83,11 +83,12 @@ var logLevelFlagValues = map[mcpv1.LogLevel]string{
 
 func brokerRouterLabels() map[string]string {
 	return map[string]string{
-		labelAppName:                  brokerRouterName,
+		labelAppName:                  "mcp-gateway",
 		labelManagedBy:                labelManagedByValue,
 		"app.kubernetes.io/component": "broker",
 	}
 }
+
 func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1.MCPGatewayExtension, publicHost, internalHost string) *appsv1.Deployment {
 	labels := brokerRouterLabels()
 	replicas := int32(1)
@@ -423,7 +424,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 			existingDeployment.Spec.Template.Spec.Volumes,
 		)
 		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
-		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
+
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
