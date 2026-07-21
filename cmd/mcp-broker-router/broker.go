@@ -103,7 +103,13 @@ func (a *app) setUpHTTPServer() {
 
 func (a *app) setUpMetricsServer() {
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", a.metricsHandler)
+	if a.metricsHandler != nil {
+		mux.Handle("/metrics", a.metricsHandler)
+	} else {
+		mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+		})
+	}
 	a.metricsServer = &http.Server{
 		Addr:              a.brokerCfg.metricsAddr,
 		Handler:           mux,

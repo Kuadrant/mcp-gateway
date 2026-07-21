@@ -1633,8 +1633,8 @@ func TestMCPManager_MetricsRecorded_OnSuccess(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(ctx, &rm))
 
-	// find mcp_broker_discovery_total{status="success"}
-	discoveryTotal := findCounterValue(t, rm, "mcp_broker_discovery_total", map[string]string{
+	// find mcp_broker_discovery{status="success"}
+	discoveryTotal := findCounterValue(t, rm, "mcp_broker_discovery", map[string]string{
 		"server_name": "test-server",
 		"status":      "success",
 	})
@@ -1645,6 +1645,16 @@ func TestMCPManager_MetricsRecorded_OnSuccess(t *testing.T) {
 		"server_name": "test-server",
 	})
 	require.Equal(t, int64(2), toolsDiscovered)
+
+	histCount := findHistogramCount(t, rm, "mcp_broker_discovery_duration_seconds", map[string]string{
+		"server_name": "test-server",
+	})
+	require.Equal(t, uint64(1), histCount)
+
+	bytesVal := findGaugeValue(t, rm, "mcp_broker_tools_list_response_bytes", map[string]string{
+		"server_name": "test-server",
+	})
+	require.Greater(t, bytesVal, int64(0))
 }
 
 func TestMCPManager_MetricsRecorded_OnConnectionFailure(t *testing.T) {
@@ -1671,12 +1681,12 @@ func TestMCPManager_MetricsRecorded_OnConnectionFailure(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(ctx, &rm))
 
-	failures := findCounterValue(t, rm, "mcp_broker_upstream_connection_failures_total", map[string]string{
+	failures := findCounterValue(t, rm, "mcp_broker_upstream_connection_failures", map[string]string{
 		"server_name": "failing-server",
 	})
 	require.Equal(t, int64(1), failures)
 
-	discoveryFailure := findCounterValue(t, rm, "mcp_broker_discovery_total", map[string]string{
+	discoveryFailure := findCounterValue(t, rm, "mcp_broker_discovery", map[string]string{
 		"server_name": "failing-server",
 		"status":      "failure",
 	})
@@ -1696,6 +1706,27 @@ func findCounterValue(t *testing.T, rm metricdata.ResourceMetrics, name string, 
 			for _, dp := range data.DataPoints {
 				if labelsMatch(dp.Attributes, labels) {
 					return dp.Value
+				}
+			}
+		}
+	}
+	t.Fatalf("metric %s with labels %v not found", name, labels)
+	return 0
+}
+
+// findHistogramCount returns the data point count for a histogram metric matching the given labels.
+func findHistogramCount(t *testing.T, rm metricdata.ResourceMetrics, name string, labels map[string]string) uint64 {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			data, ok := m.Data.(metricdata.Histogram[float64])
+			require.True(t, ok, "metric %s is not a Histogram[float64]", name)
+			for _, dp := range data.DataPoints {
+				if labelsMatch(dp.Attributes, labels) {
+					return dp.Count
 				}
 			}
 		}

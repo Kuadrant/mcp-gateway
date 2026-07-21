@@ -248,11 +248,11 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 
 	meter := otel.GetMeterProvider().Meter("mcp-broker")
 
-	discoveryTotal, err := meter.Int64Counter("mcp_broker_discovery_total",
+	discoveryTotal, err := meter.Int64Counter("mcp_broker_discovery",
 		metric.WithDescription("number of discovery attempts per upstream server"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mcp_broker_discovery_total: %w", err)
+		return nil, fmt.Errorf("failed to create mcp_broker_discovery: %w", err)
 	}
 
 	discoveryDuration, err := meter.Float64Histogram("mcp_broker_discovery_duration_seconds",
@@ -270,11 +270,11 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		return nil, fmt.Errorf("failed to create mcp_broker_tools_discovered: %w", err)
 	}
 
-	connectionFailures, err := meter.Int64Counter("mcp_broker_upstream_connection_failures_total",
+	connectionFailures, err := meter.Int64Counter("mcp_broker_upstream_connection_failures",
 		metric.WithDescription("number of upstream connection failures"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mcp_broker_upstream_connection_failures_total: %w", err)
+		return nil, fmt.Errorf("failed to create mcp_broker_upstream_connection_failures: %w", err)
 	}
 
 	toolsListBytes, err := meter.Int64Gauge("mcp_broker_tools_list_response_bytes",
@@ -457,6 +457,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.status.Name = man.MCPName()
 		man.status.Ready = true
 		man.status.Message = "userSpecificList server healthy, tools fetched per-user"
+		man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "success")))
 		man.resetBackoff()
 		return
 	}
@@ -532,6 +533,11 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 				}
 			}
 		}
+		if toolErr != nil {
+			man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "failure")))
+		} else {
+			man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "success")))
+		}
 	}
 
 	var promptErr error
@@ -586,11 +592,6 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		}
 	}
 	jointErr := errors.Join(toolErr, promptErr)
-	if jointErr != nil {
-		man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "failure")))
-	} else {
-		man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "success")))
-	}
 	man.setStatus(jointErr, numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
 	if jointErr != nil {
 		man.applyBackoff()

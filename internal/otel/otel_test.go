@@ -110,6 +110,7 @@ func TestSetupOTelSDK_PropagatorSet(t *testing.T) {
 func TestSetupOTelSDK_RegistersMeterProvider(t *testing.T) {
 	// reset to noop so we can detect the change
 	otel.SetMeterProvider(noop.NewMeterProvider())
+	defer otel.SetMeterProvider(noop.NewMeterProvider()) // restore after test
 
 	ctx := context.Background()
 	shutdown, _, metricsHandler, err := SetupOTelSDK(ctx, "sha", "", "v0.0.1", noopLogger())

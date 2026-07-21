@@ -51,6 +51,9 @@ spec:
             - name: pprof
               containerPort: 6060
               protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           resources:
             requests:
               memory: '128Mi'
