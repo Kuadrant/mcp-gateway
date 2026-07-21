@@ -15,7 +15,18 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestMain(m *testing.M) {
+	// register noop meter so instrument creation in NewUpstreamMCPManager doesn't log warnings
+	otel.SetMeterProvider(noopmetric.NewMeterProvider())
+	os.Exit(m.Run())
+}
 
 // MockMCP implements the MCP interface for testing
 type MockMCP struct {
@@ -1592,4 +1603,134 @@ func TestMCPManager_Backoff(t *testing.T) {
 	mock.listToolsErr = nil
 	manager.manage(ctx, eventTypeTimer)
 	assert.True(t, manager.GetStatus().Ready)
+}
+
+func TestMCPManager_MetricsRecorded_OnSuccess(t *testing.T) {
+	// use a real SDK MeterProvider with an in-memory reader so we can assert metric values
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(mp)
+	defer otel.SetMeterProvider(noopmetric.NewMeterProvider())
+
+	mock := &MockMCP{
+		name:   "test-server",
+		id:     "test-server",
+		prefix: "",
+		cfg:    &config.MCPServer{Name: "test-server"},
+		tools: []mcp.Tool{
+			validTool("tool-a"),
+			validTool("tool-b"),
+		},
+		hasToolsCap: true,
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, time.Second*5, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	manager.manage(ctx, eventTypeTimer)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(ctx, &rm))
+
+	// find mcp_broker_discovery_total{status="success"}
+	discoveryTotal := findCounterValue(t, rm, "mcp_broker_discovery_total", map[string]string{
+		"server_name": "test-server",
+		"status":      "success",
+	})
+	require.Equal(t, int64(1), discoveryTotal)
+
+	// find mcp_broker_tools_discovered
+	toolsDiscovered := findGaugeValue(t, rm, "mcp_broker_tools_discovered", map[string]string{
+		"server_name": "test-server",
+	})
+	require.Equal(t, int64(2), toolsDiscovered)
+}
+
+func TestMCPManager_MetricsRecorded_OnConnectionFailure(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(mp)
+	defer otel.SetMeterProvider(noopmetric.NewMeterProvider())
+
+	mock := &MockMCP{
+		name:        "failing-server",
+		id:          "failing-server",
+		prefix:      "",
+		cfg:         &config.MCPServer{Name: "failing-server"},
+		connectErr:  fmt.Errorf("connection refused"),
+		hasToolsCap: true,
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, time.Second*5, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	manager.manage(ctx, eventTypeTimer)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(ctx, &rm))
+
+	failures := findCounterValue(t, rm, "mcp_broker_upstream_connection_failures_total", map[string]string{
+		"server_name": "failing-server",
+	})
+	require.Equal(t, int64(1), failures)
+
+	discoveryFailure := findCounterValue(t, rm, "mcp_broker_discovery_total", map[string]string{
+		"server_name": "failing-server",
+		"status":      "failure",
+	})
+	require.Equal(t, int64(1), discoveryFailure)
+}
+
+// findCounterValue finds a counter metric by name and label set and returns its value.
+func findCounterValue(t *testing.T, rm metricdata.ResourceMetrics, name string, labels map[string]string) int64 {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			data, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "metric %s is not a Sum[int64]", name)
+			for _, dp := range data.DataPoints {
+				if labelsMatch(dp.Attributes, labels) {
+					return dp.Value
+				}
+			}
+		}
+	}
+	t.Fatalf("metric %s with labels %v not found", name, labels)
+	return 0
+}
+
+// findGaugeValue finds a gauge metric by name and label set and returns its value.
+func findGaugeValue(t *testing.T, rm metricdata.ResourceMetrics, name string, labels map[string]string) int64 {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			data, ok := m.Data.(metricdata.Gauge[int64])
+			require.True(t, ok, "metric %s is not a Gauge[int64]", name)
+			for _, dp := range data.DataPoints {
+				if labelsMatch(dp.Attributes, labels) {
+					return dp.Value
+				}
+			}
+		}
+	}
+	t.Fatalf("metric %s with labels %v not found", name, labels)
+	return 0
+}
+
+func labelsMatch(attrs attribute.Set, want map[string]string) bool {
+	for k, v := range want {
+		val, ok := attrs.Value(attribute.Key(k))
+		if !ok || val.AsString() != v {
+			return false
+		}
+	}
+	return true
 }
