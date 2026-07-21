@@ -47,6 +47,7 @@ func (a *app) createBroker() {
 		Config:         a.mcpConfig,
 	}
 	a.setUpHTTPServer()
+	a.setUpMetricsServer()
 }
 
 func (a *app) setUpHTTPServer() {
@@ -98,6 +99,16 @@ func (a *app) setUpHTTPServer() {
 	mux.Handle("/mcp", traceContextMiddleware(a.mcpBroker.MCPHandler()))
 
 	a.brokerServer = httpSrv
+}
+
+func (a *app) setUpMetricsServer() {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", a.metricsHandler)
+	a.metricsServer = &http.Server{
+		Addr:              a.brokerCfg.metricsAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 }
 
 func traceContextMiddleware(next http.Handler) http.Handler {

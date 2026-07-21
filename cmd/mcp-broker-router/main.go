@@ -66,6 +66,7 @@ type brokerConfig struct {
 	discoveryToolsEnabled      bool
 	discoveryToolThreshold     int
 	enablePprof                bool
+	metricsAddr                string
 }
 
 type app struct {
@@ -86,6 +87,7 @@ type app struct {
 	elicitHandler  http.Handler
 	metricsHandler http.Handler
 	brokerServer   *http.Server
+	metricsServer  *http.Server
 	grpcServer     *grpc.Server
 	server         *mcpRouter.ExtProcServer
 }
@@ -152,6 +154,7 @@ func parseFlags() *app {
 	flag.IntVar(&bc.discoveryToolThreshold, "discovery-tool-threshold", 0,
 		"tool count above which real tools are hidden and only meta-tools are shown. 0 means never hide.")
 	flag.BoolVar(&bc.enablePprof, "enable-pprof", false, "enable pprof profiling server on localhost:6060")
+	flag.StringVar(&bc.metricsAddr, "metrics-addr", "0.0.0.0:9090", "address for the internal Prometheus metrics endpoint")
 
 	// router-specific flags
 	flag.StringVar(&rc.addr, "mcp-router-address", "0.0.0.0:50051", "The address for MCP router")
@@ -323,6 +326,14 @@ func (a *app) run(ctx context.Context) {
 		}
 	}()
 
+	go func() {
+		a.logger.Info("[http] starting metrics server (internal)", "listening", a.metricsServer.Addr)
+		if err := a.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			a.logger.Error("metrics server error", "error", err)
+			stop <- os.Interrupt
+		}
+	}()
+
 	<-stop
 
 	a.logger.Info("shutting down MCP Broker and MCP Router")
@@ -337,6 +348,9 @@ func (a *app) run(ctx context.Context) {
 
 	if err := a.brokerServer.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("HTTP shutdown error", "error", err)
+	}
+	if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
+		a.logger.Error("metrics server shutdown error", "error", err)
 	}
 	if err := a.mcpBroker.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("broker shutdown error", "error", err)
