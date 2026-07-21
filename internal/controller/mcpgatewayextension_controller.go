@@ -327,6 +327,9 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Contex
 			r.log.Info("no valid ReferenceGrant for cross-namespace reference",
 				"extension", mcpExt.Name, "extension-namespace", mcpExt.Namespace,
 				"gateway-namespace", mcpExt.Spec.TargetRef.Namespace)
+			if err := r.deleteEnvoyFilter(ctx, mcpExt); err != nil {
+				return nil, nil, err
+			}
 			if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
 				return nil, nil, err
 			}

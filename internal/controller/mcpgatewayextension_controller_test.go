@@ -955,6 +955,61 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 
+		It("should delete EnvoyFilter when the ReferenceGrant is deleted", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+
+				deployment := &appsv1.Deployment{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      brokerRouterName,
+					Namespace: "default",
+				}, deployment)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			setDeploymentStatus(ctx, "default", 1, 1)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			expectedEnvoyFilterName := fmt.Sprintf("mcp-ext-proc-%s-gateway", "default")
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Expect(deleteTestReferenceGrant(ctx, refGrantName, gatewayNamespace)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+
+				updated := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, updated)).To(Succeed())
+				condition := meta.FindStatusCondition(updated.Status.Conditions, mcpv1.ConditionTypeReady)
+				g.Expect(condition).NotTo(BeNil())
+				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(condition.Reason).To(Equal(mcpv1.ConditionReasonRefGrantRequired))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				envoyFilter := &istionetv1alpha3.EnvoyFilter{}
+				err := testK8sClient.Get(ctx, types.NamespacedName{
+					Name:      expectedEnvoyFilterName,
+					Namespace: gatewayNamespace,
+				}, envoyFilter)
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
 		It("should delete EnvoyFilter when MCPGatewayExtension is deleted", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
