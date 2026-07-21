@@ -208,6 +208,26 @@ histogram_quantile(0.99, sum(rate(mcp_broker_discovery_duration_seconds_bucket[5
 sum(mcp_broker_tools_list_response_bytes)
 ```
 
+### Istio gateway metrics (built-in)
+
+Istio emits these metrics automatically for all traffic through the gateway — no configuration required:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `istio_requests_total` | Counter | Request count by response code, source, and destination |
+| `istio_request_duration_milliseconds` | Histogram | Request latency |
+
+```promql
+# 5xx error rate per destination
+sum(rate(istio_requests_total{response_code=~"5.."}[5m])) by (destination_service_name)
+
+# 4xx rate per destination (likely misconfiguration)
+sum(rate(istio_requests_total{response_code=~"4.."}[5m])) by (destination_service_name)
+
+# p99 request latency per destination
+histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (destination_service_name, le))
+```
+
 ### Istio gateway metrics (optional MCP enrichment)
 
 Istio automatically emits `istio_requests_total` and `istio_request_duration_milliseconds` for all traffic through the gateway. Apply the reference Telemetry resource to add `mcp_server_name` and `mcp_method` labels to those existing metrics:
