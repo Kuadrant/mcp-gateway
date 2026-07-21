@@ -314,6 +314,18 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 	return b
 }
 
+// buildHostnames constructs the hostname slice based on cluster type (KIND vs OpenShift)
+func (b *TestResourcesBuilder) buildHostnames() []gatewayapiv1.Hostname {
+	if e2eDomain == defaultE2EDomain {
+		// KIND: use .mcp-gateway.local hostname only
+		return []gatewayapiv1.Hostname{gatewayapiv1.Hostname(b.hostname)}
+	}
+	// OpenShift/real clusters: use real domain hostname only
+	return []gatewayapiv1.Hostname{
+		gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp-gateway.local", "."+e2eDomain, 1)),
+	}
+}
+
 func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 	backendRef := gatewayapiv1.BackendObjectReference{
 		Name: gatewayapiv1.ObjectName(b.serviceName),
@@ -367,10 +379,7 @@ func (b *TestResourcesBuilder) buildInternalResources(routeName string) {
 			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
 				ParentRefs: []gatewayapiv1.ParentReference{parentRef},
 			},
-			Hostnames: []gatewayapiv1.Hostname{
-				gatewayapiv1.Hostname(b.hostname),
-				gatewayapiv1.Hostname(strings.Replace(b.hostname, ".mcp-gateway.local", "."+e2eDomain, 1)),
-			},
+			Hostnames: b.buildHostnames(),
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{
 					BackendRefs: []gatewayapiv1.HTTPBackendRef{
@@ -446,9 +455,7 @@ func (b *TestResourcesBuilder) buildExternalResources(routeName string) {
 			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
 				ParentRefs: []gatewayapiv1.ParentReference{parentRef},
 			},
-			Hostnames: []gatewayapiv1.Hostname{
-				gatewayapiv1.Hostname(b.hostname),
-			},
+			Hostnames: b.buildHostnames(),
 			Rules: []gatewayapiv1.HTTPRouteRule{
 				{
 					Matches: []gatewayapiv1.HTTPRouteMatch{
@@ -638,7 +645,6 @@ type MCPGatewayExtensionSetup struct {
 	gatewayNamespace string
 	sectionName      string
 	publicHost       string
-	listenerPort     int32
 	pollInterval     string
 	extension        *mcpv1.MCPGatewayExtension
 	referenceGrant   *gatewayv1beta1.ReferenceGrant
@@ -659,7 +665,6 @@ func NewMCPGatewayExtensionSetup(k8sClient client.Client) *MCPGatewayExtensionSe
 		k8sClient:        k8sClient,
 		gatewayName:      GatewayName,
 		gatewayNamespace: GatewayNamespace,
-		listenerPort:     8080,
 	}
 }
 
@@ -698,12 +703,6 @@ func (s *MCPGatewayExtensionSetup) WithPublicHost(host string) *MCPGatewayExtens
 // WithPollInterval sets the poll interval annotation
 func (s *MCPGatewayExtensionSetup) WithPollInterval(interval string) *MCPGatewayExtensionSetup {
 	s.pollInterval = interval
-	return s
-}
-
-// WithListenerPort sets the listener port used to compute the privateHost
-func (s *MCPGatewayExtensionSetup) WithListenerPort(port int32) *MCPGatewayExtensionSetup {
-	s.listenerPort = port
 	return s
 }
 
@@ -751,10 +750,6 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	}
 	if s.publicHost != "" {
 		spec.PublicHost = s.publicHost
-	}
-	if gatewayClassName != "istio" {
-		spec.PrivateHost = fmt.Sprintf("%s-%s.%s.svc.cluster.local:%d",
-			s.gatewayName, gatewayClassName, s.gatewayNamespace, s.listenerPort)
 	}
 	if s.pollInterval != "" {
 		interval, _ := strconv.Atoi(s.pollInterval)
@@ -1021,15 +1016,13 @@ type MCPGatewayExtensionBuilder struct {
 	targetGateway   string
 	targetNamespace string
 	sectionName     string
-	listenerPort    int32
 }
 
 // NewMCPGatewayExtensionBuilder creates a new MCPGatewayExtensionBuilder
 func NewMCPGatewayExtensionBuilder(name, namespace string) *MCPGatewayExtensionBuilder {
 	return &MCPGatewayExtensionBuilder{
-		name:         name,
-		namespace:    namespace,
-		listenerPort: 8080,
+		name:      name,
+		namespace: namespace,
 	}
 }
 
@@ -1048,11 +1041,6 @@ func (b *MCPGatewayExtensionBuilder) WithSectionName(sectionName string) *MCPGat
 
 // Build creates the MCPGatewayExtension resource
 func (b *MCPGatewayExtensionBuilder) Build() *mcpv1.MCPGatewayExtension {
-	var privateHost string
-	if gatewayClassName != "istio" {
-		privateHost = fmt.Sprintf("%s-%s.%s.svc.cluster.local:%d",
-			b.targetGateway, gatewayClassName, b.targetNamespace, b.listenerPort)
-	}
 	return &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
@@ -1067,7 +1055,6 @@ func (b *MCPGatewayExtensionBuilder) Build() *mcpv1.MCPGatewayExtension {
 				Namespace:   b.targetNamespace,
 				SectionName: b.sectionName,
 			},
-			PrivateHost: privateHost,
 		},
 	}
 }

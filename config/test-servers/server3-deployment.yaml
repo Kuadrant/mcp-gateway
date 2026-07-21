@@ -25,6 +25,8 @@ spec:
         env:
         - name: LOG_LEVEL
           value: "info"
+        - name: FASTMCP_HTTP_HOST_ORIGIN_PROTECTION
+          value: "false" # gateway rewrites Host to backend address; origin check would reject
         readinessProbe:
           tcpSocket:
             port: 8000

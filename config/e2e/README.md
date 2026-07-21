@@ -11,7 +11,7 @@ This directory contains template files for e2e test gateways that support both K
 - `nodeport.yaml` - NodePort services for KIND local access
 
 **Generated files (gitignored):**
-- `gateway-1.yaml`, `gateway-2.yaml`, `gateway-shared.yaml` - Generated from templates
+- `gateway-1.yaml`, `gateway-2.yaml`, `gateway-elicitation.yaml`, `gateway-shared.yaml` - Generated from templates
 - `kustomization.yaml` - Copied from platform-specific kustomization file
 
 ## Usage

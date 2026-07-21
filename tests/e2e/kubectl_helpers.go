@@ -199,28 +199,55 @@ func PatchBrokerCA(ctx context.Context, k8sClient client.Client, namespace strin
 		}
 	}
 
-	caSecret := &corev1.Secret{}
-	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)).To(Succeed())
-	caCertPEM, ok := caSecret.Data["ca.crt"]
-	Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
+	if e2eDomain == defaultE2EDomain {
+		// KIND: use cert-manager private CA
+		caSecret := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)).To(Succeed())
+		caCertPEM, ok := caSecret.Data["ca.crt"]
+		Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
 
-	caBundle := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "gateway-ca-bundle",
-			Namespace: namespace,
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"ca.crt": caCertPEM},
+		caBundle := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gateway-ca-bundle",
+				Namespace: namespace,
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{"ca.crt": caCertPEM},
+		}
+		_ = k8sClient.Delete(ctx, caBundle)
+		Expect(k8sClient.Create(ctx, caBundle)).To(Succeed())
+
+		combinedPatch := `[` +
+			`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},` +
+			`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
+			`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
+			`]`
+		Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
+	} else {
+		// OpenShift/real clusters: copy GATEWAY_CA_BUNDLE_CONFIGMAP (defaults to trusted-ca-bundle) ConfigMap from mcp-system
+		if namespace != SystemNamespace {
+			sourceConfigMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: GatewayCABundleConfigMap, Namespace: SystemNamespace}, sourceConfigMap)).To(Succeed())
+
+			targetConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      GatewayCABundleConfigMap,
+					Namespace: namespace,
+					Labels:    sourceConfigMap.Labels,
+				},
+				Data: sourceConfigMap.Data,
+			}
+			_ = k8sClient.Delete(ctx, targetConfigMap)
+			Expect(k8sClient.Create(ctx, targetConfigMap)).To(Succeed())
+		}
+
+		combinedPatch := `[` +
+			`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","configMap":{"name":"` + GatewayCABundleConfigMap + `"}}},` +
+			`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca-bundle.crt","readOnly":true}},` +
+			`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
+			`]`
+		Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
 	}
-	_ = k8sClient.Delete(ctx, caBundle)
-	Expect(k8sClient.Create(ctx, caBundle)).To(Succeed())
-
-	combinedPatch := `[` +
-		`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},` +
-		`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
-		`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
-		`]`
-	Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
 	Expect(WaitForDeploymentReady(ctx, namespace, "mcp-gateway")).To(Succeed())
 }
 

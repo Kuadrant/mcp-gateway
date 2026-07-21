@@ -6,17 +6,32 @@
 // and 127-0-0-1.sslip.io hostnames. To run against a real cluster, set:
 //
 //   E2E_DOMAIN    - base domain for all public hostnames (default: 127-0-0-1.sslip.io)
+//                   Also configures the Gateway HTTPS listener hostname as *.<domain>
 //   E2E_SCHEME    - http or https (default: http)
 //
-// Setting E2E_DOMAIN to a non-default value causes gateway URLs to be derived
-// from the public hostnames automatically (e.g. http://mcp.<domain>/mcp) instead
-// of using Kind's localhost port mappings.
+// Setting E2E_DOMAIN to a non-default value causes:
+// - Gateway URLs to be derived from public hostnames (e.g. http://mcp.<domain>/mcp)
+// - Gateway HTTPS listener hostname to use *.<domain> instead of *.mcp-gateway.local
+// - Individual server hostnames to use <name>.<domain> instead of <name>.mcp-gateway.local
 //
 // Namespace overrides (for non-standard installations):
 //
 //   MCP_GATEWAY_NAMESPACE  - MCP system namespace (default: mcp-system)
 //   GATEWAY_NAMESPACE      - Gateway namespace (default: gateway-system)
 //   TEST_SERVER_NAMESPACE  - Test server namespace (default: mcp-test)
+//
+// TLS configuration:
+//
+//   GATEWAY_TLS_SECRET           - Secret name for Gateway HTTPS listener certificate
+//                                  (default: mcp-gateway-tls-cert).
+//                                  Certificate must be valid for:
+//                                    - listener hostname (*.<domain>)
+//   GATEWAY_CA_BUNDLE_CONFIGMAP  - ConfigMap name containing CA certificates for broker to trust
+//                                  the Gateway HTTPS listener certificate (default: trusted-ca-bundle).
+//                                  Required when Gateway uses certificates signed by non-standard CAs
+//                                  (self-signed, internal CA, etc.). On Kind, uses cert-manager's
+//                                  private CA. On OpenShift/real clusters, typically uses the
+//                                  platform's trusted CA bundle.
 //
 // Individual gateway/host overrides:
 //
@@ -144,7 +159,7 @@ var _ = SynchronizedBeforeSuite(func() {
 
 	By("adding HTTPS listener to the gateway")
 	Expect(AddGatewayHTTPSListener(ctx, GatewayNamespace, GatewayName,
-		GatewayListenerName, "*.mcp-gateway.local", "mcp-gateway-tls-cert", 8443)).To(Succeed())
+		GatewayListenerName, gatewayListenerHostname(), GatewayTLSSecret, 8443)).To(Succeed())
 
 	By("waiting for gateway to be programmed")
 	Eventually(func(g Gomega) {
@@ -168,7 +183,6 @@ var _ = SynchronizedBeforeSuite(func() {
 		TargetingGateway(GatewayName, GatewayNamespace).
 		WithSectionName(GatewayListenerName).
 		WithPublicHost(gatewayPublicHost).
-		WithListenerPort(8443).
 		Build()
 
 	defaultMCPGatewayExt.

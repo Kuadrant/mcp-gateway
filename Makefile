@@ -16,7 +16,7 @@ ifeq (podman,$(CONTAINER_ENGINE))
 	CONTAINER_ENGINE_EXTRA_FLAGS ?= --load
 endif
 
-WAIT_TIME ?=120s
+WAIT_TIME ?=150s
 BROKER_ROUTER_NAME ?=mcp-gateway
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -82,6 +82,8 @@ MCP_GATEWAY_NAME ?= mcp-gateway
 E2E_DOMAIN ?= 127-0-0-1.sslip.io
 GATEWAY_CLASS_NAME ?= istio
 E2E_PLATFORM ?= kind
+GATEWAY_TLS_SECRET ?= mcp-gateway-tls-cert
+GATEWAY_TLS_LISTENER_HOSTNAME ?= *.mcp-gateway.local
 
 .PHONY: help
 help: ## Display this help
@@ -488,9 +490,10 @@ deploy-conformance-server: kind-load-conformance-server ## Deploy conformance MC
 .PHONY: generate-e2e-config
 generate-e2e-config: ## Generate e2e gateway configs from templates (E2E_DOMAIN=..., GATEWAY_CLASS_NAME=..., E2E_PLATFORM=kind|openshift)
 	@echo "Generating e2e config with E2E_DOMAIN=$(E2E_DOMAIN), GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME), E2E_PLATFORM=$(E2E_PLATFORM)"
-	@export E2E_DOMAIN=$(E2E_DOMAIN) GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME) && \
+	@export E2E_DOMAIN=$(E2E_DOMAIN) GATEWAY_CLASS_NAME=$(GATEWAY_CLASS_NAME) GATEWAY_TLS_SECRET=$(GATEWAY_TLS_SECRET) GATEWAY_TLS_LISTENER_HOSTNAME=$(GATEWAY_TLS_LISTENER_HOSTNAME) && \
 	  envsubst < config/e2e/gateway-1.yaml.template > config/e2e/gateway-1.yaml && \
 	  envsubst < config/e2e/gateway-2.yaml.template > config/e2e/gateway-2.yaml && \
+	  envsubst < config/e2e/gateway-elicitation.yaml.template > config/e2e/gateway-elicitation.yaml && \
 	  envsubst < config/e2e/gateway-shared.yaml.template > config/e2e/gateway-shared.yaml
 	@cp config/e2e/kustomization-$(E2E_PLATFORM).yaml config/e2e/kustomization.yaml
 	@echo "E2E config generated successfully"
@@ -504,9 +507,11 @@ deploy-e2e-gateways: generate-e2e-config ## Deploy two gateways for e2e multi-ga
 	@kubectl wait --for=condition=Programmed gateway/e2e-1 -n gateway-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for e2e-2 to be programmed..."
 	@kubectl wait --for=condition=Programmed gateway/e2e-2 -n gateway-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for e2e-elicitation to be programmed..."
+	@kubectl wait --for=condition=Programmed gateway/e2e-elicitation -n gateway-system --timeout=$(WAIT_TIME)
 	@echo "Waiting for shared gateway to be programmed..."
 	@kubectl wait --for=condition=Programmed gateway/shared-gateway -n gateway-system --timeout=$(WAIT_TIME)
-	@echo "E2E gateways ready: e2e-1, e2e-2, and shared-gateway"
+	@echo "E2E gateways ready: e2e-1, e2e-2, e2e-elicitation, and shared-gateway"
 
 # Deploy e2e gateways for OpenShift
 .PHONY: deploy-e2e-gateways-openshift
