@@ -5,7 +5,7 @@ This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distribut
 ## Prerequisites
 
 - MCP Gateway installed and configured
-- An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent)
+- An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent) — required only for tracing and log export. Prometheus metrics need no additional infrastructure.
 
 > **Note:** For a pre-configured local stack with OTEL Collector, Tempo, Loki, and Grafana, see the [observability example](https://github.com/Kuadrant/mcp-gateway/tree/release-0.6.0/examples/otel).
 
@@ -151,13 +151,13 @@ The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated in
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mcp_broker_discovery_total` | Counter | Discovery attempts per upstream server, labelled `status=success\|failure` |
+| `mcp_broker_discovery_total` | Counter | Discovery attempts per upstream server, labelled `status=success` or `status=failure` |
 | `mcp_broker_discovery_duration_seconds` | Histogram | Duration of `tools/list` calls during discovery |
 | `mcp_broker_tools_discovered` | Gauge | Current tool count per upstream server. Set to 0 when a server becomes unreachable |
 | `mcp_broker_upstream_connection_failures_total` | Counter | Connection failures per upstream server |
 | `mcp_broker_tools_list_response_bytes` | Gauge | Size of the last `tools/list` response per upstream server. Proxy for LLM context overhead |
 
-All metrics use `server_name` as the only label, sourced from the `MCPServerRegistration` name. No high-cardinality labels (session IDs, tool names, call IDs) are used.
+All metrics use `server_name` as the only label. Values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (e.g. `mcp-system/my-server`). No high-cardinality labels (session IDs, tool names, call IDs) are used.
 
 ### Scraping the metrics endpoint
 
@@ -215,7 +215,7 @@ histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m]
 
 ### Istio gateway metrics (optional MCP enrichment)
 
-Istio automatically emits `istio_requests_total` and `istio_request_duration_milliseconds` for all traffic through the gateway. Apply the reference Telemetry resource to add `mcp_server_name` and `mcp_method` labels to those existing metrics:
+Apply the reference Telemetry resource to add `mcp_server_name` and `mcp_method` labels to the existing `istio_requests_total` and `istio_request_duration_milliseconds` metrics:
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/examples/otel/istio-mcp-metrics.yaml
