@@ -9,7 +9,7 @@ spec:
   - name: mcp-gateway
     namespace: gateway-system
   hostnames:
-  - stateless-server.mcp-gateway.local
+  - stateless-server.mcp.local
   rules:
   - matches:
     - path:

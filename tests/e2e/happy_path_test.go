@@ -1602,4 +1602,52 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(content[0].Text).To(Equal("Hi restart-test"))
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
+
+	It("[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover", func() {
+		By("Registering a 2025-only server on the shared gateway")
+		registration := NewMCPServerResourcesWithDefaults("discover-negotiate", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("discneg_").Build()
+		regObjects := registration.GetObjects()
+		deferCleanupResources(&regObjects)
+		registeredServer := registration.Register(ctx)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Connecting with a stateless (2026) client — should negotiate down to 2025")
+		var c *mcp.ClientSession
+		Eventually(func(g Gomega) {
+			var err error
+			c, err = NewStatelessClient(ctx, gatewayURL)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		defer func() { _ = c.Close() }()
+
+		initResult := c.InitializeResult()
+		Expect(initResult).NotTo(BeNil())
+		Expect(initResult.ProtocolVersion).To(Equal("2025-11-25"),
+			"SDK should negotiate 2025 when gateway has only 2025 backends")
+
+		By("Verifying tools/list works on the negotiated 2025 session")
+		Eventually(func(g Gomega) {
+			result, err := c.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("discneg_", result)).To(BeTrue(),
+				"2025 tools should be visible after natural negotiation")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("Verifying tools/call works through the full 2025 path (hairpin init, session mapping)")
+		Eventually(func(g Gomega) {
+			result, err := c.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "discneg_greet",
+				Arguments: map[string]any{"name": "negotiate-test"},
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.Content).NotTo(BeEmpty())
+			text, ok := result.Content[0].(*mcp.TextContent)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(text.Text).To(ContainSubstring("negotiate-test"))
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+	})
 })
