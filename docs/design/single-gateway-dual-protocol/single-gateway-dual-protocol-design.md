@@ -6,7 +6,7 @@ The initial 2026-07-28 implementation required `protocolMode` on MCPGatewayExten
 
 The router already has dual implementations (`Router202511`, `Router202607`) selected by `MCP-Protocol-Version` header. The broker has a `protocolRouter` dispatching to stateful or stateless handlers. Both were gated behind a boolean switch.
 
-Builds on [2026-protocol-design](docs/design/router-2026-07-28/router-2026-07-28-design.md)
+Builds on [2026-protocol-design](../router-2026-07-28//router-2026-07-28-design.md)
 
 ## Summary
 
