@@ -16,6 +16,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const (
+	reset  = "\033[0m"
+	bold   = "\033[1m"
+	dim    = "\033[2m"
+	green  = "\033[32m"
+	yellow = "\033[33m"
+	cyan   = "\033[36m"
+	red    = "\033[31m"
+)
+
 func main() {
 	gatewayURL := os.Getenv("GATEWAY_URL")
 	if gatewayURL == "" {
@@ -25,26 +35,57 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	fmt.Println("=== MCP Gateway Dual Protocol Demo ===")
-	fmt.Printf("gateway: %s\n\n", gatewayURL)
+	banner("MCP Gateway Dual Protocol Demo")
+	fmt.Printf("  %sgateway:%s %s\n\n", dim, reset, gatewayURL)
 
-	// 1. connect as a 2026 (stateless) client via /mcp
-	fmt.Println("--- 2026-07-28 client (stateless) via /mcp ---")
-	run2026Client(ctx, gatewayURL)
-
-	// 2. connect as a 2025 (stateful) client via /mcp
-	fmt.Println("\n--- 2025-11-25 client (stateful) via /mcp ---")
-	run2025Client(ctx, gatewayURL)
-
-	// 3. connect via protocol-specific routes
 	statefulURL := strings.TrimSuffix(gatewayURL, "/mcp") + "/mcp/stateful"
 	statelessURL := strings.TrimSuffix(gatewayURL, "/mcp") + "/mcp/stateless"
 
-	fmt.Println("\n--- /mcp/stateful route (forces 2025) ---")
-	run2025Client(ctx, statefulURL)
+	steps := []struct {
+		title string
+		fn    func()
+	}{
+		{
+			"Step 1: Connect as 2026-07-28 (stateless) client to /mcp",
+			func() {
+				explain("The SDK sends server/discover to negotiate the protocol version.")
+				explain("The gateway responds with supportedVersions based on registered backends.")
+				run2026Client(ctx, gatewayURL)
+			},
+		},
+		{
+			"Step 2: Connect as 2025-11-25 (stateful) client to /mcp",
+			func() {
+				explain("server/discover is blocked via custom code in the client to force the SDK to fall back to initialize and 2025 protocol.")
+				explain("The gateway negotiates 2025-11-25 via the legacy handshake.")
+				run2025Client(ctx, gatewayURL)
+			},
+		},
+		{
+			"Step 3: Connect to /mcp/stateful (forces 2025 regardless of client)",
+			func() {
+				explain("The /mcp/stateful route overrides protocol negotiation.")
+				explain("Even a modern SDK client gets 2025-11-25 tools and session-based routing.")
+				run2025Client(ctx, statefulURL)
+			},
+		},
+		{
+			"Step 4: Connect to /mcp/stateless (forces 2026 regardless of client)",
+			func() {
+				explain("The /mcp/stateless route overrides protocol negotiation.")
+				explain("Tools from 2026-07-28 backends only, no sessions, no meta-tools.")
+				run2026Client(ctx, statelessURL)
+			},
+		},
+	}
 
-	fmt.Println("\n--- /mcp/stateless route (forces 2026) ---")
-	run2026Client(ctx, statelessURL)
+	for _, step := range steps {
+		section(step.title)
+		step.fn()
+		fmt.Println()
+	}
+
+	banner("Demo Complete")
 }
 
 func run2026Client(ctx context.Context, url string) {
@@ -57,12 +98,12 @@ func run2026Client(ctx context.Context, url string) {
 
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
-		fmt.Printf("  connect error: %v\n", err)
+		result("connect error: %v", err)
 		return
 	}
 	defer func() { _ = session.Close() }()
 
-	fmt.Printf("  negotiated: %s\n", session.InitializeResult().ProtocolVersion)
+	result("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
 	listAndCallTool(ctx, session, "stateless")
 }
 
@@ -71,33 +112,32 @@ func run2025Client(ctx context.Context, url string) {
 	t := &mcp.StreamableClientTransport{
 		Endpoint: url,
 		HTTPClient: &http.Client{Transport: &loggingTransport{
-			base:      &block2026Transport{base: http.DefaultTransport},
-			blockNote: " [server/discover blocked]",
+			base: &block2026Transport{base: http.DefaultTransport},
 		}},
 		DisableStandaloneSSE: true,
 	}
 
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
-		fmt.Printf("  connect error: %v\n", err)
+		result("connect error: %v", err)
 		return
 	}
 	defer func() { _ = session.Close() }()
 
-	fmt.Printf("  negotiated: %s\n", session.InitializeResult().ProtocolVersion)
+	result("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
 	listAndCallTool(ctx, session, "stateful")
 }
 
 func listAndCallTool(ctx context.Context, session *mcp.ClientSession, label string) {
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
-		fmt.Printf("  tools/list error: %v\n", err)
+		result("tools/list error: %v", err)
 		return
 	}
 
-	fmt.Printf("  tools (%d):\n", len(tools.Tools))
+	result("tools/list returned %s%d tools%s:", bold, len(tools.Tools), reset)
 	for _, t := range tools.Tools {
-		fmt.Printf("    - %s\n", t.Name)
+		fmt.Printf("       - %s\n", t.Name)
 	}
 
 	if len(tools.Tools) == 0 {
@@ -113,15 +153,15 @@ func listAndCallTool(ctx context.Context, session *mcp.ClientSession, label stri
 			if t.Name != toolName {
 				continue
 			}
-			result, err := session.CallTool(ctx, &mcp.CallToolParams{
+			callResult, err := session.CallTool(ctx, &mcp.CallToolParams{
 				Name:      toolName,
 				Arguments: args,
 			})
 			if err != nil {
-				fmt.Printf("  tools/call %s error: %v\n", toolName, err)
-			} else if len(result.Content) > 0 {
-				if tc, ok := result.Content[0].(*mcp.TextContent); ok {
-					fmt.Printf("  called %s → %s\n", toolName, tc.Text)
+				result("tools/call %s %serror%s: %v", toolName, red, reset, err)
+			} else if len(callResult.Content) > 0 {
+				if tc, ok := callResult.Content[0].(*mcp.TextContent); ok {
+					result("tools/call %s %s%s%s", toolName, green, tc.Text, reset)
 				}
 			}
 			break
@@ -129,11 +169,35 @@ func listAndCallTool(ctx context.Context, session *mcp.ClientSession, label stri
 	}
 }
 
-// loggingTransport logs negotiation requests (server/discover, initialize)
-// with their responses.
+// --- output helpers ---
+
+func banner(title string) {
+	line := strings.Repeat("=", len(title)+4)
+	fmt.Printf("\n%s%s%s\n", bold, line, reset)
+	fmt.Printf("%s  %s  %s\n", bold, title, reset)
+	fmt.Printf("%s%s%s\n\n", bold, line, reset)
+}
+
+func section(title string) {
+	fmt.Printf("%s%s%s\n", bold+cyan, title, reset)
+}
+
+func explain(msg string) {
+	fmt.Printf("  %s%s%s\n", dim, msg, reset)
+}
+
+func result(format string, args ...any) {
+	fmt.Printf("  %s> %s%s\n", yellow, reset, fmt.Sprintf(format, args...))
+}
+
+func wire(direction, format string, args ...any) {
+	fmt.Printf("  %s%s%s %s\n", dim, direction, reset, fmt.Sprintf(format, args...))
+}
+
+// --- transport wrappers ---
+
 type loggingTransport struct {
-	base      http.RoundTripper
-	blockNote string
+	base http.RoundTripper
 }
 
 func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -143,22 +207,44 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 
 	pv := req.Header.Get("Mcp-Protocol-Version")
-	fmt.Printf("  >> %s %s  Mcp-Protocol-Version: %s%s\n", req.Method, req.URL, pv, t.blockNote)
+	if pv == "" {
+		pv = "(none)"
+	}
+	wire(">>", "%s  protocol-version: %s", method, pv)
 	if body != nil {
-		fmt.Printf("     request: %s\n", truncate(string(body), 200))
+		prettyPrint("     request", body)
 	}
 
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
-		fmt.Printf("  << error: %v\n", err)
+		wire("<<", "%serror: %v%s", red, err, reset)
 		return resp, err
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
-	fmt.Printf("  << %d  %s\n", resp.StatusCode, truncate(string(respBody), 300))
+	color := green
+	if resp.StatusCode >= 400 {
+		color = red
+	}
+	wire("<<", "%s%d%s", color, resp.StatusCode, reset)
+	prettyPrint("     response", respBody)
 	return resp, nil
+}
+
+func prettyPrint(label string, data []byte) {
+	var obj map[string]any
+	if json.Unmarshal(data, &obj) != nil {
+		fmt.Printf("  %s%s: %s%s\n", dim, label, truncate(string(data), 200), reset)
+		return
+	}
+	pretty, err := json.MarshalIndent(obj, "  "+strings.Repeat(" ", len(label)), "  ")
+	if err != nil {
+		fmt.Printf("  %s%s: %s%s\n", dim, label, truncate(string(data), 200), reset)
+		return
+	}
+	fmt.Printf("  %s%s: %s%s\n", dim, label, string(pretty), reset)
 }
 
 func peekMethod(req *http.Request) ([]byte, string) {
@@ -184,7 +270,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// block2026Transport strips MCP-Protocol-Version header to force 2025 negotiation.
 type block2026Transport struct {
 	base http.RoundTripper
 }
