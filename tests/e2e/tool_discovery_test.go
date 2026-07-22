@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -525,10 +526,13 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			WaitForToolsWithPrefix(ctx, client, "notifsel_")
 
-			sessionID := client.ID()
-			status, _, selectErr := mcpCallSelectTools(ctx, toolDiscURL, sessionID, []string{"notifsel_hello_world"}, nil)
+			// use the SDK client (not raw HTTP) so inline POST notifications reach the handler
+			res, selectErr := client.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "select_tools",
+				Arguments: map[string]any{"tools": []any{"notifsel_hello_world"}},
+			})
 			Expect(selectErr).NotTo(HaveOccurred())
-			Expect(status).To(Equal(200))
+			Expect(res.IsError).To(BeFalse())
 
 			By("verifying notification was received")
 			Eventually(notifCh, TestTimeoutShort, TestRetryInterval).Should(Receive(),

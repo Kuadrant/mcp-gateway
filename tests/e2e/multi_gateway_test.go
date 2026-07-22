@@ -237,13 +237,14 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 			WithSectionName(E2E1ListenerName).
 			WithPublicHost(E2E1PublicHost).
 			Build()
-		newSetup.Register(ctx)
+		// clean first: reuses the same name/namespace, so old resources (finalizers) must be fully gone
+		newSetup.Clean(ctx).Register(ctx)
 
 		By("Verifying MCPGatewayExtension becomes ready again")
 		Eventually(func(g Gomega) {
 			err := VerifyMCPGatewayExtensionReady(ctx, k8sClient, e2e1ExtName, e2e1ExtNamespace)
 			g.Expect(err).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying the broker/router deployment is recreated and ready")
 		Eventually(func(g Gomega) {
