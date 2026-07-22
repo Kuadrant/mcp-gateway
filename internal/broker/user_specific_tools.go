@@ -473,12 +473,18 @@ func filterUserHeaders(h http.Header) map[string]string {
 	return headers
 }
 
-// buildStatelessTransport returns an http.RoundTripper with the gateway CA
-// bundle and per-server CA appended to the system trust pool.
+// buildStatelessTransport returns a cached http.RoundTripper with the gateway
+// CA bundle and per-server CA appended to the system trust pool. The transport
+// is built once per unique (gatewayCACert, serverCACert) pair and reused for
+// connection pooling across requests.
 func (broker *mcpBrokerImpl) buildStatelessTransport(serverCACert string) (http.RoundTripper, error) {
 	gatewayCACert := broker.gatewayCACertPEM
 	if gatewayCACert == "" && serverCACert == "" {
 		return http.DefaultTransport, nil
+	}
+	key := gatewayCACert + "|" + serverCACert
+	if cached, ok := broker.statelessTransports.Load(key); ok {
+		return cached.(http.RoundTripper), nil
 	}
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	rootCAs, err := x509.SystemCertPool()
@@ -499,5 +505,6 @@ func (broker *mcpBrokerImpl) buildStatelessTransport(serverCACert string) (http.
 		MinVersion: tls.VersionTLS12,
 		RootCAs:    rootCAs,
 	}
+	broker.statelessTransports.Store(key, base)
 	return base, nil
 }

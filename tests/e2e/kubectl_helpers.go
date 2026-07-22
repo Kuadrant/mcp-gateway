@@ -414,14 +414,15 @@ func dumpClusterStateTo(ctx context.Context, w io.Writer, resources, namespaces 
 	}
 
 	for _, ns := range namespaces {
-		p("\n--- config secret in %s ---\n", ns)
+		p("\n--- config secret in %s (metadata only) ---\n", ns)
 		cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", "mcp-gateway-config",
-			"-n", ns, "-o", "yaml")
+			"-n", ns, "-o", "jsonpath={.metadata.name}{\"\\t\"}{.metadata.namespace}{\"\\t\"}{.metadata.creationTimestamp}{\"\\t\"}{.metadata.resourceVersion}{\"\\n\"}")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			p("  error: %v\n", err)
 		} else {
-			p("%s\n", string(output))
+			p("  name\tnamespace\tcreated\tresourceVersion\n")
+			p("  %s\n", string(output))
 		}
 
 		p("\n--- pods in %s ---\n", ns)

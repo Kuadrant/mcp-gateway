@@ -156,6 +156,10 @@ type mcpBrokerImpl struct {
 	// statefulTools and statelessTools cache pre-filtered tool sets for each protocol version
 	statefulTools  atomic.Pointer[[]*mcp.Tool]
 	statelessTools atomic.Pointer[[]*mcp.Tool]
+
+	// statelessTransports caches TLS transports for stateless user-specific fetches,
+	// keyed by gatewayCACert+serverCACert. avoids rebuilding cert pools per request.
+	statelessTransports sync.Map // map[string]http.RoundTripper
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface

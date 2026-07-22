@@ -72,9 +72,12 @@ Each route returns only protocol-compatible tools. `tools/call` via `/mcp/statef
 Check which protocol versions the gateway advertises:
 
 ```bash
-curl -s https://mcp.example.com/mcp \
-  -H "MCP-Protocol-Version: 2026-07-28" \
-  -H "Accept: application/json" | jq .supportedVersions
+curl -sS -X POST https://mcp.example.com/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Protocol-Version: 2026-07-28" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}' \
+  | jq '.result.supportedVersions'
 ```
 
 ## Next Steps

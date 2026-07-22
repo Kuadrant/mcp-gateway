@@ -52,7 +52,7 @@ Custom `notificationWatcher` adapted for stateless upstreams (empty sessionID). 
 
 ## Dependency Order
 
-```
+```text
 Item 6 (investigate upstream ping) ✓ done — stateless upstreams skip ping
   ↓
 Item 1 (stop stripping protocol version header) ✓ done — protocolRouter bypasses compat handler for 2026

@@ -75,8 +75,9 @@ type blockDiscoverTransport struct {
 }
 
 func (t *blockDiscoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Del("Mcp-Protocol-Version")
-	return t.base.RoundTrip(req)
+	r2 := req.Clone(req.Context())
+	r2.Header.Del("Mcp-Protocol-Version")
+	return t.base.RoundTrip(r2)
 }
 
 // NewStatelessClient creates an MCP client that negotiates 2026-07-28

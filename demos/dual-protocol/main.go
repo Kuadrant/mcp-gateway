@@ -98,12 +98,12 @@ func run2026Client(ctx context.Context, url string) {
 
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
-		result("connect error: %v", err)
+		resultf("connect error: %v", err)
 		return
 	}
 	defer func() { _ = session.Close() }()
 
-	result("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
+	resultf("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
 	listAndCallTool(ctx, session, "stateless")
 }
 
@@ -119,23 +119,23 @@ func run2025Client(ctx context.Context, url string) {
 
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
-		result("connect error: %v", err)
+		resultf("connect error: %v", err)
 		return
 	}
 	defer func() { _ = session.Close() }()
 
-	result("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
+	resultf("negotiated: %s%s%s", green, session.InitializeResult().ProtocolVersion, reset)
 	listAndCallTool(ctx, session, "stateful")
 }
 
 func listAndCallTool(ctx context.Context, session *mcp.ClientSession, label string) {
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
-		result("tools/list error: %v", err)
+		resultf("tools/list error: %v", err)
 		return
 	}
 
-	result("tools/list returned %s%d tools%s:", bold, len(tools.Tools), reset)
+	resultf("tools/list returned %s%d tools%s:", bold, len(tools.Tools), reset)
 	for _, t := range tools.Tools {
 		fmt.Printf("       - %s\n", t.Name)
 	}
@@ -158,10 +158,10 @@ func listAndCallTool(ctx context.Context, session *mcp.ClientSession, label stri
 				Arguments: args,
 			})
 			if err != nil {
-				result("tools/call %s %serror%s: %v", toolName, red, reset, err)
+				resultf("tools/call %s %serror%s: %v", toolName, red, reset, err)
 			} else if len(callResult.Content) > 0 {
 				if tc, ok := callResult.Content[0].(*mcp.TextContent); ok {
-					result("tools/call %s %s%s%s", toolName, green, tc.Text, reset)
+					resultf("tools/call %s %s%s%s", toolName, green, tc.Text, reset)
 				}
 			}
 			break
@@ -186,11 +186,11 @@ func explain(msg string) {
 	fmt.Printf("  %s%s%s\n", dim, msg, reset)
 }
 
-func result(format string, args ...any) {
+func resultf(format string, args ...any) {
 	fmt.Printf("  %s> %s%s\n", yellow, reset, fmt.Sprintf(format, args...))
 }
 
-func wire(direction, format string, args ...any) {
+func wiref(direction, format string, args ...any) {
 	fmt.Printf("  %s%s%s %s\n", dim, direction, reset, fmt.Sprintf(format, args...))
 }
 
@@ -210,14 +210,14 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if pv == "" {
 		pv = "(none)"
 	}
-	wire(">>", "%s  protocol-version: %s", method, pv)
+	wiref(">>", "%s  protocol-version: %s", method, pv)
 	if body != nil {
 		prettyPrint("     request", body)
 	}
 
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
-		wire("<<", "%serror: %v%s", red, err, reset)
+		wiref("<<", "%serror: %v%s", red, err, reset)
 		return resp, err
 	}
 
@@ -228,7 +228,7 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if resp.StatusCode >= 400 {
 		color = red
 	}
-	wire("<<", "%s%d%s", color, resp.StatusCode, reset)
+	wiref("<<", "%s%d%s", color, resp.StatusCode, reset)
 	prettyPrint("     response", respBody)
 	return resp, nil
 }

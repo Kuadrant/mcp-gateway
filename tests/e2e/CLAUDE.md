@@ -13,7 +13,7 @@ defer a genuinely slow or heavy suite to nightly. For a quick local happy-path r
 
 Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[CACertBundle]`,
 `[Elicitation]`, `[Negative]`, `[URLElicitation]`, `[UserSpecificList]`, `[Security]`,
-`[Protocol2026]`. Tags can combine, e.g. `[Happy,Protocol2026]`.
+`[Protocol2026]`, `[DualProtocol]`. Tags can combine, e.g. `[Happy,Protocol2026]`.
 
 ## E2E Test Reliability
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)

@@ -173,7 +173,7 @@ Add e2e tests that verify a single gateway serves both protocol versions correct
 
 ## Task Order
 
-```
+```text
 Task 1 (remove protocolMode) ✓ done
 Task 2 (expose protocol version) ✓ done (dual-version detection deferred)
 Task 3 (filter tools/list) ✓ done (unit tests remaining)

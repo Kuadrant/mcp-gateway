@@ -70,7 +70,7 @@ Broker meta-tools (`discover_tools`, `select_tools`) are identified by the `kuad
 
 The broker's `filteringMiddleware` intercepts `server/discover` responses and overrides `SupportedVersions` with the union of all upstream server versions. When no upstreams are registered, the SDK's built-in version filtering is left untouched.
 
-```
+```text
 gateway with only 2025 backends  → supportedVersions: ["2025-11-25"]
 gateway with only 2026 backends  → supportedVersions: ["2026-07-28"]
 gateway with both                → supportedVersions: ["2025-11-25", "2026-07-28"]
@@ -80,7 +80,7 @@ Known SDK clients negotiate down naturally — no client-side workarounds needed
 
 ### Protocol-specific routes
 
-```
+```text
 /mcp            — negotiates best available version via server/discover
 /mcp/stateful   — forces 2025-11-25, returns only stateful tools
 /mcp/stateless  — forces 2026-07-28, returns only stateless tools

@@ -17,8 +17,10 @@ import (
 func (m *mcpBrokerImpl) computeGatewaySupportedVersions() []string {
 	seen := make(map[string]struct{})
 	m.serverVersions.Range(func(_, val any) bool {
-		for _, v := range val.([]string) {
-			seen[v] = struct{}{}
+		if versions, ok := val.([]string); ok {
+			for _, v := range versions {
+				seen[v] = struct{}{}
+			}
 		}
 		return true
 	})
