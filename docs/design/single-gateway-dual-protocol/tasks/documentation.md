@@ -2,7 +2,7 @@
 
 `protocolMode` only exists on this branch and was never released. No breaking change documentation or migration steps needed — just remove it from code and any docs on this branch.
 
-## Guide: protocol-modes.md rewrite — DONE
+## Guide: multi-protocol-support.md (was protocol-modes.md) — DONE
 
 Rewritten to describe single-gateway dual-protocol support. Covers version detection, protocol-filtered tools/list, protocol-specific routes, and behaviour differences.
 
@@ -27,11 +27,9 @@ When a platform engineer registers upstream servers that support different proto
 - UserSpecificList servers: per-user tools also filtered by protocol version
 - How to verify: connect with a 2025 client and 2026 client, compare `tools/list` results
 
-### When I want to register a server that supports both protocol versions
+### When I want to register a server that supports both protocol versions — DEFERRED
 
-When a platform engineer has an upstream MCP server that supports both `2025-11-25` and `2026-07-28`, they want to know how the gateway detects this so that the server's tools are available to all clients.
-
-**Cover:**
+Blocked on dual-version detection (Task 2). The broker currently records only the negotiated version per upstream. Once `server/discover` probing is implemented, this section should cover:
 - No configuration needed — gateway detects supported versions automatically
 - Detection mechanism: `server/discover` for 2026-capable servers returns `supportedVersions`
 - Verification: check server status in MCPServerRegistration for detected protocol versions

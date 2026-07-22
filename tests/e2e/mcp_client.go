@@ -55,6 +55,7 @@ func buildGatewayTransport(gatewayHost string, headers map[string]string, block2
 	if base == nil {
 		base = http.DefaultTransport
 	}
+	//The SDK has no public API to force 2025 negotiation so we have to intercept with the round tripper.
 	var rt http.RoundTripper = &transport.HeaderRoundTripper{Base: base, Headers: allHeaders}
 	if block2026 {
 		rt = &blockDiscoverTransport{base: rt}

@@ -16,7 +16,7 @@ import (
 
 // Test timeouts and intervals
 const (
-	TestTimeoutMedium     = time.Second * 180
+	TestTimeoutMedium     = time.Second * 120
 	TestTimeoutShort      = time.Second * 45
 	TestTimeoutLong       = time.Minute * 5
 	TestTimeoutConfigSync = time.Minute * 6

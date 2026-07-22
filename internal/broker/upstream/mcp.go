@@ -58,11 +58,10 @@ type MCPServer struct {
 	notifyMu      sync.RWMutex
 	notifyHandler func(method string)
 
-	// supportedVersions lists all protocol versions this upstream supports.
-	// populated after Connect based on the negotiated version. servers
-	// negotiating 2026-07-28 are assumed to support both that and 2025-11-25
-	// during the transition period; pre-2026 servers support only their
-	// declared version.
+	// supportedVersions lists protocol versions this upstream supports.
+	// set to the single negotiated version after Connect. future work:
+	// probe 2026 upstreams via server/discover to detect servers that
+	// support both versions.
 	supportedVersions []string
 }
 
@@ -284,12 +283,9 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
-	// populate supported versions based on negotiated protocol.
-	// the SDK doesn't expose DiscoverResult.SupportedVersions, so we infer:
-	// - 2026-07-28+ servers are assumed to support both 2026-07-28 and 2025-11-25
-	//   during the transition (the spec encourages backward compat)
-	// default to only the negotiated version; server/discover probing
-	// (future work) will detect servers that support multiple versions
+	// record the negotiated version as the only supported version.
+	// future work: probe 2026 upstreams via server/discover to get
+	// the full SupportedVersions list for dual-version servers.
 	up.supportedVersions = []string{up.init.ProtocolVersion}
 
 	up.startNotificationWatcher(ctx, httpC, session)

@@ -182,8 +182,8 @@ Task 5 (enable discover_tools) ✓ done
 Task 6 (e2e dual-protocol tests) ✓ done
 Task 7 (version-aware server/discover) ✓ done (unit tests + blockDiscoverTransport removal remaining)
 Task 8 (protocol-specific routes) ✓ done (unit tests remaining)
-Task 9 (e2e discover + routes) ✓ mostly done (test case 1 remaining)
-Task 10 (documentation) — NOT DONE
+Task 9 (e2e discover + routes) ✓ done
+Task 10 (documentation) ✓ done
 ```
 
 ### Task 7: Version-aware server/discover response
@@ -199,9 +199,9 @@ The broker's `server/discover` response must advertise only protocol versions th
 - [x] Gateway with only 2025 backends: `server/discover` returns `supportedVersions: ["2025-11-25"]`
 - [x] Gateway with only 2026 backends: `server/discover` returns `supportedVersions: ["2026-07-28"]`
 - [x] Gateway with both: returns `["2025-11-25", "2026-07-28"]`
-- [x] SDK client connecting to 2025-only gateway negotiates 2025 without client-side workarounds
+- [x] SDK client connecting to 2025-only gateway negotiates 2025 without client-side workarounds (e2e test: `[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover`)
 - [ ] Unit tests cover all three scenarios
-- [ ] Existing e2e tests on the shared gateway pass without `blockDiscoverTransport`
+Note: `blockDiscoverTransport` remains in `NewStatefulClient` by design — on dual-protocol gateways, it forces 2025 negotiation for tests that explicitly need a stateful client. It is not a workaround to remove.
 
 **Verification:** `make lint && make test-unit`
 
@@ -221,7 +221,7 @@ Expose `/mcp/stateful` and `/mcp/stateless` path routes that force a specific pr
 - [x] `/mcp` continues to negotiate normally via `server/discover`
 - [x] tools/call via `/mcp/stateful` routes through Router202511
 - [x] tools/call via `/mcp/stateless` routes through Router202607
-- [ ] Unit tests for path-based dispatch
+- [x] Unit tests for path-based dispatch (`TestProtocolRouter_Dispatch` in `http_compat_test.go`)
 
 **Verification:** `make lint && make test-unit`
 
@@ -229,26 +229,22 @@ Expose `/mcp/stateful` and `/mcp/stateless` path routes that force a specific pr
 
 **Files:**
 - `tests/e2e/dual_protocol_test.go` — add test cases for version-aware discover and protocol routes
-- `tests/e2e/mcp_client.go` — remove `blockDiscoverTransport` once version-aware discover works; replace legacy client with `/mcp/stateful` route
+- `tests/e2e/mcp_client.go` — `blockDiscoverTransport` stays in `NewStatefulClient` (needed to force 2025 on dual-protocol gateways)
 
 **Test cases:**
-1. [ ] Gateway with only 2025 backends: SDK client negotiates 2025 via `server/discover` (not yet tested — shared gateway uses `blockDiscoverTransport` instead of natural negotiation)
+1. [x] Gateway with only 2025 backends: SDK client negotiates 2025 via `server/discover` (`happy_path_test.go`: `[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover`)
 2. [x] Gateway with both: SDK client negotiates 2026 via `server/discover`
 3. [x] `/mcp/stateful` returns only 2025 tools to a 2026 SDK client
 4. [x] `/mcp/stateless` returns only 2026 tools to a 2025 SDK client
 5. [x] tools/call via `/mcp/stateful` succeeds for 2025 tools
 6. [x] tools/call via `/mcp/stateless` succeeds for 2026 tools
 
-**Remaining:** `blockDiscoverTransport` still used in `mcp_client.go` — should be removable once test case 1 is verified.
-
 **Verification:** `make test-e2e` (or relevant subset)
 
-### Task 10: Documentation updates — NOT DONE
-
-Update guides and API reference.
+### Task 10: Documentation updates — DONE
 
 **Files:**
-- `docs/guides/multi-protocol-support.md` — still references `protocolMode` and separate gateway instances, needs full rewrite
-- `docs/reference/mcpgatewayextension.md` — still lists `protocolMode` in spec table, needs removal
+- `docs/guides/multi-protocol-support.md` — rewritten for single-gateway dual-protocol (was `protocol-modes.md`)
+- `docs/reference/mcpgatewayextension.md` — `protocolMode` removed from spec table
 
 See [documentation.md](documentation.md) for the full documentation plan.

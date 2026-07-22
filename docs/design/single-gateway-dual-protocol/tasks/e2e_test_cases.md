@@ -4,16 +4,14 @@ These tests prove the gateway is protocol-agnostic — a single instance serves 
 
 ## Test infrastructure
 
-- **Single MCPGatewayExtension** (no `protocolMode` field) serving both protocols
-- Uses the **isolated listener pattern** for parallel safety: dedicated namespace, listener, and hostname
+- **Single MCPGatewayExtension** serving both protocols (no configuration needed)
+- Uses the **isolated listener pattern** for parallel safety: dedicated namespace, listener on a separate port, and hostname
 - Two test backends:
-  - `mcp-test-stateless-server` — speaks 2026-07-28 only
+  - `mcp-test-stateless-server` — speaks 2026-07-28 only (also supports user-specific tool filtering)
   - `server1` or `server2` — speaks 2025-11-25 only
-  - `user-specific-server` — speaks whichever version the SDK negotiates (both)
-- Optionally: a test server that explicitly supports both versions (returns both in `server/discover` `supportedVersions`)
-- Two client types per test:
-  - 2025 client: `NewMCPGatewayClientWithNotifications` (session-based, SSE)
-  - 2026 client: `NewMCPGatewayClient` (stateless, SDK auto-negotiates 2026-07-28)
+- Two client types:
+  - 2025 client: `NewStatefulClient` / `NewStatefulClientWithNotifications` (blocks `server/discover`, forces `initialize`)
+  - 2026 client: `NewStatelessClient` (allows `server/discover`, negotiates 2026-07-28)
 
 ## Test cases
 
@@ -69,9 +67,6 @@ Deploy with only 2025-11-25 backends (no 2026 backends registered). Connect a 20
 
 Deploy with only 2026-07-28 backends. Connect a 2025 client. `tools/list` returns no tools (or only broker meta-tools). Connect a 2026 client — sees all tools.
 
-### [DualProtocol,Security] Protocol version header cannot leak cross-protocol tools
-
-Connect a 2025 client (session-based). Manually set `MCP-Protocol-Version: 2026-07-28` header on a raw `tools/list` request using the 2025 session. Verify the gateway does not return 2026-only tools — the session-based transport identifies this as a 2025 client regardless of the header override. (This tests that protocol determination is robust, not just header-trusting.)
 
 ## Version-aware server/discover
 
@@ -111,8 +106,6 @@ Connect a standard SDK client to `/mcp`. The gateway negotiates the best availab
 
 ## Test server requirements
 
-The existing `stateless-server` speaks 2026-07-28 only. The existing `server1`/`server2` speak 2025-11-25 only. For the dual-version test case, one of:
-- Modify `user-specific-server` to explicitly return both versions in `server/discover` `supportedVersions`
-- Create a new `dual-protocol-server` test server that advertises both versions
+The existing `stateless-server` speaks 2026-07-28 only and supports user-specific tool filtering (same token scheme as `user-specific-server`). The existing `server1`/`server2` speak 2025-11-25 only.
 
-The `user-specific-server` already uses the standard go-sdk which auto-negotiates both versions. If `server/discover` returns `supportedVersions: ["2025-11-25", "2026-07-28"]` by default with the latest SDK, it may already work. Verify before creating a new server.
+For the dual-version test case (`[DualProtocol] Dual-version server tools visible to both clients`): blocked on dual-version detection in the broker (only the negotiated version is recorded today). A test server that advertises both versions will be needed once `server/discover` probing is implemented.

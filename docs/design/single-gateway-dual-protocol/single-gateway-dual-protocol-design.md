@@ -6,6 +6,8 @@ The initial 2026-07-28 implementation required `protocolMode` on MCPGatewayExten
 
 The router already has dual implementations (`Router202511`, `Router202607`) selected by `MCP-Protocol-Version` header. The broker has a `protocolRouter` dispatching to stateful or stateless handlers. Both were gated behind a boolean switch.
 
+Builds on [2026-protocol-design](docs/design/router-2026-07-28/router-2026-07-28-design.md)
+
 ## Summary
 
 Remove `protocolMode`. Both handlers are always active. The broker pre-caches tools into stateful and stateless sets, serving the correct set per client. `server/discover` advertises only the protocol versions that have backend support, so SDK clients negotiate naturally. Protocol-specific routes (`/mcp/stateful`, `/mcp/stateless`) let agents access tools from both protocol versions via separate endpoints.
@@ -24,17 +26,12 @@ Remove `protocolMode`. Both handlers are always active. The broker pre-caches to
 - Server Cards (SEP-2127)
 - Broker redesign for `2026-07-28` (ttlMs, cacheScope, InputRequiredResult)
 - Independent deployment of router and broker
-- `/vmcp/` discovery routing (separate design)
 
 ## Job Stories
 
 ### When supporting clients on different protocol versions
 
 When a platform engineer has agents using both protocols, they want a single gateway instance to serve both without deploying two stacks.
-
-### When a category has mixed-protocol backends
-
-When upstream servers support different protocol versions, each client should see only tools from compatible backends.
 
 ### When an upstream server supports both protocol versions
 
@@ -52,7 +49,7 @@ When an upstream is upgraded from `2025-11-25` to `2026-07-28`, clients see the 
 
 ### Protocol version tracking
 
-Each upstream server's supported versions are detected at connect time. Currently defaults to only the negotiated version (e.g. `["2025-11-25"]` or `["2026-07-28"]`). Future work: call `server/discover` on 2026 upstreams to get the full `SupportedVersions` list for servers that support both.
+When the broker's upstream manager connects to a backend, it records the SDK-negotiated protocol version as that server's supported version (e.g. `["2025-11-25"]` or `["2026-07-28"]`). A backend that supports both versions is recorded as supporting only whichever version the SDK negotiated. Future work: after connecting to a 2026 backend, probe it with `server/discover` to get the full `SupportedVersions` list.
 
 The broker maintains a `serverVersions` map updated when upstream managers connect. The `ServerSupportsVersion(id, version)` method provides lookups.
 
@@ -79,7 +76,7 @@ gateway with only 2026 backends  → supportedVersions: ["2026-07-28"]
 gateway with both                → supportedVersions: ["2025-11-25", "2026-07-28"]
 ```
 
-SDK clients negotiate down naturally — no client-side workarounds needed.
+Known SDK clients negotiate down naturally — no client-side workarounds needed as of now.
 
 ### Protocol-specific routes
 

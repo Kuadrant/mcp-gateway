@@ -71,7 +71,11 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
-	// no AfterAll teardown — leave state for debugging; BeforeAll Clean() handles cleanup on next run
+	AfterAll(func() {
+		if toolDiscExt != nil {
+			toolDiscExt.TearDown(ctx)
+		}
+	})
 
 	newGatewayClient := func() {
 		Eventually(func(g Gomega) {
@@ -86,8 +90,9 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			_ = mcpGatewayClient.Close()
 			mcpGatewayClient = nil
 		}
-		// leave testResources for post-failure debugging; BeforeAll Clean() handles cleanup on next run
-		testResources = []client.Object{}
+		for _, obj := range testResources {
+			CleanupResource(ctx, k8sClient, obj)
+		}
 	})
 
 	JustAfterEach(func() {
