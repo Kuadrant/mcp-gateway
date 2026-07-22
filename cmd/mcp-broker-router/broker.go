@@ -114,6 +114,8 @@ func (a *app) setUpMetricsServer() {
 		Addr:              a.brokerCfg.metricsAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 }
 

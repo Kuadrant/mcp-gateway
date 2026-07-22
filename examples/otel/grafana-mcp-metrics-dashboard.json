@@ -8,6 +8,12 @@
   "templating": {
     "list": [
       {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "pluginId": "prometheus"
+      },
+      {
         "name": "server_name",
         "label": "Server",
         "type": "query",
@@ -16,12 +22,6 @@
         "multi": true,
         "includeAll": true,
         "current": { "selected": true, "text": "All", "value": "$__all" }
-      },
-      {
-        "name": "datasource",
-        "label": "Prometheus",
-        "type": "datasource",
-        "pluginId": "prometheus"
       }
     ]
   },

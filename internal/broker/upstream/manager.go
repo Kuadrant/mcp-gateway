@@ -278,7 +278,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 	}
 
 	toolsListBytes, err := meter.Int64Gauge("mcp_broker_tools_list_response_bytes",
-		metric.WithDescription("last observed size in bytes of tools/list response per upstream server"),
+		metric.WithDescription("serialized size in bytes of the validated tool list per upstream server"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mcp_broker_tools_list_response_bytes: %w", err)
@@ -457,7 +457,6 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.status.Name = man.MCPName()
 		man.status.Ready = true
 		man.status.Message = "userSpecificList server healthy, tools fetched per-user"
-		man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "success")))
 		man.resetBackoff()
 		return
 	}

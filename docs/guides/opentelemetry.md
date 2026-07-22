@@ -155,9 +155,9 @@ The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated in
 | `mcp_broker_discovery_duration_seconds` | Histogram | Duration of `tools/list` calls during discovery |
 | `mcp_broker_tools_discovered` | Gauge | Current tool count per upstream server. Set to 0 when a server becomes unreachable |
 | `mcp_broker_upstream_connection_failures_total` | Counter | Connection failures per upstream server |
-| `mcp_broker_tools_list_response_bytes` | Gauge | Size of the last `tools/list` response per upstream server. Proxy for LLM context overhead |
+| `mcp_broker_tools_list_response_bytes` | Gauge | Serialized size of the validated tool list per upstream server. Proxy for LLM context overhead |
 
-All metrics use `server_name` as the only label. Values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (e.g. `mcp-system/my-server`). No high-cardinality labels (session IDs, tool names, call IDs) are used.
+`mcp_broker_discovery_total` uses `server_name` and `status` labels. All other metrics use only `server_name`. Label values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (e.g. `mcp-system/my-server`). No high-cardinality labels (session IDs, tool names, call IDs) are used.
 
 ### Scraping the metrics endpoint
 
