@@ -167,27 +167,12 @@ The metrics port is not routed through the Envoy gateway listener. Scrape it clu
 # Port-forward for local inspection (use pod name directly — unready pods are skipped by deployment forward)
 POD=$(kubectl get pod -n mcp-system -l app.kubernetes.io/name=mcp-gateway \
   -o jsonpath='{.items[0].metadata.name}')
-kubectl port-forward -n mcp-system pod/$POD 9090:9090
+kubectl port-forward -n mcp-system pod/$POD 9090:9090 &
+sleep 1
 curl http://localhost:9090/metrics
 ```
 
 For Prometheus scraping, add the broker pod IP as a scrape target. The broker `Service` is controller-managed and does not expose port 9090, so scrape by pod IP directly or use a `PodMonitor` if you have Prometheus Operator installed.
-
-### Configuring the metrics port
-
-The metrics address can be changed with the `--metrics-addr` flag:
-
-```bash
-kubectl set env deployment/mcp-gateway -n mcp-system \
-  METRICS_ADDR="0.0.0.0:9091"
-```
-
-Or via Helm:
-
-```bash
-helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
-  --set broker.metricsAddr="0.0.0.0:9091"
-```
 
 ### Useful PromQL queries
 
@@ -233,7 +218,7 @@ histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m]
 Istio automatically emits `istio_requests_total` and `istio_request_duration_milliseconds` for all traffic through the gateway. Apply the reference Telemetry resource to add `mcp_server_name` and `mcp_method` labels to those existing metrics:
 
 ```bash
-kubectl apply -f examples/otel/istio-mcp-metrics.yaml
+kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/examples/otel/istio-mcp-metrics.yaml
 ```
 
 This promotes the `x-mcp-servername` and `x-mcp-method` headers (already set by the MCP Router) into Prometheus label dimensions without any code changes. After applying:
