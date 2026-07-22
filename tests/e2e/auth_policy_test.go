@@ -85,7 +85,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		}
 	})
 
-	It("[Auth] should return 401 for unauthenticated requests", func() {
+	It("[Auth] should return 401 for unauthenticated requests", Label("auth-policy"), func() {
 		By("Sending an initialize request without Authorization header")
 		status, respBody, respHeaders, err := mcpRawPost(ctx, authGatewayURL, "", authInitBody(), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -94,7 +94,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(respHeaders.Get("WWW-Authenticate")).To(ContainSubstring("Bearer"))
 	})
 
-	It("[Auth] should return 401 for malformed JWT", func() {
+	It("[Auth] should return 401 for malformed JWT", Label("auth-policy"), func() {
 		By("Sending an initialize request with an invalid bearer token")
 		headers := map[string]string{"Authorization": "Bearer not-a-real-jwt"}
 
@@ -103,7 +103,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(status).To(Equal(http.StatusUnauthorized))
 	})
 
-	It("[Auth] should allow initialize and tools/list with valid JWT, filtered by user roles", func() {
+	It("[Auth] should allow initialize and tools/list with valid JWT, filtered by user roles", Label("auth-policy"), func() {
 		By("Obtaining a token from Keycloak")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
@@ -134,7 +134,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(tools).NotTo(ContainElement("test2_hello_world"), "accounting does NOT have hello_world for test-server2")
 	})
 
-	It("[Auth] should allow authorised tool call", func() {
+	It("[Auth] should allow authorised tool call", Label("auth-policy"), func() {
 		By("Obtaining a token and initialising a session")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
@@ -151,7 +151,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(content).NotTo(BeEmpty())
 	})
 
-	It("[Auth] should reject unauthorised tool call", func() {
+	It("[Auth] should reject unauthorised tool call", Label("auth-policy"), func() {
 		By("Obtaining a token and initialising a session")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
@@ -167,7 +167,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(status).NotTo(Equal(http.StatusOK), "unauthorised tool call must not succeed")
 	})
 
-	It("[Auth] should filter prompts/list by JWT roles", func() {
+	It("[Auth] should filter prompts/list by JWT roles", Label("auth-policy"), func() {
 		By("Obtaining a token and initialising a session")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
@@ -189,7 +189,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(prompts).To(ContainElement("test1_greet"), "accounting has prompt:greet for test-server1")
 	})
 
-	It("[Auth] should allow prompts/get with auth as first request to a server", func() {
+	It("[Auth] should allow prompts/get with auth as first request to a server", Label("auth-policy"), func() {
 		By("Obtaining a token and initialising a session")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
 		Expect(err).NotTo(HaveOccurred())
@@ -206,7 +206,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(respBody).To(ContainSubstring("Say hi to reviewer"))
 	})
 
-	It("[Auth] should return empty prompts for combined JWT + VirtualServer with no intersection", func() {
+	It("[Auth] should return empty prompts for combined JWT + VirtualServer with no intersection", Label("auth-policy"), func() {
 		By("Registering the everything-server so its prompts are federated")
 		evReg := NewTestResources("auth-everything", k8sClient).
 			ForInternalService("everything-server", 9090).

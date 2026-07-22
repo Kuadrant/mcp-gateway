@@ -33,7 +33,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}
 	})
 
-	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", Serial, func() {
+	It("[Full] MCPGatewayExtension with invalid sectionName is rejected", Serial, Label("multi-gateway"), func() {
 		// Use TestServerNameSpace (mcp-test) which doesn't have an existing MCPGatewayExtension
 		// We need to create a ReferenceGrant first to allow cross-namespace reference
 		By("Creating a ReferenceGrant to allow cross-namespace reference")
@@ -64,7 +64,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("listener"))
 	})
 
-	It("[Full] Second MCPGatewayExtension in same namespace is rejected", Serial, func() {
+	It("[Full] Second MCPGatewayExtension in same namespace is rejected", Serial, Label("multi-gateway"), func() {
 		// The default MCPGatewayExtension in SystemNamespace (mcp-system) is already running
 		// Creating a second one in the same namespace should fail
 
@@ -89,7 +89,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("already has MCPGatewayExtension"))
 	})
 
-	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", Serial, func() {
+	It("[Full] MCPGatewayExtension targeting non-existent Gateway should report invalid status", Serial, Label("multi-gateway"), func() {
 		By("Creating an MCPGatewayExtension targeting a non-existent Gateway")
 		mcpExt := NewMCPGatewayExtensionBuilder("test-invalid-gateway", TestServerNameSpace).
 			WithTarget("non-existent-gateway", GatewayNamespace).
@@ -111,7 +111,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(ContainSubstring("invalid"))
 	})
 
-	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", Serial, func() {
+	It("[Happy] MCPGatewayExtension cross-namespace reference requires ReferenceGrant", Serial, Label("multi-gateway", "pr"), func() {
 		// Note: The existing MCPGatewayExtension in SystemNamespace (mcp-system) already owns the gateway.
 		// After adding a ReferenceGrant, this MCPGatewayExtension will get a conflict status
 		// because only one MCPGatewayExtension can own a gateway (the oldest one wins).
@@ -158,7 +158,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
-	It("[multi-gateway] Second MCPGatewayExtension deployment becomes ready and is accessible. Deletion removes the gateway extension and access", func() {
+	It("[multi-gateway] Second MCPGatewayExtension deployment becomes ready and is accessible. Deletion removes the gateway extension and access", Label("multi-gateway"), func() {
 		// This test uses the dedicated e2e-1 gateway to avoid impacting other tests.
 		// It verifies that deleting the MCPGatewayExtension removes the broker/router deployment.
 		const (
@@ -268,7 +268,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[multi-gateway] clients see isolated tool lists per gateway and can invoke tools on each", func() {
+	It("[multi-gateway] clients see isolated tool lists per gateway and can invoke tools on each", Label("multi-gateway"), func() {
 		// This test verifies that when multiple MCPGatewayExtensions are deployed,
 		// each gateway sees only the tools from MCPServerRegistrations that target it,
 		// and that tool invocation routes to the correct backend.
@@ -420,7 +420,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
-	It("[multi-gateway] Shared Gateway with team isolation via sectionName", func() {
+	It("[multi-gateway] Shared Gateway with team isolation via sectionName", Label("multi-gateway"), func() {
 		// This test verifies that a single Gateway with multiple listeners can be used
 		// by different teams, each with their own MCPGatewayExtension targeting their
 		// specific listener. Each team should only see tools from their own registrations.
@@ -635,7 +635,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(msg).To(Or(ContainSubstring("not allowed"), ContainSubstring("allowedRoutes"), ContainSubstring("conflict")))
 	})
 
-	It("[Happy] MCPGatewayExtension creates HTTPRoute for gateway access", func() {
+	It("[Happy] MCPGatewayExtension creates HTTPRoute for gateway access", Label("routing", "pr"), func() {
 		const (
 			extName      = "httproute-test-ext"
 			extNamespace = "httproute-test"
@@ -675,7 +675,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(v.HTTPRouteHasOwnerReference(routeName, extNamespace, extName)).To(Succeed())
 	})
 
-	It("[Happy] MCPGatewayExtension with httpRouteManagement Disabled skips HTTPRoute creation", func() {
+	It("[Happy] MCPGatewayExtension with httpRouteManagement Disabled skips HTTPRoute creation", Label("routing", "pr"), func() {
 		const (
 			extName      = "no-httproute-ext"
 			extNamespace = "no-httproute-test"
@@ -715,7 +715,7 @@ var _ = Describe("MCP Gateway Multi-Gateway", func() {
 		Expect(v.HTTPRouteNotFound(routeName, extNamespace)).To(Succeed())
 	})
 
-	It("[multi-gateway] Each MCPGatewayExtension gets its own HTTPRoute", func() {
+	It("[multi-gateway] Each MCPGatewayExtension gets its own HTTPRoute", Label("multi-gateway", "routing"), func() {
 		const (
 			teamAExtName = "httproute-team-a"
 			teamBExtName = "httproute-team-b"

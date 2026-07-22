@@ -33,18 +33,24 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    # tag names and dispatch inputs reach the shell via env vars, never inline
     - name: Determine versions
       id: versions
+      env:
+        TAG_NAME: ${{ github.event.release.tag_name }}
+        INPUT_CHART_VERSION: ${{ inputs.chart_version }}
+        INPUT_APP_VERSION: ${{ inputs.app_version }}
+        REPO_OWNER: ${{ github.repository_owner }}
       run: |
         if [ "${{ github.event_name }}" = "release" ]; then
           # Extract version from release tag (e.g., v0.4.2 -> 0.4.2)
-          TAG="${{ github.event.release.tag_name }}"
+          TAG="$TAG_NAME"
           CHART_VERSION="${TAG#v}"
           APP_VERSION="${TAG}"
         else
           # Manual workflow dispatch
-          CHART_VERSION="${{ inputs.chart_version }}"
-          APP_VERSION="${{ inputs.app_version }}"
+          CHART_VERSION="$INPUT_CHART_VERSION"
+          APP_VERSION="$INPUT_APP_VERSION"
           # Default app_version to v + chart_version if not specified
           if [ -z "$APP_VERSION" ]; then
             APP_VERSION="v${CHART_VERSION}"
@@ -52,7 +58,7 @@ jobs:
         fi
 
         # lowercase owner for OCI registry compatibility
-        OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
 
         echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
         echo "app_version=${APP_VERSION}" >> $GITHUB_OUTPUT
@@ -62,10 +68,12 @@ jobs:
         echo "Owner: ${OWNER}"
 
     - name: Validate chart version format
+      env:
+        CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
       run: |
-        if [[ ! "${{ steps.versions.outputs.chart_version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
+        if [[ ! "$CHART_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
           echo "Error: Chart version must be in semver format X.Y.Z or X.Y.Z-prerelease (e.g., 0.4.2, 0.5.0-rc1)"
-          echo "Got: ${{ steps.versions.outputs.chart_version }}"
+          echo "Got: $CHART_VERSION"
           exit 1
         fi
 
@@ -75,9 +83,12 @@ jobs:
         version: '3.14.0'
 
     - name: Update Chart.yaml versions
+      env:
+        CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+        APP_VERSION: ${{ steps.versions.outputs.app_version }}
       run: |
-        sed -i "s/version: .*/version: ${{ steps.versions.outputs.chart_version }}/" charts/mcp-gateway/Chart.yaml
-        sed -i "s/appVersion: .*/appVersion: \"${{ steps.versions.outputs.app_version }}\"/" charts/mcp-gateway/Chart.yaml
+        sed -i "s/version: .*/version: ${CHART_VERSION}/" charts/mcp-gateway/Chart.yaml
+        sed -i "s/appVersion: .*/appVersion: \"${APP_VERSION}\"/" charts/mcp-gateway/Chart.yaml
 
         echo "Updated Chart.yaml:"
         cat charts/mcp-gateway/Chart.yaml
@@ -106,33 +117,45 @@ jobs:
         ls -la ./chart-packages/
 
     - name: Login to Container Registry
+      env:
+        REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REGISTRY_USER: ${{ github.actor }}
       run: |
-        echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+        echo "$REGISTRY_TOKEN" | helm registry login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
 
     - name: Push chart to OCI registry
+      env:
+        OWNER: ${{ steps.versions.outputs.owner }}
       run: |
         chart_package=$(ls ./chart-packages/mcp-gateway-*.tgz)
         echo "Pushing chart package: $chart_package"
-        helm push "$chart_package" oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts
+        helm push "$chart_package" "oci://${REGISTRY}/${OWNER}/charts"
 
     - name: Verify chart installation
+      env:
+        OWNER: ${{ steps.versions.outputs.owner }}
+        CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
       run: |
         # Verify the chart we just pushed works (client-only, no cluster needed)
         echo "Testing chart template rendering from OCI registry..."
-        helm template test-install oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --debug
+        helm template test-install "oci://${REGISTRY}/${OWNER}/charts/mcp-gateway" --version "$CHART_VERSION" --debug
 
     - name: Generate release summary
+      env:
+        OWNER: ${{ steps.versions.outputs.owner }}
+        CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+        APP_VERSION: ${{ steps.versions.outputs.app_version }}
       run: |
         echo "## Helm Chart Release Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Chart Name:** ${{ env.CHART_NAME }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Chart Version:** ${{ steps.versions.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **App Version:** ${{ steps.versions.outputs.app_version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Registry:** ${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts" >> $GITHUB_STEP_SUMMARY
+        echo "- **Chart Name:** ${CHART_NAME}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Chart Version:** ${CHART_VERSION}" >> $GITHUB_STEP_SUMMARY
+        echo "- **App Version:** ${APP_VERSION}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Registry:** ${REGISTRY}/${OWNER}/charts" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Installation Command" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "helm install mcp-gateway oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --create-namespace --namespace mcp-system" >> $GITHUB_STEP_SUMMARY
+        echo "helm install mcp-gateway oci://${REGISTRY}/${OWNER}/charts/mcp-gateway --version ${CHART_VERSION} --create-namespace --namespace mcp-system" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   create-git-tag:
@@ -148,12 +171,14 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Create and push git tag
+      env:
+        INPUT_CHART_VERSION: ${{ inputs.chart_version }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        tag_name="chart-v${{ inputs.chart_version }}"
-        git tag -a "$tag_name" -m "Helm chart release v${{ inputs.chart_version }}"
+        tag_name="chart-v${INPUT_CHART_VERSION}"
+        git tag -a "$tag_name" -m "Helm chart release v${INPUT_CHART_VERSION}"
         git push origin "$tag_name"
 
         echo "Created git tag: $tag_name"

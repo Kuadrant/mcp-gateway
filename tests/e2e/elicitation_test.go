@@ -135,9 +135,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		}
 	})
 
-	// --- MCP protocol elicitation tests ---
-
-	It("[Elicitation] should accept elicitation and return user-provided information", func() {
+	It("[Elicitation] should accept elicitation and return user-provided information", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := acceptElicitHandler(map[string]any{"name": "e2e-test-user"})
@@ -178,7 +176,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[Elicitation] should decline elicitation", func() {
+	It("[Elicitation] should decline elicitation", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		handler := declineElicitHandler()
@@ -219,7 +217,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[Full][Elicitation] should error when calling elicitation tool without handler", func() {
+	It("[Full][Elicitation] should error when calling elicitation tool without handler", Label("elicitation"), func() {
 		toolName := fmt.Sprintf("%strigger-elicitation-request", prefix)
 
 		By("Creating a standard client without elicitation handler")
@@ -304,7 +302,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 			urlTestResources = nil
 		})
 
-		It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client; server without tokenURLElicitation is unaffected", func() {
+		It("[Happy,URLElicitation] URL elicitation triggers on missing token for elicitation-capable client; server without tokenURLElicitation is unaffected", Label("url-elicitation", "pr"), func() {
 			toolName := fmt.Sprintf("%shello_world", urlPrefix)
 
 			By("Registering a second server WITHOUT tokenURLElicitation or credentialRef")
@@ -364,7 +362,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 			Expect(directContent[0].Text).To(ContainSubstring("Hi direct"))
 		})
 
-		It("[Happy,URLElicitation] Full round-trip: token page submit then retry succeeds", func() {
+		It("[Happy,URLElicitation] Full round-trip: token page submit then retry succeeds", Label("url-elicitation", "pr"), func() {
 			toolName := fmt.Sprintf("%shello_world", urlPrefix)
 
 			By("Initializing with elicitation capability")
@@ -444,7 +442,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 			Expect(content2[0].Text).To(ContainSubstring("Hello"))
 		})
 
-		It("[URLElicitation] Non-elicitation-capable client gets standard error on missing token", func() {
+		It("[URLElicitation] Non-elicitation-capable client gets standard error on missing token", Label("url-elicitation"), func() {
 			toolName := fmt.Sprintf("%shello_world", urlPrefix)
 
 			By("Initializing WITHOUT elicitation capability")
@@ -473,7 +471,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 			Expect(body).NotTo(ContainSubstring("-32042"))
 		})
 
-		It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", func() {
+		It("[Happy,URLElicitation] 401 from upstream invalidates cached token and re-triggers elicitation", Label("url-elicitation", "pr"), func() {
 			toolName := fmt.Sprintf("%shello_world", urlPrefix)
 
 			By("Initializing with elicitation capability")

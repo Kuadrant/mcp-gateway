@@ -27,25 +27,46 @@ var sharedMCPTestServer2 = "mcp-test-server2"
 var scaledMCPTestServer = "mcp-test-server3"
 
 var _ = Describe("MCP Gateway Registration Happy Path", func() {
+	var (
+		testResources    []client.Object
+		mcpGatewayClient *NotifyingMCPClient
+	)
+
+	BeforeEach(func() {
+		testResources = []client.Object{}
+		Eventually(func(g Gomega) {
+			var err error
+			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+	})
+
+	AfterEach(func() {
+		if mcpGatewayClient != nil {
+			_ = mcpGatewayClient.Close()
+			mcpGatewayClient = nil
+		}
+		for _, to := range testResources {
+			CleanupResource(ctx, k8sClient, to)
+		}
+		testResources = []client.Object{}
+	})
+
 	JustAfterEach(func() {
 		if CurrentSpecReport().Failed() {
 			GinkgoWriter.Println("failure detected")
 		}
 	})
 
-	It("[Happy] basic registration tool invocation and unregistration", func() {
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] basic registration tool invocation and unregistration", Label("core", "pr"), func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		registration1 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithPrefix("server1").Build()
 		httpRoute1Name := registration1.GetHTTPRouteName()
-		reg1Objects := registration1.GetObjects()
-		deferCleanupResources(&reg1Objects)
+		testResources = append(testResources, registration1.GetObjects()...)
 		registeredServer1 := registration1.Register(ctx)
 
 		registration2 := NewMCPServerResourcesWithDefaults("basic-registration", k8sClient).WithPrefix("server2").Build()
-		reg2Objects := registration2.GetObjects()
-		deferCleanupResources(&reg2Objects)
+		testResources = append(testResources, registration2.GetObjects()...)
 		registeredServer2 := registration2.Register(ctx)
 
 		By("Verifying MCPServerRegistrations become ready")
@@ -107,11 +128,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	// Regression test: an HTTP backend with an explicit sectionName targeting the
 	// HTTPS listener must still get an http:// URL in the broker config. The gateway
 	// listener protocol (HTTPS) must not bleed into the upstream service URL.
-	It("[Happy] HTTP backend with explicit HTTPS listener sectionName", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] HTTP backend with explicit HTTPS listener sectionName", Label("routing", "pr"), func() {
 		By("Registering a plain HTTP server with sectionName targeting the HTTPS listener")
 		registration := NewTestResources("https-listener-http-backend", k8sClient).
 			ForInternalService(sharedMCPTestServer1, 9090).
@@ -140,11 +157,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(res.Content).NotTo(BeEmpty())
 	})
 
-	It("[Happy] should register mcp server with non-default spec.path", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should register mcp server with non-default spec.path", Label("routing", "pr"), func() {
 		By("Registering an MCP server with a non-default path")
 		registration := NewTestResources("non-default-path", k8sClient).
 			ForInternalService("mcp-custom-path-server", 8080).
@@ -173,11 +186,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(res.Content).NotTo(BeEmpty())
 	})
 
-	It("[Happy] should register mcp server with credential with the gateway and make the tools available", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should register mcp server with credential with the gateway and make the tools available", Label("core", "pr"), func() {
 		cred := BuildCredentialSecret("mcp-credential", "test-api-key-secret-toke")
 		registration := NewMCPServerResourcesWithDefaults("credentials", k8sClient).
 			WithCredential(cred, "token").WithBackendTarget("mcp-api-key-server", 9090).WithPrefix("auth").Build()
@@ -216,9 +225,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	})
 
-	It("[Happy] should use and re-use a backend MCP session", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
+	It("[Happy] should use and re-use a backend MCP session", Label("sessions", "pr"), func() {
 
 		registration := NewMCPServerResourcesWithDefaults("sessions", k8sClient).WithPrefix("sess_").Build()
 		// Important as we need to make sure to clean up
@@ -301,11 +308,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Happy] concurrent tool calls on a fresh session should create only one backend session", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] concurrent tool calls on a fresh session should create only one backend session", Label("sessions", "pr"), func() {
 		By("Registering an MCPServerRegistration")
 		registration := NewMCPServerResourcesWithDefaults("concurrent-session", k8sClient).WithPrefix("conc_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
@@ -363,11 +366,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		GinkgoWriter.Printf("all %d concurrent calls used backend session: %s\n", concurrency, firstSession)
 	})
 
-	It("[Happy] concurrent tool calls across different backends should each reach the correct upstream", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] concurrent tool calls across different backends should each reach the correct upstream", Label("sessions"), func() {
 		By("Registering server1 (Go) and everything-server (TypeScript) with unique prefixes")
 		reg1 := NewMCPServerResourcesWithDefaults("cross-backend-1", k8sClient).
 			WithPrefix("xb1_").Build()
@@ -460,11 +459,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}
 	})
 
-	It("[Full] Redis session cache persists backend sessions across pod restarts", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Full] Redis session cache persists backend sessions across pod restarts", Serial, Label("sessions"), func() {
 		deploymentName := "mcp-gateway"
 		redisSecretName := "redis-session-store"
 		redisConnectionString := fmt.Sprintf("redis://redis.%s.svc.cluster.local:6379", SystemNamespace)
@@ -564,7 +559,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			"backend session should be restored from Redis after pod restart")
 	})
 
-	It("[Happy] should assign unique mcp-session-ids to concurrent clients and new session on reconnect", func() {
+	It("[Happy] should assign unique mcp-session-ids to concurrent clients and new session on reconnect", Label("sessions", "pr"), func() {
 		By("Creating multiple clients concurrently")
 		var client1, client2, client3 *mcp.ClientSession
 		Eventually(func(g Gomega) {
@@ -619,11 +614,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(newSession).NotTo(Equal(session3), "reconnected client should have a different session ID than client3")
 	})
 
-	It("[Happy] should only return tools specified by MCPVirtualServer when using X-Mcp-Virtualserver header", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should only return tools specified by MCPVirtualServer when using X-Mcp-Virtualserver header", Label("trusted-headers", "pr"), func() {
 		By("Creating an MCPServerRegistration with tools")
 		registration := NewMCPServerResourcesWithDefaults("virtualserver-test", k8sClient).WithPrefix("vst_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
@@ -671,11 +662,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(len(allToolsAgain.Tools)).To(BeNumerically(">", 1), "expected more than 1 tool without virtual server header")
 	})
 
-	It("[Happy] should send list_changed notifications to connected clients when a server with tools and prompts is registered", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should send list_changed notifications to connected clients when a server with tools and prompts is registered", Label("core", "pr"), func() {
 		// NOTE on notifications. A notification is sent when servers are removed during clean up as this effects tools list also.
 		// as the list_changed notification is broadcast, this can mean clients in other tests receive additional notifications
 		// for that reason we only assert we received at least one rather than a set number
@@ -738,10 +725,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Eventually(client2Notification).WithTimeout(TestTimeoutMedium).Should(Receive(), "client2 should have received a notification")
 	})
 
-	It("[Happy] should forward notifications/tools/list_changed from backend MCP server to connected clients", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
+	It("[Happy] should forward notifications/tools/list_changed from backend MCP server to connected clients", Label("core", "pr"), func() {
 
 		By("Creating an MCPServerRegistration pointing to server1 which has the add_tool feature")
 		registration := NewMCPServerResourcesWithDefaults("backend-notification-test", k8sClient).
@@ -835,10 +819,8 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 	// Note this is a complex test as it scales up and down the server. It can take quite a while to run.
 	// consider moving to separate suite
-	It("[Full] should gracefully handle an MCP Server becoming unavailable", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
+	It("[Full] should gracefully handle an MCP Server becoming unavailable", Serial, Label("core"), func() {
+		// heal leftover scale-down from a crashed prior run
 		_ = ScaleDeployment(ctx, TestServerNameSpace, scaledMCPTestServer, 1)
 
 		By("Scaling down the MCP server3 deployment to 0")
@@ -941,11 +923,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred(), "tool calls should work once the server is back and ready")
 	})
 
-	It("[Happy] should filter tools based on x-mcp-authorized JWT header", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should filter tools based on x-mcp-authorized JWT header", Serial, Label("trusted-headers", "pr"), func() {
 		SetupTrustedHeadersAuth(ctx, k8sClient)
 
 		By("Creating an MCPServerRegistration with tools")
@@ -994,10 +972,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should register MCP server via Hostname backendRef", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-
+	It("[Happy] should register MCP server via Hostname backendRef", Label("routing", "pr"), func() {
 		// verifies controller correctly handles Hostname backendRef
 		// broker connectivity not tested - test server doesn't speak HTTPS
 		externalHost := "mcp-test-server2.mcp-test.svc.cluster.local"
@@ -1014,10 +989,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutMedium, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Full] should become Ready even with invalid protocol version", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-
+	It("[Full] should become Ready even with invalid protocol version", Label("core"), func() {
 		// the controller writes config and verifies the route is programmed.
 		// protocol validation is a runtime concern handled by the broker, not
 		// the controller. a server with an unsupported protocol version will
@@ -1036,10 +1008,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should become Ready even when tool conflicts exist from same prefix", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-
+	It("[Happy] should become Ready even when tool conflicts exist from same prefix", Label("core", "pr"), func() {
 		// tool and prompt conflicts are detected by the broker at runtime, not
 		// by the controller. both registrations will be Ready in the CRD.
 		// conflicts surface through the broker's /status endpoint.
@@ -1067,11 +1036,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Full] should allow multiple MCP Servers without prefixes", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Full] should allow multiple MCP Servers without prefixes", Label("core"), func() {
 		By("Creating HTTPRoutes and MCP Servers")
 		// create httproutes for test servers that should already be deployed
 		registration := NewMCPServerResources("same-prefix", "everything-server.mcp-gateway.local", "everything-server", 9090, k8sClient).
@@ -1127,11 +1092,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(content.Text).To(Equal("Echo: e2e"))
 	})
 
-	It("[Happy] should list prompts with prefix, invoke via GetPrompt, and remove on unregistration", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should list prompts with prefix, invoke via GetPrompt, and remove on unregistration", Label("prompts", "pr"), func() {
 		By("Creating MCPServerRegistration pointing to server1 which has a 'greet' prompt")
 		registration := NewMCPServerResourcesWithDefaults("prompt-list", k8sClient).
 			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("prompttest_").Build()
@@ -1176,11 +1137,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should aggregate prompts from multiple servers with different prefixes", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should aggregate prompts from multiple servers with different prefixes", Label("prompts", "pr"), func() {
 		By("Creating two MCPServerRegistrations for server1 with different prefixes")
 		registration1 := NewMCPServerResources("prompt-multi-1", "prompt-s1a.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("s1a_").Build()
@@ -1208,11 +1165,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should filter prompts via MCPVirtualServer", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should filter prompts via MCPVirtualServer", Label("prompts", "pr"), func() {
 		By("Creating MCPServerRegistration for server1 with prompts")
 		registration := NewMCPServerResourcesWithDefaults("prompt-vs-filter", k8sClient).
 			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("vs_").Build()
@@ -1259,11 +1212,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(PromptsListHasPrompt(promptsAll, expectedPrompt)).To(BeTrue())
 	})
 
-	It("[Happy] should filter prompts based on x-mcp-authorized JWT header", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should filter prompts based on x-mcp-authorized JWT header", Serial, Label("prompts"), func() {
 		SetupTrustedHeadersAuth(ctx, k8sClient)
 
 		// server1 exposes a single prompt (greet), so register it twice with
@@ -1321,11 +1270,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(PromptsListHasPrompt(promptsAll, fmt.Sprintf("%s%s", registeredServerB.Spec.Prefix, "greet"))).To(BeTrue())
 	})
 
-	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should expose all prompts when MCPVirtualServer omits prompts field", Label("prompts", "pr"), func() {
 		By("Creating MCPServerRegistration for server1 with prompts")
 		registration := NewMCPServerResourcesWithDefaults("prompt-vs-nofilter", k8sClient).
 			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("nofilt_").Build()
@@ -1374,10 +1319,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should return error for prompts/get with nonexistent prompt", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-
+	It("[Happy] should return error for prompts/get with nonexistent prompt", Label("prompts", "pr"), func() {
 		By("Creating MCPServerRegistration for server1")
 		registration := NewMCPServerResourcesWithDefaults("prompt-notfound", k8sClient).
 			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("notfound_").Build()
@@ -1404,11 +1346,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(rpcErr.Code).To(Equal(-32602), "expected JSON-RPC invalid-params error code (-32602)")
 	})
 
-	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should resolve prefix conflicts by modifying MCPServer to add prefix", Label("core", "pr"), func() {
 		// server1 has: greet, time, slow, headers, add_tool
 		// server2 has: hello_world, time, headers, auth1234, slow, set_time, pour_chocolate_into_mold
 		// Both have time, headers, slow - these will conflict
@@ -1474,11 +1412,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(len(res.Content)).To(BeNumerically(">=", 1))
 	})
 
-	It("[Happy] should disable and re-enable an MCPServerRegistration", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Happy] should disable and re-enable an MCPServerRegistration", Serial, Label("core", "pr"), func() {
 		By("Creating an MCPServerRegistration with default state (Enabled)")
 		registration := NewMCPServerResourcesWithDefaults("disable-enable-test", k8sClient).WithPrefix("distest_").Build()
 		testResources = append(testResources, registration.GetObjects()...)
@@ -1534,11 +1468,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Full] tools and prompts re-populate after gateway restart no redis", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
+	It("[Full] tools and prompts re-populate after gateway restart no redis", Serial, Label("core"), func() {
 		deploymentName := "mcp-gateway"
 
 		By("Registering an MCPServerRegistration with tools and prompts")

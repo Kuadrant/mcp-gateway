@@ -95,13 +95,22 @@ linters:
           - staticcheck
         text: "dot.imports|ST1001"
       # gosec false-positives in e2e test code: G101 test-only EC signing
-      # key, G109/G115 trusted int conversions in builders, G204 kubectl
+      # key, G109/G115 trusted int conversions in builders, G118 suite-level
+      # context cancel called in SynchronizedAfterSuite, G204 kubectl
       # shell-outs with controlled inputs, G402 self-signed Kind certs.
       # Other gosec rules still apply.
       - path: 'tests/e2e/.*\.go$'
         linters:
           - gosec
-        text: "G(101|109|115|204|402):"
+        text: "G(101|109|115|118|204|402):"
+      # e2e test specs share setup/teardown patterns intentionally
+      - path: 'tests/e2e/.*\.go$'
+        linters:
+          - dupl
+      # e2e test helpers keep params for future callers
+      - path: 'tests/e2e/.*\.go$'
+        linters:
+          - unparam
       # Suite-level context for the entire Ginkgo run is intentional.
       - path: 'tests/e2e/suite_test\.go$'
         linters:

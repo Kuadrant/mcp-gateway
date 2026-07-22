@@ -47,6 +47,8 @@ func patchExtensionCACertBundle(ref *mcpv1.CACertBundleReference) {
 	Expect(k8sClient.Patch(ctx, ext, client.RawPatch(types.MergePatchType, patchBytes))).To(Succeed())
 }
 
+// Serial: every spec patches caCertBundleRef on the shared MCPGatewayExtension,
+// which rewrites broker config and recreates all upstream managers
 var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 	var (
 		testResources    []client.Object
@@ -124,7 +126,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	}
 
-	It("[HTTPS] [Happy,CACertBundle] Gateway CA bundle enables TLS connection to upstream server", func() {
+	It("[HTTPS] [Happy,CACertBundle] Gateway CA bundle enables TLS connection to upstream server", Label("tls", "pr"), func() {
 		By("Creating CA bundle secret with correct CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, correctCAPEM)
 		testResources = append(testResources, caBundle)
@@ -156,7 +158,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Full,CACertBundle] Multiple servers sharing the same gateway CA bundle", func() {
+	It("[HTTPS] [Full,CACertBundle] Multiple servers sharing the same gateway CA bundle", Label("tls"), func() {
 		By("Creating CA bundle secret with correct CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, correctCAPEM)
 		testResources = append(testResources, caBundle)
@@ -199,7 +201,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Full,CACertBundle] Per-server CA appends to gateway bundle", func() {
+	It("[HTTPS] [Full,CACertBundle] Per-server CA appends to gateway bundle", Label("tls"), func() {
 		By("Generating unrelated CA for gateway bundle")
 		unrelatedCAPEM := generateSelfSignedCACertForBundle("Unrelated Gateway CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, unrelatedCAPEM)
@@ -237,7 +239,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Full,CACertBundle] Wrong CA fails, rotation to correct CA recovers", func() {
+	It("[HTTPS] [Full,CACertBundle] Wrong CA fails, rotation to correct CA recovers", Label("tls"), func() {
 		By("Generating wrong CA for gateway bundle")
 		wrongCAPEM := generateSelfSignedCACertForBundle("Wrong CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, wrongCAPEM)
@@ -286,7 +288,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Full,CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error", func() {
+	It("[HTTPS] [Full,CACertBundle] Invalid CA bundle secret — MCPGatewayExtension reports error", Label("tls"), func() {
 		By("Patching MCPGatewayExtension to reference non-existent secret")
 		ref := &mcpv1.CACertBundleReference{Name: "nonexistent-secret", Key: "ca.crt"}
 		patchExtensionCACertBundle(ref)
@@ -322,7 +324,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Full,CACertBundle] Gateway CA bundle with existing per-server CA on same server", func() {
+	It("[HTTPS] [Full,CACertBundle] Gateway CA bundle with existing per-server CA on same server", Label("tls"), func() {
 		By("Creating CA bundle secret with correct CA")
 		caBundle := createLabeledCASecret(caBundleSecretName, SystemNamespace, correctCAPEM)
 		testResources = append(testResources, caBundle)

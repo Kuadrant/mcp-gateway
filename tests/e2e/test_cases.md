@@ -218,11 +218,7 @@
 
 ### [Happy,URLElicitation] Full round-trip: token page submit then retry succeeds
 
-- When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response.
-
-### [Full][URLElicitation] Cached token reused across multiple tool calls
-
-- After a token has been submitted via the token page, subsequent tool calls to the same server from the same session should reuse the cached token without triggering a new -32042 error. The upstream server should receive the token on each call.
+- When an elicitation-capable client receives a -32042 error, it should be able to GET the token page URL, POST the token via the form with the elicitation_id, then retry the tool call. On retry the cached token should be injected by the router as an Authorization header and the upstream server should receive it and return a successful tool response. Subsequent tool calls to the same server from the same session reuse the cached token without triggering a new -32042 error (also exercised by the 401-invalidation case below, whose setup call succeeds on the cached token).
 
 ### [URLElicitation] Non-elicitation-capable client gets standard error on missing token
 

@@ -13,6 +13,8 @@ jobs:
     outputs:
       is-member: ${{ steps.check-org.outputs.is-member }}
       suite: ${{ steps.parse-command.outputs.suite }}
+      make-target: ${{ steps.resolve.outputs.make_target }}
+      suite-name: ${{ steps.resolve.outputs.suite_name }}
     steps:
       - name: Check org membership
         id: check-org
@@ -26,24 +28,60 @@ jobs:
               });
               core.setOutput('is-member', response.status === 204 || response.status === 302);
             } catch (error) {
-              // 404 means not a member
               core.setOutput('is-member', false);
             }
 
       - name: Parse command
         id: parse-command
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          COMMENT="${{ github.event.comment.body }}"
-          # Extract suite from "/test-e2e <suite>"
-          SUITE=$(echo "$COMMENT" | grep -oP '/test-e2e\s+\K\w+' || echo "")
-          if [[ "$SUITE" != "happy" && "$SUITE" != "full" ]]; then
-            echo "Invalid or missing suite. Use: /test-e2e happy or /test-e2e full"
-            SUITE=""
-          fi
+          # extract suite from "/test-e2e <suite>" (env var, not inline interpolation)
+          SUITE=$(echo "$COMMENT_BODY" | grep -oP '/test-e2e\s+\K\w[-\w]*' || echo "")
           echo "suite=$SUITE" >> $GITHUB_OUTPUT
 
+      - name: Checkout (for shared suite list)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: build/known-suites.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve make target
+        id: resolve
+        env:
+          SUITE: ${{ steps.parse-command.outputs.suite }}
+        run: |
+          KNOWN="$(cat build/known-suites.txt | tr '\n' ' ' | xargs)"
+          case "$SUITE" in
+            happy|pr)
+              echo "make_target=test-e2e-pr" >> $GITHUB_OUTPUT
+              echo "suite_name=" >> $GITHUB_OUTPUT
+              ;;
+            pr-extended)
+              echo "make_target=test-e2e-pr-extended" >> $GITHUB_OUTPUT
+              echo "suite_name=" >> $GITHUB_OUTPUT
+              ;;
+            full)
+              echo "make_target=test-e2e-ci-full" >> $GITHUB_OUTPUT
+              echo "suite_name=" >> $GITHUB_OUTPUT
+              ;;
+            "")
+              echo "make_target=" >> $GITHUB_OUTPUT
+              echo "suite_name=" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              if echo "$KNOWN" | grep -qwF -- "$SUITE"; then
+                echo "make_target=test-e2e-suite" >> $GITHUB_OUTPUT
+                echo "suite_name=$SUITE" >> $GITHUB_OUTPUT
+              else
+                echo "make_target=" >> $GITHUB_OUTPUT
+                echo "suite_name=" >> $GITHUB_OUTPUT
+              fi
+              ;;
+          esac
+
       - name: React to comment
-        if: steps.check-org.outputs.is-member == 'true' && steps.parse-command.outputs.suite != ''
+        if: steps.check-org.outputs.is-member == 'true' && steps.resolve.outputs.make_target != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -67,30 +105,46 @@ jobs:
             });
             core.setFailed('User is not a member of the Kuadrant organization');
 
+      - name: Read known suites
+        if: steps.check-org.outputs.is-member == 'true' && steps.resolve.outputs.make_target == ''
+        id: known
+        run: |
+          echo "suites=$(tr ' ' '\n' < build/known-suites.txt | grep -v '^$' | sed 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g')" >> "$GITHUB_OUTPUT"
+
       - name: Reject invalid suite
-        if: steps.check-org.outputs.is-member == 'true' && steps.parse-command.outputs.suite == ''
+        if: steps.check-org.outputs.is-member == 'true' && steps.resolve.outputs.make_target == ''
         uses: actions/github-script@v7
+        env:
+          KNOWN_SUITES: ${{ steps.known.outputs.suites }}
         with:
           script: |
+            const suites = process.env.KNOWN_SUITES;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '❌ Invalid command. Usage: `/test-e2e happy` or `/test-e2e full`'
+              body: `Invalid suite. Usage:\n` +
+                '```\n' +
+                '/test-e2e <suite>       # named suite\n' +
+                '/test-e2e pr            # curated PR gate (~32 specs)\n' +
+                '/test-e2e pr-extended   # broader coverage (~64 specs)\n' +
+                '/test-e2e full          # all suites\n' +
+                '```\n' +
+                `Available suites: ${suites}`
             });
             core.setFailed('Invalid suite specified');
 
   e2e-tests:
     needs: check-permission
-    if: needs.check-permission.outputs.is-member == 'true' && needs.check-permission.outputs.suite != ''
+    if: needs.check-permission.outputs.is-member == 'true' && needs.check-permission.outputs.make-target != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: read
 
     steps:
-      - name: Get PR branch
+      - name: Get PR head
         id: pr
         uses: actions/github-script@v7
         with:
@@ -100,29 +154,30 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number
             });
-            core.setOutput('ref', pr.data.head.ref);
             core.setOutput('sha', pr.data.head.sha);
 
-      - name: Checkout PR branch
+      # checkout the head SHA captured above, not the branch name: a branch
+      # name from a fork resolves against this repo (wrong or missing code),
+      # and a moving ref could test commits pushed after the trigger comment
+      - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.pr.outputs.ref }}
+          ref: ${{ steps.pr.outputs.sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      # probe the baked CI node image (content-hash of version pins); on a
-      # miss fall back to stock kindest/node via the default in kind.mk
       - name: Probe baked CI node image
         id: ci-node
         env:
           GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           hit=false
           if image="$(make -s print-ci-node-image 2>/dev/null)"; then
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null 2>&1 || true
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               hit=true
             fi
@@ -136,12 +191,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "baked CI node image: $image (hit=$hit)"
 
-      # create with the pinned bin/kind and node image so the make load
-      # targets (same bin/kind) can always load into the node's containerd
+      # image comes from the checked-out PR's Makefile: env var, never inline
       - name: Create Kind cluster
+        env:
+          CI_NODE_HIT: ${{ steps.ci-node.outputs.hit }}
+          CI_NODE_IMAGE: ${{ steps.ci-node.outputs.image }}
         run: |
-          if [ "${{ steps.ci-node.outputs.hit }}" = "true" ]; then
-            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="${{ steps.ci-node.outputs.image }}"
+          if [ "$CI_NODE_HIT" = "true" ]; then
+            make kind-create-cluster-ci KIND_CLUSTER_IMAGE="$CI_NODE_IMAGE"
           else
             make kind-create-cluster-ci
           fi
@@ -149,13 +206,24 @@ jobs:
       - name: Setup CI environment
         run: make ci-setup
 
-      - name: Run E2E tests (happy)
-        if: needs.check-permission.outputs.suite == 'happy'
-        run: make test-e2e-happy E2E_PROCS=4
+      # auth-policy needs keycloak and the full run covers it too
+      - name: Setup auth infrastructure
+        if: |
+          needs.check-permission.outputs.suite-name == 'auth-policy' ||
+          needs.check-permission.outputs.make-target == 'test-e2e-ci-full'
+        run: make ci-auth-setup
 
-      - name: Run E2E tests (full)
-        if: needs.check-permission.outputs.suite == 'full'
-        run: make test-e2e-ci-full E2E_PROCS=4
+      - name: Run E2E tests
+        env:
+          E2E_MAKE_TARGET: ${{ needs.check-permission.outputs.make-target }}
+          E2E_SUITE: ${{ needs.check-permission.outputs.suite-name }}
+        run: |
+          echo "on-demand run: suite=$E2E_SUITE target=$E2E_MAKE_TARGET"
+          if [ -n "$E2E_SUITE" ]; then
+            make "$E2E_MAKE_TARGET" SUITE="$E2E_SUITE" E2E_PROCS=4
+          else
+            make "$E2E_MAKE_TARGET" E2E_PROCS=4
+          fi
 
       - name: Collect logs on failure
         if: failure()
@@ -163,26 +231,27 @@ jobs:
           make ci-debug-logs || true
           make ci-debug-test-servers-logs || true
 
-      - name: Report success
-        if: success()
+      - name: Report result
+        if: always()
         uses: actions/github-script@v7
+        env:
+          E2E_SUITE: ${{ needs.check-permission.outputs.suite }}
+          PR_SHA: ${{ steps.pr.outputs.sha }}
         with:
           script: |
+            const suite = process.env.E2E_SUITE;
+            const sha = process.env.PR_SHA;
+            const passed = '${{ job.status }}' === 'success';
+            const icon = passed ? ':white_check_mark:' : ':x:';
+            const status = passed ? 'passed' : 'failed';
+            const logsUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let body = `${icon} E2E \`${suite}\` ${status} on ${sha.substring(0, 7)}`;
+            if (!passed) {
+              body += ` — [logs](${logsUrl})`;
+            }
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `✅ E2E tests (\`${{ needs.check-permission.outputs.suite }}\`) passed on commit ${{ steps.pr.outputs.sha }}`
-            });
-
-      - name: Report failure
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `❌ E2E tests (\`${{ needs.check-permission.outputs.suite }}\`) failed on commit ${{ steps.pr.outputs.sha }}. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+              body,
             });

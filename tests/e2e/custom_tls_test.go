@@ -66,7 +66,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		testResources = []client.Object{}
 	})
 
-	It("[HTTPS] [Happy] broker connects to TLS upstream and tools/call works via hairpin SNI", func() {
+	It("[HTTPS] [Happy] broker connects to TLS upstream and tools/call works via hairpin SNI", Label("tls", "pr"), func() {
 		By("Registering a plain HTTP backend via the HTTPS listener")
 		registration := NewTestResources("tls-hairpin", k8sClient).
 			ForInternalService("mcp-test-server1", 9090).
@@ -107,7 +107,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Negative] broker rejects TLS upstream with wrong CA certificate", func() {
+	It("[HTTPS] [Negative] broker rejects TLS upstream with wrong CA certificate", Label("tls", "security"), func() {
 		By("Generating a wrong CA certificate")
 		wrongCAPEM := generateSelfSignedCACert()
 
@@ -158,7 +158,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [Happy] tools/call to internal TLS backend fails without DestinationRule, succeeds with it", func() {
+	It("[HTTPS] [Happy] tools/call to internal TLS backend fails without DestinationRule, succeeds with it", Label("tls", "pr"), func() {
 		By("Extracting CA cert from cert-manager secret")
 		caSecret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
@@ -281,7 +281,7 @@ var _ = Describe("HTTPS External Backends", func() {
 		testResources = nil
 	})
 
-	It("[HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS", func() {
+	It("[HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS", Label("tls"), func() {
 		pat := os.Getenv("GITHUB_MCP_PAT")
 		if pat == "" {
 			Skip("GITHUB_MCP_PAT not set — skipping external GitHub MCP test")
@@ -341,7 +341,7 @@ var _ = Describe("HTTPS External Backends", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[HTTPS] [HTTPS_EXTERNAL] In-cluster MCP server accessible over public TLS via real certs", func() {
+	It("[HTTPS] [HTTPS_EXTERNAL] In-cluster MCP server accessible over public TLS via real certs", Label("tls"), func() {
 		if os.Getenv("E2E_HTTPS_REAL_CERTS") != "true" {
 			Skip("Skipping: E2E_HTTPS_REAL_CERTS is not set to 'true'. " +
 				"This test requires a cluster with a real wildcard certificate.")
