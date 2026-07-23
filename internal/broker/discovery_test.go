@@ -10,6 +10,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,14 @@ import (
 func mustMarshalArgs(m map[string]any) json.RawMessage {
 	b, _ := json.Marshal(m)
 	return b
+}
+
+// populateTestVersions stores stateful (2025-11-25) versions for all servers in mcpServers.
+func populateTestVersions(b *mcpBrokerImpl) {
+	for _, mgr := range b.mcpServers {
+		cfg := mgr.Config()
+		b.serverVersions.Store(cfg.ID(), []string{protocol.Version2025})
+	}
 }
 
 func createTestManagerWithMeta(t *testing.T, serverName, prefix string, tools []mcp.Tool, category []string, hint string) upstream.ActiveMCPServer {
@@ -42,6 +51,7 @@ func TestDiscoverTools_BasicResponse(t *testing.T) {
 		[]mcp.Tool{{Name: "forecast"}, {Name: "current"}},
 		[]string{"Weather", "External"}, "weather data from OpenWeather",
 	)
+	populateTestVersions(b)
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -76,6 +86,7 @@ func TestDiscoverTools_CategoryFilter(t *testing.T) {
 		[]mcp.Tool{{Name: "tool2"}},
 		[]string{"Weather"}, "",
 	)
+	populateTestVersions(b)
 
 	tests := []struct {
 		name     string
@@ -120,6 +131,7 @@ func TestDiscoverTools_EmptyCategoryMatchReturnsEmptyServers(t *testing.T) {
 		[]mcp.Tool{{Name: "tool1"}},
 		[]string{"Weather"}, "",
 	)
+	populateTestVersions(b)
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -197,6 +209,7 @@ func TestSelectTools_AllOrNothing(t *testing.T) {
 		[]mcp.Tool{{Name: "real_tool"}},
 		[]string{"Test"}, "",
 	)
+	populateTestVersions(b)
 
 	b.mcpLock.RLock()
 	err := b.validateToolSelectionLocked([]string{"s1_real_tool", "s1_nonexistent"}, http.Header{}, "test-session-1")
@@ -233,6 +246,7 @@ func TestSelectTools_Success(t *testing.T) {
 		[]mcp.Tool{{Name: "tool_a"}, {Name: "tool_b"}},
 		[]string{"Test"}, "",
 	)
+	populateTestVersions(h.b)
 	cs := h.connect(t)
 
 	res, payload := selectTools(t, cs, []string{"s1_tool_a"})
@@ -256,6 +270,7 @@ func TestSelectTools_EmptyResetsScope(t *testing.T) {
 		[]mcp.Tool{{Name: "tool_a"}},
 		[]string{"Test"}, "",
 	)
+	populateTestVersions(h.b)
 	cs := h.connect(t)
 
 	res, _ := selectTools(t, cs, []string{"s1_tool_a"})
@@ -279,6 +294,7 @@ func TestSelectTools_Rescope(t *testing.T) {
 		[]mcp.Tool{{Name: "tool_a"}, {Name: "tool_b"}, {Name: "tool_c"}},
 		[]string{"Test"}, "",
 	)
+	populateTestVersions(h.b)
 	cs := h.connect(t)
 
 	res, _ := selectTools(t, cs, []string{"s1_tool_a"})
@@ -433,6 +449,7 @@ func TestSelectTools_ValidationSucceedsForValidTool(t *testing.T) {
 		[]mcp.Tool{{Name: "tool_a"}},
 		[]string{"Test"}, "",
 	)
+	populateTestVersions(b)
 
 	b.mcpLock.RLock()
 	err := b.validateToolSelectionLocked([]string{"s1_tool_a"}, http.Header{}, "validate-session")

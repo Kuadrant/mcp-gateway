@@ -769,7 +769,6 @@ func (s *MCPGatewayExtensionSetup) Build() *MCPGatewayExtensionSetup {
 	if s.caCertBundleRef != nil {
 		spec.CACertBundleRef = s.caCertBundleRef
 	}
-
 	s.extension = &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s.name,

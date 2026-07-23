@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,6 +31,7 @@ type userSpecificServer struct {
 	name   string
 	url    string
 	prefix string
+	caCert string
 }
 
 // userSessionKey builds the pool key for a per-user upstream session.
@@ -48,6 +52,7 @@ type cachedUserSession struct {
 
 // FetchUserSpecificTools fetches tools from userSpecificList servers using the
 // caller's session headers and merges them into the result before FilterTools runs.
+// Only servers supporting the client's protocol version are queried.
 func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
 	broker.mcpLock.RLock()
 	servers := broker.userSpecificServers
@@ -57,47 +62,82 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		return
 	}
 
+	clientVersion := protocol.Version2025
+	if headers.Get(protocolVersionHeader) == protocol.Version2026 {
+		clientVersion = protocol.Version2026
+	}
+	isStateless := clientVersion == protocol.Version2026
+
+	// filter to servers supporting the client's protocol
+	var matching []userSpecificServer
+	for _, srv := range servers {
+		if broker.ServerSupportsVersion(srv.id, clientVersion) {
+			matching = append(matching, srv)
+		}
+	}
+	if len(matching) == 0 {
+		return
+	}
+
 	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-all",
 		trace.WithAttributes(
-			attribute.Int("mcp.user_specific.server_count", len(servers)),
+			attribute.Int("mcp.user_specific.server_count", len(matching)),
+			attribute.String("mcp.user_specific.client_version", clientVersion),
 		),
 	)
 	defer span.End()
 
-	broker.logger.Debug("fetching user-specific tools", "serverCount", len(servers))
-
-	gatewaySessionID := headers.Get(gatewaySessionHeader)
-	if gatewaySessionID == "" {
-		broker.logger.Error("no gateway session ID for user-specific tool fetch")
-		span.SetStatus(codes.Error, "missing gateway session ID")
-		return
-	}
+	broker.logger.Debug("fetching user-specific tools", "serverCount", len(matching), "clientVersion", clientVersion)
 
 	userHeaders := filterUserHeaders(headers)
 
 	var mu sync.Mutex
 	var allTools []mcp.Tool
 
-	g, gCtx := errgroup.WithContext(ctx)
-	for _, srv := range servers {
-		g.Go(func() error {
-			tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
-			if err != nil {
-				broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
-				return nil // graceful degradation
-			}
-			broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
-			mu.Lock()
-			allTools = append(allTools, tools...)
-			mu.Unlock()
-			return nil
-		})
+	if isStateless {
+		g, gCtx := errgroup.WithContext(ctx)
+		for _, srv := range matching {
+			g.Go(func() error {
+				tools, err := broker.doFetchToolsStateless(gCtx, srv, userHeaders)
+				if err != nil {
+					broker.logger.Error("failed to fetch user-specific tools (stateless)", "server", srv.name, "error", err)
+					return nil
+				}
+				broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
+				mu.Lock()
+				allTools = append(allTools, tools...)
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = g.Wait()
+	} else {
+		gatewaySessionID := headers.Get(gatewaySessionHeader)
+		if gatewaySessionID == "" {
+			broker.logger.Error("no gateway session ID for user-specific tool fetch")
+			span.SetStatus(codes.Error, "missing gateway session ID")
+			return
+		}
+		g, gCtx := errgroup.WithContext(ctx)
+		for _, srv := range matching {
+			g.Go(func() error {
+				tools, err := broker.fetchToolsFromServer(gCtx, srv, userHeaders, gatewaySessionID)
+				if err != nil {
+					broker.logger.Error("failed to fetch user-specific tools", "server", srv.name, "error", err)
+					return nil
+				}
+				broker.logger.Debug("fetched user-specific tools", "server", srv.name, "toolCount", len(tools))
+				mu.Lock()
+				allTools = append(allTools, tools...)
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = g.Wait()
 	}
-	_ = g.Wait()
 
 	span.SetAttributes(attribute.Int("mcp.user_specific.tools_fetched", len(allTools)))
 
-	// convert value tools to pointers for ListToolsResult
 	for i := range allTools {
 		result.Tools = append(result.Tools, &allTools[i])
 	}
@@ -197,6 +237,85 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	}
 
 	return &fetchResult{tools: validTools, sessionID: session.ID()}, nil
+}
+
+// doFetchToolsStateless creates a fresh connection, lists tools, and closes
+// immediately. no session pool, no caching — each call is independent.
+func (broker *mcpBrokerImpl) doFetchToolsStateless(ctx context.Context, srv userSpecificServer, userHeaders map[string]string) ([]mcp.Tool, error) {
+	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-server-stateless",
+		trace.WithAttributes(
+			attribute.String("mcp.server.name", srv.name),
+			attribute.String("mcp.server.url", srv.url),
+		),
+	)
+	defer span.End()
+
+	fetchCtx, cancel := context.WithTimeout(ctx, broker.userSpecificFetchTimeout)
+	defer cancel()
+
+	base, err := broker.buildStatelessTransport(srv.caCert)
+	if err != nil {
+		span.SetStatus(codes.Error, "tls setup failed")
+		return nil, fmt.Errorf("failed to build TLS transport for %s: %w", srv.name, err)
+	}
+	httpClient := &http.Client{
+		Transport: &transport.DynamicHeaderRoundTripper{
+			Base:    base,
+			Headers: func() map[string]string { return userHeaders },
+		},
+	}
+
+	t := &mcp.StreamableClientTransport{
+		Endpoint:             srv.url,
+		HTTPClient:           httpClient,
+		DisableStandaloneSSE: true,
+	}
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-broker",
+		Version: "0.0.1",
+	}, nil)
+
+	session, err := mcpClient.Connect(fetchCtx, t, nil)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	toolsResult, err := session.ListTools(fetchCtx, nil)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("list tools: %w", err)
+	}
+
+	valueTools := make([]mcp.Tool, 0, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		if tool != nil {
+			valueTools = append(valueTools, *tool)
+		}
+	}
+
+	validTools, invalids := upstream.ValidateTools(valueTools)
+	if len(invalids) > 0 {
+		switch broker.invalidToolPolicy {
+		case upstream.InvalidToolPolicyFilterOut:
+			broker.logger.Error("invalid user-specific tools filtered", "server", srv.name, "count", len(invalids))
+		case upstream.InvalidToolPolicyRejectServer:
+			span.SetStatus(codes.Error, "invalid tools")
+			return nil, fmt.Errorf("server %s rejected: %d invalid tools", srv.id, len(invalids))
+		}
+	}
+
+	for i := range validTools {
+		validTools[i].Name = srv.prefix + validTools[i].Name
+		validTools[i].Meta = mcp.Meta{
+			"kuadrant/id": string(srv.id),
+		}
+	}
+
+	span.SetAttributes(attribute.Int("mcp.user_specific.tools_count", len(validTools)))
+	return validTools, nil
 }
 
 // getOrCreateUserSession returns a cached upstream session or creates a new
@@ -322,11 +441,23 @@ var sensitiveForwardHeaders = map[string]struct{}{
 // stripping internal gateway headers and gateway-scoped credentials. the
 // client's Authorization header is intentionally preserved: user-specific
 // servers rely on it to return a per-user tool list.
+// transportHeaders are set by the SDK transport and must not be overridden
+// by user headers forwarded to upstream servers.
+var transportHeaders = map[string]struct{}{
+	"accept":               {},
+	"content-type":         {},
+	"content-length":       {},
+	"mcp-protocol-version": {},
+	"mcp-session-id":       {},
+	"mcp-method":           {},
+	"mcp-name":             {},
+}
+
 func filterUserHeaders(h http.Header) map[string]string {
 	headers := make(map[string]string, len(h))
 	for key, vals := range h {
 		lower := strings.ToLower(key)
-		if lower == "mcp-session-id" {
+		if _, skip := transportHeaders[lower]; skip {
 			continue
 		}
 		if strings.HasPrefix(lower, "x-mcp-") {
@@ -340,4 +471,40 @@ func filterUserHeaders(h http.Header) map[string]string {
 		}
 	}
 	return headers
+}
+
+// buildStatelessTransport returns a cached http.RoundTripper with the gateway
+// CA bundle and per-server CA appended to the system trust pool. The transport
+// is built once per unique (gatewayCACert, serverCACert) pair and reused for
+// connection pooling across requests.
+func (broker *mcpBrokerImpl) buildStatelessTransport(serverCACert string) (http.RoundTripper, error) {
+	gatewayCACert := broker.gatewayCACertPEM
+	if gatewayCACert == "" && serverCACert == "" {
+		return http.DefaultTransport, nil
+	}
+	key := gatewayCACert + "|" + serverCACert
+	if cached, ok := broker.statelessTransports.Load(key); ok {
+		return cached.(http.RoundTripper), nil
+	}
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if gatewayCACert != "" {
+		if !rootCAs.AppendCertsFromPEM([]byte(gatewayCACert)) {
+			return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+		}
+	}
+	if serverCACert != "" {
+		if !rootCAs.AppendCertsFromPEM([]byte(serverCACert)) {
+			return nil, fmt.Errorf("failed to parse per-server CA certificate PEM")
+		}
+	}
+	base.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+	broker.statelessTransports.Store(key, base)
+	return base, nil
 }

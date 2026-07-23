@@ -32,7 +32,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 	JustAfterEach(func() {
 		if CurrentSpecReport().Failed() {
-			GinkgoWriter.Println("failure detected")
+			DumpClusterState(ctx, SystemNamespace, GatewayNamespace, TestServerNameSpace)
 		}
 	})
 
@@ -62,7 +62,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with user-a auth")
-		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -94,13 +94,13 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating clients for user-a and user-b")
-		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = userAClient.Close() }()
 
-		userBClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userBClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-b-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -151,7 +151,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with user-a auth")
-		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -182,7 +182,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Listing tools without user-specific server — record baseline")
 		var baselineCount int
-		mcpClient, err := NewMCPGatewayClient(ctx, gatewayURL)
+		mcpClient, err := NewStatefulClient(ctx, gatewayURL)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = mcpClient.Close() }()
 
@@ -206,7 +206,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying client without auth still sees same standard tools (no user-specific tools leak)")
-		noAuthClient, err := NewMCPGatewayClient(ctx, gatewayURL)
+		noAuthClient, err := NewStatefulClient(ctx, gatewayURL)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = noAuthClient.Close() }()
 
@@ -250,7 +250,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		uspecReg.Register(ctx)
 
 		By("Creating a client with auth")
-		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -288,7 +288,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with user-a auth")
-		userAClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -326,7 +326,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with auth and a virtual server header")
-		userClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization":       "Bearer user-a-token",
 			"X-Mcp-Virtualserver": "test/vs",
 		})
@@ -380,7 +380,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 
 		By("Creating a client with user-a auth and virtual server header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		vsClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		vsClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization":       "Bearer user-a-token",
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		})

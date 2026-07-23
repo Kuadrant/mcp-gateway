@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -196,7 +196,7 @@ func headersHandler(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolR
 			lines = append(lines, fmt.Sprintf("%s: %s", k, strings.Join(v, ", ")))
 		}
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Join(lines, "\n")}}}, nil
 }
 

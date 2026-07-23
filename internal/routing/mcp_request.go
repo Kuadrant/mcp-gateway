@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
@@ -254,7 +253,28 @@ func SseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
 func BuildSSEToolError(requestID any, message string) string {
 	return SseJSONRPC(requestID, func(b *strings.Builder) {
 		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-		b.WriteString(strconv.Quote(message))
+		b.WriteString(jsonQuote(message))
 		b.WriteString("}],\"isError\":true}}")
 	})
+}
+
+// BuildJSONToolError constructs a plain JSON-RPC error response for 2026-07-28
+func BuildJSONToolError(requestID any, message string) string {
+	var b strings.Builder
+	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
+	idBytes, err := json.Marshal(requestID)
+	if err != nil {
+		b.WriteString("null")
+	} else {
+		b.Write(idBytes)
+	}
+	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+	b.WriteString(jsonQuote(message))
+	b.WriteString("}],\"isError\":true}}")
+	return b.String()
+}
+
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

@@ -80,7 +80,8 @@ func newBrokerHarness(t *testing.T, compose func(*brokerHarness) http.Handler, e
 func newCompatHarness(t *testing.T) *brokerHarness {
 	t.Helper()
 	return newBrokerHarness(t, func(h *brokerHarness) http.Handler {
-		ch := h.b.MCPHandler().(*compatHandler)
+		pr := h.b.MCPHandler().(*protocolRouter)
+		ch := pr.legacy
 		h.wrapped = ch.next.(*sessionResurrectionHandler)
 		return ch
 	})
@@ -116,7 +117,8 @@ func newResurrectionHarnessIdle(t *testing.T, idle time.Duration) *brokerHarness
 func newDiscoveryHarness(t *testing.T) *brokerHarness {
 	t.Helper()
 	return newBrokerHarness(t, func(h *brokerHarness) http.Handler {
-		ch := h.b.MCPHandler().(*compatHandler)
+		pr := h.b.MCPHandler().(*protocolRouter)
+		ch := pr.legacy
 		h.wrapped = ch.next.(*sessionResurrectionHandler)
 		return ch
 	}, WithDiscoveryToolsEnabled(true))

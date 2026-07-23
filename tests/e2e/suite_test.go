@@ -228,7 +228,7 @@ func newTestGatewayClient() *NotifyingMCPClient {
 	var c *NotifyingMCPClient
 	Eventually(func(g Gomega) {
 		var err error
-		c, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+		c, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
 		g.Expect(err).NotTo(HaveOccurred())
 	}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	DeferCleanup(func() {

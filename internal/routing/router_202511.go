@@ -117,7 +117,9 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 			span.SetAttributes(attribute.String("mcp.route", "broker-meta-tool"))
 			return r.routeBrokerPassthrough(ctx, mcpReq)
 		}
-		r.Logger.DebugContext(ctx, "no server for tool", "toolName", toolName)
+		if r.Logger.Enabled(ctx, slog.LevelDebug) {
+			r.Logger.DebugContext(ctx, "no server for tool", "toolName", toolName, "availableTools", table.DumpTools())
+		}
 		mcpotel.SpanError(span, fmt.Errorf("tool not found: %s", toolName), "tool not found")
 		span.SetAttributes(attribute.String("error.type", "tool_not_found"))
 		return &Decision{

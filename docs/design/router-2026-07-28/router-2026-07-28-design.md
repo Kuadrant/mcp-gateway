@@ -12,7 +12,7 @@ Extract routing logic behind a `Router` interface with two implementations: one 
 
 ## Goals
 
-- **G1:** Support `2026-07-28` routing: `Mcp-Method`/`Mcp-Name` header-based routing, `:authority` rewrite, prefix stripping, `Mcp-Name` header rewrite.
+- **G1:** Support `2026-07-28` routing: `Mcp-Method`/`Mcp-Name` header-based routing, `:authority` rewrite, prefix stripping, `Mcp-Name` header rewrite. Provide steel thread around new protocol for tool and prompts.
 - **G2:** Isolate `2025-11-25` code path so it can be removed without touching the `2026-07-28` path.
 - **G3:** Zero broker imports in router. Replace `MCPBroker` interface with a routing table.
 - **G4:** Define the `Router` interface as the contract for a future Praxis adapter.
@@ -21,26 +21,33 @@ Extract routing logic behind a `Router` interface with two implementations: one 
 ## Non-Goals
 
 - Praxis filter implementation (Phase 2, separate design)
-- Broker changes for `2026-07-28` (`server/discover`, `InputRequiredResult`, `ttlMs` — separate design)
+- Full broker `2026-07-28` redesign (`InputRequiredResult`, `ttlMs`/`cacheScope` cache semantics, identity-keyed scope store — separate design, scoped in `tasks/broker-2026-scope.md`)
 - `2025-11-25` deprecation or removal
 - Independent deployment of router and broker
-- Changes to controller or operator
+
+> **Note:** Some Broker changes were made to support the dual-protocol gateway:
+> - `protocolRouter` in `MCPHandler()` dispatches 2026-07-28 requests to a stateless `StreamableHTTPHandler`, bypassing the compat layer and session management. Both handlers are always active — no `protocolMode` flag.
+> - `discover_tools`/`select_tools` always registered, filtered to stateful clients only via pre-cached protocol tool sets.
+> - Upstream `Ping()` skipped for 2026-07-28 upstreams (SDK limitation: `_meta` not injected on ping).
+> - `server/discover` response overridden with the union of upstream server protocol versions for natural version negotiation.
+>
+> See `tasks/broker-2026-scope.md` for remaining broker work and the `single-gateway-dual-protocol` design for the dual-protocol gateway design.
 
 ## Job Stories
 
-### When deploying gateways for different protocol versions
+### When supporting clients on different protocol versions
 
-When a platform admin needs to support both `2025-11-25` and `2026-07-28` MCP clients, they want to deploy separate gateway instances — one for each protocol version — so that each instance handles a single protocol cleanly without translation overhead.
+When a platform admin has agents using both `2025-11-25` and `2026-07-28`, they want a single gateway to serve both so that they don't need to deploy separate instances. The gateway negotiates the correct version per client via `server/discover`.
 
-### When migrating MCP servers between gateway instances
+### When migrating upstream servers to the new protocol
 
-When a platform admin is transitioning from a `2025-11-25` gateway to a `2026-07-28` gateway, they want to understand how to move their MCPServerRegistrations between instances so that they can migrate servers incrementally as upstream servers adopt the new protocol.
+When an upstream is upgraded from `2025-11-25` to `2026-07-28`, clients see the change automatically — the gateway's `server/discover` response updates to reflect the new version, and tools move from the stateful to the stateless cache.
 
 ## Constraints
 
-### Single protocol per gateway instance
+### No cross-protocol translation
 
-A single gateway instance cannot support both `2025-11-25` and `2026-07-28` simultaneously. From a client's perspective, the gateway appears as a single MCP server. If the gateway federates a mix of upstream servers running different protocol versions, it would need to translate between protocols depending on which server a given request targets. This translation is complex — the protocols differ in session management, transport semantics, header contracts, and capability negotiation — and the translation layer would become a persistent source of bugs and edge cases rather than a transitional shim. Each gateway instance binds to one protocol version at deployment time.
+The gateway does not translate between protocols. A 2025 client talks to 2025 backends; a 2026 client talks to 2026 backends. Tools from incompatible backends are filtered out of `tools/list`. This avoids the complexity of translating session semantics, `_meta` fields, and transport differences between protocol versions.
 
 ## Design
 
@@ -63,15 +70,6 @@ type RoutingTable interface {
     ToolAnnotations(serverID, toolName string) (*ToolAnnotation, bool)
 }
 
-type ServerRoute struct {
-    Name                string
-    Host                string
-    Prefix              string
-    Path                string
-    URL                 string
-    TokenURLElicitation *TokenURLElicitationRoute
-    UserSpecificList    bool
-}
 ```
 
 `LookupPrefix` exists for `UserSpecificList` servers where per-user tools may not appear in the tool lookup. The router falls back to prefix matching when a tool name is not found via `LookupTool`.
@@ -112,23 +110,6 @@ Key properties:
 #### `2025-11-25` router
 
 Already implemented in `internal/routing/router_202511.go`. Implements `Router` with body-based routing, session management, hairpin init, and elicitation handling.
-
-```go
-// internal/routing/router_202511.go
-type Router202511 struct {
-    RoutingConfig       *atomic.Pointer[config.MCPServersConfig]
-    Table               RoutingTableFunc
-    SessionCache        SessionCache
-    JWTManager          *session.JWTManager
-    InitForClient       InitForClient
-    HairpinClientPool   *clients.HairpinClientPool
-    ElicitationMap      idmap.Map
-    TokenElicitationMap elicitation.Map
-    ElicitationEnabled  bool
-    Logger              *slog.Logger
-    initGroup           singleflight.Group
-}
-```
 
 This implementation is explicitly temporary — removed when `2025-11-25` support is dropped.
 
@@ -222,11 +203,22 @@ The `HandleResponseHeaders` and response body SSE rewriter in `server.go` are `2
 - **Prefix stripping is the only body mutation.** The router does not modify any other body fields. This limits the attack surface for body manipulation.
 
 
+### Dual-protocol gateway — DONE
+
+Implemented in `docs/design/single-gateway-dual-protocol/`. A single gateway serves both protocols via `server/discover` negotiation. Protocol-specific routes (`/mcp/stateful`, `/mcp/stateless`) let agents access tools from both versions. `protocolMode` was removed — both routers are always active.
+
 ## Future Considerations
 
-- **Praxis adapter.** The `Router` interface is designed to be implementable from a Praxis `HttpFilter`. The `Request`/`Decision` types are transport-agnostic. A `PraxisAdapter` would translate between Praxis's `HttpFilterContext` and these types, then call the same `Router` interface (reimplemented in Rust).
+### Server cards (SEP-2127)
+
+The gateway could serve a server card advertising both protocol paths as separate remotes. This builds on the existing `/mcp/stateful` and `/mcp/stateless` routes. Separate design scope.
+
+### Other future work
+
+- **Praxis adapter.** The `Router` interface is designed to be implementable from a Praxis `HttpFilter`. The `Request`/`Decision` types are transport-agnostic.
 - **Body phase skip.** When no prefix is configured on any MCPServerRegistration, the ext_proc could be configured with `request_body_mode: NONE` for `2026-07-28` routes, eliminating the body phase entirely at the Envoy level.
-- **`2025-11-25` removal.** When support is dropped, `Router202511` and all its dependencies (SessionCache, JWTManager, singleflight, InitForClient, ElicitationMap) are deleted. The `ExtProcAdapter` simplifies to a single router.
+- **`2025-11-25` removal.** When support is dropped, `Router202511` and all its dependencies (SessionCache, JWTManager, singleflight, InitForClient, ElicitationMap) are deleted.
+- **Discovery tools for stateless clients.** The `scopeStore` keys by session ID, which doesn't exist in stateless mode. Options: re-key by `sub` claim, or use the spec's `requiredHeaders` mechanism on endpoints to pass an opaque scope key per request.
 
 ## Execution
 

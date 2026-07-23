@@ -95,7 +95,11 @@ func (a *app) setUpHTTPServer() {
 		mux.Handle("/tokens", a.tokenHandler)
 		mux.Handle("/mcp/elicitation", a.elicitHandler)
 	}
-	mux.Handle("/mcp", traceContextMiddleware(a.mcpBroker.MCPHandler()))
+	mcpHandler := traceContextMiddleware(a.mcpBroker.MCPHandler())
+	mux.Handle("/mcp", mcpHandler)
+	// stateful and stateless handlers let clients target each protocol separately if they wish, vs the joint /mcp that offers both
+	mux.Handle("/mcp/stateful", mcpHandler)
+	mux.Handle("/mcp/stateless", mcpHandler)
 
 	a.brokerServer = httpSrv
 }

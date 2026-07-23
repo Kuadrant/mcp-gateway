@@ -29,7 +29,7 @@ var scaledMCPTestServer = "mcp-test-server3"
 var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	JustAfterEach(func() {
 		if CurrentSpecReport().Failed() {
-			GinkgoWriter.Println("failure detected")
+			DumpClusterState(ctx, SystemNamespace, GatewayNamespace, TestServerNameSpace)
 		}
 	})
 
@@ -229,7 +229,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var mcpClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			mcpClient, err = NewMCPGatewayClient(context.Background(), gatewayURL)
+			mcpClient, err = NewStatefulClient(context.Background(), gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		clientSession := mcpClient.ID()
@@ -283,7 +283,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("deleting the session it should get a new backend session")
 		Expect(mcpClient.Close()).Error().NotTo(HaveOccurred())
 		// closing the client triggers a delete and cancelling of the context so we need a new client
-		mcpClient, err = NewMCPGatewayClient(context.Background(), gatewayURL)
+		mcpClient, err = NewStatefulClient(context.Background(), gatewayURL)
 		Expect(err).Error().NotTo(HaveOccurred())
 		By("invoking headers tool with new client")
 		res, err = mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: toolName})
@@ -569,21 +569,21 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var client1, client2, client3 *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			client1, err = NewMCPGatewayClient(ctx, gatewayURL)
+			client1, err = NewStatefulClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = client1.Close() }()
 
 		Eventually(func(g Gomega) {
 			var err error
-			client2, err = NewMCPGatewayClient(ctx, gatewayURL)
+			client2, err = NewStatefulClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = client2.Close() }()
 
 		Eventually(func(g Gomega) {
 			var err error
-			client3, err = NewMCPGatewayClient(ctx, gatewayURL)
+			client3, err = NewStatefulClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = client3.Close() }()
@@ -607,7 +607,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		var reconnectedClient *mcp.ClientSession
 		Eventually(func(g Gomega) {
 			var err error
-			reconnectedClient, err = NewMCPGatewayClient(ctx, gatewayURL)
+			reconnectedClient, err = NewStatefulClient(ctx, gatewayURL)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = reconnectedClient.Close() }()
@@ -650,7 +650,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		virtualServerClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -681,7 +681,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		// for that reason we only assert we received at least one rather than a set number
 		By("Creating clients with notification handlers and different sessions")
 		client1Notification := make(chan struct{}, 1)
-		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+		client1, err := NewStatefulClientWithNotifications(ctx, gatewayURL, func(method string) {
 			if strings.Contains(method, "list_changed") {
 				GinkgoWriter.Println("client 1 received notification registration", method)
 				select {
@@ -694,7 +694,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		defer func() { _ = client1.Close() }()
 
 		client2Notification := make(chan struct{}, 1)
-		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+		client2, err := NewStatefulClientWithNotifications(ctx, gatewayURL, func(method string) {
 			if strings.Contains(method, "list_changed") {
 				GinkgoWriter.Println("client 2 received notification registration", method)
 				select {
@@ -705,9 +705,9 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client2.Close() }()
-		Expect(client1.sessionID).NotTo(BeEmpty())
-		Expect(client2.sessionID).NotTo(BeEmpty())
-		Expect(client1.sessionID).NotTo(Equal(client2.sessionID))
+		Expect(client1.ID()).NotTo(BeEmpty())
+		Expect(client2.ID()).NotTo(BeEmpty())
+		Expect(client1.ID()).NotTo(Equal(client2.ID()))
 
 		By("registering a new MCPServerRegistration pointing to server1 which has both tools and prompts")
 		registration := NewMCPServerResourcesWithDefaults("notification-test", k8sClient).
@@ -764,7 +764,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating new clients with notification handlers")
 		client1Notification := make(chan struct{}, 1)
-		client1, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+		client1, err := NewStatefulClientWithNotifications(ctx, gatewayURL, func(method string) {
 			if method == "notifications/tools/list_changed" {
 				GinkgoWriter.Println("client 1 received notification", method)
 				select {
@@ -777,7 +777,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		defer func() { _ = client1.Close() }()
 
 		client2Notification := make(chan struct{}, 1)
-		client2, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+		client2, err := NewStatefulClientWithNotifications(ctx, gatewayURL, func(method string) {
 			GinkgoWriter.Println("client 2 received notification", method)
 			if method == "notifications/tools/list_changed" {
 				select {
@@ -882,7 +882,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with notification handler")
 		receivedNotification := make(chan struct{}, 1)
-		notifyClient, err := NewMCPGatewayClientWithNotifications(ctx, gatewayURL, func(method string) {
+		notifyClient, err := NewStatefulClientWithNotifications(ctx, gatewayURL, func(method string) {
 			if method == "notifications/tools/list_changed" {
 				GinkgoWriter.Println("received notification during unavailability test", method)
 				select {
@@ -977,7 +977,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Creating a client with x-mcp-authorized header")
-		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		authorizedClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"X-Mcp-Authorized": jwtToken,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1238,7 +1238,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		virtualServerClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1298,7 +1298,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Creating a client with x-mcp-authorized header")
-		authorizedClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		authorizedClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"X-Mcp-Authorized": jwtToken,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1349,7 +1349,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 
 		By("Creating a client with X-Mcp-Virtualserver header")
 		virtualServerHeader := fmt.Sprintf("%s/%s", virtualServer.Namespace, virtualServer.Name)
-		virtualServerClient, err := NewMCPGatewayClientWithHeaders(ctx, gatewayURL, map[string]string{
+		virtualServerClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"X-Mcp-Virtualserver": virtualServerHeader,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1601,5 +1601,53 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(content).NotTo(BeEmpty())
 			g.Expect(content[0].Text).To(Equal("Hi restart-test"))
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+	})
+
+	It("[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover", func() {
+		By("Registering a 2025-only server on the shared gateway")
+		registration := NewMCPServerResourcesWithDefaults("discover-negotiate", k8sClient).
+			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("discneg_").Build()
+		regObjects := registration.GetObjects()
+		deferCleanupResources(&regObjects)
+		registeredServer := registration.Register(ctx)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Connecting with a stateless (2026) client — should negotiate down to 2025")
+		var c *mcp.ClientSession
+		Eventually(func(g Gomega) {
+			var err error
+			c, err = NewStatelessClient(ctx, gatewayURL)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		defer func() { _ = c.Close() }()
+
+		initResult := c.InitializeResult()
+		Expect(initResult).NotTo(BeNil())
+		Expect(initResult.ProtocolVersion).To(Equal("2025-11-25"),
+			"SDK should negotiate 2025 when gateway has only 2025 backends")
+
+		By("Verifying tools/list works on the negotiated 2025 session")
+		Eventually(func(g Gomega) {
+			result, err := c.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("discneg_", result)).To(BeTrue(),
+				"2025 tools should be visible after natural negotiation")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("Verifying tools/call works through the full 2025 path (hairpin init, session mapping)")
+		Eventually(func(g Gomega) {
+			result, err := c.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "discneg_greet",
+				Arguments: map[string]any{"name": "negotiate-test"},
+			})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.Content).NotTo(BeEmpty())
+			text, ok := result.Content[0].(*mcp.TextContent)
+			g.Expect(ok).To(BeTrue())
+			g.Expect(text.Text).To(ContainSubstring("negotiate-test"))
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 })

@@ -142,6 +142,23 @@ func (m *MockMCP) ProtocolInfo() *mcp.InitializeResult {
 	return result
 }
 
+func (m *MockMCP) SupportedVersions() []string {
+	if m.protocolVersion == "" {
+		return nil
+	}
+	return []string{m.protocolVersion}
+}
+
+func (m *MockMCP) SupportsVersion(v string) bool {
+	versions := m.SupportedVersions()
+	for _, ver := range versions {
+		if ver == v {
+			return true
+		}
+	}
+	return false
+}
+
 // newMockMCP creates a MockMCP with sensible defaults for testing
 func newMockMCP(name, prefix string) *MockMCP {
 	id := config.UpstreamMCPID(fmt.Sprintf("%s:%s:http://mock/mcp", name, prefix))

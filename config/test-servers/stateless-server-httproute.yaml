@@ -1,0 +1,20 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: stateless-server-route
+  labels:
+    app: mcp-test-stateless-server
+spec:
+  parentRefs:
+  - name: mcp-gateway
+    namespace: gateway-system
+  hostnames:
+  - stateless-server.mcp.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp
+    backendRefs:
+    - name: mcp-test-stateless-server
+      port: 9090

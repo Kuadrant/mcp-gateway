@@ -50,7 +50,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		testResources = []client.Object{}
 		Eventually(func(g Gomega) {
 			var err error
-			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			mcpGatewayClient, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
@@ -249,7 +249,7 @@ var _ = Describe("Custom TLS Configuration", Ordered, func() {
 		_ = mcpGatewayClient.Close()
 		Eventually(func(g Gomega) {
 			var err error
-			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			mcpGatewayClient, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
@@ -373,7 +373,7 @@ var _ = Describe("HTTPS External Backends", func() {
 		var mcpClient *NotifyingMCPClient
 		Eventually(func(g Gomega) {
 			var err error
-			mcpClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			mcpClient, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		defer func() { _ = mcpClient.Close() }()

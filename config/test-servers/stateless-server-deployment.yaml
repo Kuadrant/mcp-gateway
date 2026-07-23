@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-test-stateless-server
+  labels:
+    app: mcp-test-stateless-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-test-stateless-server
+  template:
+    metadata:
+      labels:
+        app: mcp-test-stateless-server
+    spec:
+      containers:
+      - name: mcp-test-stateless-server
+        image: ghcr.io/kuadrant/mcp-gateway/test-stateless-server:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 9090
+          name: http
+        env:
+        - name: MCP_TRANSPORT
+          value: "http"
+        - name: PORT
+          value: "9090"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+          requests:
+            memory: "64Mi"
+            cpu: "50m"

@@ -43,19 +43,20 @@ func TestFilterUserHeaders(t *testing.T) {
 			},
 		},
 		{
-			name: "strips x-mcp- prefixed headers",
+			name: "strips x-mcp- prefixed and transport headers",
 			input: http.Header{
 				"X-Mcp-Virtualserver": []string{"ns/vs"},
 				"X-Mcp-Authorized":    []string{"jwt-value"},
 				"X-Mcp-Custom":        []string{"value"},
 				"Accept":              []string{"application/json"},
+				"X-Custom":            []string{"keep"},
 			},
 			expected: map[string]string{
-				"Accept": "application/json",
+				"X-Custom": "keep",
 			},
 		},
 		{
-			name: "preserves non-internal headers",
+			name: "strips transport headers, preserves user headers",
 			input: http.Header{
 				"Authorization": []string{"Bearer xyz"},
 				"Content-Type":  []string{"application/json"},
@@ -63,17 +64,18 @@ func TestFilterUserHeaders(t *testing.T) {
 			},
 			expected: map[string]string{
 				"Authorization": "Bearer xyz",
-				"Content-Type":  "application/json",
 				"X-Custom":      "keep-this",
 			},
 		},
 		{
-			name: "uses first value for multi-value headers",
+			name: "strips accept and mcp-protocol-version",
 			input: http.Header{
-				"Accept": []string{"text/html", "application/json"},
+				"Accept":               []string{"text/html"},
+				"Mcp-Protocol-Version": []string{"2026-07-28"},
+				"Authorization":        []string{"Bearer tok"},
 			},
 			expected: map[string]string{
-				"Accept": "text/html",
+				"Authorization": "Bearer tok",
 			},
 		},
 		{
@@ -129,12 +131,14 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 
 	cfg := mockServer.configPtr()
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(*cfg)}
 	broker := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(*cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 5 * time.Second,
 	}
+	withStatefulVersions(broker, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing-tool"}},
@@ -149,6 +153,14 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 
 func toUserSpecificServer(cfg config.MCPServer) userSpecificServer {
 	return userSpecificServer{id: cfg.ID(), name: cfg.Name, url: cfg.URL, prefix: cfg.Prefix}
+}
+
+// withStatefulVersions populates serverVersions for test servers so
+// ServerSupportsVersion returns true for 2025-11-25 (stateful).
+func withStatefulVersions(b *mcpBrokerImpl, servers []userSpecificServer) {
+	for _, srv := range servers {
+		b.serverVersions.Store(srv.id, []string{"2025-11-25"})
+	}
 }
 
 // newTestMCPServer returns a test HTTP server that handles MCP initialize and
@@ -223,12 +235,14 @@ func TestFetchUserSpecificTools_FetchesAndMergesTools(t *testing.T) {
 
 	cfg := mockServer.configPtr()
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(*cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(*cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "cached-tool"}},
@@ -266,12 +280,14 @@ func TestFetchUserSpecificTools_GracefulDegradation(t *testing.T) {
 	}
 
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 2 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing"}},
@@ -331,12 +347,14 @@ func TestFetchUserSpecificTools_SessionCaching(t *testing.T) {
 	}
 
 	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
 	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{toUserSpecificServer(cfg)},
+		userSpecificServers:      servers,
 		logger:                   slog.Default(),
 		sessionCache:             cache,
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
+	withStatefulVersions(b, servers)
 
 	makeHeaders := func() http.Header {
 		return http.Header{
@@ -551,4 +569,120 @@ func TestUserSessionPool_AuthHeaderStaysFresh(t *testing.T) {
 	_, err = sessB.ListTools(ctx, nil)
 	require.NoError(t, err)
 	require.Equal(t, "Bearer token-b", lastAuth.Load(), "refreshed token must reach the upstream")
+}
+
+// newStatelessTestMCPServer creates an httptest server running a 2026-07-28
+// stateless MCP server with a single tool.
+func newStatelessTestMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "stateless-test", Version: "1.0"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "tool",
+		Description: "stateless tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	return httptest.NewServer(handler)
+}
+
+func TestFetchUserSpecificTools_StatelessFetch(t *testing.T) {
+	ts := newStatelessTestMCPServer(t)
+	defer ts.Close()
+
+	cache, _ := session.NewCache()
+	srv := userSpecificServer{
+		id: "ns/stateless-server", name: "stateless-server",
+		url: ts.URL, prefix: "sl_",
+	}
+	b := &mcpBrokerImpl{
+		userSpecificServers:      []userSpecificServer{srv},
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+	b.serverVersions.Store(srv.id, []string{"2026-07-28"})
+
+	result := &mcp.ListToolsResult{
+		Tools: []*mcp.Tool{{Name: "cached-tool"}},
+	}
+	headers := http.Header{
+		"Mcp-Session-Id":       []string{"gw-session-1"},
+		"Mcp-Protocol-Version": []string{"2026-07-28"},
+		"Authorization":        []string{"Bearer user-token"},
+	}
+
+	b.FetchUserSpecificTools(context.Background(), headers, result)
+
+	require.Len(t, result.Tools, 2, "should merge stateless tool with existing")
+	assert.Equal(t, "cached-tool", result.Tools[0].Name)
+	assert.Equal(t, "sl_tool", result.Tools[1].Name, "tool should be prefixed with sl_")
+
+	// no session should be cached (stateless path)
+	assert.Equal(t, 0, poolSize(b), "stateless fetch should not cache sessions")
+}
+
+func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
+	// stateful (2025) test server
+	var initCount2025 atomic.Int32
+	ts2025 := newTestMCPServer(&initCount2025, "upstream-2025")
+	defer ts2025.Close()
+
+	// stateless (2026) test server
+	ts2026 := newStatelessTestMCPServer(t)
+	defer ts2026.Close()
+
+	srv2025 := userSpecificServer{
+		id: "ns/server-2025", name: "server-2025",
+		url: ts2025.URL, prefix: "s25_",
+	}
+	srv2026 := userSpecificServer{
+		id: "ns/server-2026", name: "server-2026",
+		url: ts2026.URL, prefix: "s26_",
+	}
+
+	cache, _ := session.NewCache()
+	b := &mcpBrokerImpl{
+		userSpecificServers:      []userSpecificServer{srv2025, srv2026},
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+	b.serverVersions.Store(srv2025.id, []string{"2025-11-25"})
+	b.serverVersions.Store(srv2026.id, []string{"2026-07-28"})
+
+	t.Run("2025 client sees only 2025 tools", func(t *testing.T) {
+		result := &mcp.ListToolsResult{}
+		headers := http.Header{
+			"Mcp-Session-Id": []string{"gw-session-2025"},
+			"Authorization":  []string{"Bearer token"},
+		}
+		b.FetchUserSpecificTools(context.Background(), headers, result)
+
+		var names []string
+		for _, tool := range result.Tools {
+			names = append(names, tool.Name)
+		}
+		assert.Contains(t, names, "s25_user_tool", "2025 client should see 2025 server tools")
+		assert.NotContains(t, names, "s26_tool", "2025 client should NOT see 2026 server tools")
+	})
+
+	t.Run("2026 client sees only 2026 tools", func(t *testing.T) {
+		result := &mcp.ListToolsResult{}
+		headers := http.Header{
+			"Mcp-Session-Id":       []string{"gw-session-2026"},
+			"Mcp-Protocol-Version": []string{"2026-07-28"},
+			"Authorization":        []string{"Bearer token"},
+		}
+		b.FetchUserSpecificTools(context.Background(), headers, result)
+
+		var names []string
+		for _, tool := range result.Tools {
+			names = append(names, tool.Name)
+		}
+		assert.Contains(t, names, "s26_tool", "2026 client should see 2026 server tools")
+		assert.NotContains(t, names, "s25_user_tool", "2026 client should NOT see 2025 server tools")
+	})
 }

@@ -32,6 +32,7 @@
 | `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle used as the base trust pool for all upstream MCP server connections. Per-server `caCertSecretRef` on MCPServerRegistration appends to this pool. The Secret must have the label `mcp.kuadrant.io/secret: "true"` and must not exceed 256 KiB |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
 
+
 ## MCPGatewayExtensionTargetReference
 
 | **Field** | **Type** | **Required** | **Description** |

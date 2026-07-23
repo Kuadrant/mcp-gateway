@@ -41,3 +41,6 @@ nodes:
   - containerPort: 30077 # e2e-elicitation gateway
     hostPort: 8010
     protocol: TCP
+  - containerPort: 30083 # protocol-2026 listener
+    hostPort: 8011
+    protocol: TCP

@@ -119,7 +119,7 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 	connectMCPClient := func() {
 		Eventually(func(g Gomega) {
 			var err error
-			mcpGatewayClient, err = NewMCPGatewayClientWithNotifications(ctx, gatewayURL, nil)
+			mcpGatewayClient, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	}

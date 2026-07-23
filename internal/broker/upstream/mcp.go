@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -55,6 +57,12 @@ type MCPServer struct {
 	// session connects, leaving no registration gap.
 	notifyMu      sync.RWMutex
 	notifyHandler func(method string)
+
+	// supportedVersions lists protocol versions this upstream supports.
+	// set to the single negotiated version after Connect. future work:
+	// probe 2026 upstreams via server/discover to detect servers that
+	// support both versions.
+	supportedVersions []string
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided
@@ -275,6 +283,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
+	// record the negotiated version as the only supported version.
+	// future work: probe 2026 upstreams via server/discover to get
+	// the full SupportedVersions list for dual-version servers.
+	up.supportedVersions = []string{up.init.ProtocolVersion}
+
 	up.startNotificationWatcher(ctx, httpC, session)
 
 	// register notification and connection-lost handlers after session is
@@ -383,8 +396,37 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}
 }
 
-// Ping sends a ping request to the upstream MCP server to check connectivity
+// UsesStatelessProtocol returns true if the upstream negotiated protocol
+// version 2026-07-28 or later (stateless, no sessions).
+func (up *MCPServer) UsesStatelessProtocol() bool {
+	return up.init != nil && up.init.ProtocolVersion >= protocol.Version2026
+}
+
+// SupportedVersions returns the list of protocol versions this upstream supports.
+// Returns nil if not yet connected (init is nil).
+func (up *MCPServer) SupportedVersions() []string {
+	if len(up.supportedVersions) == 0 {
+		return nil
+	}
+	// return a copy to prevent mutation
+	result := make([]string, len(up.supportedVersions))
+	copy(result, up.supportedVersions)
+	return result
+}
+
+// SupportsVersion returns true if this upstream supports the given protocol version.
+func (up *MCPServer) SupportsVersion(v string) bool {
+	return slices.Contains(up.supportedVersions, v)
+}
+
+// Ping sends a ping request to the upstream MCP server to check connectivity.
+// Returns nil for stateless (2026-07-28) upstreams: the SDK does not inject
+// the required _meta fields on ping requests (SDK bug), and a successful
+// Connect via server/discover is sufficient proof of connectivity.
 func (up *MCPServer) Ping(ctx context.Context) error {
+	if up.UsesStatelessProtocol() {
+		return nil
+	}
 	session := up.currentSession()
 	if session == nil {
 		return fmt.Errorf("client not connected")

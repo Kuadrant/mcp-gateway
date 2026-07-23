@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"maps"
 	"slices"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
@@ -78,11 +79,7 @@ func (m *mcpBrokerImpl) handleListTags(req *mcp.CallToolRequest) (*mcp.CallToolR
 	}
 	m.mcpLock.RUnlock()
 
-	tags := make([]string, 0, len(seen))
-	for tag := range seen {
-		tags = append(tags, tag)
-	}
-	slices.Sort(tags)
+	tags := slices.Sorted(maps.Keys(seen))
 
 	return m.marshalToolResult(tags), nil
 }

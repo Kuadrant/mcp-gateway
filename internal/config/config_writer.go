@@ -30,6 +30,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -217,23 +218,16 @@ func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName s
 				return fmt.Errorf("remove mcpserver failed to read config secret: %w", err)
 			}
 
-			// check if server exists in this config
-			found := false
-			filtered := make([]MCPServer, 0, len(existingConfig.Servers))
-			for _, existing := range existingConfig.Servers {
-				if existing.Name == serverName {
-					found = true
-				} else {
-					filtered = append(filtered, existing)
-				}
-			}
-
 			// skip update if server wasn't in this config
-			if !found {
+			if !slices.ContainsFunc(existingConfig.Servers, func(s MCPServer) bool {
+				return s.Name == serverName
+			}) {
 				return nil
 			}
 
-			existingConfig.Servers = filtered
+			existingConfig.Servers = slices.DeleteFunc(existingConfig.Servers, func(s MCPServer) bool {
+				return s.Name == serverName
+			})
 			updated, err := yaml.Marshal(existingConfig)
 			if err != nil {
 				return fmt.Errorf("remove mcpserver failed to marshal config: %w", err)

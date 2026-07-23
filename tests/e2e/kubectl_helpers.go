@@ -3,12 +3,17 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -363,4 +368,73 @@ func IsAuthPolicyConfigured(ctx context.Context) bool {
 		return false
 	}
 	return strings.TrimSpace(string(output)) != ""
+}
+
+// DumpClusterState dumps gateway-related resources for post-failure debugging.
+// Writes to a temp file and prints the path; falls back to GinkgoWriter on file errors.
+func DumpClusterState(ctx context.Context, namespaces ...string) {
+	resources := []string{
+		"gateways.gateway.networking.k8s.io",
+		"httproutes.gateway.networking.k8s.io",
+		"mcpgatewayextensions.mcp.kuadrant.io",
+		"mcpserverregistrations.mcp.kuadrant.io",
+		"envoyfilters.networking.istio.io",
+	}
+
+	f, err := os.CreateTemp("", "e2e-cluster-dump-*.txt")
+	if err != nil {
+		GinkgoWriter.Printf("failed to create dump file, falling back to stdout: %v\n", err)
+		dumpClusterStateTo(ctx, GinkgoWriter, resources, namespaces)
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	w := bufio.NewWriter(f)
+	dumpClusterStateTo(ctx, w, resources, namespaces)
+	_ = w.Flush()
+
+	GinkgoWriter.Printf("cluster state dumped to: %s\n", f.Name())
+}
+
+func dumpClusterStateTo(ctx context.Context, w io.Writer, resources, namespaces []string) {
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+
+	p("=== CLUSTER STATE DUMP (post-failure) ===\n")
+	p("test: %s\n", CurrentSpecReport().FullText())
+	p("time: %s\n\n", time.Now().UTC().Format(time.RFC3339))
+
+	for _, res := range resources {
+		cmd := exec.CommandContext(ctx, "kubectl", "get", res, "--all-namespaces", "-o", "wide")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			p("  [%s] error: %v\n", res, err)
+			continue
+		}
+		p("\n--- %s ---\n%s", res, string(output))
+	}
+
+	for _, ns := range namespaces {
+		p("\n--- config secret in %s (metadata only) ---\n", ns)
+		cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", "mcp-gateway-config",
+			"-n", ns, "-o", "jsonpath={.metadata.name}{\"\\t\"}{.metadata.namespace}{\"\\t\"}{.metadata.creationTimestamp}{\"\\t\"}{.metadata.resourceVersion}{\"\\n\"}")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			p("  error: %v\n", err)
+		} else {
+			p("  name\tnamespace\tcreated\tresourceVersion\n")
+			p("  %s\n", string(output))
+		}
+
+		p("\n--- pods in %s ---\n", ns)
+		cmd = exec.CommandContext(ctx, "kubectl", "get", "pods", "-n", ns, "-o", "wide")
+		output, _ = cmd.CombinedOutput()
+		p("%s\n", string(output))
+
+		p("\n--- deployments in %s ---\n", ns)
+		cmd = exec.CommandContext(ctx, "kubectl", "get", "deployments", "-n", ns, "-o", "wide")
+		output, _ = cmd.CombinedOutput()
+		p("%s\n", string(output))
+	}
+
+	p("=== END CLUSTER STATE DUMP ===\n")
 }

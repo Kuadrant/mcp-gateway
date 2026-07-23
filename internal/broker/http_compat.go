@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
 	"unicode"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -30,26 +32,69 @@ import (
 // this layer restores the old observable surface at the HTTP boundary; the
 // SDK handler only ever sees requests it agrees with.
 
-// MCPHandler returns the full /mcp HTTP handler: the SDK streamable handler
-// wrapped with session resurrection and the mark3labs compatibility layer.
-// JSONResponse matches mark3labs, which answered POSTs with application/json
-// and delivered server-initiated notifications on the standalone GET stream.
+// MCPHandler returns the full /mcp HTTP handler. Requests with
+// MCP-Protocol-Version: 2026-07-28 go directly to a stateless SDK handler.
+// All other requests go through the mark3labs compatibility layer with
+// session resurrection.
 func (m *mcpBrokerImpl) MCPHandler() http.Handler {
-	opts := &mcp.StreamableHTTPOptions{
+	statefulOpts := &mcp.StreamableHTTPOptions{
 		DisableLocalhostProtection: true, // behind envoy
 		JSONResponse:               true,
 	}
 	if m.sessionValidator != nil {
-		// cache hygiene: evict idle session table entries. invisible to
-		// clients because a valid JWT resurrects the session on the next
-		// request, so only set when resurrection is available.
-		opts.SessionTimeout = SessionIdleTimeout
+		statefulOpts.SessionTimeout = SessionIdleTimeout
 	}
-	handler := mcp.NewStreamableHTTPHandler(
+	statefulHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return m.MCPServer() },
-		opts,
+		statefulOpts,
 	)
-	return &compatHandler{next: m.SessionResurrectionHandler(handler), broker: m}
+	legacyHandler := &compatHandler{
+		next:   m.SessionResurrectionHandler(statefulHandler),
+		broker: m,
+	}
+
+	statelessHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return m.MCPServer() },
+		&mcp.StreamableHTTPOptions{
+			Stateless:                  true,
+			DisableLocalhostProtection: true,
+		},
+	)
+
+	return &protocolRouter{
+		legacy:    legacyHandler,
+		stateless: statelessHandler,
+		logger:    m.logger.With("component", "protocol-router"),
+	}
+}
+
+// protocolRouter dispatches to legacy (2025-11-25) or stateless (2026-07-28)
+// handlers based on the MCP-Protocol-Version header or path suffix.
+type protocolRouter struct {
+	legacy    *compatHandler
+	stateless http.Handler
+	logger    *slog.Logger
+}
+
+func (p *protocolRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// path-based protocol override takes precedence over header
+	path := r.URL.Path
+	if base, ok := strings.CutSuffix(path, protocol.PathSuffixStateful); ok {
+		r.URL.Path = base
+		r.Header.Del(protocolVersionHeader)
+		p.logger.Debug("dispatching to legacy handler (path override)", "method", r.Method, "path", path)
+		p.legacy.ServeHTTP(w, r)
+		return
+	}
+
+	pv := r.Header.Get(protocolVersionHeader)
+	if pv == protocol.Version2026 {
+		p.logger.Debug("dispatching to stateless handler", "protocol-version", pv, "method", r.Method, "path", path)
+		p.stateless.ServeHTTP(w, r)
+		return
+	}
+	p.logger.Debug("dispatching to legacy handler", "protocol-version", pv, "method", r.Method, "path", path)
+	p.legacy.ServeHTTP(w, r)
 }
 
 // mark3labs error message and status constants, byte-for-byte.
@@ -188,6 +233,15 @@ func (h *compatHandler) servePOST(w http.ResponseWriter, r *http.Request) {
 
 	if env.Method == "initialize" {
 		h.serveInitialize(w, r, body, &env)
+		return
+	}
+
+	// server/discover without a session: return method-not-found so the
+	// SDK falls back to initialize. checkSession would return text/plain
+	// which the SDK can't parse as a JSON-RPC error.
+	if env.Method == "server/discover" {
+		h.broker.logger.Debug("rejecting server/discover on legacy handler", "id", env.idValue(), "path", r.URL.Path)
+		writeMainJSONRPCError(w, http.StatusOK, env.idValue(), codeMethodNotFound, "Method server/discover not found")
 		return
 	}
 

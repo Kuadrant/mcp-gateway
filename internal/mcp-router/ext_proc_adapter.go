@@ -12,6 +12,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -25,13 +26,15 @@ var _ config.Observer = &ExtProcServer{}
 // ExtProcServer is the ext_proc adapter that translates between Envoy's
 // external processing protocol and the Router interface.
 type ExtProcServer struct {
-	RoutingConfig      atomic.Pointer[config.MCPServersConfig]
-	Logger             *slog.Logger
-	SessionCache       routing.SessionCache
-	ElicitationMap     idmap.Map
-	MaxRequestBodySize int
-	Router             routing.Router
-	ResponseHandler    routing.ResponseHandler
+	RoutingConfig       atomic.Pointer[config.MCPServersConfig]
+	Logger              *slog.Logger
+	SessionCache        routing.SessionCache
+	ElicitationMap      idmap.Map
+	MaxRequestBodySize  int
+	Router              routing.Router
+	ResponseHandler     routing.ResponseHandler
+	Router202607        routing.Router
+	ResponseHandler2026 routing.ResponseHandler
 }
 
 // OnConfigChange is used to register the router for config changes
@@ -59,7 +62,11 @@ func decisionToResponse(d *routing.Decision) []*extProcV3.ProcessingResponse {
 
 	if d.Error != nil {
 		if d.Error.JSONRPCErr != "" {
-			rb.WithImmediateJSONRPCResponse(int32(d.Error.StatusCode), decisionHeaders(d), d.Error.JSONRPCErr) //nolint:gosec // HTTP status codes are bounded 100-599
+			contentType := d.Error.ContentType
+			if contentType == "" {
+				contentType = "text/event-stream"
+			}
+			rb.WithImmediateJSONRPCResponse(int32(d.Error.StatusCode), decisionHeaders(d), d.Error.JSONRPCErr, contentType) //nolint:gosec // HTTP status codes are bounded 100-599
 		} else {
 			rb.WithImmediateResponse(int32(d.Error.StatusCode), d.Error.Message) //nolint:gosec // HTTP status codes are bounded 100-599
 		}
@@ -147,6 +154,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		localRequestHeaders *extProcV3.HttpHeaders
 		requestID           string
 		requestPath         string
+		protocolVersion     string
+		mcpMethodHeader     string
+		mcpNameHeader       string
 		endOfStream         = false
 		mcpRequest          *routing.MCPRequest
 		ctx                 = stream.Context()
@@ -191,6 +201,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			requestID = getSingleValueHeader(localRequestHeaders.Headers, "x-request-id")
 			requestPath = getSingleValueHeader(localRequestHeaders.Headers, ":path")
 			method := getSingleValueHeader(localRequestHeaders.Headers, ":method")
+			protocolVersion = getSingleValueHeader(localRequestHeaders.Headers, "mcp-protocol-version")
+			mcpMethodHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-method")
+			mcpNameHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-name")
 
 			span.End()
 			ctx, span = tracer().Start(ctx, "mcp-router.process", //nolint:spancheck // ended via defer closure
@@ -199,6 +212,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					attribute.String("http.method", method),
 					attribute.String("http.path", requestPath),
 					attribute.String("http.request_id", requestID),
+					attribute.String("mcp.protocol_version", protocolVersion),
+					attribute.String("mcp.header.method", mcpMethodHeader),
+					attribute.String("mcp.header.name", mcpNameHeader),
 				),
 			)
 
@@ -311,15 +327,36 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			routingReq := &routing.Request{
 				MCPMethod:       mcpRequest.Method,
 				MCPName:         mcpRequest.ToolName(),
-				ProtocolVersion: getSingleValueHeader(localRequestHeaders.Headers, "mcp-protocol-version"),
-				Authority:       getSingleValueHeader(localRequestHeaders.Headers, routing.AuthorityHeader),
-				SessionID:       mcpRequest.GetSessionID(),
-				Path:            requestPath,
-				RequestID:       requestID,
-				Body:            body,
-				Parsed:          mcpRequest,
+				ProtocolVersion: protocolVersion,
+				// use the configured hostname, not the original :authority from the
+				// client request which may include a port. HandleRequestHeaders
+				// already rewrites :authority to this value for Envoy.
+				Authority: s.RoutingConfig.Load().MCPGatewayExternalHostname,
+				SessionID: mcpRequest.GetSessionID(),
+				Path:      requestPath,
+				RequestID: requestID,
+				Body:      body,
+				Parsed:    mcpRequest,
 			}
-			decision := s.Router.RouteRequest(ctx, routingReq)
+
+			// path-based protocol override: /mcp/stateful forces 2025
+			effectiveVersion := protocolVersion
+			if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
+				effectiveVersion = protocol.Version2025
+			}
+
+			router := s.Router
+			routerName := "202511"
+			if s.Router202607 != nil && effectiveVersion == protocol.Version2026 {
+				routerName = "202607"
+				routingReq.MCPMethod = mcpMethodHeader
+				routingReq.MCPName = mcpNameHeader
+				router = s.Router202607
+			}
+
+			span.SetAttributes(attribute.String("mcp.router", routerName))
+			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", protocolVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
+			decision := router.RouteRequest(ctx, routingReq)
 			routeResponses := decisionToResponse(decision)
 			for _, response := range routeResponses {
 				s.Logger.DebugContext(ctx, "sending mcp body routing instructions to envoy", "response", response)
@@ -346,7 +383,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_ResponseHeaders", "request id:", requestID)
 
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
-			span.SetAttributes(attribute.String("http.status_code", statusCode))
+			span.SetAttributes(
+				attribute.String("http.status_code", statusCode),
+				attribute.String("mcp.response.protocol_version", protocolVersion),
+			)
 
 			respInput := &routing.ResponseInput{
 				StatusCode:        statusCode,
@@ -356,16 +396,20 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				Request:           mcpRequest,
 			}
 
-			// populate client elicitation flag before response handling
-			if mcpRequest != nil && mcpRequest.IsToolCall() {
-				clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpRequest.GetSessionID())
-				if elErr != nil {
-					s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
+			respHandler := s.ResponseHandler
+			if s.ResponseHandler2026 != nil && protocolVersion == protocol.Version2026 {
+				respHandler = s.ResponseHandler2026
+			} else {
+				if mcpRequest != nil && mcpRequest.IsToolCall() {
+					clientElicitation, elErr := s.SessionCache.GetClientElicitation(ctx, mcpRequest.GetSessionID())
+					if elErr != nil {
+						s.Logger.ErrorContext(ctx, "failed to check client elicitation", "error", elErr)
+					}
+					mcpRequest.ClientElicitation = clientElicitation
 				}
-				mcpRequest.ClientElicitation = clientElicitation
 			}
 
-			respDecision := s.ResponseHandler.HandleResponse(ctx, respInput)
+			respDecision := respHandler.HandleResponse(ctx, respInput)
 			responses := responseDecisionToResponse(respDecision)
 
 			if respDecision.StreamBody {

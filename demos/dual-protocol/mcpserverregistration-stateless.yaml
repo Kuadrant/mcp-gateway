@@ -1,0 +1,14 @@
+---
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPServerRegistration
+metadata:
+  name: stateless-server
+  namespace: mcp-test
+  labels:
+    mcp.kuadrant.io/managed: 'true'
+spec:
+  prefix: stateless_
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: stateless-server-route

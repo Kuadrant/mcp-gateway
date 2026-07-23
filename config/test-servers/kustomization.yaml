@@ -43,3 +43,6 @@ resources:
   - user-specific-server-httproute.yaml
   - user-specific-server-httproute-ext.yaml
   - user-specific-server-mcpserverregistration.yaml
+  - stateless-server-deployment.yaml
+  - stateless-server-service.yaml
+  - stateless-server-httproute.yaml

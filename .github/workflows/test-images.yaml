@@ -81,6 +81,10 @@ jobs:
             context: .
             dockerfile: tests/servers/user-specific-server/Dockerfile
             image-name: test-user-specific-server
+          - server: stateless-server
+            context: .
+            dockerfile: tests/servers/stateless-server/Dockerfile
+            image-name: test-stateless-server
 
     steps:
       - name: Check out code

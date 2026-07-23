@@ -13,3 +13,4 @@ Test servers in `config/test-servers/`:
 - **Custom Response Server**: Tests custom response handling
 - **TLS Server**: Go SDK with native TLS support (tools: echo_tls, tls_info). Requires cert-manager; deployed via `make deploy-tls-test-server`
 - **User-Specific Server**: Go SDK, returns different tools per user based on Authorization header (userSpecificList feature testing)
+- **Stateless Server**: Go SDK with `Stateless: true` for 2026-07-28 protocol testing (tools: hello_world, headers; prompts: greeting)

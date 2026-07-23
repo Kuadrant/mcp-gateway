@@ -26,6 +26,7 @@ func TestHandleListTags_deduplicates(t *testing.T) {
 	b := NewBroker(logger).(*mcpBrokerImpl)
 	b.mcpServers["s1"] = createTestManagerWithTags(t, "s1", "s1_", []mcp.Tool{{Name: "tool1"}}, []string{"prod", "finance"})
 	b.mcpServers["s2"] = createTestManagerWithTags(t, "s2", "s2_", []mcp.Tool{{Name: "tool2"}}, []string{"prod", "hr"})
+	populateTestVersions(b)
 
 	result, err := b.handleListTags(&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}})
 	require.NoError(t, err)
@@ -40,6 +41,7 @@ func TestHandleFilterToolsByTags_match(t *testing.T) {
 	b := NewBroker(logger).(*mcpBrokerImpl)
 	b.mcpServers["s1"] = createTestManagerWithTags(t, "s1", "s1_", []mcp.Tool{{Name: "tool1"}}, []string{"prod", "finance"})
 	b.mcpServers["s2"] = createTestManagerWithTags(t, "s2", "s2_", []mcp.Tool{{Name: "tool2"}}, []string{"prod", "hr"})
+	populateTestVersions(b)
 
 	args, _ := json.Marshal(map[string]any{"tags": []any{"prod", "finance"}})
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: args}}
@@ -57,6 +59,7 @@ func TestHandleFilterToolsByTags_match(t *testing.T) {
 func TestHandleFilterToolsByTags_no_match(t *testing.T) {
 	b := NewBroker(logger).(*mcpBrokerImpl)
 	b.mcpServers["s1"] = createTestManagerWithTags(t, "s1", "s1_", []mcp.Tool{{Name: "tool1"}}, []string{"dev"})
+	populateTestVersions(b)
 
 	args, _ := json.Marshal(map[string]any{"tags": []any{"prod"}})
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: args}}
@@ -83,6 +86,7 @@ func TestHandleFilterToolsByTags_missing_param(t *testing.T) {
 func TestHandleFilterToolsByTags_empty_tags(t *testing.T) {
 	b := NewBroker(logger).(*mcpBrokerImpl)
 	b.mcpServers["s1"] = createTestManagerWithTags(t, "s1", "s1_", []mcp.Tool{{Name: "tool1"}}, []string{"prod"})
+	populateTestVersions(b)
 
 	args, _ := json.Marshal(map[string]any{"tags": []any{}})
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: args}}

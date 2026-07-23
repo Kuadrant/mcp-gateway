@@ -24,6 +24,15 @@ func (a *app) createRouter() {
 	}
 	a.server.RoutingConfig.Store(a.mcpConfig)
 
+	a.server.Router202607 = &routing.Router202607{
+		Table:         a.mcpBroker.RoutingTable,
+		RoutingConfig: &a.server.RoutingConfig,
+		Logger:        a.logger.With("component", "router-202607"),
+	}
+	a.server.ResponseHandler2026 = &routing.ResponseHandler202607{
+		Logger: a.logger.With("component", "response-handler-202607"),
+	}
+
 	a.server.Router = &routing.Router202511{
 		RoutingConfig:       &a.server.RoutingConfig,
 		Table:               a.mcpBroker.RoutingTable,

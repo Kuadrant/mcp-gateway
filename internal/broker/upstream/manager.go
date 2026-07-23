@@ -17,6 +17,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,7 +33,7 @@ const (
 	// legacy initialize to upstreams (the SDK client's fallback proposal),
 	// reported as /status expectedVersion exactly as mark3labs' constant
 	// was. drift on SDK bumps is caught by TestExpectedVersionMatchesSDKProposal.
-	expectedProtocolVersion = "2025-11-25"
+	expectedProtocolVersion = protocol.Version2025
 )
 
 type eventType int
@@ -90,6 +91,10 @@ type MCP interface {
 	ProtocolInfo() *mcp.InitializeResult
 	// GetToolHints returns raw annotation hints for a served (prefixed) tool name.
 	GetToolHints(served string) (ToolHints, bool)
+	// SupportedVersions returns all protocol versions this upstream supports, or nil if not connected.
+	SupportedVersions() []string
+	// SupportsVersion returns true if this upstream supports the given protocol version.
+	SupportsVersion(v string) bool
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only
@@ -104,6 +109,8 @@ type ActiveMCPServer interface {
 	GetManagedPrompts() []mcp.Prompt
 	GetServedManagedPrompt(promptName string) *mcp.Prompt
 	Config() config.MCPServer
+	SupportedVersions() []string
+	SupportsVersion(v string) bool
 }
 
 // GatewayTool pairs a tool definition with the handler the gateway
@@ -325,7 +332,9 @@ func (a *activeMCP) GetManagedPrompts() []mcp.Prompt { return a.manager.GetManag
 func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
 }
-func (a *activeMCP) Config() config.MCPServer { return a.manager.mcp.GetConfig() }
+func (a *activeMCP) Config() config.MCPServer      { return a.manager.mcp.GetConfig() }
+func (a *activeMCP) SupportedVersions() []string   { return a.manager.mcp.SupportedVersions() }
+func (a *activeMCP) SupportsVersion(v string) bool { return a.manager.mcp.SupportsVersion(v) }
 
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())

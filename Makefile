@@ -304,6 +304,7 @@ deploy-example: install-crd ## Deploy example MCPServerRegistration resource
 	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=mcp-oidc-server --timeout=$(WAIT_TIME)
 	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=everything-server --timeout=$(WAIT_TIME)
 	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=mcp-custom-response --timeout=$(WAIT_TIME)
+	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=mcp-test-stateless-server --timeout=$(WAIT_TIME) 2>/dev/null || true
 	@echo "All test servers ready, deploying MCPServerRegistration resources..."
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-base.yaml
 	kubectl apply -f config/samples/mcpserverregistration-test-servers-extended.yaml
@@ -337,6 +338,7 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest .
 	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest .
 	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/user-specific-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest .
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/stateless-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-stateless-server:latest .
 
 # Build conformance server Docker image
 .PHONY: build-conformance-server
@@ -357,6 +359,7 @@ kind-load-test-servers: kind build-test-servers ## Build test server images loca
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-everything-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-custom-response-server:latest)
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-stateless-server:latest)
 
 # TEST_SERVER_IMAGE_REPO/TAG and TEST_SERVER_IMAGES live in build/ci-node.mk
 # so the baked CI node image tag hashes them
@@ -458,6 +461,32 @@ deploy-everything-server: kind-load-everything-server ## Deploy only the everyth
 	kubectl apply -f config/test-servers/everything-server-deployment.yaml -n mcp-test
 	kubectl apply -f config/test-servers/everything-server-service.yaml -n mcp-test
 	kubectl apply -f config/test-servers/everything-server-httproute.yaml -n mcp-test
+
+# Build and load stateless server image
+.PHONY: build-stateless-server
+build-stateless-server: ## Build stateless server Docker image
+	@echo "Building stateless server image..."
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/stateless-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-stateless-server:latest .
+
+.PHONY: kind-load-stateless-server
+kind-load-stateless-server: kind build-stateless-server ## Load stateless server image into Kind cluster
+	@echo "Loading stateless server image into Kind cluster..."
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-stateless-server:latest)
+
+# Deploy stateless server only (for dual-protocol demo)
+.PHONY: deploy-stateless-server
+deploy-stateless-server: kind-load-stateless-server ## Deploy the stateless test server for dual-protocol demo
+	@echo "Deploying stateless server..."
+	kubectl apply -f config/test-servers/namespace.yaml
+	kubectl apply -f config/test-servers/stateless-server-deployment.yaml -n mcp-test
+	kubectl apply -f config/test-servers/stateless-server-service.yaml -n mcp-test
+	kubectl apply -f config/test-servers/stateless-server-httproute.yaml -n mcp-test
+	@echo "Waiting for stateless server to be ready..."
+	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=mcp-test-stateless-server --timeout=$(WAIT_TIME)
+	@echo "Deploying MCPServerRegistration for stateless server..."
+	kubectl apply -f demos/dual-protocol/mcpserverregistration-stateless.yaml
+	@echo "Waiting for MCPServerRegistration to be ready..."
+	@kubectl wait --for=condition=Ready mcpserverregistration/stateless-server -n mcp-test --timeout=240s
 
 # Deploy test servers
 deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local testing
@@ -726,9 +755,10 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-gateway
 	"$(MAKE)" deploy
 	"${MAKE}" add-jwt-key
-	# Deploy everything server for local dev (use 'make deploy-test-servers' for all servers)
+	# Deploy everything server (2025) and stateless server (2026) for dual-protocol demo
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
+	"$(MAKE)" deploy-stateless-server
 	@"$(MAKE)" -s local-env-setup-complete-message
 
 .PHONY: local-env-setup-olm

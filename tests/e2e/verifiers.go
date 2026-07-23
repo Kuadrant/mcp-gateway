@@ -319,11 +319,14 @@ func (v *Verifier) MCPGatewayExtensionReady(name, namespace string) error {
 	}
 
 	for _, condition := range ext.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
-			return nil
+		if condition.Type == "Ready" {
+			if condition.Status == metav1.ConditionTrue {
+				return nil
+			}
+			return fmt.Errorf("MCPGatewayExtension %s/%s not ready: %s", namespace, name, condition.Message)
 		}
 	}
-	return fmt.Errorf("MCPGatewayExtension %s/%s not ready", namespace, name)
+	return fmt.Errorf("MCPGatewayExtension %s/%s has no Ready condition", namespace, name)
 }
 
 // MCPGatewayExtensionNotReady checks if the MCPGatewayExtension has Ready=False condition
