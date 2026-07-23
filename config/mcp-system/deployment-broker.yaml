@@ -6,6 +6,8 @@ metadata:
   labels:
     app: mcp-broker-router
     component: broker-router
+    app.kubernetes.io/name: mcp-gateway
+    app.kubernetes.io/component: broker
 spec:
   replicas: 1
   selector:
@@ -17,6 +19,8 @@ spec:
       labels:
         app: mcp-broker-router
         component: broker-router
+        app.kubernetes.io/name: mcp-gateway
+        app.kubernetes.io/component: broker
     spec:
       serviceAccountName: mcp-broker-router
       volumes:
@@ -53,11 +57,11 @@ spec:
               protocol: TCP
           resources:
             requests:
-              memory: '128Mi'
-              cpu: '100m'
+              memory: "128Mi"
+              cpu: "100m"
             limits:
-              memory: '512Mi'
-              cpu: '500m'
+              memory: "512Mi"
+              cpu: "500m"
           livenessProbe:
             httpGet:
               path: /healthz
