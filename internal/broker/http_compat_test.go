@@ -645,14 +645,6 @@ func TestProtocolRouter_Dispatch(t *testing.T) {
 			expectPath:   "/mcp",
 		},
 		{
-			name:         "/stateless path override",
-			path:         "/mcp/stateless",
-			header:       "",
-			expectLegacy: false,
-			expectPath:   "/mcp",
-			expectHeader: "2026-07-28",
-		},
-		{
 			name:            "/stateful path override",
 			path:            "/mcp/stateful",
 			header:          "",
@@ -667,14 +659,6 @@ func TestProtocolRouter_Dispatch(t *testing.T) {
 			expectLegacy:    true,
 			expectPath:      "/mcp",
 			expectHeaderDel: true,
-		},
-		{
-			name:         "/stateless overrides non-2026 header",
-			path:         "/mcp/stateless",
-			header:       "2025-11-25",
-			expectLegacy: false,
-			expectPath:   "/mcp",
-			expectHeader: "2026-07-28",
 		},
 	}
 

@@ -339,12 +339,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				Parsed:    mcpRequest,
 			}
 
-			// path-based protocol override: /mcp/stateful forces 2025,
-			// /mcp/stateless forces 2026, regardless of header
+			// path-based protocol override: /mcp/stateful forces 2025
 			effectiveVersion := protocolVersion
-			if strings.HasSuffix(requestPath, protocol.PathSuffixStateless) {
-				effectiveVersion = protocol.Version2026
-			} else if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
+			if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
 				effectiveVersion = protocol.Version2025
 			}
 

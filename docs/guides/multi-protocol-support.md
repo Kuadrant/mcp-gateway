@@ -37,35 +37,34 @@ UserSpecificList servers follow the same filtering — per-user tools are fetche
 | **Header-body validation** | Not applicable | Rejects mismatches between `Mcp-Name` header and body `params.name` |
 | **Meta-tools** | `discover_tools`, `select_tools` available | Not available |
 
-## Protocol-specific routes
+## Protocol-specific route
 
-The gateway exposes three endpoints on every MCP listener:
+The gateway exposes two endpoints on every MCP listener:
 
 | Endpoint | Protocol | Behaviour |
 |---|---|---|
 | `/mcp` | Auto-negotiated | `server/discover` determines version; falls back to `initialize` for older SDKs |
 | `/mcp/stateful` | Forces 2025-11-25 | Session-based routing; `discover_tools` and `select_tools` available |
-| `/mcp/stateless` | Forces 2026-07-28 | Stateless header-based routing; no sessions, no meta-tools |
 
-The `/mcp/stateful` and `/mcp/stateless` endpoints override the client's protocol negotiation. A 2026 SDK client connecting to `/mcp/stateful` will receive 2025-compatible tools and route through the stateful router. A 2025 SDK client connecting to `/mcp/stateless` will receive 2026-compatible tools and route through the stateless router.
+A 2026 SDK client connecting to `/mcp` will negotiate 2026 naturally. The `/mcp/stateful` route exists for agents that also need tools from 2025-only backends — it forces 2025-11-25 negotiation regardless of the client's capabilities.
 
-These endpoints are served by the broker's `MCPHandler` — no additional configuration or HTTPRoutes are needed. Any Gateway listener with an MCPGatewayExtension automatically serves all three paths.
+This endpoint is served by the broker's `MCPHandler` — no additional configuration or HTTPRoutes are needed.
 
-### When to use protocol-specific routes
+### When to use /mcp/stateful
 
 Use `/mcp` (the default) for most clients — the gateway negotiates the correct version automatically.
 
-Use the protocol-specific routes when an agent needs tools from backends on different protocol versions. Configure the agent with two MCP server entries pointing at the same gateway host:
+Use `/mcp/stateful` when a 2026-capable agent also needs access to 2025-only tools. Configure the agent with two MCP server entries pointing at the same gateway host:
 
 ```yaml
 mcpServers:
+  gateway-default:
+    url: https://mcp.example.com/mcp
   gateway-legacy:
     url: https://mcp.example.com/mcp/stateful
-  gateway-modern:
-    url: https://mcp.example.com/mcp/stateless
 ```
 
-Each route returns only protocol-compatible tools. `tools/call` via `/mcp/stateful` routes through the stateful router (hairpin init, session management); `/mcp/stateless` routes through the stateless router (header-based, no sessions).
+The default entry negotiates 2026 and sees stateless tools. The `/mcp/stateful` entry forces 2025 and sees stateful tools plus `discover_tools` and `select_tools`.
 
 ## Verifying protocol support
 

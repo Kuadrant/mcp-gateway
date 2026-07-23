@@ -6,6 +6,5 @@ const (
 	Version2025 = "2025-11-25"
 	Version2026 = "2026-07-28"
 
-	PathSuffixStateless = "/stateless"
-	PathSuffixStateful  = "/stateful"
+	PathSuffixStateful = "/stateful"
 )

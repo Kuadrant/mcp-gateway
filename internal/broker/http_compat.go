@@ -79,13 +79,6 @@ type protocolRouter struct {
 func (p *protocolRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// path-based protocol override takes precedence over header
 	path := r.URL.Path
-	if base, ok := strings.CutSuffix(path, protocol.PathSuffixStateless); ok {
-		r.URL.Path = base
-		r.Header.Set(protocolVersionHeader, protocol.Version2026)
-		p.logger.Debug("dispatching to stateless handler (path override)", "method", r.Method, "path", path)
-		p.stateless.ServeHTTP(w, r)
-		return
-	}
 	if base, ok := strings.CutSuffix(path, protocol.PathSuffixStateful); ok {
 		r.URL.Path = base
 		r.Header.Del(protocolVersionHeader)

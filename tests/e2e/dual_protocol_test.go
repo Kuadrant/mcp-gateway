@@ -446,18 +446,12 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 
 	Context("protocol-specific routes", func() {
 		statefulURL := strings.TrimSuffix(dpURL, "/mcp") + "/mcp/stateful"
-		statelessURL := strings.TrimSuffix(dpURL, "/mcp") + "/mcp/stateless"
 
-		verifyProtocolRoute := func(
-			url string,
-			newClient func(context.Context, string) (*mcp.ClientSession, error),
-			wantPrefix, excludePrefix, label string,
-			expectDiscover bool,
-		) {
+		It("[Happy,DualProtocol] /mcp/stateful returns only 2025 tools", func() {
 			var c *mcp.ClientSession
 			Eventually(func(g Gomega) {
 				var err error
-				c, err = newClient(ctx, url)
+				c, err = NewStatefulClient(ctx, statefulURL)
 				g.Expect(err).NotTo(HaveOccurred())
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 			defer func() { _ = c.Close() }()
@@ -468,64 +462,39 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				names = toolNames(result.Tools)
 				g.Expect(slices.ContainsFunc(names, func(n string) bool {
-					return strings.HasPrefix(n, wantPrefix)
-				})).To(BeTrue(), label+" should return "+wantPrefix+" tools")
+					return strings.HasPrefix(n, "sf_")
+				})).To(BeTrue(), "/mcp/stateful should return sf_ tools")
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, excludePrefix)
-			})).To(BeFalse(), label+" should NOT return "+excludePrefix+" tools")
-			if expectDiscover {
-				Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
-					label+" should include discover_tools")
-			} else {
-				Expect(slices.Contains(names, "discover_tools")).To(BeFalse(),
-					label+" should NOT include discover_tools")
-			}
-		}
-
-		It("[Happy,DualProtocol] /mcp/stateful returns only 2025 tools", func() {
-			verifyProtocolRoute(statefulURL, NewStatefulClient, "sf_", "sl_", "/mcp/stateful", true)
+				return strings.HasPrefix(n, "sl_")
+			})).To(BeFalse(), "/mcp/stateful should NOT return sl_ tools")
+			Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
+				"/mcp/stateful should include discover_tools")
 		})
 
-		It("[Happy,DualProtocol] /mcp/stateless returns only 2026 tools", func() {
-			verifyProtocolRoute(statelessURL, NewStatelessClient, "sl_", "sf_", "/mcp/stateless", false)
-		})
-
-		verifyToolCall := func(
-			url string,
-			newClient func(context.Context, string) (*mcp.ClientSession, error),
-			prefix, toolName, expectedSubstring string,
-		) {
+		It("[DualProtocol] /mcp/stateful tools/call succeeds", func() {
 			var c *mcp.ClientSession
 			Eventually(func(g Gomega) {
 				var err error
-				c, err = newClient(ctx, url)
+				c, err = NewStatefulClient(ctx, statefulURL)
 				g.Expect(err).NotTo(HaveOccurred())
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 			defer func() { _ = c.Close() }()
 
-			waitForToolsWithPrefix(c, prefix)
+			waitForToolsWithPrefix(c, "sf_")
 
 			Eventually(func(g Gomega) {
 				result, err := c.CallTool(ctx, &mcp.CallToolParams{
-					Name:      toolName,
+					Name:      "sf_greet",
 					Arguments: map[string]any{"name": "route-test"},
 				})
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(result.Content).NotTo(BeEmpty())
 				text, ok := result.Content[0].(*mcp.TextContent)
 				g.Expect(ok).To(BeTrue())
-				g.Expect(text.Text).To(ContainSubstring(expectedSubstring))
+				g.Expect(text.Text).To(ContainSubstring("route-test"))
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		}
-
-		It("[DualProtocol] /mcp/stateful tools/call succeeds", func() {
-			verifyToolCall(statefulURL, NewStatefulClient, "sf_", "sf_greet", "route-test")
-		})
-
-		It("[DualProtocol] /mcp/stateless tools/call succeeds", func() {
-			verifyToolCall(statelessURL, NewStatelessClient, "sl_", "sl_hello_world", "Hello, route-test!")
 		})
 	})
 

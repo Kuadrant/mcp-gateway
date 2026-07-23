@@ -39,7 +39,6 @@ func main() {
 	fmt.Printf("  %sgateway:%s %s\n\n", dim, reset, gatewayURL)
 
 	statefulURL := strings.TrimSuffix(gatewayURL, "/mcp") + "/mcp/stateful"
-	statelessURL := strings.TrimSuffix(gatewayURL, "/mcp") + "/mcp/stateless"
 
 	steps := []struct {
 		title string
@@ -62,19 +61,11 @@ func main() {
 			},
 		},
 		{
-			"Step 3: Connect to /mcp/stateful (forces 2025 regardless of client)",
+			"Step 3: Connect to /mcp/stateful (2026 client accessing 2025 tools)",
 			func() {
-				explain("The /mcp/stateful route overrides protocol negotiation.")
-				explain("Even a modern SDK client gets 2025-11-25 tools and session-based routing.")
+				explain("The /mcp/stateful route forces 2025-11-25 negotiation.")
+				explain("A 2026-capable agent uses this to access tools from 2025-only backends.")
 				run2025Client(ctx, statefulURL)
-			},
-		},
-		{
-			"Step 4: Connect to /mcp/stateless (forces 2026 regardless of client)",
-			func() {
-				explain("The /mcp/stateless route overrides protocol negotiation.")
-				explain("Tools from 2026-07-28 backends only, no sessions, no meta-tools.")
-				run2026Client(ctx, statelessURL)
 			},
 		},
 	}
