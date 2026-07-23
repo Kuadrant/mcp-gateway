@@ -532,7 +532,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 				Arguments: map[string]any{"tools": []any{"notifsel_hello_world"}},
 			})
 			Expect(selectErr).NotTo(HaveOccurred())
-			Expect(res.IsError).To(BeFalse())
+			Expect(res.IsError).To(BeFalse(), "select_tools failed: %v", res.Content)
 
 			By("verifying notification was received")
 			Eventually(notifCh, TestTimeoutShort, TestRetryInterval).Should(Receive(),
