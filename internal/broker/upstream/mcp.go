@@ -425,3 +425,20 @@ func (up *MCPServer) ListTools(ctx context.Context) (*mcp.ListToolsResult, error
 	}
 	return session.ListTools(ctx, nil)
 }
+
+// SupportsResources checks if the upstream server declared resource capabilities
+func (up *MCPServer) SupportsResources() bool {
+	if up.init == nil || up.init.Capabilities == nil {
+		return false
+	}
+	return up.init.Capabilities.Resources != nil
+}
+
+// ListResources retrieves the list of available resources from the upstream MCP server
+func (up *MCPServer) ListResources(ctx context.Context) (*mcp.ListResourcesResult, error) {
+	session := up.currentSession()
+	if session == nil {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return session.ListResources(ctx, nil)
+}

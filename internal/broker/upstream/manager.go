@@ -81,6 +81,8 @@ type MCP interface {
 	ListPrompts(context.Context) (*mcp.ListPromptsResult, error)
 	SupportsPrompts() bool
 	SupportsPromptsListChanged() bool
+	ListResources(context.Context) (*mcp.ListResourcesResult, error)
+	SupportsResources() bool
 	OnNotification(func(method string))
 	OnConnectionLost(func(err error))
 	Ping(context.Context) error

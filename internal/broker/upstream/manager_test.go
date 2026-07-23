@@ -30,9 +30,12 @@ type MockMCP struct {
 	listToolsDelay      time.Duration
 	prompts             []mcp.Prompt
 	listPromptsErr      error
+	resources           []mcp.Resource
+	listResourcesErr    error
 	protocolVersion     string
 	hasToolsCap         bool
 	hasPromptsCap       bool
+	hasResourcesCap     bool
 	connected           atomic.Bool
 	notificationHandler func(method string)
 }
@@ -108,6 +111,21 @@ func (m *MockMCP) ListPrompts(_ context.Context) (*mcp.ListPromptsResult, error)
 		ptrs[i] = &m.prompts[i]
 	}
 	return &mcp.ListPromptsResult{Prompts: ptrs}, nil
+}
+
+func (m *MockMCP) SupportsResources() bool {
+	return m.hasResourcesCap
+}
+
+func (m *MockMCP) ListResources(_ context.Context) (*mcp.ListResourcesResult, error) {
+	if m.listResourcesErr != nil {
+		return nil, m.listResourcesErr
+	}
+	ptrs := make([]*mcp.Resource, len(m.resources))
+	for i := range m.resources {
+		ptrs[i] = &m.resources[i]
+	}
+	return &mcp.ListResourcesResult{Resources: ptrs}, nil
 }
 
 func (m *MockMCP) OnNotification(handler func(method string)) {

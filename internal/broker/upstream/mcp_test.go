@@ -471,3 +471,108 @@ func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
+
+func TestMCPServer_ListResources(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddResource(&mcp.Resource{
+		Name: "template",
+		URI:  "ui://template.html",
+	}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{URI: "ui://template.html", Text: "<html></html>"}},
+		}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.True(t, up.SupportsResources())
+
+	result, err := up.ListResources(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Resources, 1)
+	require.Equal(t, "ui://template.html", result.Resources[0].URI)
+}
+
+func TestMCPServer_SupportsResources_NoCapability(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.False(t, up.SupportsResources())
+}
+
+func TestMCPServer_ListResources_NotConnected(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", Prefix: "up_"}, "", nil)
+	_, err := up.ListResources(context.Background())
+	require.Error(t, err)
+}
+
+func TestMCPServer_ListResources_ReflectsChangesWithinSameSession(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddResource(&mcp.Resource{
+		Name: "template",
+		URI:  "ui://template.html",
+	}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{URI: "ui://template.html", Text: "<html></html>"}},
+		}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	first, err := up.ListResources(ctx)
+	require.NoError(t, err)
+	require.Len(t, first.Resources, 1, "expected only the resource registered at startup")
+
+	// simulate the upstream's resource set changing mid-session, without reconnecting
+	srv.AddResource(&mcp.Resource{
+		Name: "second",
+		URI:  "ui://second.html",
+	}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{URI: "ui://second.html", Text: "<html></html>"}},
+		}, nil
+	})
+
+	second, err := up.ListResources(ctx)
+	require.NoError(t, err)
+	require.Len(t, second.Resources, 2, "ListResources must not cache — a second call on the same session should see the newly added resource")
+}
+
+func TestMCPServer_ListResources_UpstreamError(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	ts.Close()
+
+	_, err := up.ListResources(ctx)
+	require.Error(t, err)
+}
