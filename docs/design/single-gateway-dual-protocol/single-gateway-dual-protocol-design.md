@@ -45,7 +45,29 @@ When an agent supports `2026-07-28` but also needs `2025-11-25`-only tools, they
 
 When an upstream is upgraded from `2025-11-25` to `2026-07-28`, clients see the change automatically without gateway reconfiguration.
 
+### When a non-interactive agent needs tools from both protocols
+
+When an automated agent cannot perform interactive protocol negotiation, it connects to `/mcp/stateful` for 2025 tools alongside its default `/mcp` connection for 2026 tools, without needing separate gateway instances.
+
+### When a gateway has no backends matching the client's protocol
+
+When a 2026 client connects to a gateway with only 2025 backends, `tools/list` returns no tools (only broker meta-tools visible to 2025 clients are filtered out). The client receives an empty tool list rather than an error — the gateway does not translate between protocols.
+
 ## Design
+
+### Prerequisites
+
+- Router dual implementations (`Router202511`, `Router202607`) behind the `Router` interface
+- Broker `protocolRouter` dispatching to stateful or stateless `StreamableHTTPHandler`
+
+### API Changes
+
+- No CRD changes — dual-protocol support is automatic
+
+### Data storage
+
+- `serverVersions sync.Map` on broker — maps `UpstreamMCPID` to `[]string` of supported protocol versions
+- `statefulTools` / `statelessTools` `atomic.Pointer` — pre-cached tool sets partitioned by protocol, rebuilt on tool changes
 
 ### Protocol version tracking
 
