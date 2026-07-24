@@ -427,6 +427,10 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - When a client sends a tools/call request with a body approaching the default `--max-request-body-size` limit (5MB, test with ~1MB), the gateway should forward the full request to the backend without truncation. The ext_proc body phase must handle the complete payload and the backend should receive and process it successfully.
 
+### [Happy] Payload integrity verification
+
+- When a client sends tool calls containing standard JSON, deeply nested JSON, unicode content, and binary-safe strings, the gateway should deliver the exact byte payload to the backend MCP server without corruption, truncation, or re-encoding. The backend MCP server computes a SHA-256 checksum of the payload parameter and returns it to the client, which compares it against the locally calculated SHA-256 hash to verify byte-exact delivery.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

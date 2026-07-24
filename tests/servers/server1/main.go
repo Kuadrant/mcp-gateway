@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"log"
@@ -77,6 +78,25 @@ func headersTool(
 
 	return &mcp.CallToolResult{
 		Content: content,
+	}, nil, nil
+}
+
+type checksumArgs struct {
+	Payload string `json:"payload" jsonschema:"the raw string payload to compute SHA-256 hash for"`
+}
+
+// Computes SHA-256 hash of the received payload parameter
+func checksumTool(
+	_ context.Context,
+	_ *mcp.CallToolRequest,
+	params checksumArgs,
+) (*mcp.CallToolResult, any, error) {
+	hash := sha256.Sum256([]byte(params.Payload))
+	hashHex := fmt.Sprintf("%x", hash)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: hashHex},
+		},
 	}, nil, nil
 }
 
@@ -194,6 +214,7 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "time", Description: "get current time", Annotations: &mcp.ToolAnnotations{Title: "time"}}, timeTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "delay N seconds"}, slowTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "headers", Description: "get headers"}, headersTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "checksum", Description: "compute payload checksum"}, checksumTool)
 
 	toolManager := &dynamicToolManager{server: server}
 	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "dynamically add a new tool (triggers notifications/tools/list_changed)", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)
