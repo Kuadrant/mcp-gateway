@@ -127,9 +127,8 @@ const maxRequestBodyBytes = 10 << 20
 // logging level accepted) and reject others with HTTP 400.
 var unsupportedDomain = map[string]string{
 	"logging/setLevel":         "logging",
-	"resources/list":           "resources",
 	"resources/templates/list": "resources",
-	"resources/read":           "resources",
+	"resources/read":           "resources", // routed directly by the router to upstreams (see request_handlers.go), not broker-dispatched
 	"resources/subscribe":      "resources",
 	"resources/unsubscribe":    "resources",
 	"completion/complete":      "completions",
@@ -142,11 +141,12 @@ var unsupportedDomain = map[string]string{
 // delegatedMethods are the request methods mark3labs dispatched and the
 // gateway serves; everything else with an id got "Method %s not found".
 var delegatedMethods = map[string]bool{
-	"ping":         true,
-	"tools/list":   true,
-	"tools/call":   true,
-	"prompts/list": true,
-	"prompts/get":  true,
+	"ping":           true,
+	"tools/list":     true,
+	"tools/call":     true,
+	"prompts/list":   true,
+	"prompts/get":    true,
+	"resources/list": true,
 }
 
 type compatHandler struct {
