@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -21,8 +22,9 @@ func SpanError(span trace.Span, err error, msg string) {
 	span.SetStatus(codes.Error, msg)
 }
 
-// SetupOTelSDK initializes the OpenTelemetry SDK with tracing and logs support
-func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *slog.Logger) (shutdown func(context.Context) error, loggerProvider *sdklog.LoggerProvider, err error) {
+// SetupOTelSDK initializes the OpenTelemetry SDK with tracing, logs, and metrics support.
+// metricsHandler serves Prometheus metrics and must be mounted by the caller on a dedicated port.
+func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *slog.Logger) (shutdown func(context.Context) error, loggerProvider *sdklog.LoggerProvider, metricsHandler http.Handler, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	shutdown = func(ctx context.Context) error {
@@ -43,7 +45,7 @@ func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *sl
 	if config.TracesEnabled() {
 		traceProvider, err := NewProvider(ctx, config)
 		if err != nil {
-			return shutdown, nil, err
+			return shutdown, nil, nil, err
 		}
 		shutdownFuncs = append(shutdownFuncs, traceProvider.Shutdown)
 		otel.SetTracerProvider(traceProvider.TracerProvider())
@@ -53,12 +55,21 @@ func SetupOTelSDK(ctx context.Context, gitSHA, dirty, version string, logger *sl
 	if config.LogsEnabled() {
 		logsProvider, err := NewLogsProvider(ctx, config)
 		if err != nil {
-			return shutdown, nil, err
+			return shutdown, nil, nil, err
 		}
 		shutdownFuncs = append(shutdownFuncs, logsProvider.Shutdown)
 		loggerProvider = logsProvider.LoggerProvider()
 		logger.Info("OpenTelemetry logs enabled", "endpoint", config.LogsEndpoint())
 	}
 
-	return shutdown, loggerProvider, nil
+	metricsProvider, err := NewMetricsProvider(ctx, config)
+	if err != nil {
+		return shutdown, nil, nil, err
+	}
+	shutdownFuncs = append(shutdownFuncs, metricsProvider.Shutdown)
+	otel.SetMeterProvider(metricsProvider.MeterProvider())
+	metricsHandler = metricsProvider.HTTPHandler()
+	logger.Info("OpenTelemetry metrics enabled (Prometheus)")
+
+	return shutdown, loggerProvider, metricsHandler, nil
 }

@@ -6,19 +6,25 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 func TestSetupOTelSDK_Disabled(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, loggerProvider, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	shutdown, loggerProvider, metricsHandler, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if loggerProvider != nil {
 		t.Error("expected loggerProvider to be nil when disabled")
+	}
+
+	if metricsHandler == nil {
+		t.Error("expected metricsHandler to be non-nil")
 	}
 
 	if err := shutdown(context.Background()); err != nil {
@@ -32,7 +38,7 @@ func TestSetupOTelSDK_TracesEnabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, _, err := SetupOTelSDK(context.Background(), "abc123", "false", "v1.0.0", logger)
+	shutdown, _, _, err := SetupOTelSDK(context.Background(), "abc123", "false", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +73,7 @@ func TestSetupOTelSDK_LogsEnabled(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	shutdown, loggerProvider, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	shutdown, loggerProvider, _, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +88,7 @@ func TestSetupOTelSDK_LogsEnabled(t *testing.T) {
 func TestSetupOTelSDK_PropagatorSet(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	_, _, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
+	_, _, _, err := SetupOTelSDK(context.Background(), "", "", "v1.0.0", logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -99,6 +105,27 @@ func TestSetupOTelSDK_PropagatorSet(t *testing.T) {
 	if ctx == nil {
 		t.Error("expected context from Extract")
 	}
+}
+
+func TestSetupOTelSDK_RegistersMeterProvider(t *testing.T) {
+	// reset to noop so we can detect the change
+	otel.SetMeterProvider(noop.NewMeterProvider())
+	defer otel.SetMeterProvider(noop.NewMeterProvider()) // restore after test
+
+	ctx := context.Background()
+	shutdown, _, metricsHandler, err := SetupOTelSDK(ctx, "sha", "", "v0.0.1", noopLogger())
+	require.NoError(t, err)
+	require.NotNil(t, metricsHandler)
+	defer shutdown(ctx) //nolint:errcheck
+
+	// the global meter provider must no longer be the noop one we set above
+	mp := otel.GetMeterProvider()
+	_, isNoop := mp.(noop.MeterProvider)
+	require.False(t, isNoop, "expected a real MeterProvider, got noop")
+}
+
+func noopLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
 }
 
 type testCarrier map[string]string

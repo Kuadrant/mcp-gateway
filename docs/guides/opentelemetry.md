@@ -1,11 +1,11 @@
 # OpenTelemetry Integration
 
-This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distributed tracing and log export. When enabled, the MCP Router (ext_proc) emits trace spans for every request and can export structured logs via OTLP. When no endpoint is configured, OTel is completely disabled with zero overhead.
+This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distributed tracing, log export, and Prometheus metrics. Tracing and log export require an OTLP endpoint to be configured. Prometheus metrics are always enabled and require no configuration.
 
 ## Prerequisites
 
 - MCP Gateway installed and configured
-- An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent)
+- An OTLP-compatible collector endpoint (e.g., [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), Grafana Alloy, Datadog Agent) — required only for tracing and log export. Prometheus metrics need no additional infrastructure.
 
 > **Note:** For a pre-configured local stack with OTEL Collector, Tempo, Loki, and Grafana, see the [observability example](https://github.com/Kuadrant/mcp-gateway/tree/release-0.6.0/examples/otel).
 
@@ -142,6 +142,99 @@ curl -s -X POST http://your-gateway-host/mcp \
 
 echo "Search for trace: $TRACE_ID"
 ```
+
+## Prometheus Metrics
+
+The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated internal port (default `:9090`). This is always enabled — no environment variables or OTLP endpoint required.
+
+### Broker metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_broker_discovery_total` | Counter | Discovery attempts per upstream server, labelled `status=success` or `status=failure` |
+| `mcp_broker_discovery_duration_seconds` | Histogram | Duration of `tools/list` calls during discovery |
+| `mcp_broker_tools_discovered` | Gauge | Current tool count per upstream server. Set to 0 when a server becomes unreachable |
+| `mcp_broker_upstream_connection_failures_total` | Counter | Connection failures per upstream server |
+| `mcp_broker_tools_list_response_bytes` | Gauge | Serialized size of the validated tool list per upstream server. Proxy for LLM context overhead |
+
+`mcp_broker_discovery_total` uses `server_name` and `status` labels. All other metrics use only `server_name`. Label values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (e.g. `mcp-system/my-server`). No high-cardinality labels (session IDs, tool names, call IDs) are used.
+
+### Scraping the metrics endpoint
+
+The metrics port is not routed through the Envoy gateway listener. Scrape it cluster-internally:
+
+```bash
+# Port-forward for local inspection (use pod name directly — unready pods are skipped by deployment forward)
+POD=$(kubectl get pod -n mcp-system -l app.kubernetes.io/name=mcp-gateway \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n mcp-system pod/$POD 9090:9090 &
+sleep 1
+curl http://localhost:9090/metrics
+```
+
+For Prometheus scraping, add the broker pod IP as a scrape target. The broker `Service` is controller-managed and does not expose port 9090, so scrape by pod IP directly or use a `PodMonitor` if you have Prometheus Operator installed.
+
+### Useful PromQL queries
+
+```promql
+# Current tool count per upstream server
+mcp_broker_tools_discovered
+
+# Discovery failure rate per server
+sum(rate(mcp_broker_discovery_total{status="failure"}[5m])) by (server_name)
+
+# Servers with active connection failures
+sum(rate(mcp_broker_upstream_connection_failures_total[5m])) by (server_name) > 0
+
+# p99 discovery latency per server
+histogram_quantile(0.99, sum(rate(mcp_broker_discovery_duration_seconds_bucket[5m])) by (server_name, le))
+
+# Total tools/list context footprint across all servers
+sum(mcp_broker_tools_list_response_bytes)
+```
+
+### Istio gateway metrics (built-in)
+
+Istio emits these metrics automatically for all traffic through the gateway — no configuration required:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `istio_requests_total` | Counter | Request count by response code, source, and destination |
+| `istio_request_duration_milliseconds` | Histogram | Request latency |
+
+```promql
+# 5xx error rate per destination
+sum(rate(istio_requests_total{response_code=~"5.."}[5m])) by (destination_service_name)
+
+# 4xx rate per destination (likely misconfiguration)
+sum(rate(istio_requests_total{response_code=~"4.."}[5m])) by (destination_service_name)
+
+# p99 request latency per destination
+histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (destination_service_name, le))
+```
+
+### Istio gateway metrics (optional MCP enrichment)
+
+Apply the reference Telemetry resource to add `mcp_server_name` and `mcp_method` labels to the existing `istio_requests_total` and `istio_request_duration_milliseconds` metrics:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/Kuadrant/mcp-gateway/main/examples/otel/istio-mcp-metrics.yaml
+```
+
+This promotes the `x-mcp-servername` and `x-mcp-method` headers (already set by the MCP Router) into Prometheus label dimensions without any code changes. After applying:
+
+```promql
+# Request rate per MCP server
+sum(rate(istio_requests_total[5m])) by (mcp_server_name)
+
+# p99 latency per MCP server
+histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (mcp_server_name, le))
+
+# Request breakdown by MCP method
+sum(rate(istio_requests_total[5m])) by (mcp_method)
+```
+
+> **Cardinality note:** `mcp_tool_name` is available in the reference config but commented out. Each unique tool name adds a label value — enable it only if your tool count is small and bounded.
 
 ## Next Steps
 

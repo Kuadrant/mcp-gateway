@@ -5,6 +5,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -191,6 +193,13 @@ type MCPManager struct {
 
 	logger *slog.Logger
 
+	// metrics instruments — created once at construction, recorded per manage() cycle
+	discoveryTotal     metric.Int64Counter
+	discoveryDuration  metric.Float64Histogram
+	toolsDiscovered    metric.Int64Gauge
+	connectionFailures metric.Int64Counter
+	toolsListBytes     metric.Int64Gauge
+
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy InvalidToolPolicy
 
@@ -237,25 +246,68 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		Cap:      tickerInterval,
 	}
 
+	meter := otel.GetMeterProvider().Meter("mcp-broker")
+
+	discoveryTotal, err := meter.Int64Counter("mcp_broker_discovery",
+		metric.WithDescription("number of discovery attempts per upstream server"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mcp_broker_discovery: %w", err)
+	}
+
+	discoveryDuration, err := meter.Float64Histogram("mcp_broker_discovery_duration_seconds",
+		metric.WithDescription("time taken for tools/list calls during discovery"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mcp_broker_discovery_duration_seconds: %w", err)
+	}
+
+	toolsDiscovered, err := meter.Int64Gauge("mcp_broker_tools_discovered",
+		metric.WithDescription("current number of tools discovered per upstream server"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mcp_broker_tools_discovered: %w", err)
+	}
+
+	connectionFailures, err := meter.Int64Counter("mcp_broker_upstream_connection_failures",
+		metric.WithDescription("number of upstream connection failures"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mcp_broker_upstream_connection_failures: %w", err)
+	}
+
+	toolsListBytes, err := meter.Int64Gauge("mcp_broker_tools_list_response_bytes",
+		metric.WithDescription("serialized size in bytes of the validated tool list per upstream server"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mcp_broker_tools_list_response_bytes: %w", err)
+	}
+
 	return &MCPManager{
-		mcp:               upstream,
-		gatewayServer:     gatewayServer,
-		promptsServer:     promptsServer,
-		tickerInterval:    tickerInterval,
-		ticker:            time.NewTicker(tickerInterval),
-		backoff:           bo,
-		baseBackoff:       bo,
-		logger:            logger,
-		invalidToolPolicy: policy,
-		toolEvents:        make(chan struct{}, 1),
-		promptEvents:      make(chan struct{}, 1),
-		done:              make(chan struct{}),
-		toolsMap:          map[string]*mcp.Tool{},
-		servedToolsMap:    map[string]*mcp.Tool{},
-		serverTools:       []GatewayTool{},
-		promptsMap:        map[string]*mcp.Prompt{},
-		servedPromptsMap:  map[string]*mcp.Prompt{},
-		serverPrompts:     []GatewayPrompt{},
+		mcp:                upstream,
+		gatewayServer:      gatewayServer,
+		promptsServer:      promptsServer,
+		tickerInterval:     tickerInterval,
+		ticker:             time.NewTicker(tickerInterval),
+		backoff:            bo,
+		baseBackoff:        bo,
+		logger:             logger,
+		invalidToolPolicy:  policy,
+		toolEvents:         make(chan struct{}, 1),
+		promptEvents:       make(chan struct{}, 1),
+		done:               make(chan struct{}),
+		toolsMap:           map[string]*mcp.Tool{},
+		servedToolsMap:     map[string]*mcp.Tool{},
+		serverTools:        []GatewayTool{},
+		promptsMap:         map[string]*mcp.Prompt{},
+		servedPromptsMap:   map[string]*mcp.Prompt{},
+		serverPrompts:      []GatewayPrompt{},
+		discoveryTotal:     discoveryTotal,
+		discoveryDuration:  discoveryDuration,
+		toolsDiscovered:    toolsDiscovered,
+		connectionFailures: connectionFailures,
+		toolsListBytes:     toolsListBytes,
 	}, nil
 }
 
@@ -396,6 +448,8 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	}
 	man.consecutiveFailures = 0
 
+	serverAttr := attribute.String("server_name", man.mcp.GetName())
+
 	if man.mcp.GetConfig().UserSpecificList {
 		man.logger.Debug("userSpecificList server healthy, tools fetched per-user", "upstream mcp server", man.mcp.ID())
 		man.status.ID = string(man.mcp.ID())
@@ -413,7 +467,9 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.DebugContext(ctx, "not fetching tools", "event", event, "upstream mcp server", man.mcp.ID(), "waiting for notification", notificationToolsListChanged)
 	} else {
 		man.logger.DebugContext(ctx, "fetching tools", "upstream mcp server", man.mcp.ID())
+		start := time.Now()
 		current, fetched, err := man.getTools(ctx)
+		man.discoveryDuration.Record(ctx, time.Since(start).Seconds(), metric.WithAttributes(serverAttr))
 		if err != nil {
 			toolErr = fmt.Errorf("upstream mcp failed to list tools server %s : %w", man.mcp.ID(), err)
 			man.recordBackendError(span, toolErr)
@@ -460,6 +516,11 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.serverTools = append(man.serverTools, toAdd...)
 					man.toolsLock.Unlock()
 
+					man.toolsDiscovered.Record(ctx, int64(len(fetched)), metric.WithAttributes(serverAttr))
+					if rawBytes := marshalledToolsSize(fetched); rawBytes >= 0 {
+						man.toolsListBytes.Record(ctx, rawBytes, metric.WithAttributes(serverAttr))
+					}
+
 					man.logger.DebugContext(ctx, "updating gateway tools", "upstream mcp server", man.mcp.ID(), "adding", len(toAdd), "removing", len(toRemove))
 					if len(toRemove) > 0 {
 						man.gatewayServer.DeleteTools(toRemove...)
@@ -470,6 +531,11 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
 				}
 			}
+		}
+		if toolErr != nil {
+			man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "failure")))
+		} else {
+			man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(serverAttr, attribute.String("status", "success")))
 		}
 	}
 
@@ -586,6 +652,11 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 // the next attempt starts fresh.
 func (man *MCPManager) handleConnectionFailure(ctx context.Context, span trace.Span, err error, numberOfTools, numberOfPrompts int) {
 	man.consecutiveFailures++
+	man.connectionFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("server_name", man.mcp.GetName())))
+	man.discoveryTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("server_name", man.mcp.GetName()),
+		attribute.String("status", "failure"),
+	))
 	man.recordBackendError(span, err)
 	man.logger.ErrorContext(ctx, "upstream connection failure", "upstream mcp server", man.mcp.ID(), "error", err, "consecutive failures", man.consecutiveFailures)
 	if man.consecutiveFailures >= maxConsecutiveFailures {
@@ -742,6 +813,8 @@ func (man *MCPManager) removeAllTools() {
 	man.toolsMap = map[string]*mcp.Tool{}
 	man.servedToolsMap = map[string]*mcp.Tool{}
 	man.toolsLock.Unlock()
+	man.toolsDiscovered.Record(context.Background(), 0, metric.WithAttributes(attribute.String("server_name", man.mcp.GetName())))
+	man.toolsListBytes.Record(context.Background(), 0, metric.WithAttributes(attribute.String("server_name", man.mcp.GetName())))
 	man.gatewayServer.DeleteTools(toolsToRemove...)
 	man.logger.Debug("removed all tools", "upstream mcp server", man.mcp.ID(), "count", len(toolsToRemove))
 }
@@ -928,4 +1001,14 @@ func (man *MCPManager) SetPromptsForTesting(prompts []mcp.Prompt) {
 		man.promptsMap[prompts[i].Name] = &prompts[i]
 		man.servedPromptsMap[prefixedName(man.mcp.GetPrefix(), prompts[i].Name)] = &prompts[i]
 	}
+}
+
+// marshalledToolsSize returns the JSON-serialised byte count of a tools slice,
+// used as a proxy for context contribution size. returns -1 on marshal failure.
+func marshalledToolsSize(tools []mcp.Tool) int64 {
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return -1
+	}
+	return int64(len(b))
 }

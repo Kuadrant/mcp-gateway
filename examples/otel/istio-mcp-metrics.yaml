@@ -1,0 +1,61 @@
+# Istio Telemetry tag overrides for MCP-aware gateway metrics.
+#
+# Promotes x-mcp-servername, x-mcp-toolname, and x-mcp-method request headers
+# (set by the MCP Router ext_proc) into Prometheus metric labels on the existing
+# istio_requests_total and istio_request_duration_milliseconds metrics.
+#
+# Apply to the namespace where the Istio Gateway is deployed:
+#   kubectl apply -f examples/otel/istio-mcp-metrics.yaml
+#
+# Note: tag overrides apply to the Prometheus reporter on the Envoy proxy
+# that handles inbound traffic. Verify labels appear with:
+#   kubectl exec -n <gateway-ns> <gateway-pod> -- curl -s localhost:15000/stats/prometheus | grep mcp_server_name
+#
+# Cardinality note: mcp_tool_name is commented out by default. Each unique tool
+# name adds a label value — with many tools this can significantly increase metric
+# cardinality. Enable only if the tool count is small and bounded.
+#
+# Example queries after applying:
+#   # request rate per MCP server
+#   sum(rate(istio_requests_total[5m])) by (mcp_server_name)
+#
+#   # p99 tool call latency per MCP server
+#   histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (mcp_server_name, le))
+#
+#   # top 10 most called tools (requires mcp_tool_name uncommented below)
+#   topk(10, sum(rate(istio_requests_total[5m])) by (mcp_tool_name))
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mcp-metrics
+  namespace: gateway-system
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        mcp_server_name:
+          operation: UPSERT
+          value: "request.headers['x-mcp-servername']"
+        mcp_method:
+          operation: UPSERT
+          value: "request.headers['x-mcp-method']"
+        # mcp_tool_name adds a label per unique tool — watch cardinality before enabling.
+        # mcp_tool_name:
+        #   operation: UPSERT
+        #   value: "request.headers['x-mcp-toolname']"
+    - match:
+        metric: REQUEST_DURATION
+      tagOverrides:
+        mcp_server_name:
+          operation: UPSERT
+          value: "request.headers['x-mcp-servername']"
+        mcp_method:
+          operation: UPSERT
+          value: "request.headers['x-mcp-method']"
+        # mcp_tool_name:
+        #   operation: UPSERT
+        #   value: "request.headers['x-mcp-toolname']"
