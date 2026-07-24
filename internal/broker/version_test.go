@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -70,4 +71,8 @@ func (m *mockActiveServer) SupportsVersion(v string) bool {
 		}
 	}
 	return false
+}
+func (m *mockActiveServer) SupportsResources() bool { return false }
+func (m *mockActiveServer) ListResources(context.Context) (*mcp.ListResourcesResult, error) {
+	return &mcp.ListResourcesResult{}, nil
 }
