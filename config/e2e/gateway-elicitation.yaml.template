@@ -8,10 +8,10 @@ metadata:
   name: e2e-elicitation
   namespace: gateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: ${GATEWAY_CLASS_NAME}
   listeners:
     - name: mcp
-      hostname: 'elicitation.127-0-0-1.sslip.io'
+      hostname: 'elicitation.${E2E_DOMAIN}'
       port: 8080
       protocol: HTTP
       allowedRoutes:
@@ -27,11 +27,11 @@ spec:
     - name: mcp-tls
       port: 8443
       protocol: HTTPS
-      hostname: '*.mcp-gateway.local'
+      hostname: '${GATEWAY_TLS_LISTENER_HOSTNAME}'
       tls:
         mode: Terminate
         certificateRefs:
-          - name: mcp-gateway-tls-cert
+          - name: '${GATEWAY_TLS_SECRET}'
       allowedRoutes:
         namespaces:
           from: All

@@ -39,9 +39,8 @@ func declineElicitHandler() func(context.Context, *mcp.ElicitRequest) (*mcp.Elic
 }
 
 const (
-	elicitExtName    = "elicitation-ext"
-	elicitNamespace  = "mcp-elicitation"
-	elicitPublicHost = "elicit.mcp-gateway.local"
+	elicitExtName   = "elicitation-ext"
+	elicitNamespace = "mcp-elicitation"
 )
 
 var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
@@ -86,8 +85,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 			InNamespace(elicitNamespace).
 			TargetingGateway(ElicitationGatewayName, GatewayNamespace).
 			WithSectionName(ElicitationListenerName).
-			WithPublicHost(elicitPublicHost).
-			WithListenerPort(8443).
+			WithPublicHost(ElicitationPublicHost).
 			WithURLElicitation().
 			Build()
 		elicitationExt.Clean(ctx).Register(ctx)
@@ -111,7 +109,6 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 		registration := NewTestResources("elicitation", k8sClient).
 			InNamespace(elicitNamespace).
 			ForInternalService("everything-server", 9090).
-			WithHostname("everything-server.mcp-gateway.local").
 			WithBackendNamespace(TestServerNameSpace).
 			WithPrefix("es_").
 			WithParentGateway(ElicitationGatewayName, GatewayNamespace).
