@@ -2360,3 +2360,88 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildBrokerRouterDeployment_GatewayCACertSecretRef(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-broker-router:latest",
+	}
+
+	base := func() *mcpv1.MCPGatewayExtension {
+		return &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-ext", Namespace: "default"},
+			Spec: mcpv1.MCPGatewayExtensionSpec{
+				TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
+					Name: "test-gateway",
+				},
+			},
+		}
+	}
+
+	t.Run("default configuration no gateway-ca-cert", func(t *testing.T) {
+		mcpExt := base()
+		deployment := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+
+		container := deployment.Spec.Template.Spec.Containers[0]
+		for _, arg := range container.Command {
+			if strings.HasPrefix(arg, "--gateway-ca-cert=") {
+				t.Errorf("expected no --gateway-ca-cert flag, got %s", arg)
+			}
+		}
+
+		for _, vol := range deployment.Spec.Template.Spec.Volumes {
+			if vol.Name == "gateway-ca-cert-volume" {
+				t.Errorf("expected no gateway-ca-cert volume")
+			}
+		}
+	})
+
+	t.Run("applies gateway-ca-cert flag and volume", func(t *testing.T) {
+		mcpExt := base()
+		mcpExt.Spec.GatewayCACertSecretRef = &mcpv1.CACertSecretReference{
+			Name: "my-custom-ca",
+			Key:  "my.crt",
+		}
+
+		deployment := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		container := deployment.Spec.Template.Spec.Containers[0]
+
+		foundFlag := false
+		for _, arg := range container.Command {
+			if arg == "--gateway-ca-cert=/gateway-ca-cert/my.crt" {
+				foundFlag = true
+				break
+			}
+		}
+		if !foundFlag {
+			t.Errorf("expected --gateway-ca-cert=/gateway-ca-cert/my.crt flag in command: %v", container.Command)
+		}
+
+		foundVolume := false
+		for _, vol := range deployment.Spec.Template.Spec.Volumes {
+			if vol.Name == "gateway-ca-cert-volume" {
+				foundVolume = true
+				if vol.Secret.SecretName != "my-custom-ca" {
+					t.Errorf("expected volume secret name to be my-custom-ca, got %s", vol.Secret.SecretName)
+				}
+				break
+			}
+		}
+		if !foundVolume {
+			t.Error("expected gateway-ca-cert-volume to be mounted")
+		}
+
+		foundMount := false
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == "gateway-ca-cert-volume" {
+				foundMount = true
+				if mount.MountPath != "/gateway-ca-cert" {
+					t.Errorf("expected volume mount path to be /gateway-ca-cert, got %s", mount.MountPath)
+				}
+				break
+			}
+		}
+		if !foundMount {
+			t.Error("expected gateway-ca-cert-volume mount in container")
+		}
+	})
+}

@@ -137,6 +137,12 @@ type MCPGatewayExtensionSpec struct {
 	// The Secret must have the label mcp.kuadrant.io/secret=true.
 	// +optional
 	CACertBundleRef *CACertBundleReference `json:"caCertBundleRef,omitempty"`
+
+	// gatewayCACertSecretRef references a Secret containing a custom CA certificate
+	// used by the broker to verify TLS connections to the gateway's internal service.
+	// The Secret must have the label mcp.kuadrant.io/secret=true.
+	// +optional
+	GatewayCACertSecretRef *CACertSecretReference `json:"gatewayCACertSecretRef,omitempty"`
 }
 
 // OAuthProtectedResource configures the OAuth protected resource metadata
