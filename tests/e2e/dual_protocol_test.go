@@ -99,7 +99,12 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		// leave resources for post-failure debugging; BeforeAll Clean() handles cleanup on next run
+		for i := len(testResources) - 1; i >= 0; i-- {
+			CleanupResource(ctx, k8sClient, testResources[i])
+		}
+		if dpExt != nil {
+			dpExt.TearDown(ctx)
+		}
 	})
 
 	JustAfterEach(func() {
