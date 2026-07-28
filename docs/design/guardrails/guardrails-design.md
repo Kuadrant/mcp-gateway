@@ -149,15 +149,14 @@ If `guardrailsConfigIDs` is set but no `guardrailsRef` exists on the MCPGatewayE
 
 #### Guardrails Secret Deletion
 
-If the guardrails Secret is deleted:
+If the guardrails Secret is missing (deleted or never created) while `guardrailsRef` is set:
 
 1. MCPGatewayExtension gets condition `GuardrailsSecretNotFound`
-2. The controller retains the last valid guardrails config in `mcp-gateway-config` — `GlobalGuardrails` is not cleared. The router continues to attempt guardrails checks against the configured URL
-3. All MCPServerRegistrations with `guardrailsConfigIDs` are set to `NotReady` and removed from the gateway
-4. For servers without `guardrailsConfigIDs` (covered by global guardrails only), the guardrails server is now unreachable and `failMode` applies: `deny` (default) rejects tool calls, `allow` proceeds without checks
-5. To disable guardrails entirely, the platform engineer must remove `guardrailsRef` from the MCPGatewayExtension — Secret deletion alone does not disable enforcement
+2. `GlobalGuardrails` is cleared from `mcp-gateway-config`
+3. All MCPServerRegistrations are set to `NotReady` and removed from the gateway
+4. To restore: recreate the Secret or remove `guardrailsRef` from MCPGatewayExtension
 
-This ensures Secret deletion does not silently fail open. The platform engineer's intent (guardrails enabled via `guardrailsRef`) is preserved until explicitly changed. Accidental Secret deletion with `failMode: deny` (the default) blocks tool calls rather than letting unverified requests through.
+This ensures a missing Secret fails closed uniformly. No stale config is retained — there may be no prior config to retain (Secret never created), and retaining a config pointing at an unreachable URL only adds latency before the same outcome.
 
 #### Resolution Order
 
