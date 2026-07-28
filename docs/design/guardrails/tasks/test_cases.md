@@ -33,9 +33,9 @@ tags: Happy,Guardrails
 
 - When the guardrails server is unreachable and `failMode: allow`, tool calls should proceed to the backend as if guardrails were not configured.
 
-### [Guardrails] Server without guardrails unaffected by global config
+### [Guardrails] Global guardrails allows tool call that passes check
 
-- When an MCPGatewayExtension has `guardrailsRef` set, servers whose tool calls pass the check should work identically to the non-guardrails case.
+- When an MCPGatewayExtension has `guardrailsRef` set and a server has no per-server `guardrailsConfigIDs`, a tool call with arguments that pass the global guardrails check should be routed to the backend and the tool result returned.
 
 ### [Guardrails] Elicitation accept response checked by guardrails
 
@@ -45,9 +45,9 @@ tags: Happy,Guardrails
 
 - When guardrails are configured and a client makes an authenticated `tools/call` with an `Authorization` header, the router should not forward the client's `Authorization` header to the guardrails server. The mock guardrails server should receive the check request without any `Authorization` header.
 
-### [Guardrails,Security] Guardrails Secret deletion fails closed for globally guarded servers
+### [Guardrails,Security] Guardrails Secret deletion fails closed
 
-- When an MCPGatewayExtension has `guardrailsRef` with `failMode: deny` and the guardrails Secret is deleted, tool calls to servers covered by global guardrails (no `guardrailsConfigIDs`) should be rejected with a 503 JSON-RPC error. The router retains the last valid config and the guardrails server is unreachable.
+- When an MCPGatewayExtension has `guardrailsRef` and the guardrails Secret is deleted, `GlobalGuardrails` should be cleared from `mcp-gateway-config`, all MCPServerRegistrations should be set to NotReady and removed from the gateway config. Tool calls should fail because no tools are available.
 
 ## Controller Integration Tests (envtest)
 
@@ -63,13 +63,9 @@ tags: Happy,Guardrails
 
 - When the guardrails Secret is updated (e.g. changing `configIDs` or `url`), the controller should detect the change, re-validate, and write the updated config to `mcp-gateway-config`.
 
-### Guardrails Secret deletion retains config and sets registrations NotReady
+### Guardrails Secret deletion clears config and sets all registrations NotReady
 
-- When the guardrails Secret is deleted, the controller should retain the last valid guardrails config in `mcp-gateway-config` (not clear `GlobalGuardrails`), set MCPGatewayExtension condition to `GuardrailsSecretNotFound`, and set all MCPServerRegistrations with `guardrailsConfigIDs` to NotReady. Recreating the Secret should restore normal operation.
-
-### Guardrails Secret deletion — globally guarded servers fail closed
-
-- When the guardrails Secret is deleted and a server has no `guardrailsConfigIDs` (covered by global guardrails only with `failMode: deny`), tool calls to that server should be rejected with 503 because the guardrails server is unreachable and the retained config enforces `failMode: deny`. The server should remain in `tools/list` (it is not set to NotReady).
+- When the guardrails Secret is deleted, the controller should clear `GlobalGuardrails` from `mcp-gateway-config`, set MCPGatewayExtension condition to `GuardrailsSecretNotFound`, and set all MCPServerRegistrations to NotReady. Recreating the Secret should restore normal operation.
 
 ## Unit Tests
 

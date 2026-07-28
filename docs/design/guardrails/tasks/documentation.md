@@ -6,7 +6,7 @@ Documentation for guardrails integration, organized by user goals.
 
 ### When I want to protect tool calls with guardrails
 
-When a platform engineer wants to enforce safety policies on MCP tool calls, they want to configure a guardrails server and apply it to their gateway so that all tool calls are checked before reaching backends.
+When MCP servers interact with sensitive systems, a platform engineer deploying a gateway wants to configure a guardrails server and apply it to their gateway so that dangerous tool calls are rejected before reaching backends.
 
 **Cover:**
 - Creating the guardrails Secret (type `guardrails/external/nemo`, required label)
@@ -16,7 +16,7 @@ When a platform engineer wants to enforce safety policies on MCP tool calls, the
 
 ### When I want per-server guardrails policies
 
-When a platform engineer or MCP server developer wants different guardrails policies for specific servers, they want to add server-level config IDs alongside the global policy.
+When servers have different risk profiles, a platform engineer or MCP server developer managing multiple servers wants to add server-level config IDs alongside the global policy so that each server's guardrails match its capabilities.
 
 **Cover:**
 - Setting `guardrailsConfigIDs` on MCPServerRegistration (not `guardrailsRef`)
@@ -27,7 +27,7 @@ When a platform engineer or MCP server developer wants different guardrails poli
 
 ### When I want to understand fail modes
 
-When a platform engineer wants to decide how the gateway behaves when the guardrails server is down, they want to understand the trade-offs between fail-closed and fail-open.
+When the guardrails server may become unavailable, a platform engineer configuring gateway resilience wants to understand the trade-offs between fail-closed and fail-open so that they can choose the right policy for their risk tolerance.
 
 **Cover:**
 - `failMode: deny` (default) — tool calls rejected when guardrails unreachable
@@ -37,7 +37,7 @@ When a platform engineer wants to decide how the gateway behaves when the guardr
 
 ### When I need TLS trust for the guardrails server
 
-When a platform engineer deploys the guardrails server behind a private CA, they want to configure TLS trust.
+When the guardrails server uses a corporate or self-signed CA, a platform engineer setting up secure communication wants to configure TLS trust so that the gateway can reach the guardrails server over HTTPS.
 
 **Cover:**
 - Adding the guardrails server CA to the gateway CA bundle (`caCertBundleRef`)
@@ -65,7 +65,7 @@ When a platform engineer deploys the guardrails server behind a private CA, they
 
 ### When I need to understand guardrails in the security model
 
-When a contributor needs to understand how guardrails fits into the security architecture, they want to know the trust boundaries and invariants.
+When reviewing or extending the security architecture, a contributor working on the gateway wants to understand guardrails trust boundaries and invariants so that changes preserve the security model.
 
 **Cover:**
 - Guardrails is router-only (broker not involved)
