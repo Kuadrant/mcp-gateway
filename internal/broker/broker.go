@@ -893,9 +893,12 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 		span.RecordError(err)
 		return nil, err
 	}
+	if result == nil {
+		return nil, nil
+	}
 
 	if result.NextCursor != "" {
-		m.logger.Info("upstream resources/list response is paginated, only the first page is returned",
+		m.logger.Debug("upstream resources/list response is paginated, only the first page is returned",
 			"server", srv.MCPName(), "nextCursor", result.NextCursor)
 	}
 
