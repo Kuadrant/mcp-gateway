@@ -10,12 +10,11 @@ To install MCP Gateway without kuadrant-operator, use [Helm](./how-to-install-an
 
 - OpenShift 4.18+ with OLM
 - Gateway API CRDs present (pre-installed on OCP 4.18+)
-- Istio installed
+- Istio installed (mcp-gateway requires Istio EnvoyFilter CRDs)
 
 ## Step 1: Install kuadrant-operator
 
-Create a subscription for kuadrant-operator. The bundle includes the MCP Gateway
-CRDs and controller:
+Create a subscription for kuadrant-operator:
 
 ```bash
 oc apply -f - <<EOF
@@ -40,9 +39,21 @@ oc wait csv -n kuadrant-system -l operators.coreos.com/kuadrant-operator.kuadran
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=5m
 ```
 
-## Step 2: Enable MCP Gateway via the Kuadrant CR
+The kuadrant-operator deploys all component controllers (including the MCP Gateway
+controller) automatically on startup into the `kuadrant-system` namespace. No
+additional configuration is needed to enable MCP Gateway — it runs as a singleton
+alongside authorino-operator, limitador-operator, and dns-operator.
 
-Create a Kuadrant CR with MCP Gateway enabled:
+Verify the MCP Gateway controller is running:
+
+```bash
+oc get deployment mcp-gateway-controller -n kuadrant-system
+# Expected: READY 1/1
+```
+
+## Step 2: Create a Kuadrant CR
+
+Create a Kuadrant CR to enable data plane resources (Authorino, Limitador, policies):
 
 ```bash
 oc apply -f - <<EOF
@@ -51,23 +62,15 @@ kind: Kuadrant
 metadata:
   name: kuadrant
   namespace: kuadrant-system
-spec:
-  components:
-    mcpGateway:
-      enabled: true
+spec: {}
 EOF
-```
-
-Verify the controller is running:
-
-```bash
-oc get deployment mcp-gateway-controller -n kuadrant-system
-# Expected: READY 1/1
 ```
 
 ## Step 3: Create an MCPGatewayExtension
 
-Create an `MCPGatewayExtension` in the namespace where you want to deploy the broker-router:
+Create an `MCPGatewayExtension` in the namespace where you want to deploy the broker-router.
+The MCP Gateway controller watches for these across all namespaces and creates the
+broker-router infrastructure per extension:
 
 ```bash
 GATEWAY_HOST=$(oc get gateway <your-gateway> -n <gateway-namespace> \
@@ -109,12 +112,5 @@ EnvoyFilter, and configuration Secret.
 
 ## Uninstall
 
-To disable MCP Gateway, set `enabled: false` on the Kuadrant CR:
-
-```bash
-oc patch kuadrant kuadrant -n kuadrant-system --type=merge \
-  -p '{"spec":{"components":{"mcpGateway":{"enabled":false}}}}'
-```
-
 Delete your MCPGatewayExtension CRs first to trigger cascaded cleanup of broker-router
-resources before disabling the component.
+resources, then uninstall kuadrant-operator via OLM.
