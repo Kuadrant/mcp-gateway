@@ -1,71 +1,116 @@
 # Installing MCP Gateway via OLM
 
-This guide covers installing the MCP Gateway controller using [Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/).
+This guide covers installing MCP Gateway on OpenShift via kuadrant-operator.
+MCP Gateway is deployed as a managed component of kuadrant-operator — there is no
+separate MCP Gateway OLM subscription.
+
+To install MCP Gateway without kuadrant-operator, use [Helm](./how-to-install-and-configure.md).
 
 ## Prerequisites
 
-OpenShift clusters include OLM by default. For non-OpenShift Kubernetes clusters, install OLM first:
+- OpenShift 4.18+ with OLM
+- Gateway API CRDs present (pre-installed on OCP 4.18+)
+- Istio installed (mcp-gateway requires Istio EnvoyFilter CRDs)
+
+## Step 1: Install kuadrant-operator
+
+Create a subscription for kuadrant-operator:
 
 ```bash
-make olm-install
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: kuadrant-operator
+  namespace: kuadrant-system
+spec:
+  channel: stable
+  name: kuadrant-operator
+  source: kuadrant-operator-catalog
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
 ```
 
-## Install
-
-Deploy from a release tag using kustomize with a remote ref:
+Wait for the operator to be ready:
 
 ```bash
-export MCP_GATEWAY_VERSION=0.7.1
-kubectl apply -k "https://github.com/Kuadrant/mcp-gateway/config/deploy/olm?ref=v${MCP_GATEWAY_VERSION}"
-```
-
-Wait for the controller to be ready. The CSV may take a moment to appear while OLM processes the subscription:
-
-```bash
-kubectl wait csv -n mcp-system -l operators.coreos.com/mcp-gateway.mcp-system="" \
+oc wait csv -n kuadrant-system -l operators.coreos.com/kuadrant-operator.kuadrant-system="" \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=5m
 ```
 
-If the command returns "no matching resources found", wait a few seconds and retry -- the CSV has not been created yet.
+The kuadrant-operator deploys all component controllers (including the MCP Gateway
+controller) automatically on startup into the `kuadrant-system` namespace. No
+additional configuration is needed to enable MCP Gateway — it runs as a singleton
+alongside authorino-operator, limitador-operator, and dns-operator.
+
+Verify the MCP Gateway controller is running:
+
+```bash
+oc get deployment mcp-gateway-controller -n kuadrant-system
+# Expected: READY 1/1
+```
+
+## Step 2: Create a Kuadrant CR
+
+Create a Kuadrant CR to enable data plane resources (Authorino, Limitador, policies):
+
+```bash
+oc apply -f - <<EOF
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: kuadrant-system
+spec: {}
+EOF
+```
+
+## Step 3: Create an MCPGatewayExtension
+
+Create an `MCPGatewayExtension` in the namespace where you want to deploy the broker-router.
+The MCP Gateway controller watches for these across all namespaces and creates the
+broker-router infrastructure per extension:
+
+```bash
+GATEWAY_HOST=$(oc get gateway <your-gateway> -n <gateway-namespace> \
+  -o jsonpath='{.status.addresses[0].value}')
+
+oc apply -f - <<EOF
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway
+  namespace: <your-namespace>
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: <your-gateway>
+    namespace: <gateway-namespace>
+    sectionName: mcp
+  publicHost: $GATEWAY_HOST
+EOF
+```
+
+Wait for it to be ready:
+
+```bash
+oc wait mcpgatewayextension mcp-gateway -n <your-namespace> \
+  --for=jsonpath='{.status.conditions[0].reason}'=ValidMCPGatewayExtension \
+  --timeout=60s
+```
+
+The controller automatically creates the broker-router Deployment, Service, HTTPRoute,
+EnvoyFilter, and configuration Secret.
 
 ## Next Steps
 
-Installing via OLM deploys the operator only. To deploy the MCP Gateway itself, create an `MCPGatewayExtension` resource. See [Manual Resource Creation](./isolated-gateway-deployment.md#manual-resource-creation) for details.
+- [Register MCP Servers](./register-mcp-servers.md)
+- [Authentication](./authentication.md)
+- [Authorization](./authorization.md)
 
 ## Uninstall
 
-```bash
-make undeploy-olm
-```
-
-## Local Development (Kind)
-
-The default `local-env-setup` target uses kustomize:
-
-```bash
-make local-env-setup
-```
-
-To use the OLM-based deployment instead (installs both MCP Gateway and Kuadrant via OLM):
-
-```bash
-make local-env-setup-olm
-```
-
-This builds the bundle and catalog images locally, loads them into the Kind cluster, deploys the Kuadrant OLM catalog, and lets OLM resolve Kuadrant as a dependency automatically.
-
-## Available Make Targets
-
-| Target | Description |
-|--------|-------------|
-| `make bundle` | Generate OLM bundle manifests |
-| `make bundle-build` | Build the OLM bundle image |
-| `make bundle-push` | Push the OLM bundle image |
-| `make catalog-build` | Build the OLM catalog image |
-| `make catalog-push` | Push the OLM catalog image |
-| `make olm-install` | Install OLM on the cluster |
-| `make olm-uninstall` | Uninstall OLM from the cluster |
-| `make deploy-olm` | Deploy controller via OLM on local cluster |
-| `make deploy-kuadrant-catalog` | Deploy Kuadrant OLM catalog from upstream |
-| `make local-env-setup-olm` | Full local setup with MCP Gateway and Kuadrant via OLM |
-| `make undeploy-olm` | Remove OLM-deployed controller |
+Delete your MCPGatewayExtension CRs first to trigger cascaded cleanup of broker-router
+resources, then uninstall kuadrant-operator via OLM.
