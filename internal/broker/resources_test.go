@@ -196,6 +196,22 @@ func TestFetchResources_NextCursorLoggedNotFollowed(t *testing.T) {
 	assert.True(t, buf.hasMessage("paginated"), "expected a log entry noting the unfollowed nextCursor")
 }
 
+// TestFetchResourcesFromServer_NilResult guards against a contract slip an
+// upstream/SDK implementation could make: ListResources returning (nil, nil)
+// instead of a non-nil result with no error. fetchResourcesFromServer runs
+// inside a bare g.Go() goroutine with no recover(), so dereferencing
+// result.NextCursor on a nil result would crash the whole broker process,
+// not just this request.
+func TestFetchResourcesFromServer_NilResult(t *testing.T) {
+	b := newResourcesTestBroker(5 * time.Second)
+	mock := &mockActiveServer{listResourcesResult: nil, listResourcesErr: nil}
+
+	resources, err := b.fetchResourcesFromServer(context.Background(), mock, "pfx_")
+
+	require.NoError(t, err)
+	assert.Nil(t, resources)
+}
+
 // recordingHandler is a minimal slog.Handler that records whether any log
 // record's message contains a given substring, just enough to assert a log
 // line fired without pulling in a full logging test framework.
