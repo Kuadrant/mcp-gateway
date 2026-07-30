@@ -420,9 +420,8 @@ func (up *MCPServer) SupportsVersion(v string) bool {
 }
 
 // Ping sends a ping request to the upstream MCP server to check connectivity.
-// Returns nil for stateless (2026-07-28) upstreams: the SDK does not inject
-// the required _meta fields on ping requests (SDK bug), and a successful
-// Connect via server/discover is sufficient proof of connectivity.
+// Returns nil for stateless (2026-07-28) upstreams: ping was removed from
+// the 2026-07-28 spec.
 func (up *MCPServer) Ping(ctx context.Context) error {
 	if up.UsesStatelessProtocol() {
 		return nil
