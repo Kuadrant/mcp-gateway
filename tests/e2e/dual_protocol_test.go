@@ -284,7 +284,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 			By("user-a sees list_repos via stateless client")
@@ -307,7 +307,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 					"user-a should see usl_list_repos, got: %v", names)
 				g.Expect(slices.Contains(names, "usl_run_pipeline")).To(BeFalse(),
 					"user-a should NOT see usl_run_pipeline")
-			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 
 		It("[DualProtocol,UserSpecificList] 2025 client does not see tools from 2026-only UserSpecificList server", func() {
@@ -329,8 +329,13 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			server := reg.Register(ctx)
 
 			Eventually(func(g Gomega) {
-				g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+			By("confirming ucross_ tools are visible via a 2026 client before testing 2025 filtering")
+			slC := newStatelessClient()
+			defer func() { _ = slC.Close() }()
+			waitForToolsWithPrefix(slC, "ucross_")
 
 			By("2025 client should not see tools from a 2026-only UserSpecificList server")
 			c := newStatefulClient()

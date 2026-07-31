@@ -1615,6 +1615,16 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
+		By("Waiting for broker to connect to backend (tools must appear)")
+		statefulC := newTestGatewayClient()
+		defer func() { _ = statefulC.Close() }()
+		Eventually(func(g Gomega) {
+			result, err := statefulC.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("discneg_", result)).To(BeTrue(),
+				"discneg_ tools must be present before testing version negotiation")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
 		By("Connecting with a stateless (2026) client — should negotiate down to 2025")
 		var c *mcp.ClientSession
 		Eventually(func(g Gomega) {
