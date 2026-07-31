@@ -1,5 +1,14 @@
 # POC Test Report: kuadrant-operator + mcp-gateway Integration
 
+> **POC note:** This report documents the POC implementation where the mcp-gateway
+> controller was triggered by Kuadrant CR creation. Per RFC 0019 (final, merged
+> 2026-07-29), production behaviour is that all child controllers deploy on
+> kuadrant-operator startup unconditionally — the Kuadrant CR is not required to
+> start them. Any references to "Kuadrant CR triggers controller" in this report
+> reflect the POC implementation, not the production design.
+>
+> Test items marked **NOT TESTED** were not run against this POC environment.
+
 ## Overview
 
 End-to-end test of the umbrella operator pattern for mcp-gateway on OpenShift 4.22
@@ -762,44 +771,44 @@ oc get httproute mcp-gateway-tokens-route -n mcp-test
 
 | Check | Result |
 |---|---|
-| `tools/list` with `x-mcp-virtualserver` header returns only named tools | |
-| `tools/list` without header returns full tool set (opt-in, not global) | |
-| Deleting MCPVirtualServer causes filter to stop applying | |
+| `tools/list` with `x-mcp-virtualserver` header returns only named tools | NOT TESTED |
+| `tools/list` without header returns full tool set (opt-in, not global) | NOT TESTED |
+| Deleting MCPVirtualServer causes filter to stop applying | NOT TESTED |
 
 ### MCPGatewayExtension deletion cleanup
 
 | Check | Result |
 |---|---|
-| Broker-router Deployment deleted on extension delete (ownerRef cascade) | |
-| Service deleted on extension delete | |
-| HTTPRoute deleted on extension delete | |
-| EnvoyFilter deleted in istio-system (explicit cross-namespace delete) | |
-| Config secret cleared to empty on extension delete | |
+| Broker-router Deployment deleted on extension delete (ownerRef cascade) | NOT TESTED |
+| Service deleted on extension delete | NOT TESTED |
+| HTTPRoute deleted on extension delete | NOT TESTED |
+| EnvoyFilter deleted in istio-system (explicit cross-namespace delete) | NOT TESTED |
+| Config secret cleared to empty on extension delete | NOT TESTED |
 
 ### Redis session store
 
 | Check | Result |
 |---|---|
-| `CACHE_CONNECTION_STRING` env var injected into broker-router | |
-| Session survives broker-router pod restart (stored in Redis) | |
+| `CACHE_CONNECTION_STRING` env var injected into broker-router | NOT TESTED |
+| Session survives broker-router pod restart (stored in Redis) | NOT TESTED |
 
 ### Trusted headers keypair
 
 | Check | Result |
 |---|---|
-| Auto-generated keypair creates two secrets (public + private) | |
-| `TRUSTED_HEADER_PUBLIC_KEY` env var injected into broker-router | |
-| `X-Mcp-Toolname` header present in upstream-received headers | |
-| `X-Mcp-Servername` header present with correct `namespace/name` value | |
-| `X-Mcp-Method: initialize` confirms router hairpin lazy-init pattern | |
-| BYO mode validates referenced secret exists | |
+| Auto-generated keypair creates two secrets (public + private) | NOT TESTED |
+| `TRUSTED_HEADER_PUBLIC_KEY` env var injected into broker-router | NOT TESTED |
+| `X-Mcp-Toolname` header present in upstream-received headers | NOT TESTED |
+| `X-Mcp-Servername` header present with correct `namespace/name` value | NOT TESTED |
+| `X-Mcp-Method: initialize` confirms router hairpin lazy-init pattern | NOT TESTED |
+| BYO mode validates referenced secret exists | NOT TESTED |
 
 ### URL elicitation
 
 | Check | Result |
 |---|---|
-| `mcp-gateway-tokens-route` HTTPRoute created when `urlElicitation=Enabled` | |
-| Tokens HTTPRoute deleted when `urlElicitation=Disabled` | |
+| `mcp-gateway-tokens-route` HTTPRoute created when `urlElicitation=Enabled` | NOT TESTED |
+| Tokens HTTPRoute deleted when `urlElicitation=Disabled` | NOT TESTED |
 
 ---
 

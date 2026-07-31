@@ -491,9 +491,10 @@ done
 oc wait csv/kuadrant-operator.v1.5.1 -n mcp-system \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
 
-# Create a Kuadrant CR to trigger mcp-gateway controller deployment.
-# Under Mike's olmv1-umbrella-poc-phase1 approach, all child controllers
-# (including mcp-gateway) are deployed when the Kuadrant CR is created.
+# NOTE (POC): In this POC the Kuadrant CR was used to trigger controller deployment.
+# Per RFC 0019 (final), child controllers deploy unconditionally on kuadrant-operator
+# startup — no Kuadrant CR is needed to start the mcp-gateway controller.
+# The Kuadrant CR is only needed to enable data plane resources (Authorino, Limitador).
 oc apply -f - <<EOF
 apiVersion: kuadrant.io/v1beta1
 kind: Kuadrant

@@ -14,10 +14,19 @@ To install MCP Gateway without kuadrant-operator, use [Helm](./how-to-install-an
 
 ## Step 1: Install kuadrant-operator
 
-Create a subscription for kuadrant-operator:
+Create a namespace, OperatorGroup, and Subscription for kuadrant-operator:
 
 ```bash
+oc new-project kuadrant-system
+
 oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: kuadrant-operator-group
+  namespace: kuadrant-system
+spec: {}
+---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
