@@ -76,9 +76,6 @@ This is a key difference from `2025-11-25`, where `:authority` is set in the bod
 
 ## Future Considerations
 
-### FULL_DUPLEX_STREAMED for response bodies (guardrails integration)
+### Response body streaming for guardrails
 
-
-When a guardrails configuration exists, the router sets `ResponseBodyMode` to `FULL_DUPLEX_STREAMED` in the `ModeOverride` during request header processing. This applies to both `2026-07-28` and `2025-11-25` clients. Envoy sends response body chunks to ext_proc without waiting for each response, allowing the router to forward chunks to the guardrails service without stalling the upstream read. The router acts as a forwarding proxy: chunk in, send to guardrails, return the chunk or an error based on the guardrails verdict.
-
-The primary integration target is [NeMo Guardrails](https://docs.nvidia.com/nemo/guardrails/reference/guardrails-api-server/chat-completions/chat-completions), which exposes an OpenAI-compatible `POST /v1/chat/completions` endpoint. NeMo supports streaming via the `stream: true` request parameter — when enabled, the server returns partial message deltas as server-sent events. The router can forward response body chunks to this endpoint as they arrive rather than accumulating the full response.
+When guardrails are configured, the router sets `ResponseBodyMode` to `FULL_DUPLEX_STREAMED`, overriding `NONE` in the protocol-specific flow above. This applies to both `2026-07-28` and `2025-11-25` clients. For SSE responses, the router processes per-event using SSE framing. For JSON responses, the router accumulates the full body. See the [guardrails design](../guardrails/guardrails-design.md) for the buffering model and size cap behaviour.

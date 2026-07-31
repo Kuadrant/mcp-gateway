@@ -35,6 +35,17 @@ When the guardrails server may become unavailable, a platform engineer configuri
 - Translation failures always denied regardless of `failMode`
 - Consistency with ext_proc `failure_mode_allow` invariant
 
+### When I need to configure body size limits
+
+When a platform engineer is configuring the gateway for large tool payloads or response bodies, they want to understand the relationship between the gateway's `maxBodyBytes` and Envoy's `per_connection_buffer_limit_bytes` so that requests are not rejected unexpectedly.
+
+**Cover:**
+- `maxBodyBytes` on MCPGatewayExtension (default 1 MiB) — controls router-side buffer for streamed body accumulation
+- For `2025-11-25` clients: Envoy's `per_connection_buffer_limit_bytes` (default 1 MiB) must be equal to or larger than `maxBodyBytes`, otherwise Envoy rejects the request before the router sees it
+- For `2026-07-28` clients: request body is streamed, `maxBodyBytes` is the only limit
+- Response bodies: `maxBodyBytes` applies per SSE event (not per stream) or per JSON body
+- How to increase: set `maxBodyBytes` on MCPGatewayExtension, and for 2025 clients also adjust the Envoy listener buffer via EnvoyFilter or Gateway API policy
+
 ### When I need TLS trust for the guardrails server
 
 When the guardrails server uses a corporate or self-signed CA, a platform engineer setting up secure communication wants to configure TLS trust so that the gateway can reach the guardrails server over HTTPS.
@@ -50,6 +61,7 @@ When the guardrails server uses a corporate or self-signed CA, a platform engine
 
 **Cover:**
 - `guardrailsRef` field (optional, SecretReference)
+- `maxBodyBytes` field (optional, default 1 MiB) — buffer size cap for streamed body accumulation
 - Secret requirements: type `guardrails/external/nemo`, label `mcp.kuadrant.io/secret=true`
 - Secret key: `config.yaml` (url, configIDs, model, failMode)
 - `configIDs` is optional — may be empty for per-server-only policies

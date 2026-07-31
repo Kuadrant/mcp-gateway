@@ -45,6 +45,14 @@ tags: Happy,Guardrails
 
 - When guardrails are configured and a client makes an authenticated `tools/call` with an `Authorization` header, the router should not forward the client's `Authorization` header to the guardrails server. The mock guardrails server should receive the check request without any `Authorization` header.
 
+### [Happy,Guardrails] Tool response blocked by guardrails
+
+- When guardrails are configured and a backend MCP server returns a `tools/call` result containing text content that triggers a block, the gateway should return a JSON-RPC error to the client instead of the tool result. The original response body should not reach the client.
+
+### [Guardrails] Response body exceeding maxBodyBytes rejected with 413
+
+- When guardrails are configured and a backend MCP server returns a response body larger than the configured `maxBodyBytes`, the gateway should reject with a 413 JSON-RPC error regardless of `failMode`.
+
 ### [Guardrails,Security] Guardrails Secret deletion fails closed
 
 - When an MCPGatewayExtension has `guardrailsRef` and the guardrails Secret is deleted, `GlobalGuardrails` should be cleared from `mcp-gateway-config`, all MCPServerRegistrations should be set to NotReady and removed from the gateway config. Tool calls should fail because no tools are available.
