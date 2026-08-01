@@ -328,7 +328,10 @@ func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, r
 // InternalHost returns the internal/private host computed from the targetRef.
 // gatewayClassName is used to derive the Service name created by the Gateway controller,
 // which follows the convention <gateway-name>-<gatewayClassName>.<namespace>.svc.cluster.local.
-func (m *MCPGatewayExtension) InternalHost(port uint32, gatewayClassName string) string {
+// useHTTPS controls whether an "https://" scheme prefix is added to the computed
+// default host. It has no effect when PrivateHost is explicitly set, since that
+// value is honoured verbatim (the operator may already include their own scheme).
+func (m *MCPGatewayExtension) InternalHost(port uint32, gatewayClassName string, useHTTPS bool) string {
 	if m.Spec.PrivateHost != "" {
 		return m.Spec.PrivateHost
 	}
@@ -336,7 +339,11 @@ func (m *MCPGatewayExtension) InternalHost(port uint32, gatewayClassName string)
 	if gatewayNamespace == "" {
 		gatewayNamespace = m.Namespace
 	}
-	return fmt.Sprintf("%s-%s.%s.svc.cluster.local:%v", m.Spec.TargetRef.Name, gatewayClassName, gatewayNamespace, port)
+	host := fmt.Sprintf("%s-%s.%s.svc.cluster.local:%v", m.Spec.TargetRef.Name, gatewayClassName, gatewayNamespace, port)
+	if useHTTPS {
+		return "https://" + host
+	}
+	return host
 }
 
 // HTTPRouteDisabled returns true if HTTPRouteManagement is set to Disabled
