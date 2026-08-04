@@ -115,6 +115,11 @@ type ActiveMCPServer interface {
 	Config() config.MCPServer
 	SupportedVersions() []string
 	SupportsVersion(v string) bool
+	// SupportsResources and ListResources are live pass-throughs, not cached
+	// reads: resources are never pre-registered (see ListResources), so
+	// there is nothing for manage() to populate ahead of time.
+	SupportsResources() bool
+	ListResources(ctx context.Context) (*mcp.ListResourcesResult, error)
 }
 
 // GatewayTool pairs a tool definition with the handler the gateway
@@ -389,6 +394,10 @@ func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 func (a *activeMCP) Config() config.MCPServer      { return a.manager.mcp.GetConfig() }
 func (a *activeMCP) SupportedVersions() []string   { return a.manager.mcp.SupportedVersions() }
 func (a *activeMCP) SupportsVersion(v string) bool { return a.manager.mcp.SupportsVersion(v) }
+func (a *activeMCP) SupportsResources() bool       { return a.manager.SupportsResources() }
+func (a *activeMCP) ListResources(ctx context.Context) (*mcp.ListResourcesResult, error) {
+	return a.manager.ListResources(ctx)
+}
 
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())
@@ -782,6 +791,18 @@ func (man *MCPManager) GetServedManagedTool(toolName string) *mcp.Tool {
 	man.toolsLock.RLock()
 	defer man.toolsLock.RUnlock()
 	return man.servedToolsMap[toolName]
+}
+
+// SupportsResources reports whether the upstream declared resource capabilities.
+func (man *MCPManager) SupportsResources() bool {
+	return man.mcp.SupportsResources()
+}
+
+// ListResources fetches the upstream's current resources live. Unlike
+// GetManagedTools/GetManagedPrompts, this is not a cached read: resources
+// are never pre-registered, so there is no local copy to return instead.
+func (man *MCPManager) ListResources(ctx context.Context) (*mcp.ListResourcesResult, error) {
+	return man.mcp.ListResources(ctx)
 }
 
 // SetToolsForTesting sets the tools directly for testing purposes.

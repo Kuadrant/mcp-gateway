@@ -60,12 +60,6 @@ func TestCompat_MainDispatchTable(t *testing.T) {
 			exact: `{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method server/discover not found"}}` + "\n",
 		},
 		{
-			name:   "resources list",
-			body:   `{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}`,
-			status: http.StatusOK, ct: "application/json",
-			exact: `{"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"resources not supported"}}` + "\n",
-		},
-		{
 			name:   "resources templates list",
 			body:   `{"jsonrpc":"2.0","id":4,"method":"resources/templates/list","params":{}}`,
 			status: http.StatusOK, ct: "application/json",
@@ -177,6 +171,20 @@ func TestCompat_MainDispatchTable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// resources/list must reach the real SDK dispatcher, not the "resources not
+// supported" rejection every other resources/* method still gets: it moved
+// from unsupportedDomain to delegatedMethods when the broker started
+// serving it for real. This guards against that move being reverted.
+func TestCompat_ResourcesListIsDelegatedNotRejected(t *testing.T) {
+	h := newCompatHarness(t)
+	sid := h.initialize(t)
+
+	res := h.postResourcesList(t, sid)
+	require.Equal(t, http.StatusOK, res.status, res.body)
+	require.NotContains(t, res.body, "resources not supported")
+	require.Contains(t, res.body, `"resources"`)
 }
 
 // mark3labs rejected bad content types with 400 text, not the SDK's 415.

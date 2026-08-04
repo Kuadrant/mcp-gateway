@@ -185,6 +185,17 @@ func (h *brokerHarness) postToolsList(t *testing.T, sessionID string) compatResp
 	return h.post(t, sessionID, h.toolsListBody())
 }
 
+// resourcesListBody issues a resources/list body with a unique JSON-RPC id:
+// concurrent in-flight requests on one session must not collide on id.
+func (h *brokerHarness) resourcesListBody() string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/list","params":{}}`, h.rpcID.Add(1))
+}
+
+func (h *brokerHarness) postResourcesList(t *testing.T, sessionID string) compatResponse {
+	t.Helper()
+	return h.post(t, sessionID, h.resourcesListBody())
+}
+
 // connect attaches a real SDK client to the served handler.
 func (h *brokerHarness) connect(t *testing.T) *mcp.ClientSession {
 	t.Helper()

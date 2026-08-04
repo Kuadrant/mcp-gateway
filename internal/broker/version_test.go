@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -46,7 +47,9 @@ func TestBroker_ServerSupportsVersion(t *testing.T) {
 
 // mockActiveServer implements upstream.ActiveMCPServer for testing
 type mockActiveServer struct {
-	supportedVersions []string
+	supportedVersions   []string
+	listResourcesResult *mcp.ListResourcesResult
+	listResourcesErr    error
 }
 
 func (m *mockActiveServer) Stop()           {}
@@ -70,4 +73,14 @@ func (m *mockActiveServer) SupportsVersion(v string) bool {
 		}
 	}
 	return false
+}
+func (m *mockActiveServer) SupportsResources() bool { return false }
+func (m *mockActiveServer) ListResources(context.Context) (*mcp.ListResourcesResult, error) {
+	if m.listResourcesErr != nil {
+		return nil, m.listResourcesErr
+	}
+	if m.listResourcesResult != nil {
+		return m.listResourcesResult, nil
+	}
+	return &mcp.ListResourcesResult{}, nil
 }
