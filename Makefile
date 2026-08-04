@@ -732,8 +732,6 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@if [ -f bin/yq ]; then echo "[OK] yq already installed"; else echo "Installing yq..."; "$(MAKE)" -s yq; fi
 	@if [ -f bin/istioctl ]; then echo "[OK] istioctl already installed"; else echo "Installing istioctl..."; "$(MAKE)" -s istioctl; fi
 	@if [ -f bin/controller-gen ]; then echo "[OK] controller-gen already installed"; else echo "Installing controller-gen..."; "$(MAKE)" -s controller-gen; fi
-	@if [ -f bin/operator-sdk ]; then echo "[OK] operator-sdk already installed"; else echo "Installing operator-sdk..."; "$(MAKE)" -s operator-sdk; fi
-	@if [ -f bin/opm ]; then echo "[OK] opm already installed"; else echo "Installing opm..."; "$(MAKE)" -s opm; fi
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
