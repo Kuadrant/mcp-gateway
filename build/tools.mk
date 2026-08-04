@@ -45,5 +45,3 @@ $(GOLANGCI_LINT):
 
 .PHONY: golangci-lint-bin
 golangci-lint-bin: $(GOLANGCI_LINT) # Download golangci-lint locally if necessary.
-
-
