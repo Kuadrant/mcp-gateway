@@ -50,12 +50,14 @@ var managedCommandFlags = []string{
 	"--mcp-router-key",
 	"--enable-url-elicitation",
 	"--log-level",
+	"--gateway-ca-cert",
 }
 
 // managedVolumeNames are the volume names the controller owns and reconciles.
 // Any volume not in this list is user-managed and preserved as-is.
 var managedVolumeNames = []string{
 	"config-volume",
+	"gateway-ca-cert-volume",
 }
 
 // managedEnvVarNames are the env var names the controller owns and reconciles.
@@ -175,6 +177,46 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		)
 	}
 
+	volumes := []corev1.Volume{
+		{
+			Name: "config-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  "mcp-gateway-config",
+					DefaultMode: ptr.To(int32(420)), // 0644 octal
+				},
+			},
+		},
+	}
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "config-volume",
+			MountPath: "/config",
+			ReadOnly:  true,
+		},
+	}
+
+	if mcpExt.Spec.GatewayCACertSecretRef != nil {
+		key := mcpExt.Spec.GatewayCACertSecretRef.Key
+		if key == "" {
+			key = "ca.crt"
+		}
+		command = append(command, "--gateway-ca-cert=/gateway-ca-cert/"+key)
+		volumes = append(volumes, corev1.Volume{
+			Name: "gateway-ca-cert-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: mcpExt.Spec.GatewayCACertSecretRef.Name,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "gateway-ca-cert-volume",
+			MountPath: "/gateway-ca-cert",
+			ReadOnly:  true,
+		})
+	}
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      brokerRouterName,
@@ -217,13 +259,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 									Protocol:      corev1.ProtocolTCP,
 								},
 							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "config-volume",
-									MountPath: "/config",
-									ReadOnly:  true,
-								},
-							},
+							VolumeMounts: volumeMounts,
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -240,17 +276,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 							},
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "config-volume",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName:  "mcp-gateway-config",
-									DefaultMode: ptr.To(int32(420)), // 0644 octal
-								},
-							},
-						},
-					},
+					Volumes: volumes,
 				},
 			},
 		},
