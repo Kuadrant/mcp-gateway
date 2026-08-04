@@ -483,7 +483,9 @@ func TestBuildBrokerRouterDeployment_InternalHost(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, tt.gatewayClassName))
+			// useHTTPS=false: this test exercises host/namespace derivation only;
+			// HTTPS scheme-prefix behavior is covered separately by TestDerivePrivateHost.
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, tt.gatewayClassName, false))
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			wantFlag := "--mcp-gateway-private-host=" + tt.wantInternalHost
@@ -539,7 +541,7 @@ func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			if tt.wantAbsent {
@@ -587,7 +589,7 @@ func TestBuildBrokerRouterDeployment_NoRouterKeyFlag(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 	command := deployment.Spec.Template.Spec.Containers[0].Command
 
 	for _, arg := range command {
@@ -670,7 +672,7 @@ func TestBuildBrokerRouterDeployment_LogLevel(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			var got string
@@ -751,7 +753,7 @@ func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 					LogLevel: tt.specLogLevel,
 				},
 			}
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 			var got string
 			for _, arg := range command {
@@ -807,7 +809,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 			container := deployment.Spec.Template.Spec.Containers[0]
 
 			// JWT_SESSION_SIGNING_KEY should always be present
@@ -974,7 +976,7 @@ func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 
 	if deployment.Spec.Template.Spec.ServiceAccountName != brokerRouterName {
 		t.Errorf("expected ServiceAccountName %q, got %q", brokerRouterName, deployment.Spec.Template.Spec.ServiceAccountName)
@@ -2140,7 +2142,7 @@ func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio", false))
 	probe := deployment.Spec.Template.Spec.Containers[0].ReadinessProbe
 
 	if probe == nil {
