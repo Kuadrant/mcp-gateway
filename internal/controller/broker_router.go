@@ -83,8 +83,9 @@ var logLevelFlagValues = map[mcpv1.LogLevel]string{
 
 func brokerRouterLabels() map[string]string {
 	return map[string]string{
-		labelAppName:   brokerRouterName,
-		labelManagedBy: labelManagedByValue,
+		labelAppName:                  "mcp-gateway",
+		labelManagedBy:                labelManagedByValue,
+		"app.kubernetes.io/component": "broker",
 	}
 }
 
@@ -418,7 +419,12 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingContainer.VolumeMounts = mergeVolumeMounts(desiredContainer.VolumeMounts, existingContainer.VolumeMounts)
 		existingContainer.ReadinessProbe = desiredContainer.ReadinessProbe
 		existingDeployment.Spec.Template.Spec.Containers[0] = existingContainer
-		existingDeployment.Spec.Template.Spec.Volumes = mergeVolumes(deployment.Spec.Template.Spec.Volumes, existingDeployment.Spec.Template.Spec.Volumes)
+		existingDeployment.Spec.Template.Spec.Volumes = mergeVolumes(
+			deployment.Spec.Template.Spec.Volumes,
+			existingDeployment.Spec.Template.Spec.Volumes,
+		)
+		existingDeployment.Spec.Template.Labels = deployment.Spec.Template.Labels
+
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
@@ -554,6 +560,13 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	existingEnv := filterManagedEnvVars(existingContainer.Env)
 	if !equality.Semantic.DeepEqual(desiredEnv, existingEnv) {
 		return true, fmt.Sprintf("env changed: %+v -> %+v", existingEnv, desiredEnv)
+	}
+	if !equality.Semantic.DeepEqual(desired.Spec.Template.Labels, existing.Spec.Template.Labels) {
+		return true, fmt.Sprintf(
+			"pod template labels changed: %v -> %v",
+			existing.Spec.Template.Labels,
+			desired.Spec.Template.Labels,
+		)
 	}
 	return false, ""
 }
