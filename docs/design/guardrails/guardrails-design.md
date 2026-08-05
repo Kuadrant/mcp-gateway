@@ -4,11 +4,11 @@
 
 > **Note:** examples reference NeMo Guardrails as the initial target.
 
-Guardrails systems don't support MCP natively. Their endpoints (`v1/chat/completions`, `v1/guardrail/checks`) are incompatible with MCP JSON-RPC. Integrating at the router level provides centralized enforcement and consistent protection across all clients.
+Guardrails endpoints are incompatible with MCP JSON-RPC. Guardrails are an important piece of the security landscape for agent based interactions. MCP Servers provide information to agents so it is important to be able to apply policy and govern what can be sent to those agents and their respective LLMs. 
 
 ## Summary
 
-Add a translation layer in the router that intercepts `tools/call` requests and responses, translates them to guardrails checks, and either proceeds or rejects. Request checks run in the ext_proc body phase before routing. Response checks accumulate the response body in a size-capped buffer, parse the JSON-RPC result, and send text content to the guardrails service before releasing to the client. Configuration via Kubernetes Secret referenced from `MCPGatewayExtension` (global) and/or `MCPServerRegistration` (per-server). TLS reuses the gateway's existing CA bundle configuration.
+A new translation layer in the router intercepts `tools/call` requests and responses, translates to guardrails checks, proceeds or rejects. Request checks run in ext_proc body phase before routing. Response checks accumulate the body in a size-capped buffer, parse JSON-RPC, and send text content to guardrails before releasing to the client. Configuration via Secret referenced from MCPGatewayExtension annotation (global). Allow extended policy configs per server via annotation. TLS reuses the gateway's existing CA bundle.
 
 ## Goals
 
@@ -18,6 +18,7 @@ Add a translation layer in the router that intercepts `tools/call` requests and 
 - Fail closed by default, configurable to allow
 - Reuse gateway CA trust pool
 - Target NeMo Guardrails initially
+- Keep the integration light and not part of the core API given it is likely to migrate to its own filter in the future
 
 ## Non-Goals
 
@@ -45,21 +46,15 @@ When MCP servers return data from sensitive systems, tool responses are checked 
 
 Tool calls fail closed by default. `failMode: allow` exists for non-critical servers.
 
-### When the guardrails server uses a private CA
-
-Add the CA to the gateway CA bundle (`caCertBundleRef`). No separate guardrails TLS config.
-
 ## Constraints
 
-### Deployment model
-
-The gateway does not deploy or operate a guardrails instance. A running guardrails server must exist and be reachable before configuring `guardrailsRef`.
+The gateway does not deploy or operate a guardrails instance. A running guardrails server must exist and be reachable.
 
 ## Design
 
 ### Configuration via Secret
 
-Type `guardrails/external/nemo`, following the project's Secret reference pattern (`credentialRef`, `caCertSecretRef`):
+Type `guardrails/external/nemo`, following the project's Secret reference pattern:
 
 ```yaml
 apiVersion: v1
@@ -83,113 +78,99 @@ stringData:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `url` | yes | Guardrails server endpoint |
-| `configIDs` | no | Default config IDs applied to all servers. Empty if per-server `guardrailsConfigIDs` supply policies |
+| `configIDs` | no | Default config IDs for all servers. Empty for per-server-only model |
 | `model` | yes | Model identifier for the guardrails check |
-| `failMode` | no | `deny` (default): reject on failure. `allow`: proceed |
+| `failMode` | no | `deny` (default) or `allow` |
 
-> **Note:** The body buffer size cap (`maxBodyBytes`) is configured at the gateway level on MCPGatewayExtension, not per guardrails config. See API Changes below.
+The Secret type determines which provider validates and parses the content. The controller resolves the type to a provider implementation that exposes a `ValidateConfig()` method, returning a typed config or an error.
 
-> **Note:** TLS uses the gateway's existing CA bundle (`caCertBundleRef`). Add private CAs there.
+TLS uses the gateway's existing CA bundle (`caCertBundleRef`). `maxBodyBytes` is configured on MCPGatewayExtension spec, not per guardrails config.
 
 ### API Changes
 
+Guardrails configuration is an extension to the core API, delivered via annotations rather than spec-level fields. This keeps guardrails decoupled from the CRD schema. See [Alternatives Considered](#alternatives-considered) for the rejected spec-level approach and rationale.
+
 #### MCPGatewayExtension
 
-```go
-type MCPGatewayExtensionSpec struct {
-    // ... existing fields ...
-
-    // guardrailsRef references a Secret of type guardrails/external/nemo.
-    // When set, all tools/call requests are checked before routing.
-    // +optional
-    GuardrailsRef *SecretReference `json:"guardrailsRef,omitempty"`
-
-    // maxBodyBytes is the buffer size cap in bytes for a streamed body 
-    // (request or response) accumulation. Applies to any body the router buffers (prefix
-    // stripping, guardrails inspection). Bodies exceeding this are
-    // rejected with a 413. Default 1 MiB. 
-    // For 2025 protocol the request is sent buffered from Envoy and so this setting defaults
-    // to the default body buffer in Envoy and needs to be controlled via Envoy
-    // +optional
-    MaxBodyBytes *int `json:"maxBodyBytes,omitempty"`
-}
-```
+`mcp.kuadrant.io/guardrails-ref` — Secret name in the same namespace. Validated at reconcile time, not admission.
 
 ```yaml
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPGatewayExtension
 metadata:
   name: mcp-gateway
+  annotations:
+    mcp.kuadrant.io/guardrails-ref: my-guardrails-config
 spec:
   targetRef:
     name: mcp-gateway
     sectionName: mcp
   maxBodyBytes: 1048576  # 1 MiB (default)
-  guardrailsRef:
-    name: my-guardrails-config
+```
+
+`maxBodyBytes` is a spec field — it applies to any body the router buffers (request or response) (prefix stripping, guardrails), not just guardrails.
+
+```go
+type MCPGatewayExtensionSpec struct {
+    // ... existing fields ...
+
+    // +optional
+    MaxBodyBytes *int `json:"maxBodyBytes,omitempty"`
+}
 ```
 
 #### MCPServerRegistration
 
-```go
-type MCPServerRegistrationSpec struct {
-    // ... existing fields ...
-
-    // guardrailsConfigIDs specifies additional config IDs merged with gateway
-    // defaults into a single check request. Requires guardrailsRef on the
-    // MCPGatewayExtension — without it, the server is set to NotReady.
-    // +optional
-    GuardrailsConfigIDs []string `json:"guardrailsConfigIDs,omitempty"`
-}
-```
+`mcp.kuadrant.io/guardrails-config-ids` — comma-separated config IDs merged with gateway defaults. Requires `mcp.kuadrant.io/guardrails-ref` on the MCPGatewayExtension.
 
 ```yaml
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPServerRegistration
 metadata:
   name: dangerous-server
+  annotations:
+    mcp.kuadrant.io/guardrails-config-ids: "strict-input-checking,pii-detection"
 spec:
   targetRef:
     name: dangerous-server-route
   prefix: dangerous_
-  guardrailsConfigIDs:
-    - "strict-input-checking"
-    - "pii-detection"
 ```
 
 #### Validation
 
-If `guardrailsConfigIDs` is set but no `guardrailsRef` exists on the MCPGatewayExtension:
+If `guardrails-config-ids` is set but no `guardrails-ref` exists on the MCPGatewayExtension:
 
-1. MCPServerRegistration set to `NotReady` with reason `GuardrailsNotConfigured`
-2. Server removed from gateway config (no tools/list, tool calls fail)
-3. Re-reconciled when `guardrailsRef` is added
+1. MCPServerRegistration set to `NotReady` with reason `GatewayGuardrailsNotConfigured`
+2. Server removed from gateway config
+3. Re-reconciled when the gateway annotation is added
 
 #### Guardrails Secret Deletion
 
-If the guardrails Secret is missing (deleted or never created) while `guardrailsRef` is set:
+If the referenced Secret is missing while the annotation is set:
 
 1. MCPGatewayExtension gets condition `GuardrailsSecretNotFound`
-2. `GlobalGuardrails` is cleared from `mcp-gateway-config`
-3. All MCPServerRegistrations are set to `NotReady` and removed from the gateway
-4. To restore: recreate the Secret or remove `guardrailsRef` from MCPGatewayExtension
+2. `GlobalGuardrails` cleared from `mcp-gateway-config`
+3. All MCPServerRegistrations set to `NotReady` and removed
+4. Restore by recreating the Secret or removing the annotation
 
 #### Resolution Order
 
-One guardrails server per gateway. Per-server config IDs are additive.
+One guardrails server per gateway. Per-server config IDs are additive — they cannot remove gateway defaults. This lets gateway admins enforce org-wide policies via the Secret's `configIDs` while teams add domain-specific rails for their servers.
 
-| Gateway `guardrailsRef` | Server `guardrailsConfigIDs` | Effective Behavior |
+| Gateway `guardrails-ref` | Server `guardrails-config-ids` | Effective Behavior |
 |-------------------------|------------------------------|--------------------|
 | Not set | Not set | No guardrails |
-| Set (with default IDs) | Not set | Gateway defaults applied |
-| Set (empty default IDs) | Not set | No check — per-server-only model |
-| Set (with default IDs) | Set | Gateway defaults + server IDs merged |
-| Set (no default IDs) | Set | Server IDs only |
+| Set (Secret has default IDs) | Not set | Gateway defaults applied |
+| Set (Secret has empty IDs) | Not set | No check — per-server-only model |
+| Set (Secret has default IDs) | Set | Gateway defaults + server IDs merged |
+| Set (Secret has no default IDs) | Set | Server IDs only |
 | Not set | Set | **NotReady** — server removed |
 
 ### Request Flow
 
-Guardrails runs in the router after backend resolution, before the Decision is returned. Applies to `tools/call` and elicitation `accept` responses. Client `Authorization` header is not forwarded to the guardrails server (see Security Considerations).
+Runs after backend resolution, before the Decision is returned. Applies to `tools/call` and elicitation `accept`. Client `Authorization` is not forwarded to the guardrails server.
+
+For `2026-07-28`, request bodies arrive `STREAMED` — the router accumulates chunks bounded by `maxBodyBytes`. For `2025-11-25`, request bodies are already `BUFFERED` by Envoy. Envoy's `per_connection_buffer_limit_bytes` (default 1 MiB) must be >= `maxBodyBytes` for `2025-11-25` clients.
 
 ```mermaid
 sequenceDiagram
@@ -202,7 +183,6 @@ sequenceDiagram
     Client->>Envoy: tools/call (JSON-RPC)
     Envoy->>Router: ext_proc body phase
     Router->>Router: parse JSON-RPC, resolve backend
-    Router->>Router: check guardrails config for server
 
     alt guardrails enabled
         Router->>Guardrails: POST /v1/guardrail/checks
@@ -233,23 +213,25 @@ sequenceDiagram
 
 ### Response Handling
 
-When guardrails are configured, the router sets `ResponseBodyMode` to `FULL_DUPLEX_STREAMED` via `ModeOverride`. Applies to both protocol versions. See [streamed body processing](../router-2026-07-28/streamed-body-processing.md) for the mode override mechanism.
+Response body mode depends on scope:
 
-For `2026-07-28` request bodies (`STREAMED`), the router accumulates chunks before sending to guardrails, bounded by `maxBodyBytes`. For `2025-11-25`, request bodies are already `BUFFERED` by Envoy.
+| Configuration | Response body mode | Mechanism |
+|---------------|-------------------|-----------|
+| Gateway-level (Secret has default config IDs) | `FULL_DUPLEX_STREAMED` permanently | Controller configures ext_proc filter |
+| Per-server only (empty default IDs) | `FULL_DUPLEX_STREAMED` dynamically | Router sets `ModeOverride` only for requests/responses for servers with guardrails |
 
-> **Note:** For `2025-11-25`, Envoy's `per_connection_buffer_limit_bytes` (default 1 MiB) must be >= `maxBodyBytes` — otherwise Envoy rejects before the router sees the request.
-
+See [streamed body processing](../router-2026-07-28/streamed-body-processing.md) for the mode override mechanism. This mirrors how elicitation is handled also.
 
 #### SSE responses (`text/event-stream`)
 
 > **Note:** SSE is [deprecated as of `2026-07-28`](https://blog.modelcontextprotocol.io/posts/2026-07-28/#deprecations) with a year-long offramp.
 
-For `2025-11-25` responses, each SSE event is a complete JSON-RPC message. Per-event processing reuses the `sseRewriter` pattern from `internal/mcp-router/elicitation.go`:
+Per-event processing reuses the `sseRewriter` pattern from `internal/mcp-router/elicitation.go`:
 
-1. Extract `content[].text` from tool results, send to guardrails
-2. On pass: release the event to the client
-3. On block: return error, close stream
-4. If a single event exceeds `maxBodyBytes`: reject with 413
+1. Extract `content[].text`, send to guardrails
+2. On pass: release event
+3. On block: error, close stream
+4. Event exceeds `maxBodyBytes`: 413
 
 #### JSON responses (`application/json`)
 
@@ -272,7 +254,6 @@ sequenceDiagram
         Backend-->>Envoy: SSE event 1
         Envoy->>Router: ResponseBody chunk(s)
         Router->>Router: accumulate until event boundary
-        Router->>Router: parse JSON-RPC, extract text content
         Router->>Guardrails: POST /v1/guardrail/checks
         Guardrails-->>Router: pass
         Router-->>Envoy: release event 1
@@ -290,7 +271,6 @@ sequenceDiagram
         Backend-->>Envoy: response body
         Envoy->>Router: ResponseBody chunks
         Router->>Router: accumulate full body
-        Router->>Router: parse JSON-RPC, extract text content
         Router->>Guardrails: POST /v1/guardrail/checks
         Guardrails-->>Router: verdict
         alt status: success
@@ -303,40 +283,27 @@ sequenceDiagram
     end
 ```
 
-#### Response Translation Mapping (NeMo)
-
-| MCP response field | NeMo field |
-|-------------------|------------|
-| `result.content[].text` (text items only) | `messages[0].content` |
-| tool name (from request context) | `messages[0].name` |
-| N/A | `messages[0].role = "assistant"` |
-| from config | `guardrails.config_ids` |
-| from config | `model` |
-
 #### Response to Decision Mapping
 
 | Outcome | Router action |
 |---------|---------------|
-| `status: "success"` | Release original event/body to client |
+| `status: "success"` | Release original body to client |
 | `status: "modified"` | **Unresolved** — see Open Questions |
 | `status: "blocked"` | Error response, discard buffer, close stream |
-| Event/body exceeds `maxBodyBytes` | 413 error — general resource limit, not guardrails-specific. `failMode` does not apply |
+| Exceeds `maxBodyBytes` | 413. `failMode` does not apply |
 | Non-2xx / timeout | Apply `failMode`: deny → error, allow → release |
 
 ### Translation Mapping (NeMo)
 
-#### MCP `tools/call` to NeMo `v1/guardrail/checks`
+#### Request: `tools/call` → `v1/guardrail/checks`
 
 | MCP field | NeMo field |
 |-----------|------------|
 | `params.name` | `messages[0].name` |
 | `params.arguments` (JSON-encoded) | `messages[0].content` |
 | N/A | `messages[0].role = "user"` |
-| N/A | `messages[0].config = "tool"` |
 | from config | `guardrails.config_ids` |
 | from config | `model` |
-
-Example:
 
 ```json
 {
@@ -355,7 +322,7 @@ Example:
 }
 ```
 
-#### Elicitation `accept` to NeMo
+#### Request: elicitation `accept` → `v1/guardrail/checks`
 
 `decline`/`cancel` bypass guardrails (no user content).
 
@@ -364,28 +331,29 @@ Example:
 | `result.action` | `messages[0].name` |
 | `result` minus `action` (JSON-encoded) | `messages[0].content` |
 | N/A | `messages[0].role = "user"` |
-| N/A | `messages[0].config = "tool"` |
-| from config | `guardrails.config_ids` |
-| from config | `model` |
+| from config | `guardrails.config_ids`, `model` |
 
-#### Response to Decision Mapping
+#### Response: `result` → `v1/guardrail/checks`
+
+| MCP response field | NeMo field |
+|-------------------|------------|
+| `result.content[].text` (text items only) | `messages[0].content` |
+| tool name (from request context) | `messages[0].name` |
+| N/A | `messages[0].role = "assistant"` |
+| from config | `guardrails.config_ids`, `model` |
+
+#### Decision Mapping
 
 | Outcome | Router action |
 |---------|---------------|
-| Translation failure | Always deny with 400. `failMode` does not apply |
-| `status: "success"` | Proceed with routing |
+| Translation failure | Always deny (400). `failMode` does not apply |
+| `status: "success"` | Proceed |
 | `status: "blocked"` | 403 with rails message |
-| Non-2xx HTTP | Apply `failMode`: deny → 503, allow → proceed |
-| Timeout | Apply `failMode`: deny → 503, allow → proceed |
-| Malformed response body | Apply `failMode`: deny → 502, allow → proceed |
-
-### TLS Trust
-
-Reuses the gateway's CA trust pool (system roots + `caCertBundleRef`).
+| Non-2xx / timeout / malformed | Apply `failMode` |
 
 ### Config Propagation
 
-Controller writes resolved guardrails config into `mcp-gateway-config` Secret. Per-server `guardrailsConfigIDs` go into each server entry:
+Controller writes resolved guardrails config into `mcp-gateway-config` Secret:
 
 ```go
 type BrokerConfig struct {
@@ -408,40 +376,35 @@ type GuardrailsConfig struct {
 }
 ```
 
-Single `*http.Client` per guardrails server, reused across requests. Follows the `HairpinClientPool` pattern. Recreated on config change (URL or TLS).
+Single `*http.Client` per guardrails server, following the `HairpinClientPool` pattern. Recreated on config change.
 
 | Setting | Value | Rationale |
 |---------|-------|-----------|
 | Keep-alive | enabled | avoid TCP/TLS per check |
 | `MaxIdleConnsPerHost` | ext_proc stream count | match concurrency |
-| `http.Client.Timeout` | none | per-request `context.WithTimeout` instead |
-| `DialContext` timeout | 1s | fast-fail DNS/TCP hangs |
-| Per-request deadline | 3s | guardrails budget within 10s `message_timeout` |
+| `http.Client.Timeout` | none | per-request `context.WithTimeout` |
+| `DialContext` timeout | 1s | fast-fail DNS/TCP |
+| Per-request deadline | 3s | within 10s `message_timeout` |
 
 ### Internal Architecture
 
-Translation behind a `GuardrailsTransformer` interface. Secret type determines implementation, resolved at config load time.
-
 ```go
-// GuardrailsTransformer translates MCP requests and responses into
-// provider-specific check request bodies. configIDs is the merged
-// gateway + per-server set.
 type GuardrailsTransformer interface {
     TransformRequest(req *MCPRequest, cfg *GuardrailsConfig, configIDs []string) ([]byte, error)
     TransformResponse(toolName string, content []byte, cfg *GuardrailsConfig, configIDs []string) ([]byte, error)
 }
 ```
 
-Transformer selection by Secret type (`guardrails/external/nemo` → `NeMoTransformer`). Transformer owns the request body shape. Router owns HTTP call, timeout, TLS, fail mode, config ID merging, and Decision mapping.
+Secret type determines implementation (`guardrails/external/nemo` → `NeMoTransformer`). Transformer owns request body shape. Router owns HTTP call, timeout, TLS, fail mode, config ID merging, and Decision mapping.
 
 ### Component Responsibilities
 
 | Component | Responsibility |
 |-----------|----------------|
 | Controller | Reads/validates guardrails Secret, writes config. Sets MCPServerRegistration NotReady if gateway guardrails missing |
-| Router | Calls guardrails server before routing `tools/call` and elicitation accepts, maps response to Decision |
+| Router | Calls guardrails before routing `tools/call` and elicitation accepts, maps response to Decision |
 | Broker | No involvement |
-| Envoy | `FULL_DUPLEX_STREAMED` response body mode when guardrails configured (set by router via `ModeOverride`) |
+| Envoy | `FULL_DUPLEX_STREAMED` response body mode when guardrails configured |
 
 ### Observability
 
@@ -459,19 +422,19 @@ Span attributes on `mcp-router.tool-call`:
 
 ## Performance Impact
 
-Hot path — see `docs/design/performance.md`. Synchronous HTTP round-trip per check. 3s guardrails budget within the 10s ext_proc `message_timeout`. Response-side: per-event for SSE, full-body for JSON. Bodies exceeding `maxBodyBytes` → 413 regardless of `failMode`.
+Hot path — see `docs/design/performance.md`. Synchronous HTTP round-trip per check. 3s guardrails budget within 10s `message_timeout`. Response-side: per-event for SSE, full-body for JSON. Bodies exceeding `maxBodyBytes` → 413 regardless of `failMode`.
 
 ## Security Considerations
 
 - **Fail closed by default** — consistent with invariant #5
-- **Secret validation** — type `guardrails/external/nemo`, label `mcp.kuadrant.io/secret=true`, valid `url`. `configIDs` may be empty for per-server-only policies
+- **Secret validation** — type `guardrails/external/nemo`, label `mcp.kuadrant.io/secret=true`, valid `url`
 - **Router-only path** — broker never interacts with guardrails
-- **No credential leak** — client `Authorization` not forwarded to guardrails server. NeMo uses its own `OPENAI_API_KEY` for LLM auth
-- **TLS optional in-cluster** — acceptable for in-cluster communication
+- **No credential leak** — client `Authorization` not forwarded to guardrails server
+- **TLS optional in-cluster**
 
 ## Why the Router
 
-Requires parsed JSON-RPC body, resolved backend, and guardrails config. Only the router has all three. Alternatives (`ext_authz`, Lua/WASM) either can't access the body or duplicate the JSON-RPC parser. Cost: synchronous round-trip in the hot path, scoped to `tools/call` and elicitation `accept`.
+Requires parsed JSON-RPC body, resolved backend, and guardrails config. Only the router has all three. Alternatives (`ext_authz`, Lua/WASM) either can't access the body or duplicate the JSON-RPC parser.
 
 ## Future Considerations
 
@@ -481,25 +444,51 @@ Check `prompts/get` response content. Same pattern, different translation mappin
 
 ### Circuit Breaker
 
-If the guardrails server degrades (slow but not down), every check eats the full timeout. A circuit breaker tripping after N consecutive failures would fast-fail by applying `failMode` immediately.
+If the guardrails server degrades, every check eats the full timeout. A circuit breaker tripping after N consecutive failures would fast-fail by applying `failMode` immediately.
+
+### Standalone Guardrails Filter
+
+Guardrails could move out of the router into a separate filter in the request chain with its own CRD and deployment. The annotation-based API avoids blocking this — dropping an annotation is not a breaking change.
 
 ### AI Gateway Provider Integration
 
-A provider like Praxis could offer guardrails natively. CRD field stays the same, Secret type differs per provider (`type: guardrails/internal/praxis`).
+A provider like Praxis could offer guardrails natively. Secret type differs per provider (`type: guardrails/internal/praxis`). If guardrails migrate to a standalone filter, the provider abstraction moves with it.
+
+## Alternatives Considered
+
+### Spec-level `guardrailsRef` field on MCPGatewayExtension
+
+Add `guardrailsRef *SecretReference` to `MCPGatewayExtensionSpec` and `guardrailsConfigIDs []string` to `MCPServerRegistrationSpec`.
+
+```go
+type MCPGatewayExtensionSpec struct {
+    // ... existing fields ...
+    GuardrailsRef *SecretReference `json:"guardrailsRef,omitempty"`
+}
+
+type MCPServerRegistrationSpec struct {
+    // ... existing fields ...
+    GuardrailsConfigIDs []string `json:"guardrailsConfigIDs,omitempty"`
+}
+```
+
+Benefits: schema-validated at admission, discoverable via `kubectl explain`, consistent with `caCertBundleRef`.
+
+**Rejected** — unclear whether guardrails belong permanently in the router and gateway API. The router has the parsed body, resolved backend, and config today, but that is implementation convenience, not ownership. Guardrails could migrate to a separate filter in the request chain with its own CRD. A spec field becomes dead API surface requiring backwards-compatible maintenance. The annotation avoids this.
 
 ## Open Questions
 
 ### Request-side value for schema-constrained tools
 
-Guardrails add clear value for freeform text. For rigid schemas (`{"namespace": "prod", "replicas": 3}`), the latency cost may not be justified — AuthPolicy and input validation already cover access and correctness.
+For rigid schemas (`{"namespace": "prod", "replicas": 3}`), the latency cost may not be justified — AuthPolicy and input validation already cover access and correctness.
 
 ### Modified response handling
 
-NeMo can return `status: "modified"` with altered content (e.g. PII redacted). Should the router replace the original body with the modified content, or release the original?
+NeMo can return `status: "modified"` with altered content (e.g. PII redacted). Should the router replace the original body or release the original?
 
 ### Non-text response content
 
-Only `text` content items are inspected. `image`/`audio` (base64) and `resource` (URI reference) bypass guardrails. PII in screenshots or confidential audio would not be caught. Text-only inspection leaves a gap.
+Only `text` content items are inspected. `image`/`audio` (base64) and `resource` (URI reference) bypass guardrails.
 
 ## Execution
 

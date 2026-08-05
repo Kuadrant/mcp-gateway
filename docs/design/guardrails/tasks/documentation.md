@@ -10,8 +10,8 @@ When MCP servers interact with sensitive systems, a platform engineer deploying 
 
 **Cover:**
 - Creating the guardrails Secret (type `guardrails/external/nemo`, required label)
-- Setting `guardrailsRef` on MCPGatewayExtension
-- Configuring `configIDs`, `model`, `failMode`
+- Setting `mcp.kuadrant.io/guardrails-ref` annotation on MCPGatewayExtension
+- Configuring `configIDs`, `model`, `failMode` in the Secret
 - Verifying guardrails are active (test a blocked call)
 
 ### When I want per-server guardrails policies
@@ -19,10 +19,10 @@ When MCP servers interact with sensitive systems, a platform engineer deploying 
 When servers have different risk profiles, a platform engineer or MCP server developer managing multiple servers wants to add server-level config IDs alongside the global policy so that each server's guardrails match its capabilities.
 
 **Cover:**
-- Setting `guardrailsConfigIDs` on MCPServerRegistration (not `guardrailsRef`)
-- Additive behavior: global + per-server config IDs merged into a single request
-- Per-server-only model: gateway `guardrailsRef` with empty `configIDs`, servers supply their own
-- Requirement: `guardrailsRef` must exist on MCPGatewayExtension — without it, server is NotReady
+- Setting `mcp.kuadrant.io/guardrails-config-ids` annotation on MCPServerRegistration
+- This annotation is an extension only — it requires `mcp.kuadrant.io/guardrails-ref` on the MCPGatewayExtension. Without a gateway-level guardrails config, the server is set to NotReady
+- Additive behavior: per-server IDs are merged with gateway defaults, they cannot remove org-wide policies
+- Per-server-only model: gateway annotation with empty `configIDs` in Secret, servers supply their own
 - YAML examples showing combined configuration
 
 ### When I want to understand fail modes
@@ -60,18 +60,19 @@ When the guardrails server uses a corporate or self-signed CA, a platform engine
 ### `docs/reference/mcpgatewayextension.md`
 
 **Cover:**
-- `guardrailsRef` field (optional, SecretReference)
-- `maxBodyBytes` field (optional, default 1 MiB) — buffer size cap for streamed body accumulation
+- `mcp.kuadrant.io/guardrails-ref` annotation (Secret name in same namespace)
+- `maxBodyBytes` spec field (optional, default 1 MiB) — buffer size cap for streamed body accumulation
 - Secret requirements: type `guardrails/external/nemo`, label `mcp.kuadrant.io/secret=true`
 - Secret key: `config.yaml` (url, configIDs, model, failMode)
-- `configIDs` is optional — may be empty for per-server-only policies
+- Annotation-based: not visible via `kubectl explain`, validated at reconcile time
 
 ### `docs/reference/mcpserverregistration.md`
 
 **Cover:**
-- `guardrailsConfigIDs` field (optional, list of strings)
-- Additive to global guardrails config IDs, merged into single request
-- Requires `guardrailsRef` on MCPGatewayExtension — NotReady without it
+- `mcp.kuadrant.io/guardrails-config-ids` annotation (comma-separated config IDs)
+- Extension only — not standalone. Requires `mcp.kuadrant.io/guardrails-ref` on MCPGatewayExtension
+- Additive to gateway config IDs, cannot override or remove gateway defaults
+- NotReady if gateway guardrails annotation is absent
 
 ## Security Architecture Update (`docs/design/security-architecture.md`)
 
