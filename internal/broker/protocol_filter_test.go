@@ -179,6 +179,7 @@ func TestRebuildProtocolToolCache(t *testing.T) {
 			stateful := broker.statefulTools.Load()
 			if stateful == nil {
 				t.Fatal("statefulTools is nil")
+				return
 			}
 			if len(*stateful) != tt.wantStatefulCount {
 				t.Errorf("stateful count: got %d, want %d", len(*stateful), tt.wantStatefulCount)
