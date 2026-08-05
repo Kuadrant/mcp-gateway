@@ -870,7 +870,7 @@ func (m *mcpBrokerImpl) FetchResources(ctx context.Context, result *mcp.ListReso
 	_ = g.Wait()
 
 	span.SetAttributes(attribute.Int("mcp.resources.resources_fetched", len(allResources)))
-	result.Resources = append(result.Resources, allResources...)
+	result.Resources = allResources
 }
 
 // fetchResourcesFromServer fetches and prefix-rewrites one upstream's
