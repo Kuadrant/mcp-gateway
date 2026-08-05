@@ -902,10 +902,13 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 			"server", srv.MCPName(), "nextCursor", result.NextCursor)
 	}
 
-	for _, r := range result.Resources {
-		if r != nil {
-			r.URI = rewriteResourceURI(r.URI, prefix)
+	for i, r := range result.Resources {
+		if r == nil {
+			continue
 		}
+		copied := *r
+		copied.URI = rewriteResourceURI(r.URI, prefix)
+		result.Resources[i] = &copied
 	}
 
 	span.SetAttributes(attribute.Int("mcp.resources.resources_count", len(result.Resources)))
