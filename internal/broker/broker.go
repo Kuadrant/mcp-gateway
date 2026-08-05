@@ -438,6 +438,7 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 				if !ok || resourcesResult == nil {
 					return result, nil
 				}
+				// no header extraction — resources are not user-specific in this phase
 				m.FetchResources(ctx, resourcesResult)
 			}
 
