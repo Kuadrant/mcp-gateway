@@ -683,6 +683,8 @@ func (m *mcpBrokerImpl) GetServerInfoByPrompt(prompt string) (*config.MCPServer,
 // exact-name lookup to try first: matching is by longest prefix on the URI's
 // authority segment alone, same approach GetServerInfo uses for
 // userSpecificList tools.
+// Only ui:// URIs can be resolved; non-ui:// URIs are returned by FetchResources
+// unrewritten and will always produce an error here.
 func (m *mcpBrokerImpl) GetServerInfoByResource(uri string) (*config.MCPServer, error) {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
