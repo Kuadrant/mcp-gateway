@@ -35,7 +35,7 @@ const unpaginatedPageSize = 1 << 30
 // resourcePrefixAllowlist re-validates a server's prefix independently of the
 // CRD's own pattern validation before it's injected into a ui:// authority
 // segment (defense-in-depth in case the CRD pattern is loosened later).
-var resourcePrefixAllowlist = regexp.MustCompile(`^[a-z0-9_]+$`)
+var resourcePrefixAllowlist = regexp.MustCompile(`^[a-z0-9]+_$`)
 
 // MCPBroker manages a set of MCP servers and their sessions
 type MCPBroker interface {
@@ -918,6 +918,7 @@ func rewriteResourceURI(uri, prefix string) string {
 	if err != nil || u.Scheme != "ui" {
 		return uri
 	}
+	u.User = nil // never forward upstream credentials to clients
 	u.Host = prefix + u.Host
 	return u.String()
 }
