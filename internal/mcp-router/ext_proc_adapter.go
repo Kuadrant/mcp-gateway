@@ -410,6 +410,22 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			respDecision := respHandler.HandleResponse(ctx, respInput)
+
+			if mcpRequest != nil && mcpRequest.IsToolCall() {
+				user := ""
+				if mcpRequest.Headers != nil {
+					user = mcpRequest.Headers[routing.MCPVerifiedSubHeader]
+				}
+				s.Logger.InfoContext(ctx, "tool call",
+					"user", user,
+					"tool", mcpRequest.ToolName(),
+					"server", mcpRequest.ServerName,
+					"status", statusCode,
+					"request_id", requestID,
+					"session", mcpRequest.GetSessionID(),
+				)
+			}
+
 			responses := responseDecisionToResponse(respDecision)
 
 			if respDecision.StreamBody {
