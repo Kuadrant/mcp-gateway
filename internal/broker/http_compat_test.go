@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -400,6 +401,7 @@ func TestCompat_ToolsListResultRewrite(t *testing.T) {
 		"up_annotated": {Raw: json.RawMessage(`{"readOnlyHint":true,"destructiveHint":false}`)},
 	})
 	h.b.mcpServers["up1"] = upstream.NewActiveForTesting(manager)
+	h.b.serverVersions.Store(config.UpstreamMCPID("up1"), []string{"2025-11-25"})
 
 	// gateway-registered tools as the SDK client decode produced them: the
 	// annotated one has collapsed bools, the plain one none at all
@@ -409,6 +411,7 @@ func TestCompat_ToolsListResultRewrite(t *testing.T) {
 				Name:        "up_annotated",
 				InputSchema: map[string]any{"type": "object"},
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+				Meta:        mcp.Meta{"kuadrant/id": "up1"},
 			},
 			Handler: func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return &mcp.CallToolResult{}, nil
@@ -418,6 +421,7 @@ func TestCompat_ToolsListResultRewrite(t *testing.T) {
 			Tool: mcp.Tool{
 				Name:        "up_plain",
 				InputSchema: map[string]any{"type": "object"},
+				Meta:        mcp.Meta{"kuadrant/id": "up1"},
 			},
 			Handler: func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return &mcp.CallToolResult{}, nil
@@ -539,21 +543,6 @@ func TestCompat_NotificationDeliveredToSDKClient(t *testing.T) {
 func TestToolsListUnpaginated(t *testing.T) {
 	b := NewBroker(logger, WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
 
-	const total = mcp.DefaultPageSize + 1
-	tools := make([]upstream.GatewayTool, 0, total)
-	for i := range total {
-		tools = append(tools, upstream.GatewayTool{
-			Tool: mcp.Tool{
-				Name:        fmt.Sprintf("tool-%04d", i),
-				InputSchema: map[string]any{"type": "object"},
-			},
-			Handler: func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return &mcp.CallToolResult{}, nil
-			},
-		})
-	}
-	b.gatewayServer.AddTools(tools...)
-
 	ct, st := mcp.NewInMemoryTransports()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -570,6 +559,23 @@ func TestToolsListUnpaginated(t *testing.T) {
 	cs, err := client.Connect(ctx, ct, nil)
 	require.NoError(t, err)
 	defer func() { _ = cs.Close() }()
+
+	const total = mcp.DefaultPageSize + 1
+	b.serverVersions.Store(config.UpstreamMCPID("pagination-server"), []string{"2025-11-25"})
+	tools := make([]upstream.GatewayTool, 0, total)
+	for i := range total {
+		tools = append(tools, upstream.GatewayTool{
+			Tool: mcp.Tool{
+				Name:        fmt.Sprintf("tool-%04d", i),
+				InputSchema: map[string]any{"type": "object"},
+				Meta:        mcp.Meta{"kuadrant/id": "pagination-server"},
+			},
+			Handler: func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			},
+		})
+	}
+	b.gatewayServer.AddTools(tools...)
 
 	res, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)

@@ -156,12 +156,12 @@ func TestRebuildProtocolCaches(t *testing.T) {
 			wantStatelessCount: 1,
 		},
 		{
-			name: "tool without kuadrant/id",
+			name: "tool without kuadrant/id excluded from all sets",
 			tools: []upstream.GatewayTool{
 				{Tool: mcp.Tool{Name: "tool1", InputSchema: objectSchema, Meta: map[string]any{"other": "value"}}, Handler: upstream.NoopToolHandler},
 			},
 			serverVersions:     map[config.UpstreamMCPID][]string{},
-			wantStatefulCount:  1,
+			wantStatefulCount:  0,
 			wantStatelessCount: 0,
 		},
 	}
@@ -272,111 +272,48 @@ func TestToolsForProtocol(t *testing.T) {
 }
 
 func TestRebuildProtocolCaches_Prompts(t *testing.T) {
-	tests := []struct {
-		name               string
-		prompts            []upstream.GatewayPrompt
-		serverVersions     map[config.UpstreamMCPID][]string
-		wantStatefulCount  int
-		wantStatelessCount int
-	}{
-		{
-			name: "all 2025 server prompts",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-				{Prompt: mcp.Prompt{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions: map[config.UpstreamMCPID][]string{
-				"server1": {"2025-11-25"},
-			},
-			wantStatefulCount:  2,
-			wantStatelessCount: 0,
-		},
-		{
-			name: "all 2026 server prompts",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-				{Prompt: mcp.Prompt{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions: map[config.UpstreamMCPID][]string{
-				"server1": {"2026-07-28"},
-			},
-			wantStatefulCount:  0,
-			wantStatelessCount: 2,
-		},
-		{
-			name: "mixed servers",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-				{Prompt: mcp.Prompt{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server2"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions: map[config.UpstreamMCPID][]string{
-				"server1": {"2025-11-25"},
-				"server2": {"2026-07-28"},
-			},
-			wantStatefulCount:  1,
-			wantStatelessCount: 1,
-		},
-		{
-			name: "prompt with non-string kuadrant/id",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"kuadrant/id": 123}}, Handler: upstream.NoopPromptHandler},
-				{Prompt: mcp.Prompt{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions: map[config.UpstreamMCPID][]string{
-				"server1": {"2025-11-25"},
-			},
-			wantStatefulCount:  1,
-			wantStatelessCount: 0,
-		},
-		{
-			name: "server supports both versions",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions: map[config.UpstreamMCPID][]string{
-				"server1": {"2025-11-25", "2026-07-28"},
-			},
-			wantStatefulCount:  1,
-			wantStatelessCount: 1,
-		},
-		{
-			name: "prompt without kuadrant/id",
-			prompts: []upstream.GatewayPrompt{
-				{Prompt: mcp.Prompt{Name: "prompt1", Meta: map[string]any{"other": "value"}}, Handler: upstream.NoopPromptHandler},
-			},
-			serverVersions:     map[config.UpstreamMCPID][]string{},
-			wantStatefulCount:  1,
-			wantStatelessCount: 0,
-		},
-	}
+	t.Run("mixed servers with edge cases", func(t *testing.T) {
+		// 2025-only server, 2026-only server, dual-version server,
+		// prompt without kuadrant/id (defaults to stateful),
+		// prompt with non-string kuadrant/id (dropped from both sets)
+		prompts := []upstream.GatewayPrompt{
+			{Prompt: mcp.Prompt{Name: "p25", Meta: map[string]any{"kuadrant/id": "srv25"}}, Handler: upstream.NoopPromptHandler},
+			{Prompt: mcp.Prompt{Name: "p26", Meta: map[string]any{"kuadrant/id": "srv26"}}, Handler: upstream.NoopPromptHandler},
+			{Prompt: mcp.Prompt{Name: "pdual", Meta: map[string]any{"kuadrant/id": "srvdual"}}, Handler: upstream.NoopPromptHandler},
+			{Prompt: mcp.Prompt{Name: "no_id", Meta: map[string]any{"other": "value"}}, Handler: upstream.NoopPromptHandler},
+			{Prompt: mcp.Prompt{Name: "bad_id", Meta: map[string]any{"kuadrant/id": 123}}, Handler: upstream.NoopPromptHandler},
+		}
+		versions := map[config.UpstreamMCPID][]string{
+			"srv25":   {"2025-11-25"},
+			"srv26":   {"2026-07-28"},
+			"srvdual": {"2025-11-25", "2026-07-28"},
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			broker := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
-			for id, versions := range tt.serverVersions {
-				broker.serverVersions.Store(id, versions)
-			}
+		broker := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+		for id, v := range versions {
+			broker.serverVersions.Store(id, v)
+		}
+		broker.gatewayServer.AddPrompts(prompts...)
+		broker.rebuildProtocolCaches()
 
-			broker.gatewayServer.AddPrompts(tt.prompts...)
-			broker.rebuildProtocolCaches()
+		stateful := broker.statefulPrompts.Load()
+		if stateful == nil {
+			t.Fatal("statefulPrompts is nil")
+		}
+		// p25 + pdual = 2 (no_id and bad_id both excluded)
+		if len(*stateful) != 2 {
+			t.Errorf("stateful count: got %d, want 2", len(*stateful))
+		}
 
-			stateful := broker.statefulPrompts.Load()
-			if stateful == nil {
-				t.Fatal("statefulPrompts is nil")
-			}
-			if len(*stateful) != tt.wantStatefulCount {
-				t.Errorf("stateful count: got %d, want %d", len(*stateful), tt.wantStatefulCount)
-			}
-
-			stateless := broker.statelessPrompts.Load()
-			if stateless == nil && tt.wantStatelessCount > 0 {
-				t.Fatal("statelessPrompts is nil but expected prompts")
-			}
-			if stateless != nil && len(*stateless) != tt.wantStatelessCount {
-				t.Errorf("stateless count: got %d, want %d", len(*stateless), tt.wantStatelessCount)
-			}
-		})
-	}
+		stateless := broker.statelessPrompts.Load()
+		if stateless == nil {
+			t.Fatal("statelessPrompts is nil")
+		}
+		// p26 + pdual = 2
+		if len(*stateless) != 2 {
+			t.Errorf("stateless count: got %d, want 2", len(*stateless))
+		}
+	})
 }
 
 func TestPromptsForProtocol(t *testing.T) {

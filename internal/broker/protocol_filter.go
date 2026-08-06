@@ -48,7 +48,7 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 
 		serverIDVal, hasServerID := tool.Meta["kuadrant/id"]
 		if !hasServerID {
-			statefulT = append(statefulT, tool)
+			m.logger.Warn("tool missing kuadrant/id, excluded from protocol sets", "toolName", tool.Name)
 			continue
 		}
 
@@ -77,7 +77,7 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 
 		serverIDVal, hasServerID := prompt.Meta["kuadrant/id"]
 		if !hasServerID {
-			statefulP = append(statefulP, prompt)
+			m.logger.Warn("prompt missing kuadrant/id, excluded from protocol sets", "promptName", prompt.Name)
 			continue
 		}
 

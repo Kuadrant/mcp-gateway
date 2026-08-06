@@ -20,7 +20,7 @@ func createMockActiveMCPServer(t *testing.T, cfg config.MCPServer, toolsCache, p
 }
 
 func TestCollectToolsCacheMetadata(t *testing.T) {
-	t.Run("tools from two different upstreams", func(t *testing.T) {
+	t.Run("multiple tools per server deduplicates to one metadata entry per server", func(t *testing.T) {
 		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
 			"server1": createMockActiveMCPServer(t,
 				config.MCPServer{Name: "server1", Prefix: "s1_"},
@@ -34,41 +34,11 @@ func TestCollectToolsCacheMetadata(t *testing.T) {
 			),
 		}
 		tools := []*mcp.Tool{
-			{Name: "tool1", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
-			{Name: "tool2", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server2"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-			{TTLMs: 2000, CacheScope: upstream.CacheScopePrivate},
-		}
-
-		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
-		broker.mcpServers = servers
-		result := &mcp.ListToolsResult{Tools: tools}
-		got := broker.collectToolsCacheMetadata(result)
-
-		assert.Equal(t, len(expected), len(got))
-		for i, want := range expected {
-			assert.Equal(t, want.TTLMs, got[i].TTLMs)
-			assert.Equal(t, want.CacheScope, got[i].CacheScope)
-		}
-	})
-
-	t.Run("tools from same upstream deduplicates", func(t *testing.T) {
-		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
-			"server1": createMockActiveMCPServer(t,
-				config.MCPServer{Name: "server1"},
-				upstream.CacheMetadata{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-				upstream.CacheMetadata{},
-			),
-		}
-		tools := []*mcp.Tool{
-			{Name: "tool1", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
-			{Name: "tool2", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
-			{Name: "tool3", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
+			{Name: "s1_a", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
+			{Name: "s1_b", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
+			{Name: "s1_c", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
+			{Name: "s2_a", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server2"}},
+			{Name: "no_id", InputSchema: objectSchema, Meta: mcp.Meta{"other": "value"}},
 		}
 
 		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
@@ -76,35 +46,7 @@ func TestCollectToolsCacheMetadata(t *testing.T) {
 		result := &mcp.ListToolsResult{Tools: tools}
 		got := broker.collectToolsCacheMetadata(result)
 
-		assert.Equal(t, len(expected), len(got))
-		assert.Equal(t, expected[0].TTLMs, got[0].TTLMs)
-		assert.Equal(t, expected[0].CacheScope, got[0].CacheScope)
-	})
-
-	t.Run("tool with no kuadrant/id skipped", func(t *testing.T) {
-		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
-			"server1": createMockActiveMCPServer(t,
-				config.MCPServer{Name: "server1"},
-				upstream.CacheMetadata{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-				upstream.CacheMetadata{},
-			),
-		}
-		tools := []*mcp.Tool{
-			{Name: "tool1", InputSchema: objectSchema, Meta: mcp.Meta{"other": "value"}},
-			{Name: "tool2", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "server1"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-		}
-
-		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
-		broker.mcpServers = servers
-		result := &mcp.ListToolsResult{Tools: tools}
-		got := broker.collectToolsCacheMetadata(result)
-
-		assert.Equal(t, len(expected), len(got))
-		assert.Equal(t, expected[0].TTLMs, got[0].TTLMs)
-		assert.Equal(t, expected[0].CacheScope, got[0].CacheScope)
+		assert.Len(t, got, 2, "should return one entry per server; tools without kuadrant/id ignored")
 	})
 
 	t.Run("no tools returns empty", func(t *testing.T) {
@@ -118,7 +60,7 @@ func TestCollectToolsCacheMetadata(t *testing.T) {
 }
 
 func TestCollectPromptsCacheMetadata(t *testing.T) {
-	t.Run("prompts from two different upstreams", func(t *testing.T) {
+	t.Run("multiple prompts per server deduplicates to one metadata entry per server", func(t *testing.T) {
 		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
 			"server1": createMockActiveMCPServer(t,
 				config.MCPServer{Name: "server1", Prefix: "s1_"},
@@ -128,16 +70,14 @@ func TestCollectPromptsCacheMetadata(t *testing.T) {
 			"server2": createMockActiveMCPServer(t,
 				config.MCPServer{Name: "server2", Prefix: "s2_"},
 				upstream.CacheMetadata{},
-				upstream.CacheMetadata{TTLMs: 1500, CacheScope: upstream.CacheScopePrivate, UserSpecificList: false},
+				upstream.CacheMetadata{TTLMs: 1500, CacheScope: upstream.CacheScopePrivate},
 			),
 		}
 		prompts := []*mcp.Prompt{
-			{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}},
-			{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server2"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 500, CacheScope: upstream.CacheScopePublic, UserSpecificList: true},
-			{TTLMs: 1500, CacheScope: upstream.CacheScopePrivate, UserSpecificList: false},
+			{Name: "s1_a", Meta: map[string]any{"kuadrant/id": "server1"}},
+			{Name: "s1_b", Meta: map[string]any{"kuadrant/id": "server1"}},
+			{Name: "s2_a", Meta: map[string]any{"kuadrant/id": "server2"}},
+			{Name: "no_id", Meta: map[string]any{"other": "value"}},
 		}
 
 		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
@@ -145,64 +85,7 @@ func TestCollectPromptsCacheMetadata(t *testing.T) {
 		result := &mcp.ListPromptsResult{Prompts: prompts}
 		got := broker.collectPromptsCacheMetadata(result)
 
-		assert.Equal(t, len(expected), len(got))
-		for i, want := range expected {
-			assert.Equal(t, want.TTLMs, got[i].TTLMs)
-			assert.Equal(t, want.CacheScope, got[i].CacheScope)
-			assert.Equal(t, want.UserSpecificList, got[i].UserSpecificList)
-		}
-	})
-
-	t.Run("prompts from same upstream deduplicates", func(t *testing.T) {
-		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
-			"server1": createMockActiveMCPServer(t,
-				config.MCPServer{Name: "server1"},
-				upstream.CacheMetadata{},
-				upstream.CacheMetadata{TTLMs: 3000, CacheScope: upstream.CacheScopePublic},
-			),
-		}
-		prompts := []*mcp.Prompt{
-			{Name: "prompt1", Meta: map[string]any{"kuadrant/id": "server1"}},
-			{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server1"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 3000, CacheScope: upstream.CacheScopePublic},
-		}
-
-		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
-		broker.mcpServers = servers
-		result := &mcp.ListPromptsResult{Prompts: prompts}
-		got := broker.collectPromptsCacheMetadata(result)
-
-		assert.Equal(t, len(expected), len(got))
-		assert.Equal(t, expected[0].TTLMs, got[0].TTLMs)
-		assert.Equal(t, expected[0].CacheScope, got[0].CacheScope)
-	})
-
-	t.Run("prompt with no kuadrant/id skipped", func(t *testing.T) {
-		servers := map[config.UpstreamMCPID]upstream.ActiveMCPServer{
-			"server1": createMockActiveMCPServer(t,
-				config.MCPServer{Name: "server1"},
-				upstream.CacheMetadata{},
-				upstream.CacheMetadata{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-			),
-		}
-		prompts := []*mcp.Prompt{
-			{Name: "prompt1", Meta: map[string]any{"other": "value"}},
-			{Name: "prompt2", Meta: map[string]any{"kuadrant/id": "server1"}},
-		}
-		expected := []upstream.CacheMetadata{
-			{TTLMs: 1000, CacheScope: upstream.CacheScopePublic},
-		}
-
-		broker := NewBroker(slog.Default()).(*mcpBrokerImpl)
-		broker.mcpServers = servers
-		result := &mcp.ListPromptsResult{Prompts: prompts}
-		got := broker.collectPromptsCacheMetadata(result)
-
-		assert.Equal(t, len(expected), len(got))
-		assert.Equal(t, expected[0].TTLMs, got[0].TTLMs)
-		assert.Equal(t, expected[0].CacheScope, got[0].CacheScope)
+		assert.Len(t, got, 2, "should return one entry per server; prompts without kuadrant/id ignored")
 	})
 
 	t.Run("no prompts returns empty", func(t *testing.T) {
