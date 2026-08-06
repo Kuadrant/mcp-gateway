@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -357,6 +358,17 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			span.SetAttributes(attribute.String("mcp.router", routerName))
 			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", protocolVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
 			decision := router.RouteRequest(ctx, routingReq)
+			if decision.Error != nil && mcpRequest.IsToolCall() {
+				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
+				s.Logger.InfoContext(ctx, "tool call",
+					"user", authSub,
+					"tool", mcpRequest.ToolName(),
+					"server", mcpRequest.ServerName,
+					"status", strconv.Itoa(decision.Error.StatusCode),
+					"request_id", requestID,
+					"session", internaljwt.LogSafeSessionID(mcpRequest.GetSessionID()),
+				)
+			}
 			routeResponses := decisionToResponse(decision)
 			for _, response := range routeResponses {
 				s.Logger.DebugContext(ctx, "sending mcp body routing instructions to envoy", "response", response)
@@ -410,6 +422,19 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			respDecision := respHandler.HandleResponse(ctx, respInput)
+
+			if mcpRequest != nil && mcpRequest.IsToolCall() {
+				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
+				s.Logger.InfoContext(ctx, "tool call",
+					"user", authSub,
+					"tool", mcpRequest.ToolName(),
+					"server", mcpRequest.ServerName,
+					"status", statusCode,
+					"request_id", requestID,
+					"session", internaljwt.LogSafeSessionID(mcpRequest.GetSessionID()),
+				)
+			}
+
 			responses := responseDecisionToResponse(respDecision)
 
 			if respDecision.StreamBody {
