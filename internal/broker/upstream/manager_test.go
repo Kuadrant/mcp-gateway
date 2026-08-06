@@ -529,7 +529,7 @@ func TestMCPManager_toolToServerTool(t *testing.T) {
 	assert.Equal(t, "A test tool", serverTool.Tool.Description)
 
 	// check that meta has id field
-	id, ok := serverTool.Tool.Meta[gatewayServerID]
+	id, ok := serverTool.Tool.Meta[GatewayServerID]
 	assert.True(t, ok)
 	assert.Equal(t, string(mock.id), id)
 
@@ -1449,7 +1449,7 @@ func TestMCPManager_promptToServerPrompt(t *testing.T) {
 			assert.Equal(t, tt.expectedName, serverPrompt.Prompt.Name)
 			assert.Equal(t, tt.promptDesc, serverPrompt.Prompt.Description)
 
-			id, ok := serverPrompt.Prompt.Meta[gatewayServerID]
+			id, ok := serverPrompt.Prompt.Meta[GatewayServerID]
 			assert.True(t, ok)
 			assert.Equal(t, string(mock.id), id)
 
