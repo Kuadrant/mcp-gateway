@@ -812,6 +812,13 @@ func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
 	man.status = status
 }
 
+// SetCacheMetadataForTesting sets cache metadata directly for testing.
+func (man *MCPManager) SetCacheMetadataForTesting(toolsMeta, promptsMeta CacheMetadata) {
+	if mcpServer, ok := man.mcp.(*MCPServer); ok {
+		mcpServer.SetCacheMetadataForTesting(toolsMeta, promptsMeta)
+	}
+}
+
 // NewActiveForTesting wraps a manager as an ActiveMCPServer without starting
 // the event loop. Stop is a no-op. Only for use in tests that need a static
 // manager with pre-seeded tools/status.

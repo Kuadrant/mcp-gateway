@@ -53,6 +53,7 @@ type cachedUserSession struct {
 // FetchUserSpecificTools fetches tools from userSpecificList servers using the
 // caller's session headers and merges them into the result before FilterTools runs.
 // Only servers supporting the client's protocol version are queried.
+// Delegates to the appropriate ProtocolHandler for version-specific fetch logic.
 func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
 	broker.mcpLock.RLock()
 	servers := broker.userSpecificServers
@@ -63,10 +64,11 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 	}
 
 	clientVersion := protocol.Version2025
+	handler := broker.handler2025
 	if headers.Get(protocolVersionHeader) == protocol.Version2026 {
 		clientVersion = protocol.Version2026
+		handler = broker.handler2026
 	}
-	isStateless := clientVersion == protocol.Version2026
 
 	// filter to servers supporting the client's protocol
 	var matching []userSpecificServer
@@ -89,18 +91,15 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 
 	broker.logger.Debug("fetching user-specific tools", "serverCount", len(matching), "clientVersion", clientVersion)
 
-	before := len(result.Tools)
-	if isStateless {
-		broker.fetchStatelessUserTools(ctx, matching, headers, result)
-	} else {
-		if headers.Get(gatewaySessionHeader) == "" {
-			broker.logger.Error("no gateway session ID for user-specific tool fetch")
-			span.SetStatus(codes.Error, "missing gateway session ID")
-			return
-		}
-		broker.fetchStatefulUserTools(ctx, matching, headers, result)
+	// 2025 stateful fetches require a gateway session ID
+	if clientVersion == protocol.Version2025 && headers.Get(gatewaySessionHeader) == "" {
+		broker.logger.Error("no gateway session ID for user-specific tool fetch")
+		span.SetStatus(codes.Error, "missing gateway session ID")
+		return
 	}
 
+	before := len(result.Tools)
+	handler.FetchUserSpecificTools(ctx, matching, headers, result)
 	span.SetAttributes(attribute.Int("mcp.user_specific.tools_fetched", len(result.Tools)-before))
 }
 
