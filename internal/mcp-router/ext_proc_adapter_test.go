@@ -683,6 +683,13 @@ func (s *stubRouter) RouteRequest(_ context.Context, _ *routing.Request) *routin
 	return &routing.Decision{}
 }
 
+// stubErrorRouter is a Router that always returns an error decision with the given status code.
+type stubErrorRouter struct{ statusCode int }
+
+func (s *stubErrorRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
+	return &routing.Decision{Error: &routing.Error{StatusCode: s.statusCode, Message: "routing error"}}
+}
+
 // stubResponseHandler is a ResponseHandler that always returns an empty decision.
 type stubResponseHandler struct{}
 
@@ -821,6 +828,125 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 	require.Equal(t, "req-abc", found.attrs["request_id"])
 	require.NotEmpty(t, found.attrs["tool"])
 	require.NotEmpty(t, found.attrs["session"])
+}
+
+// TestProcess_ToolCallAuditLog_RouterError verifies that an audit log entry is
+// emitted even when the router returns an error decision (e.g. session init
+// failure), where the response headers phase is never reached.
+func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
+	type logRecord struct {
+		msg   string
+		attrs map[string]string
+	}
+	var mu sync.Mutex
+	var logs []logRecord
+
+	captureHandler := &captureLogHandler{fn: func(r slog.Record) {
+		attrs := make(map[string]string)
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.String()
+			return true
+		})
+		mu.Lock()
+		logs = append(logs, logRecord{msg: r.Message, attrs: attrs})
+		mu.Unlock()
+	}}
+
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	srv := &ExtProcServer{
+		Logger:          slog.New(captureHandler),
+		SessionCache:    cache,
+		Router:          &stubErrorRouter{statusCode: 500},
+		ResponseHandler: &stubResponseHandler{},
+	}
+	srv.RoutingConfig.Store(&config.MCPServersConfig{})
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"myserver__echo","arguments":{}}}`)
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestHeaders{
+					RequestHeaders: &extProcV3.HttpHeaders{
+						Headers: &corev3.HeaderMap{
+							Headers: []*corev3.HeaderValue{
+								{Key: "content-type", RawValue: []byte("application/json")},
+								{Key: "x-request-id", RawValue: []byte("req-err-001")},
+								{Key: "x-mcp-verified-sub", RawValue: []byte("alice@example.com")},
+							},
+						},
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestHeaders{
+						RequestHeaders: &extProcV3.HeadersResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{
+									SetHeaders: []*corev3.HeaderValueOption{
+										{Header: &corev3.HeaderValue{Key: ":authority"}},
+									},
+									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        toolCallBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_ImmediateResponse{
+						ImmediateResponse: &extProcV3.ImmediateResponse{
+							Body:   []byte("dummy"),
+							Status: &typev3.HttpStatus{Code: typev3.StatusCode_InternalServerError},
+							Headers: &extProcV3.HeaderMutation{
+								SetHeaders: []*corev3.HeaderValueOption{
+									{Header: &corev3.HeaderValue{Key: "content-type", RawValue: []byte("text/plain")}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// After the immediate response, Process loops back to Recv. Signal stream end.
+	mock.serverStream = append(mock.serverStream, mockProcessServerMessageAndErr{
+		msgErr: fmt.Errorf("EOF"),
+	})
+
+	err = srv.Process(mock)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "EOF")
+
+	mu.Lock()
+	defer mu.Unlock()
+	var found *logRecord
+	for i := range logs {
+		if logs[i].msg == "tool call" {
+			found = &logs[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "expected 'tool call' audit log entry for error path")
+	require.Equal(t, "alice@example.com", found.attrs["user"])
+	require.Equal(t, "500", found.attrs["status"])
+	require.Equal(t, "req-err-001", found.attrs["request_id"])
+	require.NotEmpty(t, found.attrs["tool"])
 }
 
 // TestExtProcServer_OnConfigChange_DataRace exercises a config-reload landing
