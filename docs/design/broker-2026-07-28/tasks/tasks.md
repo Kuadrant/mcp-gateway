@@ -146,35 +146,37 @@ Implement the 2026 protocol handler:
 
 **Verification:** `make lint && make test-unit`
 
-## Task 5: Wire protocol handlers into broker
+## Task 5: Wire protocol handlers into broker ✅
 
-**Files:** `internal/broker/broker.go`, `internal/broker/user_specific_tools.go`, `internal/broker/protocol_filter.go`
+**Files:** `internal/broker/broker.go`, `internal/broker/user_specific_tools.go`, `internal/broker/protocol_filter.go`, `internal/broker/cache_aggregation.go` (new), `internal/broker/cache_aggregation_test.go` (new), `internal/broker/http_compat_test.go`, `internal/broker/protocol_filter_test.go`, `internal/tests/stateless-server/server.go`, `tests/e2e/dual_protocol_test.go`, `tests/e2e/test_cases.md`
 
 Integrate `ProtocolHandler` into the broker:
 
 - Add `handler2025 ProtocolHandler` and `handler2026 ProtocolHandler` fields to `mcpBrokerImpl`
-- Construct handlers in `NewMCPBroker`
-- In `OnConfigChange.startManagers`: rebuild `perRequestServers` using `ShouldFetchFresh` from the appropriate handler based on upstream protocol version. 2026 upstreams with `cacheScope:"private"` or `ttlMs:0` join the list alongside CRD-declared `userSpecificList` servers
-- When upstream cache metadata changes (detected on re-list in the manager event loop), atomically rebuild `perRequestServers` immediately — not deferred to the next `OnConfigChange`. This prevents a window where a newly-private upstream leaks as public
-- In `filteringMiddleware` `tools/list` case: after `FilterTools`, call `AggregateCache` on the 2026 handler with contributing upstreams' metadata and set `result.TTLMs` and `result.CacheScope` on the `ListToolsResult`
-- In `filteringMiddleware` `prompts/list` case: filter prompts by protocol version via `promptsForProtocol` (mirroring `toolsForProtocol`), then apply same cache aggregation
-- Add `promptsForProtocol` to `protocol_filter.go`: add `statefulPrompts`/`statelessPrompts` atomic caches to `mcpBrokerImpl`, rebuild in `rebuildProtocolToolCache` (rename to `rebuildProtocolCaches`), partition prompts by upstream server version the same way tools are partitioned
-- Refactor `FetchUserSpecificTools` to delegate to the protocol handler selected by client version header
-- Verify: 2025 client responses unchanged (compat handler strips `ttlMs`/`cacheScope`)
-- Verify: 2026 `prompts/list` excludes prompts from 2025-only upstreams
+- Construct handlers in `NewBroker`
+- In `startManagers`: rebuild `userSpecificServers` using `ShouldFetchFresh` from the 2026 handler based on upstream cache metadata. 2026 upstreams with `cacheScope:"private"` or `ttlMs:0` join the list alongside CRD-declared `userSpecificList` servers
+- In `filteringMiddleware` `tools/list` case: **before** `FilterTools` (which strips `kuadrant/id`), call `AggregateCache` on the 2026 handler with contributing upstreams' metadata and set `result.TTLMs` and `result.CacheScope`
+- In `filteringMiddleware` `prompts/list` case: filter prompts by protocol version via `promptsForProtocol` (mirroring `toolsForProtocol`), then apply cache aggregation before `FilterPrompts`
+- Renamed `rebuildProtocolToolCache` to `rebuildProtocolCaches`, added prompt partitioning alongside tools
+- Added `promptsForProtocol` and `statefulPrompts`/`statelessPrompts` atomic caches
+- Refactored `FetchUserSpecificTools` to delegate to the protocol handler selected by client version header
+- Tools and prompts without `kuadrant/id` are excluded from all protocol sets with a warn log (not silently defaulted to stateful)
+- `AggregateCache` returns `"public"` (not empty string) for empty input — the SDK serializes `cacheScope` without `omitempty`
+- Exported `upstream.GatewayServerID` constant for cross-package use
+- Added cache metadata middleware to the stateless test server (env-configurable `TTLMs`/`CacheScope`)
 
 **Acceptance criteria:**
-- [ ] Broker holds two `ProtocolHandler` instances
-- [ ] `perRequestServers` includes 2026 upstreams with `cacheScope:"private"` or `ttlMs:0`
-- [ ] 2026 `tools/list` responses include aggregated `ttlMs` and `cacheScope`
-- [ ] 2025 `tools/list` responses unchanged (compat handler strips fields)
-- [ ] `prompts/list` filtered by protocol version — 2026 clients only see prompts from 2026-capable upstreams
-- [ ] `prompts/list` responses include aggregated fields for 2026 clients
-- [ ] 2025 `prompts/list` responses unchanged
-- [ ] Existing `user_specific_tools_test.go`, `protocol_filter_test.go` tests pass
-- [ ] Unit test: 2026 `prompts/list` excludes 2025-only prompts
-- [ ] `make lint && make test-unit` passes
-- [ ] `make test-controller-integration` passes
+- [x] Broker holds two `ProtocolHandler` instances
+- [x] `userSpecificServers` includes 2026 upstreams with `cacheScope:"private"` or `ttlMs:0`
+- [x] 2026 `tools/list` responses include aggregated `ttlMs` and `cacheScope`
+- [x] 2025 `tools/list` responses unchanged (compat handler strips fields)
+- [x] `prompts/list` filtered by protocol version — 2026 clients only see prompts from 2026-capable upstreams
+- [x] `prompts/list` responses include aggregated fields for 2026 clients
+- [x] 2025 `prompts/list` responses unchanged
+- [x] Existing `user_specific_tools_test.go`, `protocol_filter_test.go` tests pass
+- [x] Unit test: 2026 `prompts/list` excludes 2025-only prompts
+- [x] `make lint && make test-unit` passes
+- [x] `make test-controller-integration` passes
 
 **Verification:** `make lint && make test-unit && make test-controller-integration`
 

@@ -26,7 +26,7 @@ Given one upstream with `ttlMs:45000, cacheScope:"public"`, `AggregateCache` ret
 
 ### AggregateCache empty input
 
-Given no contributing upstreams, `AggregateCache` returns `(0, "")` (no cache fields to set).
+Given no contributing upstreams, `AggregateCache` returns `(0, "public")`. The SDK serializes `cacheScope` without `omitempty`, so an empty string fails spec validation.
 
 ### ShouldFetchFresh triggers on cacheScope private
 
@@ -58,7 +58,7 @@ A 2025 upstream that returns no `ttlMs`/`cacheScope` in its list response gets d
 
 ### filteringMiddleware sets ttlMs and cacheScope on 2026 tools/list
 
-When the middleware processes a `tools/list` result for a 2026 client, it calls `AggregateCache` and sets the result's `TTLMs` and `CacheScope` fields.
+When the middleware processes a `tools/list` result for a 2026 client, it calls `AggregateCache` **before** `FilterTools` (which strips `kuadrant/id` from tool Meta) and sets the result's `TTLMs` and `CacheScope` fields.
 
 ### filteringMiddleware sets ttlMs and cacheScope on 2026 prompts/list
 
