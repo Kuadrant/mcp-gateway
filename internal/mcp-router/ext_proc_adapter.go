@@ -359,17 +359,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", protocolVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
 			decision := router.RouteRequest(ctx, routingReq)
 			if decision.Error != nil && mcpRequest.IsToolCall() {
-				user := ""
-				if mcpRequest.Headers != nil {
-					user = mcpRequest.Headers[routing.MCPVerifiedSubHeader]
-				}
+				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
 				s.Logger.InfoContext(ctx, "tool call",
-					"user", user,
+					"user", authSub,
 					"tool", mcpRequest.ToolName(),
 					"server", mcpRequest.ServerName,
 					"status", strconv.Itoa(decision.Error.StatusCode),
 					"request_id", requestID,
-					"session", mcpRequest.GetSessionID(),
+					"session", internaljwt.LogSafeSessionID(mcpRequest.GetSessionID()),
 				)
 			}
 			routeResponses := decisionToResponse(decision)
@@ -427,17 +424,14 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			respDecision := respHandler.HandleResponse(ctx, respInput)
 
 			if mcpRequest != nil && mcpRequest.IsToolCall() {
-				user := ""
-				if mcpRequest.Headers != nil {
-					user = mcpRequest.Headers[routing.MCPVerifiedSubHeader]
-				}
+				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
 				s.Logger.InfoContext(ctx, "tool call",
-					"user", user,
+					"user", authSub,
 					"tool", mcpRequest.ToolName(),
 					"server", mcpRequest.ServerName,
 					"status", statusCode,
 					"request_id", requestID,
-					"session", mcpRequest.GetSessionID(),
+					"session", internaljwt.LogSafeSessionID(mcpRequest.GetSessionID()),
 				)
 			}
 

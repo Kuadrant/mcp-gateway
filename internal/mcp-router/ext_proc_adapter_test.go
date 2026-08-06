@@ -3,9 +3,11 @@ package mcprouter
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -659,6 +661,12 @@ func requireMatchingHTTPStatus(t *testing.T, expected, actual *typev3.HttpStatus
 	require.Equal(t, expected.Code, actual.Code)
 }
 
+// auditLogRecord holds fields captured from a single slog record.
+type auditLogRecord struct {
+	msg   string
+	attrs map[string]string
+}
+
 // captureLogHandler is a minimal slog.Handler that calls fn for every record at Info+.
 type captureLogHandler struct {
 	fn func(slog.Record)
@@ -697,16 +705,20 @@ func (s *stubResponseHandler) HandleResponse(_ context.Context, _ *routing.Respo
 	return &routing.ResponseDecision{SetHeaders: map[string]string{}}
 }
 
+// makeTestBearer builds a minimal unsigned JWT with the given sub claim, sufficient
+// for ExtractSubClaim (which does not validate signatures).
+func makeTestBearer(sub string) string {
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
+	return "Bearer " + hdr + "." + payload + ".sig"
+}
+
 // TestProcess_ToolCallAuditLog verifies that an Info-level "tool call" audit log entry
 // is emitted when a tools/call request reaches the response headers phase, and that
 // it carries user, tool, server, status, request_id, and session fields.
 func TestProcess_ToolCallAuditLog(t *testing.T) {
-	type logRecord struct {
-		msg   string
-		attrs map[string]string
-	}
 	var mu sync.Mutex
-	var logs []logRecord
+	var logs []auditLogRecord
 
 	captureHandler := &captureLogHandler{fn: func(r slog.Record) {
 		attrs := make(map[string]string)
@@ -715,7 +727,7 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 			return true
 		})
 		mu.Lock()
-		logs = append(logs, logRecord{msg: r.Message, attrs: attrs})
+		logs = append(logs, auditLogRecord{msg: r.Message, attrs: attrs})
 		mu.Unlock()
 	}}
 
@@ -741,7 +753,7 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 							Headers: []*corev3.HeaderValue{
 								{Key: "content-type", RawValue: []byte("application/json")},
 								{Key: "x-request-id", RawValue: []byte("req-abc")},
-								{Key: "x-mcp-verified-sub", RawValue: []byte("alice@example.com")},
+								{Key: "authorization", RawValue: []byte(makeTestBearer("alice@example.com"))},
 								{Key: "mcp-session-id", RawValue: []byte("gw-sess-1")},
 							},
 						},
@@ -756,6 +768,7 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 								HeaderMutation: &extProcV3.HeaderMutation{
 									SetHeaders: []*corev3.HeaderValueOption{
 										{Header: &corev3.HeaderValue{Key: ":authority"}},
+										{Header: &corev3.HeaderValue{Key: "x-mcp-verified-sub", RawValue: []byte("alice@example.com")}},
 									},
 									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 								},
@@ -815,7 +828,7 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var found *logRecord
+	var found *auditLogRecord
 	for i := range logs {
 		if logs[i].msg == "tool call" {
 			found = &logs[i]
@@ -827,19 +840,20 @@ func TestProcess_ToolCallAuditLog(t *testing.T) {
 	require.Equal(t, "200", found.attrs["status"])
 	require.Equal(t, "req-abc", found.attrs["request_id"])
 	require.NotEmpty(t, found.attrs["tool"])
-	require.NotEmpty(t, found.attrs["session"])
+	require.Empty(t, found.attrs["server"]) // stub router does not populate ServerName
+	// session must be the log-safe form (jti: or sha256: prefix), never a raw JWT
+	session := found.attrs["session"]
+	require.True(t,
+		strings.HasPrefix(session, "jti:") || strings.HasPrefix(session, "sha256:"),
+		"session field must be log-safe, got: %s", session)
 }
 
 // TestProcess_ToolCallAuditLog_RouterError verifies that an audit log entry is
 // emitted even when the router returns an error decision (e.g. session init
 // failure), where the response headers phase is never reached.
 func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
-	type logRecord struct {
-		msg   string
-		attrs map[string]string
-	}
 	var mu sync.Mutex
-	var logs []logRecord
+	var logs []auditLogRecord
 
 	captureHandler := &captureLogHandler{fn: func(r slog.Record) {
 		attrs := make(map[string]string)
@@ -848,7 +862,7 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 			return true
 		})
 		mu.Lock()
-		logs = append(logs, logRecord{msg: r.Message, attrs: attrs})
+		logs = append(logs, auditLogRecord{msg: r.Message, attrs: attrs})
 		mu.Unlock()
 	}}
 
@@ -874,7 +888,7 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 							Headers: []*corev3.HeaderValue{
 								{Key: "content-type", RawValue: []byte("application/json")},
 								{Key: "x-request-id", RawValue: []byte("req-err-001")},
-								{Key: "x-mcp-verified-sub", RawValue: []byte("alice@example.com")},
+								{Key: "authorization", RawValue: []byte(makeTestBearer("alice@example.com"))},
 							},
 						},
 					},
@@ -888,6 +902,7 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 								HeaderMutation: &extProcV3.HeaderMutation{
 									SetHeaders: []*corev3.HeaderValueOption{
 										{Header: &corev3.HeaderValue{Key: ":authority"}},
+										{Header: &corev3.HeaderValue{Key: "x-mcp-verified-sub", RawValue: []byte("alice@example.com")}},
 									},
 									RemoveHeaders: []string{"x-mcp-authorized", "x-mcp-virtualserver", "x-mcp-verified-sub"},
 								},
@@ -935,7 +950,7 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var found *logRecord
+	var found *auditLogRecord
 	for i := range logs {
 		if logs[i].msg == "tool call" {
 			found = &logs[i]
@@ -947,6 +962,9 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 	require.Equal(t, "500", found.attrs["status"])
 	require.Equal(t, "req-err-001", found.attrs["request_id"])
 	require.NotEmpty(t, found.attrs["tool"])
+	require.Empty(t, found.attrs["server"]) // stub router does not populate ServerName
+	// session is empty on the error path when no gateway session was established
+	require.Empty(t, found.attrs["session"])
 }
 
 // TestExtProcServer_OnConfigChange_DataRace exercises a config-reload landing
