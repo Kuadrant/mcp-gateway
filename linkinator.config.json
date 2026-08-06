@@ -1,10 +1,18 @@
 {
     "skip": [
+        "release-X\\.Y\\.Z",
+        "vX\\.Y\\.Z",
         "^https?://localhost:(3000|6274|8080|8200|8888|15000)",
         "sslip\\.io",
         "api\\.githubcopilot\\.com",
         "example\\.com",
-        "your-cluster"
+        "your-cluster",
+        "registry\\.redhat\\.io",
+        "registry\\.access\\.redhat\\.com",
+        "docs\\.redhat\\.com",
+        "issues\\.redhat\\.com",
+        "console\\.redhat\\.com",
+        "access\\.redhat\\.com"
     ],
     "recurse": true,
     "directoryListing": true,

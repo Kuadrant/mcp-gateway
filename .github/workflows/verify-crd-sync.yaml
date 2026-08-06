@@ -7,14 +7,12 @@ on:
       - 'api/**'
       - 'config/crd/**'
       - 'charts/mcp-gateway/crds/**'
-      - 'bundle/manifests/**'
   push:
     branches: [main]
     paths:
       - 'api/**'
       - 'config/crd/**'
       - 'charts/mcp-gateway/crds/**'
-      - 'bundle/manifests/**'
   workflow_dispatch:
 
 concurrency:
@@ -91,9 +89,4 @@ jobs:
         echo "   make update-helm-crds" >> $GITHUB_STEP_SUMMARY
         echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "3. If bundle manifests are out of sync, run:" >> $GITHUB_STEP_SUMMARY
-        echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "   make bundle" >> $GITHUB_STEP_SUMMARY
-        echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "4. Commit the updated files and push again" >> $GITHUB_STEP_SUMMARY
+        echo "3. Commit the updated files and push again" >> $GITHUB_STEP_SUMMARY

@@ -33,25 +33,17 @@ DEFAULT_IMAGE_TAG = latest
 is_semantic_version = $(shell echo "$(1)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' && echo "true")
 version_is_semantic := $(call is_semantic_version,$(VERSION))
 ifeq (0.0.0,$(VERSION))
-BUNDLE_VERSION = $(VERSION)
 IMAGE_TAG = latest
 else ifeq ($(version_is_semantic),true)
-BUNDLE_VERSION = $(VERSION)
 IMAGE_TAG = v$(VERSION)
 else
-BUNDLE_VERSION = 0.0.0
 IMAGE_TAG ?= $(DEFAULT_IMAGE_TAG)
 endif
 
-# OLM
 REGISTRY ?= ghcr.io
 ORG ?= kuadrant
 IMAGE_TAG_BASE ?= $(REGISTRY)/$(ORG)/mcp-controller
 GATEWAY_IMG ?= $(REGISTRY)/$(ORG)/mcp-gateway:$(IMAGE_TAG)
-BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:$(IMAGE_TAG)
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:$(IMAGE_TAG)
-CHANNELS ?= preview
-DEFAULT_CHANNEL ?= preview
 
 
 ## Location to install dependencies to
@@ -161,7 +153,7 @@ check-rbac-sync: yq ## Check if kustomize and helm chart RBAC rules match genera
 	fi
 
 # Run all sync checks
-check: check-crd-sync check-bundle-crd-sync check-rbac-sync ## Check all generated resources are synchronized
+check: check-crd-sync check-rbac-sync ## Check all generated resources are synchronized
 
 # Generate CRDs from Go types
 generate-crds: generate ## Generate CRD manifests from Go types
@@ -205,14 +197,6 @@ check-crd-sync: ## Check if CRDs are synchronized between config/crd and charts/
 		echo "✅ CRDs are synchronized"; \
 	fi
 
-# Check if bundle manifests are up to date
-check-bundle-crd-sync: bundle ## Check if bundle manifests are up to date
-	@if ! git diff --quiet bundle/; then \
-		echo "❌ Bundle manifests are out of date. Run 'make bundle' and commit the changes."; \
-		git diff --stat bundle/; \
-		exit 1; \
-	fi
-	@echo "✅ Bundle manifests are up to date"
 
 # Install CRD
 install-crd: ## Install MCPServerRegistration and MCPVirtualServer CRDs
@@ -748,8 +732,6 @@ tools: ## Install all required tools (kind, helm, kustomize, yq, istioctl, contr
 	@if [ -f bin/yq ]; then echo "[OK] yq already installed"; else echo "Installing yq..."; "$(MAKE)" -s yq; fi
 	@if [ -f bin/istioctl ]; then echo "[OK] istioctl already installed"; else echo "Installing istioctl..."; "$(MAKE)" -s istioctl; fi
 	@if [ -f bin/controller-gen ]; then echo "[OK] controller-gen already installed"; else echo "Installing controller-gen..."; "$(MAKE)" -s controller-gen; fi
-	@if [ -f bin/operator-sdk ]; then echo "[OK] operator-sdk already installed"; else echo "Installing operator-sdk..."; "$(MAKE)" -s operator-sdk; fi
-	@if [ -f bin/opm ]; then echo "[OK] opm already installed"; else echo "Installing opm..."; "$(MAKE)" -s opm; fi
 	@echo "All tools ready!"
 
 .PHONY: local-env-setup
@@ -766,24 +748,6 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-stateless-server
 	@"$(MAKE)" -s local-env-setup-complete-message
 
-.PHONY: local-env-setup-olm
-local-env-setup-olm: setup-cluster-base ## Setup local environment with MCP Gateway and Kuadrant via OLM
-	@echo "========================================="
-	@echo "Setting up Local OLM Environment"
-	@echo "========================================="
-	"$(MAKE)" deploy-gateway
-	"$(MAKE)" deploy-namespaces
-	kubectl apply -f config/mcp-gateway/overlays/mcp-system/trusted-header-public-key.yaml -n $(MCP_GATEWAY_NAMESPACE)
-	"$(MAKE)" cert-manager-install
-	"$(MAKE)" deploy-olm
-	"$(MAKE)" deploy-kuadrant-catalog
-	# apply MCPGatewayExtension CR and HTTPRoute (not OLM resources — those are in deploy-olm)
-	kubectl apply -k config/mcp-gateway/base/ -n $(MCP_GATEWAY_NAMESPACE)
-	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n $(MCP_GATEWAY_NAMESPACE) --timeout=$(WAIT_TIME)
-	"${MAKE}" add-jwt-key
-	"$(MAKE)" deploy-everything-server
-	"$(MAKE)" deploy-example-minimal
-	@"$(MAKE)" -s local-env-setup-complete-message
 
 .PHONY: local-env-setup-complete-message
 local-env-setup-complete-message:
