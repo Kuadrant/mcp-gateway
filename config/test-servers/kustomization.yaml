@@ -46,3 +46,7 @@ resources:
   - stateless-server-deployment.yaml
   - stateless-server-service.yaml
   - stateless-server-httproute.yaml
+  - a2a-server-deployment.yaml
+  - a2a-server-service.yaml
+  - a2a-server-httproute.yaml
+  - a2a-server-httproute-ext.yaml

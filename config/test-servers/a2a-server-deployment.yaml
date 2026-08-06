@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: a2a-test-server
+  labels:
+    app: a2a-test-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: a2a-test-server
+  template:
+    metadata:
+      labels:
+        app: a2a-test-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+      - name: a2a-test-server
+        image: ghcr.io/kuadrant/mcp-gateway/test-a2a-server:latest
+        imagePullPolicy: Never
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        ports:
+        - containerPort: 9090
+          name: http
+        env:
+        - name: AGENT_NAME
+          value: "a2a-test-agent"
+        - name: SKILLS
+          value: "forecast,alerts"
+        - name: AGENT_URL
+          value: "http://a2a-test-server.mcp-test.svc.cluster.local:9090/a2a"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
