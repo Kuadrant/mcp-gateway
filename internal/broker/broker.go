@@ -560,9 +560,10 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 
 	m.syncTagsTools(ctx, servers)
 
-	// precompute userSpecificList servers for FetchUserSpecificTools
+	// precompute CRD-declared userSpecificList servers for FetchUserSpecificTools.
+	// 2026 cache-metadata-driven servers are checked at request time in
+	// FetchUserSpecificTools to avoid racing with managers still connecting.
 	m.userSpecificServers = nil
-	seen := make(map[config.UpstreamMCPID]bool)
 	for _, srv := range servers {
 		if srv.UserSpecificList {
 			m.userSpecificServers = append(m.userSpecificServers, userSpecificServer{
@@ -572,28 +573,6 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 				prefix: srv.Prefix,
 				caCert: srv.CACert,
 			})
-			seen[srv.ID()] = true
-		}
-	}
-	// 2026 upstreams with cacheScope:"private" or ttlMs:0 also need per-request fetching
-	for id, mgr := range m.mcpServers {
-		if seen[id] {
-			continue
-		}
-		if !slices.Contains(mgr.SupportedVersions(), protocol.Version2026) {
-			continue
-		}
-		meta := mgr.ToolsCacheMetadata()
-		cfg := mgr.Config()
-		srv := userSpecificServer{
-			id:     id,
-			name:   cfg.Name,
-			url:    cfg.URL,
-			prefix: cfg.Prefix,
-			caCert: cfg.CACert,
-		}
-		if m.handler2026.ShouldFetchFresh(srv, &meta) {
-			m.userSpecificServers = append(m.userSpecificServers, srv)
 		}
 	}
 
@@ -821,6 +800,23 @@ func (m *mcpBrokerImpl) IsReady() bool {
 		}
 	}
 	return false
+}
+
+// serverSupportsVersionCached checks the serverVersions sync.Map only.
+// Safe to call while holding mcpLock (no lock acquisition).
+// Returns false on cache miss — the caller must accept that unconnected
+// servers are invisible until the cache is populated by ServerSupportsVersion
+// or rebuildProtocolCaches.
+func (m *mcpBrokerImpl) serverSupportsVersionCached(id config.UpstreamMCPID, version string) bool {
+	val, ok := m.serverVersions.Load(id)
+	if !ok {
+		return false
+	}
+	versions, ok := val.([]string)
+	if !ok {
+		return false
+	}
+	return slices.Contains(versions, version)
 }
 
 // ServerSupportsVersion returns true if the given upstream server supports the specified protocol version.

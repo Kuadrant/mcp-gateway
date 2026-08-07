@@ -50,19 +50,12 @@ type cachedUserSession struct {
 	headers atomic.Pointer[map[string]string]
 }
 
-// FetchUserSpecificTools fetches tools from userSpecificList servers using the
-// caller's session headers and merges them into the result before FilterTools runs.
-// Only servers supporting the client's protocol version are queried.
-// Delegates to the appropriate ProtocolHandler for version-specific fetch logic.
+// FetchUserSpecificTools fetches tools from servers that need per-request
+// fetching and merges them into the result before FilterTools runs.
+// Sources: CRD-declared userSpecificList (precomputed in startManagers) and
+// 2026 upstreams whose cache metadata indicates fresh fetching (evaluated here
+// at request time so newly-connected managers are picked up without a config change).
 func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
-	broker.mcpLock.RLock()
-	servers := broker.userSpecificServers
-	broker.mcpLock.RUnlock()
-
-	if len(servers) == 0 {
-		return
-	}
-
 	clientVersion := protocol.Version2025
 	handler := broker.handler2025
 	if headers.Get(protocolVersionHeader) == protocol.Version2026 {
@@ -70,13 +63,49 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		handler = broker.handler2026
 	}
 
-	// filter to servers supporting the client's protocol
+	// collect CRD-declared userSpecificList servers
+	broker.mcpLock.RLock()
+	crdServers := broker.userSpecificServers
+	broker.mcpLock.RUnlock()
+
+	seen := make(map[config.UpstreamMCPID]bool, len(crdServers))
 	var matching []userSpecificServer
-	for _, srv := range servers {
+	for _, srv := range crdServers {
 		if broker.ServerSupportsVersion(srv.id, clientVersion) {
 			matching = append(matching, srv)
 		}
+		seen[srv.id] = true
 	}
+
+	// for 2026 clients, also include connected upstreams whose cache metadata
+	// indicates per-request fetching (cacheScope:"private" or ttlMs:0).
+	// uses serverVersions sync.Map (not ServerSupportsVersion) to avoid
+	// re-entrant mcpLock.RLock inside the locked section below.
+	if clientVersion == protocol.Version2026 {
+		broker.mcpLock.RLock()
+		for id, mgr := range broker.mcpServers {
+			if seen[id] {
+				continue
+			}
+			if !broker.serverSupportsVersionCached(id, protocol.Version2026) {
+				continue
+			}
+			meta := mgr.ToolsCacheMetadata()
+			cfg := mgr.Config()
+			srv := userSpecificServer{
+				id:     id,
+				name:   cfg.Name,
+				url:    cfg.URL,
+				prefix: cfg.Prefix,
+				caCert: cfg.CACert,
+			}
+			if broker.handler2026.ShouldFetchFresh(srv, &meta) {
+				matching = append(matching, srv)
+			}
+		}
+		broker.mcpLock.RUnlock()
+	}
+
 	if len(matching) == 0 {
 		return
 	}
