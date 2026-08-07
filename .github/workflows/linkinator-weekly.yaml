@@ -18,7 +18,7 @@ jobs:
     name: Full Documentation Link Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: JustinBeckwith/linkinator-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # ratchet:actions/checkout@v4
+      - uses: JustinBeckwith/linkinator-action@36a0bfbfecd5e237e8f8531537a693616c505faf # ratchet:JustinBeckwith/linkinator-action@v2
         with:
           paths: "**/*.md"

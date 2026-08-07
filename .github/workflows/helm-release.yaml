@@ -30,110 +30,110 @@ jobs:
       packages: write
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # ratchet:actions/checkout@v4
 
-    - name: Determine versions
-      id: versions
-      run: |
-        if [ "${{ github.event_name }}" = "release" ]; then
-          # Extract version from release tag (e.g., v0.4.2 -> 0.4.2)
-          TAG="${{ github.event.release.tag_name }}"
-          CHART_VERSION="${TAG#v}"
-          APP_VERSION="${TAG}"
-        else
-          # Manual workflow dispatch
-          CHART_VERSION="${{ inputs.chart_version }}"
-          APP_VERSION="${{ inputs.app_version }}"
-          # Default app_version to v + chart_version if not specified
-          if [ -z "$APP_VERSION" ]; then
-            APP_VERSION="v${CHART_VERSION}"
+      - name: Determine versions
+        id: versions
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Extract version from release tag (e.g., v0.4.2 -> 0.4.2)
+            TAG="${{ github.event.release.tag_name }}"
+            CHART_VERSION="${TAG#v}"
+            APP_VERSION="${TAG}"
+          else
+            # Manual workflow dispatch
+            CHART_VERSION="${{ inputs.chart_version }}"
+            APP_VERSION="${{ inputs.app_version }}"
+            # Default app_version to v + chart_version if not specified
+            if [ -z "$APP_VERSION" ]; then
+              APP_VERSION="v${CHART_VERSION}"
+            fi
           fi
-        fi
 
-        # lowercase owner for OCI registry compatibility
-        OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # lowercase owner for OCI registry compatibility
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-        echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
-        echo "app_version=${APP_VERSION}" >> $GITHUB_OUTPUT
-        echo "owner=${OWNER}" >> $GITHUB_OUTPUT
-        echo "Chart Version: ${CHART_VERSION}"
-        echo "App Version: ${APP_VERSION}"
-        echo "Owner: ${OWNER}"
+          echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
+          echo "app_version=${APP_VERSION}" >> $GITHUB_OUTPUT
+          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
+          echo "Chart Version: ${CHART_VERSION}"
+          echo "App Version: ${APP_VERSION}"
+          echo "Owner: ${OWNER}"
 
-    - name: Validate chart version format
-      run: |
-        if [[ ! "${{ steps.versions.outputs.chart_version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
-          echo "Error: Chart version must be in semver format X.Y.Z or X.Y.Z-prerelease (e.g., 0.4.2, 0.5.0-rc1)"
-          echo "Got: ${{ steps.versions.outputs.chart_version }}"
-          exit 1
-        fi
+      - name: Validate chart version format
+        run: |
+          if [[ ! "${{ steps.versions.outputs.chart_version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$ ]]; then
+            echo "Error: Chart version must be in semver format X.Y.Z or X.Y.Z-prerelease (e.g., 0.4.2, 0.5.0-rc1)"
+            echo "Got: ${{ steps.versions.outputs.chart_version }}"
+            exit 1
+          fi
 
-    - name: Install Helm
-      uses: azure/setup-helm@v4
-      with:
-        version: '3.14.0'
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # ratchet:azure/setup-helm@v4
+        with:
+          version: '3.14.0'
 
-    - name: Update Chart.yaml versions
-      run: |
-        sed -i "s/version: .*/version: ${{ steps.versions.outputs.chart_version }}/" charts/mcp-gateway/Chart.yaml
-        sed -i "s/appVersion: .*/appVersion: \"${{ steps.versions.outputs.app_version }}\"/" charts/mcp-gateway/Chart.yaml
+      - name: Update Chart.yaml versions
+        run: |
+          sed -i "s/version: .*/version: ${{ steps.versions.outputs.chart_version }}/" charts/mcp-gateway/Chart.yaml
+          sed -i "s/appVersion: .*/appVersion: \"${{ steps.versions.outputs.app_version }}\"/" charts/mcp-gateway/Chart.yaml
 
-        echo "Updated Chart.yaml:"
-        cat charts/mcp-gateway/Chart.yaml
+          echo "Updated Chart.yaml:"
+          cat charts/mcp-gateway/Chart.yaml
 
-    - name: Lint Helm chart
-      run: |
-        helm lint charts/mcp-gateway
+      - name: Lint Helm chart
+        run: |
+          helm lint charts/mcp-gateway
 
-    - name: Template Helm chart (dry run)
-      run: |
-        helm template test-release charts/mcp-gateway --debug
+      - name: Template Helm chart (dry run)
+        run: |
+          helm template test-release charts/mcp-gateway --debug
 
-    - name: Run Helm unit tests (if kubeconform is available)
-      run: |
-        # Install kubeconform for validation
-        curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-        sudo mv kubeconform /usr/local/bin
+      - name: Run Helm unit tests (if kubeconform is available)
+        run: |
+          # Install kubeconform for validation
+          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin
 
-        # Validate generated manifests (ignore unknown CRDs like EnvoyFilter)
-        helm template test-release charts/mcp-gateway | kubeconform -strict -summary -ignore-missing-schemas
+          # Validate generated manifests (ignore unknown CRDs like EnvoyFilter)
+          helm template test-release charts/mcp-gateway | kubeconform -strict -summary -ignore-missing-schemas
 
-    - name: Package Helm chart
-      run: |
-        helm package charts/mcp-gateway --destination ./chart-packages
-        echo "Generated packages:"
-        ls -la ./chart-packages/
+      - name: Package Helm chart
+        run: |
+          helm package charts/mcp-gateway --destination ./chart-packages
+          echo "Generated packages:"
+          ls -la ./chart-packages/
 
-    - name: Login to Container Registry
-      run: |
-        echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+      - name: Login to Container Registry
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
-    - name: Push chart to OCI registry
-      run: |
-        chart_package=$(ls ./chart-packages/mcp-gateway-*.tgz)
-        echo "Pushing chart package: $chart_package"
-        helm push "$chart_package" oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts
+      - name: Push chart to OCI registry
+        run: |
+          chart_package=$(ls ./chart-packages/mcp-gateway-*.tgz)
+          echo "Pushing chart package: $chart_package"
+          helm push "$chart_package" oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts
 
-    - name: Verify chart installation
-      run: |
-        # Verify the chart we just pushed works (client-only, no cluster needed)
-        echo "Testing chart template rendering from OCI registry..."
-        helm template test-install oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --debug
+      - name: Verify chart installation
+        run: |
+          # Verify the chart we just pushed works (client-only, no cluster needed)
+          echo "Testing chart template rendering from OCI registry..."
+          helm template test-install oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --debug
 
-    - name: Generate release summary
-      run: |
-        echo "## Helm Chart Release Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Chart Name:** ${{ env.CHART_NAME }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Chart Version:** ${{ steps.versions.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **App Version:** ${{ steps.versions.outputs.app_version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Registry:** ${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Installation Command" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "helm install mcp-gateway oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --create-namespace --namespace mcp-system" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      - name: Generate release summary
+        run: |
+          echo "## Helm Chart Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart Name:** ${{ env.CHART_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart Version:** ${{ steps.versions.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **App Version:** ${{ steps.versions.outputs.app_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** ${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "helm install mcp-gateway oci://${{ env.REGISTRY }}/${{ steps.versions.outputs.owner }}/charts/mcp-gateway --version ${{ steps.versions.outputs.chart_version }} --create-namespace --namespace mcp-system" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   create-git-tag:
     # Only create chart tag for manual workflow dispatch (releases already have a tag)
@@ -144,16 +144,16 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # ratchet:actions/checkout@v4
 
-    - name: Create and push git tag
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Create and push git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        tag_name="chart-v${{ inputs.chart_version }}"
-        git tag -a "$tag_name" -m "Helm chart release v${{ inputs.chart_version }}"
-        git push origin "$tag_name"
+          tag_name="chart-v${{ inputs.chart_version }}"
+          git tag -a "$tag_name" -m "Helm chart release v${{ inputs.chart_version }}"
+          git push origin "$tag_name"
 
-        echo "Created git tag: $tag_name"
+          echo "Created git tag: $tag_name"

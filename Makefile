@@ -842,6 +842,26 @@ status: ## Show status of all MCP components
 	@"$(MAKE)" -s -f build/inspect.mk status-impl
 
 
+##@ Verify
+
+RATCHET ?= $(LOCALBIN)/ratchet
+RATCHET_VERSION ?= v0.11.4
+
+.PHONY: ratchet
+ratchet: $(LOCALBIN) ## Download ratchet locally if necessary.
+	@if [ ! -f $(RATCHET) ]; then \
+		echo "Installing ratchet $(RATCHET_VERSION)..."; \
+		GOBIN=$(LOCALBIN) go install github.com/sethvargo/ratchet@$(RATCHET_VERSION); \
+	fi
+
+.PHONY: ratchet-pin
+ratchet-pin: ratchet ## Pin GitHub Actions to commit SHAs.
+	$(RATCHET) pin $$(find .github/workflows \( -name '*.yaml' -o -name '*.yml' \) ! -name 'issue-triage.yaml')
+
+.PHONY: verify-ratchet
+verify-ratchet: ratchet ## Verify GitHub Actions are pinned to commit SHAs.
+	$(RATCHET) lint $$(find .github/workflows \( -name '*.yaml' -o -name '*.yml' \) ! -name 'issue-triage.yaml')
+
 ##@ Tools
 
 .PHONY: istioctl
