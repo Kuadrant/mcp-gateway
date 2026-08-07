@@ -29,7 +29,9 @@ import (
 const (
 	notificationToolsListChanged   = "notifications/tools/list_changed"
 	notificationPromptsListChanged = "notifications/prompts/list_changed"
-	GatewayServerID                = "kuadrant/id"
+	// GatewayServerID is the meta key stamped on every tool and prompt to
+	// identify which upstream server owns it.
+	GatewayServerID = "kuadrant/id"
 
 	// expectedProtocolVersion is the version the broker proposes in its
 	// legacy initialize to upstreams (the SDK client's fallback proposal),

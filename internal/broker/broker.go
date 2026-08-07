@@ -580,6 +580,9 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 		if seen[id] {
 			continue
 		}
+		if !slices.Contains(mgr.SupportedVersions(), protocol.Version2026) {
+			continue
+		}
 		meta := mgr.ToolsCacheMetadata()
 		cfg := mgr.Config()
 		srv := userSpecificServer{
@@ -589,8 +592,6 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 			prefix: cfg.Prefix,
 			caCert: cfg.CACert,
 		}
-		// handler2026 only — handler2025.ShouldFetchFresh takes mcpLock.RLock
-		// which would deadlock under our Lock
 		if m.handler2026.ShouldFetchFresh(srv, &meta) {
 			m.userSpecificServers = append(m.userSpecificServers, srv)
 		}
