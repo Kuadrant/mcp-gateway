@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -70,7 +71,7 @@ func TestProtectedResourceHandler_Handle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			handler := &ProtectedResourceHandler{Logger: logger}
 
-			req := httptest.NewRequest(tc.method, "/.well-known/oauth-protected-resource", nil)
+			req := httptest.NewRequestWithContext(context.Background(), tc.method, "/.well-known/oauth-protected-resource", nil)
 			rec := httptest.NewRecorder()
 
 			handler.Handle(rec, req)

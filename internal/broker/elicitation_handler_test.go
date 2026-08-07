@@ -72,7 +72,7 @@ func TestElicitationHandler_MissingHeaders(t *testing.T) {
 		{"missing_elicitation_id", "42", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 			if tc.requestID != "" {
 				req.Header.Set(sharedheaders.ElicitationRequestID, tc.requestID)
 			}
@@ -95,7 +95,7 @@ func TestElicitationHandler_InvalidElicitationID(t *testing.T) {
 		Config:         &stubServerConfig{},
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 	req.Header.Set(sharedheaders.ElicitationRequestID, "42")
 	req.Header.Set(sharedheaders.ElicitationID, "nonexistent")
 	w := httptest.NewRecorder()
@@ -112,7 +112,7 @@ func TestElicitationHandler_LookupError(t *testing.T) {
 		Config:         &stubServerConfig{},
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 	req.Header.Set(sharedheaders.ElicitationRequestID, "42")
 	req.Header.Set(sharedheaders.ElicitationID, "eid-123")
 	w := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestElicitationHandler_ExternalURLConfigured(t *testing.T) {
 		"gateway.example.com",
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 	req.Header.Set(sharedheaders.ElicitationRequestID, "42")
 	req.Header.Set(sharedheaders.ElicitationID, eid)
 	req.Header.Set("Mcp-Session-Id", "session-xyz")
@@ -166,7 +166,7 @@ func TestElicitationHandler_XForwardedProto(t *testing.T) {
 		"gateway.example.com",
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "http://gateway.example.com/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://gateway.example.com/mcp/elicitation", nil)
 	req.Header.Set(sharedheaders.ElicitationRequestID, "7")
 	req.Header.Set(sharedheaders.ElicitationID, eid)
 	req.Header.Set("X-Forwarded-Proto", "http")
@@ -190,7 +190,7 @@ func TestElicitationHandler_FallbackHostname(t *testing.T) {
 		"fallback.example.com",
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 	req.Host = ""
 	req.Header.Set(sharedheaders.ElicitationRequestID, "99")
 	req.Header.Set(sharedheaders.ElicitationID, eid)
@@ -214,7 +214,7 @@ func TestElicitationHandler_NoSessionHeader(t *testing.T) {
 		"gw.example.com",
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/elicitation", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/mcp/elicitation", nil)
 	req.Header.Set(sharedheaders.ElicitationRequestID, "1")
 	req.Header.Set(sharedheaders.ElicitationID, eid)
 	w := httptest.NewRecorder()

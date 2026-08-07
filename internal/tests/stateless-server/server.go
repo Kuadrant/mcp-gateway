@@ -164,7 +164,7 @@ func logRequest(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
 
-		log.Printf("[stateless-server] %s %s status=%d protocol-version=%q mcp-method=%q mcp-name=%q body=%s",
+		log.Printf("[stateless-server] %s %s status=%d protocol-version=%q mcp-method=%q mcp-name=%q body=%s", //nolint:gosec // G706: test server, values are %q quoted
 			r.Method, r.URL.Path, rec.status,
 			r.Header.Get("Mcp-Protocol-Version"),
 			r.Header.Get("Mcp-Method"),

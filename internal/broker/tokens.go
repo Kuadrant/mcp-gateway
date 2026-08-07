@@ -81,7 +81,7 @@ func (h *TokenHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure/HttpOnly/SameSite set below
 		Name:     "csrf",
 		Value:    csrf,
 		Path:     "/tokens",

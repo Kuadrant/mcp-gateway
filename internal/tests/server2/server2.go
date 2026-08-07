@@ -268,7 +268,7 @@ func logResponse(next http.Handler) http.Handler {
 			clientID = "-"
 		}
 		// quoting attacker-controllable header values prevents log forging
-		log.Printf("%q %q %d req-session=%q resp-session=%q x-client-id=%q", r.Method, r.URL.Path, rec.status, reqSession, respSession, clientID)
+		log.Printf("%q %q %d req-session=%q resp-session=%q x-client-id=%q", r.Method, r.URL.Path, rec.status, reqSession, respSession, clientID) //nolint:gosec // G706: values are %q quoted
 	})
 }
 
