@@ -45,7 +45,7 @@ func (h *ProtocolHandler2026) ShouldFetchFresh(_ userSpecificServer, meta *upstr
 // "private" if any upstream is private, user-specific, or zero-TTL.
 func (h *ProtocolHandler2026) AggregateCache(contributing []upstream.CacheMetadata) (int, string) {
 	if len(contributing) == 0 {
-		return 0, ""
+		return 0, upstream.CacheScopePublic
 	}
 
 	minTTL := 0

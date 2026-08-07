@@ -139,6 +139,7 @@ func TestFetchUserSpecificTools_NoGatewaySessionID(t *testing.T) {
 		userSpecificFetchTimeout: 5 * time.Second,
 	}
 	withStatefulVersions(broker, servers)
+	withProtocolHandlers(broker)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing-tool"}},
@@ -161,6 +162,12 @@ func withStatefulVersions(b *mcpBrokerImpl, servers []userSpecificServer) {
 	for _, srv := range servers {
 		b.serverVersions.Store(srv.id, []string{"2025-11-25"})
 	}
+}
+
+// withProtocolHandlers initializes the protocol handlers on a test broker.
+func withProtocolHandlers(b *mcpBrokerImpl) {
+	b.handler2025 = NewProtocolHandler2025(b)
+	b.handler2026 = NewProtocolHandler2026(b)
 }
 
 // newTestMCPServer returns a test HTTP server that handles MCP initialize and
@@ -243,6 +250,7 @@ func TestFetchUserSpecificTools_FetchesAndMergesTools(t *testing.T) {
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
 	withStatefulVersions(b, servers)
+	withProtocolHandlers(b)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "cached-tool"}},
@@ -288,6 +296,7 @@ func TestFetchUserSpecificTools_GracefulDegradation(t *testing.T) {
 		userSpecificFetchTimeout: 2 * time.Second,
 	}
 	withStatefulVersions(b, servers)
+	withProtocolHandlers(b)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "existing"}},
@@ -355,6 +364,7 @@ func TestFetchUserSpecificTools_SessionCaching(t *testing.T) {
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
 	withStatefulVersions(b, servers)
+	withProtocolHandlers(b)
 
 	makeHeaders := func() http.Header {
 		return http.Header{
@@ -615,6 +625,7 @@ func TestFetchUserSpecificTools_StatelessFetch(t *testing.T) {
 		userSpecificFetchTimeout: 10 * time.Second,
 	}
 	b.serverVersions.Store(srv.id, []string{"2026-07-28"})
+	withProtocolHandlers(b)
 
 	result := &mcp.ListToolsResult{
 		Tools: []*mcp.Tool{{Name: "cached-tool"}},
@@ -663,6 +674,7 @@ func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
 	}
 	b.serverVersions.Store(srv2025.id, []string{"2025-11-25"})
 	b.serverVersions.Store(srv2026.id, []string{"2026-07-28"})
+	withProtocolHandlers(b)
 
 	t.Run("2025 client sees only 2025 tools", func(t *testing.T) {
 		result := &mcp.ListToolsResult{}

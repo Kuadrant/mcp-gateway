@@ -107,7 +107,7 @@ func TestProtocolHandler2026_AggregateCache_Empty(t *testing.T) {
 	h := NewProtocolHandler2026(nil)
 	ttl, scope := h.AggregateCache(nil)
 	assert.Equal(t, 0, ttl)
-	assert.Equal(t, "", scope)
+	assert.Equal(t, upstream.CacheScopePublic, scope)
 }
 
 func TestProtocolHandler2026_FetchUserSpecificTools_EmptyServers(t *testing.T) {

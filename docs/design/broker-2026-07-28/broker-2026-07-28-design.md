@@ -125,7 +125,7 @@ When `CacheScope` or `TTLMs` changes (detected on re-list), the broker atomicall
 
 ### Aggregated values in filteringMiddleware
 
-After protocol filtering, `FetchUserSpecificTools`, and `FilterTools` run, the middleware computes aggregated `ttlMs` and `cacheScope` from contributing upstreams and sets them on the result. The same aggregation applies to `prompts/list`.
+After protocol filtering and `FetchUserSpecificTools`, but **before** `FilterTools` (which strips `kuadrant/id` from tool Meta), the middleware computes aggregated `ttlMs` and `cacheScope` from contributing upstreams and sets them on the result. The same aggregation applies to `prompts/list` (before `FilterPrompts`).
 
 For 2025 clients, the compat handler strips these fields downstream — no change needed there. 2026 clients already bypass the compat handler via `protocolRouter` (verification task only).
 

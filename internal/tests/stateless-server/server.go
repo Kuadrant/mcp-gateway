@@ -10,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +75,7 @@ func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
 		InputSchema: map[string]any{"type": "object"},
 	}, stubToolHandler("run_pipeline"))
 
-	s.AddReceivingMiddleware(userToolFilterMiddleware())
+	s.AddReceivingMiddleware(userToolFilterMiddleware(), cacheMetadataMiddleware())
 
 	// greeting prompt
 	s.AddPrompt(&mcp.Prompt{
@@ -236,6 +238,55 @@ func userToolFilterMiddleware() mcp.Middleware {
 			return result, nil
 		}
 	}
+}
+
+// cacheMetadataMiddleware sets TTLMs and CacheScope on tools/list and
+// prompts/list responses. Values are configurable via env vars:
+// MCP_TOOLS_TTL_MS (default 60000), MCP_TOOLS_CACHE_SCOPE (default "public"),
+// MCP_PROMPTS_TTL_MS (default 60000), MCP_PROMPTS_CACHE_SCOPE (default "public").
+func cacheMetadataMiddleware() mcp.Middleware {
+	toolsTTL := envInt("MCP_TOOLS_TTL_MS", 60000)
+	toolsScope := envStr("MCP_TOOLS_CACHE_SCOPE", "public")
+	promptsTTL := envInt("MCP_PROMPTS_TTL_MS", 60000)
+	promptsScope := envStr("MCP_PROMPTS_CACHE_SCOPE", "public")
+
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil {
+				return result, err
+			}
+			switch method {
+			case "tools/list":
+				if tr, ok := result.(*mcp.ListToolsResult); ok && tr != nil {
+					tr.TTLMs = toolsTTL
+					tr.CacheScope = toolsScope
+				}
+			case "prompts/list":
+				if pr, ok := result.(*mcp.ListPromptsResult); ok && pr != nil {
+					pr.TTLMs = promptsTTL
+					pr.CacheScope = promptsScope
+				}
+			}
+			return result, nil
+		}
+	}
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envStr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // requireStringArg parses an argument with mark3labs RequireString

@@ -501,6 +501,22 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - Client connects to `/mcp/stateless`, calls a 2026 tool. Routes through Router202607. Call succeeds.
 
+### [Happy,Broker2026] 2026 client tools/list returns ttlMs and cacheScope
+
+- A 2026 client sends `tools/list` to the gateway. The upstream 2026 test server reports `ttlMs:60000` and `cacheScope:"public"`. The response includes `ttlMs > 0` and a non-empty `cacheScope`.
+
+### [Happy,Broker2026] 2025 client tools/list has no ttlMs or cacheScope
+
+- A 2025 client sends `tools/list` via raw HTTP. The JSON response body does not contain `"ttlMs"` or `"cacheScope"` fields — the compat handler strips them.
+
+### [Happy,Broker2026] 2026 client prompts/list excludes 2025-only prompts
+
+- A gateway has both 2025 and 2026 upstreams with prompts. A 2026 client sends `prompts/list`. The response includes only prompts from the 2026 upstream (sl_ prefix). Prompts from the 2025-only upstream (sf_ prefix) are absent.
+
+### [Happy,Broker2026] 2026 client prompts/list returns cache metadata
+
+- A 2026 client sends `prompts/list`. The response includes `ttlMs > 0` and a non-empty `cacheScope` aggregated from the 2026 upstream's cache metadata.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

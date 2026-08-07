@@ -468,6 +468,14 @@ func (up *MCPServer) PromptsCacheMetadata() CacheMetadata {
 	return up.promptsCacheMeta
 }
 
+// SetCacheMetadataForTesting sets cache metadata directly for testing.
+func (up *MCPServer) SetCacheMetadataForTesting(toolsMeta, promptsMeta CacheMetadata) {
+	up.clientMu.Lock()
+	defer up.clientMu.Unlock()
+	up.toolsCacheMeta = toolsMeta
+	up.promptsCacheMeta = promptsMeta
+}
+
 // SupportsPrompts checks if the upstream server declared prompt capabilities
 func (up *MCPServer) SupportsPrompts() bool {
 	if up.init == nil || up.init.Capabilities == nil {

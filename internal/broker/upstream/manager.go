@@ -29,7 +29,9 @@ import (
 const (
 	notificationToolsListChanged   = "notifications/tools/list_changed"
 	notificationPromptsListChanged = "notifications/prompts/list_changed"
-	gatewayServerID                = "kuadrant/id"
+	// GatewayServerID is the meta key stamped on every tool and prompt to
+	// identify which upstream server owns it.
+	GatewayServerID = "kuadrant/id"
 
 	// expectedProtocolVersion is the version the broker proposes in its
 	// legacy initialize to upstreams (the SDK client's fallback proposal),
@@ -729,7 +731,7 @@ func (man *MCPManager) findToolConflicts(mcpTools []GatewayTool) error {
 				man.logger.Debug("skipping conflict check, tool meta is nil", "upstream mcp server", man.mcp.ID(), "tool", existingToolName)
 				continue
 			}
-			existingToolID, ok := existingTool.Meta[gatewayServerID]
+			existingToolID, ok := existingTool.Meta[GatewayServerID]
 			if !ok {
 				man.logger.Debug("skipping conflict check, tool id is missing", "upstream mcp server", man.mcp.ID(), "tool", existingToolName)
 				continue
@@ -812,6 +814,13 @@ func (man *MCPManager) SetStatusForTesting(status ServerValidationStatus) {
 	man.status = status
 }
 
+// SetCacheMetadataForTesting sets cache metadata directly for testing.
+func (man *MCPManager) SetCacheMetadataForTesting(toolsMeta, promptsMeta CacheMetadata) {
+	if mcpServer, ok := man.mcp.(*MCPServer); ok {
+		mcpServer.SetCacheMetadataForTesting(toolsMeta, promptsMeta)
+	}
+}
+
 // NewActiveForTesting wraps a manager as an ActiveMCPServer without starting
 // the event loop. Stop is a no-op. Only for use in tests that need a static
 // manager with pre-seeded tools/status.
@@ -858,7 +867,7 @@ func (man *MCPManager) removeAllPrompts() {
 func (man *MCPManager) toolToServerTool(newTool mcp.Tool) GatewayTool {
 	newTool.Name = prefixedName(man.mcp.GetPrefix(), newTool.Name)
 	newTool.Meta = mcp.Meta{
-		gatewayServerID: string(man.mcp.ID()),
+		GatewayServerID: string(man.mcp.ID()),
 	}
 	return GatewayTool{
 		Tool:    newTool,
@@ -906,7 +915,7 @@ func prefixedName(prefix, tool string) string {
 func (man *MCPManager) promptToServerPrompt(newPrompt mcp.Prompt) GatewayPrompt {
 	newPrompt.Name = prefixedName(man.mcp.GetPrefix(), newPrompt.Name)
 	newPrompt.Meta = mcp.Meta{
-		gatewayServerID: string(man.mcp.ID()),
+		GatewayServerID: string(man.mcp.ID()),
 	}
 	return GatewayPrompt{
 		Prompt:  newPrompt,
@@ -974,7 +983,7 @@ func (man *MCPManager) findPromptConflicts(mcpPrompts []GatewayPrompt) error {
 				man.logger.Debug("skipping conflict check, prompt meta is nil", "upstream mcp server", man.mcp.ID(), "prompt", existingPromptName)
 				continue
 			}
-			existingPromptID, ok := existingPrompt.Meta[gatewayServerID]
+			existingPromptID, ok := existingPrompt.Meta[GatewayServerID]
 			if !ok {
 				man.logger.Debug("skipping conflict check, prompt id is missing", "upstream mcp server", man.mcp.ID(), "prompt", existingPromptName)
 				continue

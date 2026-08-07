@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -531,6 +532,92 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			Expect(ok).To(BeTrue())
 			Expect(text.Text).To(ContainSubstring("greet"))
 			Expect(text.Text).To(ContainSubstring("e2e"))
+		})
+	})
+
+	Context("broker 2026 cache metadata", func() {
+		promptNames := func(prompts []*mcp.Prompt) []string {
+			names := make([]string, len(prompts))
+			for i, p := range prompts {
+				names[i] = p.Name
+			}
+			return names
+		}
+
+		It("[Happy,Broker2026] 2026 client tools/list returns ttlMs and cacheScope", func() {
+			c := newStatelessClient()
+			defer func() { _ = c.Close() }()
+
+			waitForToolsWithPrefix(c, "sl_")
+
+			Eventually(func(g Gomega) {
+				result, err := c.ListTools(ctx, nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result.TTLMs).To(BeNumerically(">", 0),
+					"2026 tools/list should include ttlMs > 0")
+				g.Expect(result.CacheScope).NotTo(BeEmpty(),
+					"2026 tools/list should include cacheScope")
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+		})
+
+		It("[Happy,Broker2026] 2025 client tools/list has no ttlMs or cacheScope", func() {
+			c := newStatefulClient()
+			defer func() { _ = c.Close() }()
+
+			waitForToolsWithPrefix(c, "sf_")
+
+			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/list"}`, jsonRPCID.Add(1))
+
+			var respBody string
+			Eventually(func(g Gomega) {
+				status, rb, _, postErr := mcpRawPost(ctx, dpURL, c.ID(), []byte(body), nil)
+				g.Expect(postErr).NotTo(HaveOccurred())
+				g.Expect(status).To(Equal(200))
+				respBody = rb
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+			Expect(respBody).NotTo(ContainSubstring(`"ttlMs"`),
+				"2025 response should not contain ttlMs")
+			Expect(respBody).NotTo(ContainSubstring(`"cacheScope"`),
+				"2025 response should not contain cacheScope")
+		})
+
+		It("[Happy,Broker2026] 2026 client prompts/list excludes 2025-only prompts", func() {
+			c := newStatelessClient()
+			defer func() { _ = c.Close() }()
+
+			Eventually(func(g Gomega) {
+				result, err := c.ListPrompts(ctx, nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				names := promptNames(result.Prompts)
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "2026 client should see sl_ prompts")
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+			result, err := c.ListPrompts(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			names := promptNames(result.Prompts)
+			Expect(slices.ContainsFunc(names, func(n string) bool {
+				return strings.HasPrefix(n, "sf_")
+			})).To(BeFalse(), "2026 client should NOT see sf_ (2025-only) prompts, got: %v", names)
+		})
+
+		It("[Happy,Broker2026] 2026 client prompts/list returns cache metadata", func() {
+			c := newStatelessClient()
+			defer func() { _ = c.Close() }()
+
+			Eventually(func(g Gomega) {
+				result, err := c.ListPrompts(ctx, nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(slices.ContainsFunc(promptNames(result.Prompts), func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "should have prompts loaded")
+				g.Expect(result.TTLMs).To(BeNumerically(">", 0),
+					"2026 prompts/list should include ttlMs > 0")
+				g.Expect(result.CacheScope).NotTo(BeEmpty(),
+					"2026 prompts/list should include cacheScope")
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 	})
 })
