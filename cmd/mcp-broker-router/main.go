@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
@@ -288,7 +289,10 @@ func (a *app) loadAndWatchConfig(ctx context.Context) {
 
 func (a *app) run(ctx context.Context) {
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
+	// SIGTERM is what kubelet sends on pod termination; without it the graceful
+	// shutdown below never runs in a cluster and the process dies by default
+	// signal disposition. os.Interrupt covers local runs.
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
 	lc := net.ListenConfig{}
 	lis, err := lc.Listen(ctx, "tcp", a.routerCfg.addr)
