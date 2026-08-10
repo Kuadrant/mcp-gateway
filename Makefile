@@ -860,6 +860,10 @@ ratchet: $(LOCALBIN) ## Download ratchet locally if necessary.
 ratchet-pin: ratchet ## Pin GitHub Actions to commit SHAs.
 	$(RATCHET) pin $$(find .github/workflows \( -name '*.yaml' -o -name '*.yml' \) ! -name 'issue-triage.yaml')
 
+.PHONY: ratchet-update-all
+ratchet-update-all: ratchet ## Update all pinned GitHub Actions to latest SHAs.
+	$(RATCHET) update $$(find .github/workflows \( -name '*.yaml' -o -name '*.yml' \) ! -name 'issue-triage.yaml')
+
 .PHONY: verify-ratchet
 verify-ratchet: ratchet ## Verify GitHub Actions are pinned to commit SHAs.
 	$(RATCHET) lint $$(find .github/workflows \( -name '*.yaml' -o -name '*.yml' \) ! -name 'issue-triage.yaml')
