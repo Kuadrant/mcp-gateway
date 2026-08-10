@@ -12,6 +12,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -330,7 +331,8 @@ func (m *mcpBrokerImpl) sendToolsListChanged(sessionID string) {
 // getVisibleToolNames returns a set of tool names visible to the current request,
 // after applying protocol version, auth and virtual server filtering.
 func (m *mcpBrokerImpl) getVisibleToolNames(headers http.Header) map[string]struct{} {
-	tools := m.toolsForProtocol(headers)
+	isStateless := headers.Get(protocolVersionHeader) == protocol.Version2026
+	tools := m.toolsForProtocol(isStateless)
 	tools = m.applyAuthorizedCapabilitiesFilter(headers, tools)
 	tools = m.applyVirtualServerFilter(headers, tools)
 

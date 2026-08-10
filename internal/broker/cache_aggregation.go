@@ -40,7 +40,7 @@ func (m *mcpBrokerImpl) lookupCacheMetadata(serverIDs []config.UpstreamMCPID, me
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 
-	var contributing []upstream.CacheMetadata
+	contributing := make([]upstream.CacheMetadata, 0, len(serverIDs))
 	for _, id := range serverIDs {
 		mgr, ok := m.mcpServers[id]
 		if !ok {

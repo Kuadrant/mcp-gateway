@@ -2,7 +2,6 @@ package broker
 
 import (
 	"maps"
-	"net/http"
 	"slices"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -170,9 +169,8 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 
 // promptsForProtocol returns the pre-cached prompt set for the client's protocol version.
 // Returns a shallow copy to avoid mutation by downstream filters.
-func (m *mcpBrokerImpl) promptsForProtocol(headers http.Header) []*mcp.Prompt {
-	version := headers.Get(protocolVersionHeader)
-	if version == protocol.Version2026 {
+func (m *mcpBrokerImpl) promptsForProtocol(isStateless bool) []*mcp.Prompt {
+	if isStateless {
 		if cached := m.statelessPrompts.Load(); cached != nil {
 			prompts := make([]*mcp.Prompt, len(cached.items))
 			copy(prompts, cached.items)
@@ -190,9 +188,8 @@ func (m *mcpBrokerImpl) promptsForProtocol(headers http.Header) []*mcp.Prompt {
 
 // toolsForProtocol returns the pre-cached tool set for the client's protocol version.
 // Returns a shallow copy to avoid mutation by downstream filters.
-func (m *mcpBrokerImpl) toolsForProtocol(headers http.Header) []*mcp.Tool {
-	version := headers.Get(protocolVersionHeader)
-	if version == protocol.Version2026 {
+func (m *mcpBrokerImpl) toolsForProtocol(isStateless bool) []*mcp.Tool {
+	if isStateless {
 		if cached := m.statelessTools.Load(); cached != nil {
 			tools := make([]*mcp.Tool, len(cached.items))
 			copy(tools, cached.items)
@@ -200,7 +197,6 @@ func (m *mcpBrokerImpl) toolsForProtocol(headers http.Header) []*mcp.Tool {
 		}
 	}
 
-	// default to stateful for no header or any other version
 	if cached := m.statefulTools.Load(); cached != nil {
 		tools := make([]*mcp.Tool, len(cached.items))
 		copy(tools, cached.items)

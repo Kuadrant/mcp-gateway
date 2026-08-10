@@ -2,7 +2,6 @@ package broker
 
 import (
 	"log/slog"
-	"net/http"
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
@@ -207,24 +206,19 @@ type namedPrompt struct{ *mcp.Prompt }
 
 func (n namedPrompt) getName() string { return n.Name }
 
-func testProtocolFilter[T namedItem](t *testing.T, label string, lookup func(http.Header) []T, stateful, stateless []string) {
+func testProtocolFilter[T namedItem](t *testing.T, label string, lookup func(bool) []T, stateful, stateless []string) {
 	t.Helper()
 	tests := []struct {
-		name      string
-		header    string
-		wantNames []string
+		name        string
+		isStateless bool
+		wantNames   []string
 	}{
-		{"2026 header returns stateless", "2026-07-28", stateless},
-		{"no header returns stateful", "", stateful},
-		{"2025 header returns stateful", "2025-11-25", stateful},
+		{"stateless returns 2026 set", true, stateless},
+		{"stateful returns 2025 set", false, stateful},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			headers := http.Header{}
-			if tt.header != "" {
-				headers.Set("Mcp-Protocol-Version", tt.header)
-			}
-			got := lookup(headers)
+			got := lookup(tt.isStateless)
 			if len(got) != len(tt.wantNames) {
 				t.Fatalf("got %d %s, want %d", len(got), label, len(tt.wantNames))
 			}
@@ -236,12 +230,10 @@ func testProtocolFilter[T namedItem](t *testing.T, label string, lookup func(htt
 		})
 	}
 	t.Run("returns shallow copy", func(t *testing.T) {
-		headers := http.Header{}
-		headers.Set("Mcp-Protocol-Version", "2026-07-28")
-		r1 := lookup(headers)
+		r1 := lookup(true)
 		n := len(r1)
 		_ = append(r1, r1[0])
-		r2 := lookup(headers)
+		r2 := lookup(true)
 		if len(r2) != n {
 			t.Errorf("cache was mutated: got %d %s, want %d", len(r2), label, n)
 		}
@@ -256,8 +248,8 @@ func TestToolsForProtocol(t *testing.T) {
 	b.statelessTools.Store(&sl)
 
 	testProtocolFilter(t, "tools",
-		func(h http.Header) []namedTool {
-			got := b.toolsForProtocol(h)
+		func(isStateless bool) []namedTool {
+			got := b.toolsForProtocol(isStateless)
 			out := make([]namedTool, len(got))
 			for i, tool := range got {
 				out[i] = namedTool{tool}
@@ -271,8 +263,8 @@ func TestToolsForProtocol(t *testing.T) {
 func TestRebuildProtocolCaches_Prompts(t *testing.T) {
 	t.Run("mixed servers with edge cases", func(t *testing.T) {
 		// 2025-only server, 2026-only server, dual-version server,
-		// prompt without kuadrant/id (defaults to stateful),
-		// prompt with non-string kuadrant/id (dropped from both sets)
+		// prompt without kuadrant/id (excluded from all sets),
+		// prompt with non-string kuadrant/id (excluded from all sets)
 		prompts := []upstream.GatewayPrompt{
 			{Prompt: mcp.Prompt{Name: "p25", Meta: map[string]any{"kuadrant/id": "srv25"}}, Handler: upstream.NoopPromptHandler},
 			{Prompt: mcp.Prompt{Name: "p26", Meta: map[string]any{"kuadrant/id": "srv26"}}, Handler: upstream.NoopPromptHandler},
@@ -321,8 +313,8 @@ func TestPromptsForProtocol(t *testing.T) {
 	b.statelessPrompts.Store(&sl)
 
 	testProtocolFilter(t, "prompts",
-		func(h http.Header) []namedPrompt {
-			got := b.promptsForProtocol(h)
+		func(isStateless bool) []namedPrompt {
+			got := b.promptsForProtocol(isStateless)
 			out := make([]namedPrompt, len(got))
 			for i, p := range got {
 				out[i] = namedPrompt{p}
