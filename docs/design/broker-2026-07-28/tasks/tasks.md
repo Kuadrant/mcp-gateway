@@ -241,14 +241,20 @@ Documented and verified test coverage against design goals G1-G6.
 
 **Verification:** Review test cases cover goals G1-G6.
 
-## Task 8: Documentation
+## Task 8: Documentation ✅
 
-**Files:** `docs/design/broker-2026-07-28/tasks/documentation.md`
+**Files:** `docs/design/broker-2026-07-28/tasks/documentation.md`, `docs/design/overview.md`, `docs/design/security-architecture.md`
 
-Documentation plan per `documentation.md`.
+No new user-facing guide required — the feature is transparent to operators. Documentation updates completed in task 5:
+
+- `docs/design/security-architecture.md`: added `cacheScope` correctness (pessimistic aggregation), `filterUserHeaders` credential stripping, broker→upstream per-user fetch boundary in data crossing table
+- `docs/design/overview.md`: added dual-protocol support to broker responsibilities with pointer to design doc
+- `docs/design/broker-2026-07-28/tasks/documentation.md`: updated with completion status
+- No API reference changes (`userSpecificList` stays for backward compat, no new CRD fields)
 
 **Acceptance criteria:**
-- [ ] Documentation plan covers user-facing changes
-- [ ] Security architecture updated for cache scope trust model
+- [x] Documentation plan covers user-facing changes (none needed — feature is transparent)
+- [x] Security architecture updated for cache scope trust model
+- [x] Overview updated for dual-protocol support
 
 **Verification:** Review documentation plan covers all user-facing behavior.

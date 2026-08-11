@@ -17,18 +17,16 @@ The existing `docs/guides/scaling.md` and `docs/guides/authentication.md` guides
 
 Updated in task 5. Added `cacheScope` correctness (pessimistic aggregation), `filterUserHeaders` credential stripping, and broker→upstream per-user fetch boundary to the data crossing table.
 
-### When I need to understand how ttlMs affects tool freshness
-
-When a contributor is working on routing table refresh or client-side caching, they want to understand what the aggregated `ttlMs` means.
-
-**Cover:**
-- Aggregated `ttlMs` reflects worst-case staleness of the cached portion
-- `ttlMs:0` upstreams are always-fetched — they don't contribute to the aggregate
-- The aggregate is `min(non-zero ttlMs)` — bounds freshness to the most volatile upstream
-
 ## Design Doc Update (`docs/design/overview.md`) ✅
 
 Updated in task 5. Added dual-protocol support bullet to broker responsibilities with pointer to the broker-2026-07-28 design doc.
+
+## ttlMs Freshness Semantics
+
+Covered in the design doc's constraints section and `AggregateCache` implementation. No separate doc needed — the rules are:
+- Aggregated `ttlMs` is `min(non-zero)` across upstreams — bounds freshness to the most volatile upstream
+- `ttlMs:0` upstreams are always-fetched and don't contribute to the aggregate
+- The aggregate is informational for clients; the broker's own freshness is backstopped by the manager's periodic re-list
 
 ## API Reference — No Changes
 

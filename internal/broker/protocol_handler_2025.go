@@ -41,4 +41,3 @@ func (h *ProtocolHandler2025) ShouldFetchFresh(srv userSpecificServer, _ *upstre
 func (h *ProtocolHandler2025) AggregateCache(_ []upstream.CacheMetadata) (int, string) {
 	return 0, ""
 }
-

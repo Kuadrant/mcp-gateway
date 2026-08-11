@@ -69,4 +69,3 @@ func (h *ProtocolHandler2026) AggregateCache(contributing []upstream.CacheMetada
 	}
 	return minTTL, scope
 }
-
