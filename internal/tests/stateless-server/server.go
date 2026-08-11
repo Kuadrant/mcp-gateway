@@ -102,6 +102,8 @@ func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
 			DisableLocalhostProtection: true,
 		})
 		mux.Handle("/mcp", logRequest(handler))
+		mux.HandleFunc("/admin/addTool", addToolHandler(s))
+		mux.HandleFunc("/admin/deleteTool", deleteToolHandler(s))
 
 		return func() error {
 				fmt.Printf("Serving stateless HTTPStreamable on http://localhost:%s/mcp\n", port)
@@ -290,6 +292,56 @@ func envStr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func addToolHandler(s *mcp.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = r.Body.Close()
+		name := strings.TrimSpace(string(body))
+		if name == "" {
+			http.Error(w, "tool name required", http.StatusBadRequest)
+			return
+		}
+		log.Printf("admin: adding tool %q", name)
+		s.AddTool(&mcp.Tool{
+			Name:        name,
+			Description: "dynamically added tool",
+			InputSchema: map[string]any{"type": "object"},
+		}, stubToolHandler(name))
+		w.WriteHeader(http.StatusCreated)
+	}
+}
+
+func deleteToolHandler(s *mcp.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = r.Body.Close()
+		name := strings.TrimSpace(string(body))
+		if name == "" {
+			http.Error(w, "tool name required", http.StatusBadRequest)
+			return
+		}
+		log.Printf("admin: deleting tool %q", name)
+		s.RemoveTools(name)
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 // requireStringArg parses an argument with mark3labs RequireString

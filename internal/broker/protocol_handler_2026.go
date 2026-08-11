@@ -70,7 +70,3 @@ func (h *ProtocolHandler2026) AggregateCache(contributing []upstream.CacheMetada
 	return minTTL, scope
 }
 
-// StartNotificationWatcher is a placeholder — wired in Task 6 with
-// subscriptions/listen.
-func (h *ProtocolHandler2026) StartNotificationWatcher(_ context.Context, _ *upstream.MCPServer) {
-}

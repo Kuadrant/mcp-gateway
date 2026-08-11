@@ -24,8 +24,4 @@ type ProtocolHandler interface {
 	// AggregateCache computes the aggregate ttlMs and cacheScope across
 	// contributing upstream servers' cache metadata.
 	AggregateCache(contributing []upstream.CacheMetadata) (ttlMs int, cacheScope string)
-
-	// StartNotificationWatcher starts the version-appropriate notification
-	// mechanism for an upstream server.
-	StartNotificationWatcher(ctx context.Context, server *upstream.MCPServer)
 }

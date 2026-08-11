@@ -42,8 +42,3 @@ func (h *ProtocolHandler2025) AggregateCache(_ []upstream.CacheMetadata) (int, s
 	return 0, ""
 }
 
-// StartNotificationWatcher is a no-op for 2025 — notification watcher
-// startup is handled by MCPServer.Connect directly.
-func (h *ProtocolHandler2025) StartNotificationWatcher(_ context.Context, _ *upstream.MCPServer) {
-	// existing GET SSE watcher is started inside MCPServer.Connect
-}

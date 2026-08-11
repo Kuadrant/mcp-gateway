@@ -48,9 +48,9 @@ Given no contributing upstreams, `AggregateCache` returns `(0, "public")`. The S
 
 When a 2026 upstream has `userSpecificList:false` on the CRD but reports `cacheScope:"private"`, the broker includes it in the `perRequestServers` list. Verified by checking `perRequestServers` after `OnConfigChange`.
 
-### perRequestServers rebuilt immediately on upstream metadata change
+### freshFetchServers rebuilt on upstream metadata change
 
-When an upstream's `cacheScope` changes from `"public"` to `"private"` (detected on re-list), the broker atomically rebuilds `perRequestServers` immediately. The server appears in the fresh-fetch list on the next client request without waiting for `OnConfigChange`.
+When an upstream's `cacheScope` changes from `"public"` to `"private"` (detected on re-list without a tool diff), the manager calls `NotifyMetadataChanged`, which triggers `rebuildProtocolCaches` and recomputes `freshFetchServers`. The server appears in the fresh-fetch list on the next client request without waiting for `OnConfigChange`.
 
 ### cacheMetadata defaults for 2025 upstreams
 
@@ -101,9 +101,9 @@ A 2025 client sends `tools/list` to a gateway with 2026 upstreams reporting `ttl
 
 A gateway has both 2025 and 2026 upstreams. A 2026 client `tools/list` returns 2026-upstream tools with aggregated `ttlMs`/`cacheScope`. A 2025 client `tools/list` returns 2025-upstream tools without cache fields. Neither client sees tools from unsupported protocol upstreams.
 
-### [Broker2026] 2026 upstream notification triggers tool refresh
+### [Broker2026] 2026 upstream notification triggers tool refresh and client notification
 
-A 2026 upstream sends `tools/list_changed`. The broker receives it via `subscriptions/listen`, re-lists tools, and notifies subscribed 2026 clients. Verifies the notification mechanism works end-to-end through the real gateway.
+A 2026 upstream adds a tool via its admin endpoint, triggering `tools/list_changed` over `subscriptions/listen`. The broker receives the notification, re-lists tools from the upstream, and updates the gateway server. A connected 2026 client receives a `tools/list_changed` notification and sees the new tool on the next `tools/list` call. Verifies the full chain: upstream → SDK subscriptions/listen → broker manager → gateway server → client notification.
 
 ### [Broker2026] 2025 upstream GET SSE notification unaffected
 

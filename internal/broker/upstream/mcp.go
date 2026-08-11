@@ -273,6 +273,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 			RootsV2:     &mcp.RootCapabilities{ListChanged: true}, //nolint:staticcheck // deliberate parity with mark3labs
 			Elicitation: &mcp.ElicitationCapabilities{},
 		},
+		// setting these handlers causes the SDK to open a subscriptions/listen
+		// stream for 2026 upstreams during Connect. the actual notification
+		// dispatch is handled by the receiving middleware below; these
+		// handlers exist only to enable the stream.
+		ToolListChangedHandler:   func(_ context.Context, _ *mcp.ToolListChangedRequest) {},
+		PromptListChangedHandler: func(_ context.Context, _ *mcp.PromptListChangedRequest) {},
 	})
 	// wire the notification handler before the session exists so nothing
 	// arriving during or right after the handshake is missed
@@ -308,7 +314,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// the full SupportedVersions list for dual-version servers.
 	up.supportedVersions = []string{up.init.ProtocolVersion}
 
-	up.startNotificationWatcher(ctx, httpC, session)
+	// 2026 upstreams receive notifications via the SDK's subscriptions/listen
+	// stream (opened automatically because ToolListChangedHandler is set).
+	// 2025 upstreams use the custom GET SSE notificationWatcher.
+	if !up.UsesStatelessProtocol() {
+		up.startNotificationWatcher(ctx, httpC, session)
+	}
 
 	// register notification and connection-lost handlers after session is
 	// assigned so OnConnectionLost can start session.Wait() immediately
