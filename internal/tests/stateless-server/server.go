@@ -75,6 +75,20 @@ func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
 		InputSchema: map[string]any{"type": "object"},
 	}, stubToolHandler("run_pipeline"))
 
+	// add_tool dynamically adds a tool, triggering notifications/tools/list_changed
+	s.AddTool(&mcp.Tool{
+		Name:        "add_tool",
+		Description: "dynamically add a new tool (triggers notifications/tools/list_changed)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":        map[string]any{"type": "string", "description": "tool name"},
+				"description": map[string]any{"type": "string", "description": "tool description"},
+			},
+			"required": []string{"name"},
+		},
+	}, addToolMCPHandler(s))
+
 	s.AddReceivingMiddleware(userToolFilterMiddleware(), cacheMetadataMiddleware())
 
 	// greeting prompt
@@ -224,19 +238,43 @@ func userToolFilterMiddleware() mcp.Middleware {
 				headers = extra.Header
 			}
 			auth := strings.ToLower(headers.Get("Authorization"))
-			allowed := map[string]bool{"hello_world": true, "headers": true}
-			if extras, ok := perUserTools[auth]; ok {
-				for _, name := range extras {
-					allowed[name] = true
+			if _, isPerUser := perUserTools[auth]; isPerUser {
+				allowed := make(map[string]bool)
+				for _, tool := range toolsResult.Tools {
+					allowed[tool.Name] = true
 				}
-			}
-			filtered := make([]*mcp.Tool, 0, len(allowed))
-			for _, tool := range toolsResult.Tools {
-				if allowed[tool.Name] {
-					filtered = append(filtered, tool)
+				// remove tools that belong to other users
+				for token, tools := range perUserTools {
+					if token == auth {
+						continue
+					}
+					for _, name := range tools {
+						delete(allowed, name)
+					}
 				}
+				filtered := make([]*mcp.Tool, 0, len(allowed))
+				for _, tool := range toolsResult.Tools {
+					if allowed[tool.Name] {
+						filtered = append(filtered, tool)
+					}
+				}
+				toolsResult.Tools = filtered
+			} else if auth == "" {
+				// no auth: hide per-user tools, show everything else
+				hidden := make(map[string]bool)
+				for _, tools := range perUserTools {
+					for _, name := range tools {
+						hidden[name] = true
+					}
+				}
+				filtered := make([]*mcp.Tool, 0, len(toolsResult.Tools))
+				for _, tool := range toolsResult.Tools {
+					if !hidden[tool.Name] {
+						filtered = append(filtered, tool)
+					}
+				}
+				toolsResult.Tools = filtered
 			}
-			toolsResult.Tools = filtered
 			if auth != "" {
 				toolsResult.CacheScope = "private"
 			}
@@ -292,6 +330,34 @@ func envStr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func addToolMCPHandler(s *mcp.Server) mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args map[string]any
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+			return stubToolResult("invalid arguments"), nil
+		}
+		name, _ := args["name"].(string)
+		if name == "" {
+			return stubToolResult("name required"), nil
+		}
+		desc, _ := args["description"].(string)
+		if desc == "" {
+			desc = "dynamically added tool"
+		}
+		log.Printf("add_tool: adding %q", name)
+		s.AddTool(&mcp.Tool{
+			Name:        name,
+			Description: desc,
+			InputSchema: map[string]any{"type": "object"},
+		}, stubToolHandler(name))
+		return stubToolResult(fmt.Sprintf("added tool %s", name)), nil
+	}
+}
+
+func stubToolResult(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
 func addToolHandler(s *mcp.Server) http.HandlerFunc {

@@ -7,7 +7,7 @@ E2E_TIMEOUT ?=30m
 E2E_GINKGO_SKIP_TIER2 = --skip="\[Full\]|\[multi-gateway\]"
 # Local quick run: happy-path specs only (matches [Happy] and combined [Happy,...] tags)
 E2E_GINKGO_FOCUS_HAPPY = --focus="\[Happy"
-E2E_PROCS ?= 1
+E2E_PROCS ?= 2
 
 .PHONY: ginkgo
 ginkgo: ## Download ginkgo locally if necessary

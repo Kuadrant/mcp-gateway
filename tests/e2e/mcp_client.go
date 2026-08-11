@@ -92,6 +92,35 @@ func NewStatelessClientWithHeaders(ctx context.Context, gatewayHost string, head
 	return client.Connect(ctx, buildGatewayTransport(gatewayHost, headers, false), nil)
 }
 
+// NewStatelessClientWithNotifications creates a 2026 MCP client that reports
+// tools and prompts list_changed notifications to notificationFunc.
+func NewStatelessClientWithNotifications(ctx context.Context, gatewayHost string, notificationFunc func(string)) (*NotifyingMCPClient, error) {
+	notify := func(method string) {
+		if notificationFunc != nil {
+			notificationFunc(method)
+			return
+		}
+		GinkgoWriter.Println("default notification handler:", method)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-2026", Version: "0.0.1"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(_ context.Context, _ *mcp.ToolListChangedRequest) {
+			notify("notifications/tools/list_changed")
+		},
+		PromptListChangedHandler: func(_ context.Context, _ *mcp.PromptListChangedRequest) {
+			notify("notifications/prompts/list_changed")
+		},
+	})
+
+	session, err := client.Connect(ctx, buildGatewayTransport(gatewayHost, nil, false), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &NotifyingMCPClient{
+		ClientSession: session,
+	}, nil
+}
+
 // NotifyingMCPClient wraps an MCP client session with notification handling
 type NotifyingMCPClient struct {
 	*mcp.ClientSession

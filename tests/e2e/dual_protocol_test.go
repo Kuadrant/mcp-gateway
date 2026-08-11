@@ -637,4 +637,54 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 	})
+
+	Context("2026 upstream notifications via subscriptions/listen", func() {
+		It("[Broker2026] upstream tool change propagates to broker and triggers client notification", func() {
+			By("connecting a 2026 client with notification handler")
+			notifCh := make(chan struct{}, 1)
+			c, err := NewStatelessClientWithNotifications(ctx, dpURL, func(method string) {
+				if method == "notifications/tools/list_changed" {
+					select {
+					case notifCh <- struct{}{}:
+					default:
+					}
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = c.Close() }()
+
+			waitForToolsWithPrefix(c, "sl_")
+
+			By("calling add_tool on the backend server to trigger notifications/tools/list_changed")
+			dynamicTool := "e2e_dynamic_tool"
+			addToolName := "sl_add_tool"
+			var res *mcp.CallToolResult
+			Eventually(func(g Gomega) {
+				var callErr error
+				res, callErr = c.CallTool(ctx, &mcp.CallToolParams{
+					Name: addToolName,
+					Arguments: map[string]any{
+						"name":        dynamicTool,
+						"description": "dynamically added tool for notification test",
+					},
+				})
+				g.Expect(callErr).NotTo(HaveOccurred())
+				g.Expect(res).NotTo(BeNil())
+				g.Expect(res.IsError).To(BeFalse(), "add_tool should succeed")
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+			By("verifying the client receives a tools/list_changed notification")
+			Eventually(notifCh, TestTimeoutMedium, TestRetryInterval).Should(Receive(),
+				"2026 client should receive tools/list_changed after upstream adds a tool")
+
+			By("verifying the new tool appears in tools/list")
+			Eventually(func(g Gomega) {
+				result, listErr := c.ListTools(ctx, nil)
+				g.Expect(listErr).NotTo(HaveOccurred())
+				g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+					return n == "sl_"+dynamicTool
+				})).To(BeTrue(), "new tool sl_%s should appear in tools/list", dynamicTool)
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		})
+	})
 })
