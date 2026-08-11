@@ -105,7 +105,7 @@ func (w *sseRewriter) maybeRewriteElicitation(ctx context.Context, line []byte) 
 		w.logger.ErrorContext(ctx, "failed to store elicitation mapping", "error", err)
 		return line
 	}
-	w.logger.InfoContext(
+	w.logger.DebugContext(
 		ctx,
 		"rewriting elicitation request ID",
 		"backendID",

@@ -1,32 +1,97 @@
 # Auditing MCP Tool Calls
 
-This guide covers configuring structured access logs for MCP Gateway that include caller identity, tool names, and MCP session context. It uses Kuadrant AuthPolicy to inject trusted identity from validated JWT claims, and Istio's Telemetry API to configure JSON access logging on the gateway.
+This guide covers how to produce an audit trail for MCP tool calls — capturing who called which tool, on which server, in which session, and whether it succeeded.
 
-## Overview
+Two approaches are available:
 
-MCP Gateway already sets routing headers on every request (`x-mcp-method`, `x-mcp-toolname`, `x-mcp-servername`, `mcp-session-id`). These headers are available to any Envoy access log via `%REQ(...)%` format strings. This guide adds two things:
+| Approach | Where logs appear | Works on OpenShift 4.19+ |
+|----------|-------------------|--------------------------|
+| **Router structured log** (recommended) | Router pod stdout | Yes |
+| Istio Telemetry access log | Envoy gateway pod stdout | No — CIO overwrites the Istio CR on 4.19–4.21; Istio CR is absent on 4.22+ |
 
-1. **Caller identity**: AuthPolicy validates JWT tokens and injects the authenticated username as a request header (`x-auth-identity`)
-2. **Structured access log**: An Istio Telemetry resource configures JSON access logging on the gateway, capturing MCP routing headers and the identity header
+## Approach 1: Router structured audit log (recommended)
 
-The result is a JSON access log on the gateway pod's stdout that answers: who called which tool, on which server, in which session, and when.
+The router emits a structured `level=INFO` log entry for every `tools/call` request. No additional infrastructure is required.
 
-## Prerequisites
+### What gets logged
+
+An `audit=true` entry appears at two points:
+
+**Response headers phase** — the call reached the backend and received a response:
+```
+level=INFO msg="tool call" audit=true user=alice tool=echo server=mcp-test/my-server status=200 request_id=<uuid> session=jti:...
+```
+
+**Request body phase** — the router returned an error before forwarding (for example, expired session, unknown server):
+```
+level=INFO msg="tool call" audit=true user=alice tool=echo server="" status=401 request_id=<uuid> session=sha256:...
+```
+
+**Not logged** (no tool identity available, or not the router's responsibility):
+- AuthPolicy denials — Envoy rejects before ext_proc is involved
+- Invalid JSON-RPC or unparseable body — rejected before `mcpRequest` is populated
+- `tools/list`, `initialize`, and all other non-`tools/call` methods
+
+### Fields
+
+| Field | Description |
+|-------|-------------|
+| `audit` | Always `true` — use this to filter audit entries from other Info logs |
+| `user` | JWT `sub` claim from the `Authorization` header; empty if unauthenticated |
+| `tool` | Prefixed tool name as sent by the client (e.g. `everything_echo`) |
+| `server` | `namespace/name` of the MCPServerRegistration; empty if routing failed |
+| `status` | HTTP status code of the response |
+| `request_id` | Envoy-generated request UUID (`x-request-id`) |
+| `session` | Log-safe session identifier — `jti:<uuid>` or `sha256:<prefix>`, never a raw JWT |
+
+### Querying audit entries
+
+```bash
+# tail live audit entries
+kubectl logs -f -n mcp-system -l app.kubernetes.io/name=mcp-gateway \
+  | grep 'audit=true'
+
+# all failed tool calls in the last hour
+kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway --since=1h \
+  | grep 'audit=true' | grep -v 'status=200'
+
+# calls by a specific user
+kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway --since=1h \
+  | grep 'audit=true' | grep 'user=alice'
+
+# calls to a specific tool
+kubectl logs -n mcp-system -l app.kubernetes.io/name=mcp-gateway --since=1h \
+  | grep 'audit=true' | grep 'tool=everything_echo'
+```
+
+For production, ship router pod logs to a log aggregation system (Loki, Elasticsearch, Splunk) and query there. See the [Observability guide](./opentelemetry.md) for Loki/Grafana integration.
+
+### The `user` field and authentication
+
+The `user` field is sourced from the JWT `sub` claim in the `Authorization` header, extracted directly by the router. It is not sourced from `x-mcp-verified-sub`, which is a router-set internal header and must not be used for audit purposes.
+
+Without an auth layer, `user` is empty. To populate it, configure an AuthPolicy to require a JWT on the gateway listener — the router then extracts the `sub` claim automatically. See [Authentication](./authentication.md) for setup.
+
+---
+
+## Approach 2: Istio Telemetry access log
+
+> **Not supported on OpenShift 4.19+.** On 4.19–4.21 the Cluster Ingress Operator overwrites the Istio CR; on 4.22+ the Istio CR is absent (Istio is installed via Helm through OSSM). Use approach 1 on OpenShift.
+
+This approach configures a JSON access log on the Envoy gateway pod using Istio's Telemetry API. It provides richer Envoy-level fields (upstream host, bytes sent/received, duration) and integrates with the Istio observability stack.
+
+### Prerequisites
 
 - MCP Gateway installed and configured
 - Identity provider deployed (this guide uses Keycloak, see [Authentication](./authentication.md) for setup)
-- [Kuadrant](https://kuadrant.io) installed with AuthPolicy CRD available
+- Kuadrant installed with AuthPolicy CRD available
 - Istio configured as the Gateway API provider
 
-> **Local development:** To follow along locally, run `make local-env-setup-olm && make auth-example-setup-no-vault` to bring up a Kind cluster with the gateway, Kuadrant, Keycloak, and test servers. The verification steps use the `test1_headers` tool from the test servers to inspect backend headers, but this is optional: any tool call will produce access log entries.
+### Step 1: Configure AuthPolicy with identity injection
 
-## Step 1: Configure AuthPolicy with Identity Injection
+MCP Gateway uses two gateway listeners: `mcp` handles client requests and `mcps` handles tool call routing to backend servers. Create an AuthPolicy on each to validate JWTs and inject the authenticated username as a trusted request header.
 
-MCP Gateway uses two gateway listeners: `mcp` handles client requests (initialize, tools/list), and `mcps` handles tool call routing to backend MCP servers. To capture the authenticated user identity in access logs for all request types, create an AuthPolicy on each listener.
-
-### Step 1a: Client-facing listener (`mcp`)
-
-This policy validates JWT tokens on client requests and injects the authenticated username as a request header:
+**Client-facing listener (`mcp`):**
 
 ```bash
 kubectl apply -f - <<EOF
@@ -69,9 +134,7 @@ spec:
 EOF
 ```
 
-### Step 1b: Backend-facing listener (`mcps`)
-
-This policy validates the same JWT on tool call requests routed to backend servers and injects the identity header there too:
+**Backend-facing listener (`mcps`):**
 
 ```bash
 kubectl apply -f - <<EOF
@@ -112,39 +175,11 @@ spec:
 EOF
 ```
 
-After Authorino validates the JWT, it extracts `preferred_username` from the token claims and injects it as the `x-auth-identity` request header. This header is trustworthy because Authorino strips any client-supplied value and sets it from the validated token. With both policies in place, the `mcp_user_id` field appears in access log entries for all MCP request types.
+After Authorino validates the JWT it injects `x-auth-identity` from the token claims. This header is trustworthy because Authorino strips any client-supplied value before setting it.
 
-> **Note:** Replace `preferred_username` with `sub` or another claim depending on your identity provider and what you want as the audit identity. For Keycloak, `preferred_username` gives a human-readable username but requires the `profile` scope in the token request.
+> Replace `preferred_username` with `sub` or another claim depending on your identity provider. `preferred_username` gives a human-readable name but requires the `profile` scope in the token request.
 
-Verify that the identity header is injected by calling a tool and checking what the backend receives:
-
-```bash
-# Get a token (adjust for your identity provider)
-TOKEN=$(curl -s -X POST "https://keycloak.127-0-0-1.sslip.io:8002/realms/mcp/protocol/openid-connect/token" \
-  -d "grant_type=password&client_id=mcp-gateway&client_secret=secret&username=mcp&password=mcp&scope=openid+profile" \
-  | jq -r '.access_token')
-
-# Initialize a session (session ID is returned in the response header)
-SESSION_ID=$(curl -si http://mcp.127-0-0-1.sslip.io:8001/mcp \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"audit-test","version":"0.0.1"}}}' \
-  | grep -i 'mcp-session-id:' | awk '{print $2}' | tr -d '\r')
-
-# Call the headers tool (available on test server1) to see what headers reach the backend
-curl -s http://mcp.127-0-0-1.sslip.io:8001/mcp \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Mcp-Session-Id: $SESSION_ID" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test1_headers","arguments":{}}}' \
-  | jq '.result.content[0].text' | grep -i "x-auth-identity"
-```
-
-You should see `x-auth-identity` with the Keycloak username in the response.
-
-## Step 2: Add MeshConfig Extension Provider
-
-Add a custom access log provider to Istio's MeshConfig. This provider defines the JSON format for the audit log.
+### Step 2: Add MeshConfig extension provider
 
 ```bash
 kubectl patch istio default -n istio-system --type='merge' \
@@ -185,23 +220,9 @@ kubectl patch istio default -n istio-system --type='merge' \
   }'
 ```
 
-> **Note:** If you have other extension providers configured (e.g., for OpenTelemetry tracing), include them in the `extensionProviders` array alongside the access log provider, since the merge replaces the array.
+> If you have other extension providers configured (for example, for OpenTelemetry tracing), include them alongside this one — the merge replaces the array.
 
-**Fields explained:**
-
-| Field | Source | Description |
-|-------|--------|-------------|
-| `mcp_method` | `%REQ(X-MCP-METHOD)%` | MCP method (`tools/call`, `tools/list`, `initialize`, etc.) |
-| `mcp_tool_name` | `%REQ(X-MCP-TOOLNAME)%` | Tool name (after prefix stripping) |
-| `mcp_server_name` | `%REQ(X-MCP-SERVERNAME)%` | Backend MCP server name |
-| `mcp_session_id` | `%REQ(MCP-SESSION-ID)%` | MCP session identifier |
-| `mcp_user_id` | `%REQ(X-AUTH-IDENTITY)%` | Authenticated user identity (injected by AuthPolicy) |
-| `traceparent` | `%REQ(TRACEPARENT)%` | W3C Trace Context for cross-system correlation |
-| `request_id` | `%REQ(X-REQUEST-ID)%` | Per-request identifier |
-
-## Step 3: Create Telemetry Resource
-
-Create a Telemetry resource in the gateway namespace to enable the access log on the gateway workload:
+### Step 3: Create Telemetry resource
 
 ```bash
 kubectl apply -f - <<EOF
@@ -220,61 +241,47 @@ spec:
 EOF
 ```
 
-This scopes the access log to the `mcp-gateway` gateway pods only. Other workloads in the mesh are not affected.
-
-Verify the Telemetry resource is applied:
+### Step 4: Verify
 
 ```bash
-kubectl get telemetry -n gateway-system
-```
-
-## Step 4: Verify the Audit Trail
-
-Make an authenticated tool call and check the gateway pod logs for the access log entry:
-
-```bash
-# Make a tool call (reuse token and session from Step 1)
 curl -s http://mcp.127-0-0-1.sslip.io:8001/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Mcp-Session-Id: $SESSION_ID" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"test1_greet","arguments":{"name":"audit-test"}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test1_greet","arguments":{"name":"audit-test"}}}'
 
-# Check gateway pod logs for the JSON access log entry
 kubectl logs -n gateway-system -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=30s \
   | grep '"mcp_method"' | tail -1 | jq .
 ```
 
-You should see a JSON entry like:
+Expected output:
 
 ```json
 {
   "timestamp": "2026-05-21T14:23:01.123Z",
-  "method": "POST",
-  "path": "/mcp",
-  "response_code": 200,
-  "request_id": "abc-111",
-  "traceparent": null,
   "mcp_method": "tools/call",
   "mcp_tool_name": "greet",
   "mcp_server_name": "mcp-test/test-server1",
   "mcp_session_id": "sess-7a3b",
   "mcp_user_id": "mcp",
-  "duration_ms": 342,
-  "upstream_host": "10.0.1.5:8080",
-  "bytes_sent": 1024,
-  "bytes_received": 512
+  "response_code": 200,
+  "duration_ms": 342
 }
 ```
 
-## Example Queries
+### Without authentication
+
+If you do not have an auth layer, the routing headers still provide useful audit context. The `mcp_user_id` field will be empty (`-`), but you still get: which tool was called, on which server, in which session, when, and how long it took.
+
+### Example queries
 
 Filter access logs using `jq`:
 
 ```bash
 # All tool calls by a specific user
 kubectl logs -n gateway-system -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=1h \
-  | grep '"mcp_method"' | jq 'select(.mcp_user_id == "mcp")'
+  | grep '"mcp_method"' | jq 'select(.mcp_user_id == "alice")'
 
 # All calls to a specific tool
 kubectl logs -n gateway-system -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=1h \
@@ -293,13 +300,9 @@ kubectl logs -n gateway-system -l gateway.networking.k8s.io/gateway-name=mcp-gat
   | grep '"mcp_method"' | jq 'select(.response_code >= 400)'
 ```
 
-For production use, ship these logs to a log aggregation system (Loki, Elasticsearch, Splunk) and query there. See the [Observability guide](./observability.md) for Loki/Grafana integration.
+For production, ship gateway pod logs to a log aggregation system (Loki, Elasticsearch, Splunk). See the [Observability guide](./opentelemetry.md) for Loki/Grafana integration.
 
-## Without Authentication
-
-If you don't have an auth layer, the routing headers still provide useful audit context. The `mcp_user_id` field will be empty (`-`), but you still get: which tool was called, on which server, in which session, when, and how long it took.
-
-## Customizing the Identity Header
+### Customizing the identity header
 
 The `x-auth-identity` header name and the JWT claim used are configurable in the AuthPolicy. Adjust the `response.success.headers` section to match your identity provider:
 
@@ -311,6 +314,6 @@ If you change the header name, update the `mcp_user_id` field in the MeshConfig 
 
 ## Next Steps
 
-- **[Authentication](./authentication.md)**: Configure OAuth 2.1 authentication for MCP Gateway
-- **[Authorization](./authorization.md)**: Control which users can access specific tools
-- **[OpenTelemetry](./opentelemetry.md)**: Enable distributed tracing for request-level debugging
+- [Authentication](./authentication.md) — configure OAuth 2.1 for MCP Gateway
+- [Authorization](./authorization.md) — control which users can access specific tools
+- [OpenTelemetry](./opentelemetry.md) — distributed tracing for request-level debugging
