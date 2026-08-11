@@ -149,6 +149,7 @@ type ToolsAdderDeleter interface {
 	AddTools(tools ...GatewayTool)
 	DeleteTools(tools ...string)
 	ListTools() map[string]*GatewayTool
+	NotifyMetadataChanged()
 }
 
 // PromptsAdderDeleter defines the interface for managing prompts on the gateway server
@@ -497,6 +498,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		man.logger.DebugContext(ctx, "not fetching tools", "event", event, "upstream mcp server", man.mcp.ID(), "waiting for notification", notificationToolsListChanged)
 	} else {
 		man.logger.DebugContext(ctx, "fetching tools", "upstream mcp server", man.mcp.ID())
+		metaBefore := man.mcp.ToolsCacheMetadata()
 		start := time.Now()
 		current, fetched, err := man.getTools(ctx)
 		man.discoveryDuration.Record(ctx, time.Since(start).Seconds(), metric.WithAttributes(serverAttr))
@@ -557,6 +559,16 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					}
 					if len(toAdd) > 0 {
 						man.gatewayServer.AddTools(toAdd...)
+					}
+					// tool add/remove triggers onTableChange via the gateway server.
+					// if tools didn't change but cache metadata did (e.g. scope
+					// flipped public→private), notify explicitly so the broker
+					// rebuilds freshFetchServers.
+					if len(toAdd) == 0 && len(toRemove) == 0 {
+						metaAfter := man.mcp.ToolsCacheMetadata()
+						if metaBefore.TTLMs != metaAfter.TTLMs || metaBefore.CacheScope != metaAfter.CacheScope {
+							man.gatewayServer.NotifyMetadataChanged()
+						}
 					}
 					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
 				}

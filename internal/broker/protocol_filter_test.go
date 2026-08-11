@@ -305,6 +305,111 @@ func TestRebuildProtocolCaches_Prompts(t *testing.T) {
 	})
 }
 
+func TestFreshFetchServers_UpdatedOnMetadataChange(t *testing.T) {
+	broker := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	broker.serverVersions.Store(config.UpstreamMCPID("srv1"), []string{"2026-07-28"})
+
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:   "srv1",
+		Prefix: "s1_",
+		URL:    "http://test.local/mcp",
+	}, "", nil)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, upstream.InvalidToolPolicyFilterOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetToolsForTesting([]mcp.Tool{{Name: "tool1", InputSchema: objectSchema}})
+	manager.SetCacheMetadataForTesting(
+		upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic},
+		upstream.CacheMetadata{},
+	)
+	broker.mcpServers[config.UpstreamMCPID("srv1")] = upstream.NewActiveForTesting(manager)
+
+	broker.gatewayServer.AddTools(upstream.GatewayTool{
+		Tool:    mcp.Tool{Name: "s1_tool1", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "srv1"}},
+		Handler: upstream.NoopToolHandler,
+	})
+	broker.rebuildProtocolCaches()
+
+	cached := broker.statelessTools.Load()
+	if cached == nil {
+		t.Fatal("statelessTools is nil")
+	}
+	if len(cached.freshFetchServers) != 0 {
+		t.Fatalf("public scope should not produce fresh-fetch servers, got %d", len(cached.freshFetchServers))
+	}
+
+	// upstream changes to private scope without changing tools
+	manager.SetCacheMetadataForTesting(
+		upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
+		upstream.CacheMetadata{},
+	)
+	broker.rebuildProtocolCaches()
+
+	cached = broker.statelessTools.Load()
+	if cached == nil {
+		t.Fatal("statelessTools is nil after rebuild")
+	}
+	if len(cached.freshFetchServers) != 1 {
+		t.Fatalf("private scope should produce 1 fresh-fetch server, got %d", len(cached.freshFetchServers))
+	}
+	if cached.freshFetchServers[0].id != config.UpstreamMCPID("srv1") {
+		t.Errorf("expected srv1, got %s", cached.freshFetchServers[0].id)
+	}
+}
+
+// regression: cache metadata changing without a tool add/remove did not
+// trigger onTableChange, so freshFetchServers was stale until the next
+// tool change. this test verifies that a metadata-only change is picked up.
+func TestFreshFetchServers_MetadataChangeWithoutToolChange(t *testing.T) {
+	broker := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	broker.serverVersions.Store(config.UpstreamMCPID("srv1"), []string{"2026-07-28"})
+
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:   "srv1",
+		Prefix: "s1_",
+		URL:    "http://test.local/mcp",
+	}, "", nil)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, upstream.InvalidToolPolicyFilterOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetToolsForTesting([]mcp.Tool{{Name: "tool1", InputSchema: objectSchema}})
+	manager.SetCacheMetadataForTesting(
+		upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic},
+		upstream.CacheMetadata{},
+	)
+	broker.mcpServers[config.UpstreamMCPID("srv1")] = upstream.NewActiveForTesting(manager)
+
+	// initial tool registration triggers onTableChange → rebuildProtocolCaches
+	broker.gatewayServer.AddTools(upstream.GatewayTool{
+		Tool:    mcp.Tool{Name: "s1_tool1", InputSchema: objectSchema, Meta: mcp.Meta{"kuadrant/id": "srv1"}},
+		Handler: upstream.NoopToolHandler,
+	})
+
+	cached := broker.statelessTools.Load()
+	if cached == nil {
+		t.Fatal("statelessTools is nil after initial AddTools")
+	}
+	if len(cached.freshFetchServers) != 0 {
+		t.Fatalf("public scope should not produce fresh-fetch servers, got %d", len(cached.freshFetchServers))
+	}
+
+	// upstream changes metadata to private — same tools, no add/remove.
+	// in production, the manager event loop detects the change and calls
+	// NotifyMetadataChanged. simulate that here.
+	manager.SetCacheMetadataForTesting(
+		upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
+		upstream.CacheMetadata{},
+	)
+	broker.gatewayServer.NotifyMetadataChanged()
+
+	cached = broker.statelessTools.Load()
+	if len(cached.freshFetchServers) != 1 {
+		t.Fatalf("expected 1 fresh-fetch server after metadata change to private, got %d", len(cached.freshFetchServers))
+	}
+}
+
 func TestPromptsForProtocol(t *testing.T) {
 	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
 	sf := protocolCacheEntry[*mcp.Prompt]{items: []*mcp.Prompt{{Name: "prompt1"}, {Name: "prompt2"}}}

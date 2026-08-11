@@ -88,6 +88,12 @@ func (g *gatewayServer) DeleteTools(names ...string) {
 	}
 }
 
+func (g *gatewayServer) NotifyMetadataChanged() {
+	if g.onTableChange != nil {
+		g.onTableChange()
+	}
+}
+
 func (g *gatewayServer) ListTools() map[string]*upstream.GatewayTool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()

@@ -240,6 +240,8 @@ func (m *MockToolsAdderDeleter) ListTools() map[string]*GatewayTool {
 	return m.tools
 }
 
+func (m *MockToolsAdderDeleter) NotifyMetadataChanged() {}
+
 func TestNewUpstreamMCPManager(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -889,6 +891,8 @@ func (m *MockGatewayServer) ListTools() map[string]*GatewayTool {
 	}
 	return result
 }
+
+func (m *MockGatewayServer) NotifyMetadataChanged() {}
 
 func TestMCPManager_shouldFetchTools(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))

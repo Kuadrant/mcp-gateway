@@ -41,6 +41,7 @@ func newMockGateway() *mockGateway                                     { return 
 func (m *mockGateway) AddTools(_ ...upstream.GatewayTool)              {}
 func (m *mockGateway) DeleteTools(_ ...string)                         {}
 func (m *mockGateway) ListTools() map[string]*upstream.GatewayTool     { return nil }
+func (m *mockGateway) NotifyMetadataChanged()                          {}
 func (m *mockGateway) AddPrompts(_ ...upstream.GatewayPrompt)          {}
 func (m *mockGateway) DeletePrompts(_ ...string)                       {}
 func (m *mockGateway) ListPrompts() map[string]*upstream.GatewayPrompt { return nil }
