@@ -186,9 +186,9 @@ Integrate `ProtocolHandler` into the broker:
 
 **Verification:** `make lint && make test-unit && make test-controller-integration`
 
-## Task 6: subscriptions/listen for 2026 upstreams
+## Task 6: subscriptions/listen for 2026 upstreams ✅
 
-**Files:** `internal/broker/upstream/mcp.go`, `internal/tests/stateless-server/server.go`, `tests/e2e/dual_protocol_test.go`
+**Files:** `internal/broker/upstream/mcp.go`, `internal/broker/protocol_handler.go`, `internal/broker/protocol_handler_2025.go`, `internal/broker/protocol_handler_2026.go`, `internal/tests/stateless-server/server.go`, `internal/tests/stateless-server/server_test.go`, `tests/e2e/dual_protocol_test.go`, `tests/e2e/mcp_client.go`
 
 Enable the SDK's built-in `subscriptions/listen` for 2026 upstreams. No custom `subscriptionsListener` needed — the SDK opens the stream automatically during `Connect` when notification handlers are set on the client.
 
@@ -202,32 +202,44 @@ Enable the SDK's built-in `subscriptions/listen` for 2026 upstreams. No custom `
 - E2E test: add tool via admin endpoint, verify broker picks up the change AND the connected 2026 client receives a `tools/list_changed` notification
 
 **Acceptance criteria:**
-- [ ] SDK opens `subscriptions/listen` for 2026 upstreams automatically
-- [ ] 2026 upstreams do not start `notificationWatcher` (GET SSE)
-- [ ] 2025 upstreams continue using `notificationWatcher`
-- [ ] Manager event loop processes notifications from both mechanisms identically
-- [ ] Stateless test server supports `/admin/addTool` and `/admin/deleteTool`
-- [ ] E2E test: 2026 upstream tool change propagates to broker and triggers client notification
-- [ ] `StartNotificationWatcher` removed from `ProtocolHandler` interface
-- [ ] `make lint && make test-unit` passes
+- [x] SDK opens `subscriptions/listen` for 2026 upstreams automatically
+- [x] 2026 upstreams do not start `notificationWatcher` (GET SSE)
+- [x] 2025 upstreams continue using `notificationWatcher`
+- [x] Manager event loop processes notifications from both mechanisms identically
+- [x] Stateless test server supports `add_tool` MCP tool and `/admin/addTool`, `/admin/deleteTool` HTTP endpoints
+- [x] E2E test: 2026 upstream tool change propagates to broker and triggers client notification
+- [x] `StartNotificationWatcher` removed from `ProtocolHandler` interface
+- [x] `make lint && make test-unit` passes
 
 **Verification:** `make lint && make test-unit`
 
 **CHECKPOINT: full feature functional. Both protocol paths work with correct cache aggregation and notification mechanisms.**
 
-## Task 7: E2E test cases
+## Task 7: E2E test cases ✅
 
 **Files:** `docs/design/broker-2026-07-28/tasks/test_cases.md`, `tests/e2e/test_cases.md` (update)
 
-Write integration and e2e test cases per `test_cases.md`.
+Documented and verified test coverage against design goals G1-G6.
+
+**Coverage summary:**
+- G1 (ttlMs/cacheScope on list responses): covered by `[Happy,Broker2026]` tools/list and prompts/list e2e tests
+- G2 (cacheScope private triggers per-user): unit-tested (`TestFreshFetchServers_*`); e2e gap noted — needs stateless server with `MCP_TOOLS_CACHE_SCOPE=private` without CRD flag
+- G3 (subscriptions/listen): covered by `[Broker2026] upstream tool change propagates` e2e test
+- G4 (2025 unchanged): covered by `[Happy,Broker2026] 2025 client tools/list has no ttlMs` e2e test
+- G5 (interface isolation): architecture, no e2e needed
+- G6 (prompts filtered): covered by `[Happy,Broker2026] prompts/list excludes 2025-only prompts` e2e test
+
+**Gaps documented:**
+- `[Happy,Broker2026] cacheScope private triggers per-user tool fetch` — unit-tested, e2e not yet implemented
+- `[Broker2026,Security] Private scope prevents cross-user tool list leak` — not yet implemented, requires AuthPolicy
 
 **Acceptance criteria:**
-- [ ] Integration test cases documented for aggregation logic, ShouldFetchFresh, and middleware behavior
-- [ ] E2E test cases documented for full-stack flows
-- [ ] E2E cases added to `tests/e2e/test_cases.md`
-- [ ] Cases cover all job stories from the design doc
+- [x] Integration test cases documented for aggregation logic, ShouldFetchFresh, and middleware behavior
+- [x] E2E test cases documented for full-stack flows
+- [x] E2E cases added to `tests/e2e/test_cases.md`
+- [x] Cases cover all job stories from the design doc (gaps documented with status)
 
-**Verification:** Review test cases cover goals G1-G5.
+**Verification:** Review test cases cover goals G1-G6.
 
 ## Task 8: Documentation
 

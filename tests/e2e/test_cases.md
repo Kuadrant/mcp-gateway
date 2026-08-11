@@ -517,6 +517,10 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - A 2026 client sends `prompts/list`. The response includes `ttlMs > 0` and a non-empty `cacheScope` aggregated from the 2026 upstream's cache metadata.
 
+### [Broker2026] upstream tool change propagates to broker and triggers client notification
+
+- A 2026 client connects with a notification handler. The test calls `sl_add_tool` through the gateway to dynamically add a tool on the upstream. The broker receives `tools/list_changed` via `subscriptions/listen`, re-lists tools, and updates the gateway server. The client receives a `tools/list_changed` notification and sees the new tool on the next `tools/list` call. Verifies the full chain: upstream → SDK subscriptions/listen → broker manager → gateway server → client notification.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

@@ -89,9 +89,11 @@ tags: Happy,Broker2026,Security
 
 A 2026 client sends `tools/list` to the gateway. The upstream 2026 test server reports `ttlMs:60000` and `cacheScope:"public"`. The response includes these fields at the top level of the list result alongside the tools.
 
-### [Happy,Broker2026] cacheScope private triggers per-user tool fetch
+### [Happy,Broker2026] cacheScope private triggers per-user tool fetch (not yet implemented)
 
 A 2026 upstream reports `cacheScope:"private"`. A 2026 client sends `tools/list` with auth headers. The broker fetches per-user tools from that upstream using the client's credentials, without `userSpecificList:true` on the MCPServerRegistration. The response includes the user-specific tools and `cacheScope:"private"`.
+
+**Status:** unit-tested (`TestFreshFetchServers_UpdatedOnMetadataChange`). E2E test needs a stateless server configured with `MCP_TOOLS_CACHE_SCOPE=private` and no CRD `userSpecificList`.
 
 ### [Happy,Broker2026] 2025 client response unchanged with 2026 upstreams
 
@@ -113,6 +115,8 @@ A 2025 upstream sends `tools/list_changed` via GET SSE. The broker processes it 
 
 A gateway has both 2025 and 2026 upstreams, each with prompts. A 2026 client sends `prompts/list`. The response includes only prompts from the 2026 upstream. Prompts from the 2025-only upstream are absent. A 2025 client sends `prompts/list` and sees only the 2025 upstream's prompts.
 
-### [Broker2026,Security] Private scope prevents cross-user tool list leak
+### [Broker2026,Security] Private scope prevents cross-user tool list leak (not yet implemented)
 
 Two clients (different auth headers) send `tools/list` to a gateway with one `cacheScope:"private"` upstream and one `cacheScope:"public"` upstream. Both see the same public tools. The private upstream's tools reflect each client's credentials. The aggregated response has `cacheScope:"private"`.
+
+**Status:** not yet implemented. Requires AuthPolicy setup with two test users.
