@@ -60,6 +60,14 @@ bundle-push: ## Push the OLM bundle image
 $(CATALOG_DOCKERFILE): $(OPM)
 	-mkdir -p $(CATALOG_DIR)
 	cd catalog && $(PROJECT_PATH)/$(OPM) generate dockerfile mcp-gateway-catalog
+	# opm serve binds a pprof endpoint on a fixed port (default localhost:6060). the builder
+	# stage runs 'opm serve --cache-only' to prime the cache; under multi-arch buildx every
+	# arch runs concurrently under QEMU on the same loopback and collides on that port
+	# (bind: address already in use). disable pprof for the cache-populate step. sed -i.bak is
+	# portable across GNU/BSD sed; the pattern no longer matches once patched, so it is idempotent.
+	sed -i.bak 's/"--cache-only"]/"--cache-only", "--pprof-addr", ""]/' $(CATALOG_DOCKERFILE)
+	rm -f $(CATALOG_DOCKERFILE).bak
+	grep -q -- '--pprof-addr' $(CATALOG_DOCKERFILE) || { echo "error: failed to inject --pprof-addr into $(CATALOG_DOCKERFILE); opm template may have changed"; exit 1; }
 
 .PHONY: catalog
 catalog: opm yq $(CATALOG_DOCKERFILE) ## Generate FBC catalog content
