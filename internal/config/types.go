@@ -116,6 +116,16 @@ type MCPServer struct {
 	Category            []string                   `json:"category,omitempty"            yaml:"category,omitempty"`
 	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`
+	GuardrailsConfigIDs []string                   `json:"guardrailsConfigIDs,omitempty" yaml:"guardrailsConfigIDs,omitempty"`
+}
+
+// GuardrailsConfig holds the resolved guardrails server config parsed from
+// the guardrails Secret referenced by the MCPGatewayExtension.
+type GuardrailsConfig struct {
+	URL       string   `json:"url"                 yaml:"url"`
+	ConfigIDs []string `json:"configIDs,omitempty" yaml:"configIDs,omitempty"`
+	Model     string   `json:"model"               yaml:"model"`
+	FailMode  string   `json:"failMode,omitempty"  yaml:"failMode,omitempty"` // "deny" | "allow"
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -210,9 +220,10 @@ type Observer interface {
 
 // BrokerConfig holds broker configuration
 type BrokerConfig struct {
-	Servers          []MCPServer           `json:"servers"                          yaml:"servers"`
-	VirtualServers   []VirtualServerConfig `json:"virtualServers,omitempty"         yaml:"virtualServers,omitempty"`
-	GatewayCACertPEM string                `json:"gatewayCACertPEM,omitempty"       yaml:"gatewayCACertPEM,omitempty"`
+	Servers                   []MCPServer           `json:"servers"                          yaml:"servers"`
+	VirtualServers            []VirtualServerConfig `json:"virtualServers,omitempty"         yaml:"virtualServers,omitempty"`
+	GatewayCACertPEM          string                `json:"gatewayCACertPEM,omitempty"       yaml:"gatewayCACertPEM,omitempty"`
+	GlobalGuardrailsConfigIDs []string              `json:"globalGuardrailsConfigIDs,omitempty" yaml:"globalGuardrailsConfigIDs,omitempty"`
 }
 
 // AuthConfig holds auth configuration

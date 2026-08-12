@@ -25,6 +25,7 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -50,6 +51,9 @@ const (
 	labelExtensionNamespace = "mcp.kuadrant.io/extension-namespace"
 	// used to ensure a specific control plane reconciles this resource based on the gateway value
 	labelIstioRev = "istio.io/rev"
+
+	// guardrails reference labels
+	labelGuardrailsReference = "mcp.kuadrant.io/guardrails-ref"
 )
 
 func envoyFilterLabels(mcpExt *mcpv1.MCPGatewayExtension, gateway *gatewayv1.Gateway) map[string]string {
@@ -238,6 +242,14 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	if err := r.reconcileCACertBundle(ctx, mcpExt); err != nil {
+		var valErr *validationError
+		if errors.As(err, &valErr) {
+			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureGuardrailsSecret(ctx, mcpExt); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
@@ -908,6 +920,38 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ con
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{Name: extName, Namespace: extNamespace},
 	}}
+}
+
+// ensureGuardrailsSecret validates the guardrails Secret referenced by the
+// labelGuardrailsReference annotation. The annotation is optional: when unset,
+// guardrails is disabled for this gateway and reconciliation proceeds normally.
+func (r *MCPGatewayExtensionReconciler) ensureGuardrailsSecret(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
+	guardrailsSecretRef := mcpExt.Annotations[labelGuardrailsReference]
+	if guardrailsSecretRef == "" {
+		return nil
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: guardrailsSecretRef, Namespace: mcpExt.Namespace}, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return newValidationError(mcpv1.GuardrailsSecretNotFound,
+				fmt.Sprintf("guardrails secret %s not found", guardrailsSecretRef))
+		}
+		return fmt.Errorf("failed to get guardrails secret: %w", err)
+	}
+
+	// Check if the secret has the required label
+	if secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+			fmt.Sprintf("guardrails secret %s missing required label %s=%s", guardrailsSecretRef, ManagedSecretLabel, ManagedSecretValue))
+	}
+
+	if _, err := guardrails.EnsureNeMoConfigData(secret.Type, secret.Data); err != nil {
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+			fmt.Sprintf("guardrails secret %s is invalid: %v", guardrailsSecretRef, err))
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

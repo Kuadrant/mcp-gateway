@@ -51,6 +51,9 @@ const (
 	conditionReasonNotReady = "NotReady"
 	// conditionReasonDisabled is the reason used when the MCPServerRegistration is disabled
 	conditionReasonDisabled = "Disabled"
+
+	// ManagedGuardrailsAnnotation is the annotation for the guardrails config IDs
+	ManagedGuardrailsAnnotation = "mcp.kuadrant.io/guardrails-config-ids"
 )
 
 // ServerInfo holds server information
