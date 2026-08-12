@@ -266,6 +266,57 @@ func TestInMemoryCache_SetAndGetClientElicitation(t *testing.T) {
 	require.True(t, val)
 }
 
+func TestInMemoryCache_ExpiresSessionAndElicitationEntries(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+	t.Cleanup(cache.Close)
+
+	const ttl = 20 * time.Millisecond
+	_, err = cache.AddSession(ctx, "gateway-session-1", "server1", "upstream-session-1", ttl)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetClientElicitation(ctx, "gateway-session-1", ttl))
+
+	require.Eventually(t, func() bool {
+		exists, err := cache.KeyExists(ctx, "gateway-session-1")
+		if err != nil || exists {
+			return false
+		}
+		elicitation, err := cache.GetClientElicitation(ctx, "gateway-session-1")
+		return err == nil && !elicitation
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestInMemoryCache_ExpiresUserToken(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+	t.Cleanup(cache.Close)
+
+	require.NoError(t, cache.SetUserToken(ctx, "gateway-session-1", "server1", "token", 20*time.Millisecond))
+	require.Eventually(t, func() bool {
+		_, ok, err := cache.GetUserToken(ctx, "gateway-session-1", "server1")
+		return err == nil && !ok
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestInMemoryCache_DropsExpiredSessionBeforeAddingNewServer(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCache()
+	require.NoError(t, err)
+	t.Cleanup(cache.Close)
+
+	_, err = cache.AddSession(ctx, "gateway-session-1", "expired-server", "expired-upstream", 20*time.Millisecond)
+	require.NoError(t, err)
+	time.Sleep(30 * time.Millisecond)
+
+	_, err = cache.AddSession(ctx, "gateway-session-1", "fresh-server", "fresh-upstream", time.Hour)
+	require.NoError(t, err)
+	sessions, err := cache.GetSession(ctx, "gateway-session-1")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"fresh-server": "fresh-upstream"}, sessions)
+}
+
 func TestInMemoryCache_AddSession_Concurrent(t *testing.T) {
 	ctx := context.Background()
 	cache, err := NewCache()

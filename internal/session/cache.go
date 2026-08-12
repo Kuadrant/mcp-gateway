@@ -15,17 +15,81 @@ const clientElicitationPrefix = "clientelicitation:"
 
 const userTokenFieldPrefix = "token:"
 
+const inMemoryReapInterval = time.Minute
+
 // Cache implements a cache
 type Cache struct {
-	inmemory      *sync.Map
-	innerMu       sync.Mutex // serializes copy-on-write mutations on inner map[string]string values
-	extClient     *redis.Client
-	encryptionKey []byte
+	inmemory          *sync.Map
+	inmemoryExpiresAt map[string]time.Time
+	innerMu           sync.Mutex // serializes in-memory entries and expiry metadata
+	reaperOnce        sync.Once
+	reaperCloseOnce   sync.Once
+	reaperStop        chan struct{}
+	extClient         *redis.Client
+	encryptionKey     []byte
+}
+
+func (c *Cache) startInMemoryReaper() {
+	c.reaperOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(inMemoryReapInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-c.reaperStop:
+					return
+				case now := <-ticker.C:
+					c.reapExpiredInMemory(now)
+				}
+			}
+		}()
+	})
+}
+
+// setInMemoryExpiry must be called while innerMu is held.
+func (c *Cache) setInMemoryExpiry(key string, ttl time.Duration, clearOnZero bool) {
+	if ttl > 0 {
+		c.inmemoryExpiresAt[key] = time.Now().Add(ttl)
+		c.startInMemoryReaper()
+		return
+	}
+	if clearOnZero {
+		delete(c.inmemoryExpiresAt, key)
+	}
+}
+
+// expireInMemoryKey must be called while innerMu is held.
+func (c *Cache) expireInMemoryKey(key string, now time.Time) {
+	expiresAt, ok := c.inmemoryExpiresAt[key]
+	if !ok || now.Before(expiresAt) {
+		return
+	}
+	delete(c.inmemoryExpiresAt, key)
+	c.inmemory.Delete(key)
+}
+
+func (c *Cache) reapExpiredInMemory(now time.Time) {
+	c.innerMu.Lock()
+	defer c.innerMu.Unlock()
+	for key := range c.inmemoryExpiresAt {
+		c.expireInMemoryKey(key, now)
+	}
+}
+
+// Close stops the in-memory expiry reaper.
+func (c *Cache) Close() {
+	if c.reaperStop == nil {
+		return
+	}
+	c.reaperCloseOnce.Do(func() { close(c.reaperStop) })
 }
 
 // KeyExists checks if a key exists in the cache
 func (c *Cache) KeyExists(ctx context.Context, key string) (bool, error) {
 	if c.inmemory != nil {
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(key, time.Now())
 		_, ok := c.inmemory.Load(key)
 		return ok, nil
 	}
@@ -43,6 +107,9 @@ func (c *Cache) KeyExists(ctx context.Context, key string) (bool, error) {
 // GetSession returns a session from the cache
 func (c *Cache) GetSession(ctx context.Context, key string) (map[string]string, error) {
 	if c.inmemory != nil {
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(key, time.Now())
 		val, ok := c.inmemory.Load(key)
 		if ok {
 			return val.(map[string]string), nil
@@ -59,7 +126,9 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 		defer c.innerMu.Unlock()
 		for _, k := range key {
 			c.inmemory.Delete(k)
+			delete(c.inmemoryExpiresAt, k)
 			c.inmemory.Delete(clientElicitationPrefix + k)
+			delete(c.inmemoryExpiresAt, clientElicitationPrefix+k)
 		}
 		return nil
 	}
@@ -71,11 +140,12 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 }
 
 // AddSession will add a session under the key. If the key exists it will append that session.
-// ttl sets the expiry on the Redis hash key; pass 0 for no expiry (in-memory mode ignores ttl).
+// ttl sets the expiry on the session key; pass 0 for no expiry.
 func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession string, ttl time.Duration) (bool, error) {
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(key, time.Now())
 		var existing map[string]string
 		if val, ok := c.inmemory.Load(key); ok {
 			existing = val.(map[string]string)
@@ -85,6 +155,7 @@ func (c *Cache) AddSession(ctx context.Context, key, mcpServerID, mcpSession str
 			next = map[string]string{}
 		}
 		next[mcpServerID] = mcpSession
+		c.setInMemoryExpiry(key, ttl, false)
 		c.inmemory.Store(key, next)
 		return true, nil
 	}
@@ -104,6 +175,7 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(key, time.Now())
 		val, ok := c.inmemory.Load(key)
 		if !ok {
 			return nil
@@ -118,10 +190,13 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 }
 
 // SetClientElicitation records that the client for this gateway session supports elicitation.
-// ttl sets the key expiry in Redis; pass 0 for no expiry (in-memory mode ignores ttl).
+// ttl sets the key expiry; pass 0 for no expiry.
 func (c *Cache) SetClientElicitation(ctx context.Context, gatewaySessionID string, ttl time.Duration) error {
 	key := clientElicitationPrefix + gatewaySessionID
 	if c.inmemory != nil {
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		c.setInMemoryExpiry(key, ttl, true)
 		c.inmemory.Store(key, true)
 		return nil
 	}
@@ -132,6 +207,9 @@ func (c *Cache) SetClientElicitation(ctx context.Context, gatewaySessionID strin
 func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID string) (bool, error) {
 	key := clientElicitationPrefix + gatewaySessionID
 	if c.inmemory != nil {
+		c.innerMu.Lock()
+		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(key, time.Now())
 		_, ok := c.inmemory.Load(key)
 		return ok, nil
 	}
@@ -146,12 +224,13 @@ func (c *Cache) GetClientElicitation(ctx context.Context, gatewaySessionID strin
 }
 
 // SetUserToken stores a per-user upstream token in the session hash.
-// ttl sets the expiry on the Redis hash key; pass 0 for no expiry (in-memory mode ignores ttl).
+// ttl sets the expiry on the session key; pass 0 for no expiry.
 func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token string, ttl time.Duration) error {
 	field := userTokenFieldPrefix + serverName
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(sessionID, time.Now())
 		var existing map[string]string
 		if val, ok := c.inmemory.Load(sessionID); ok {
 			existing = val.(map[string]string)
@@ -161,6 +240,7 @@ func (c *Cache) SetUserToken(ctx context.Context, sessionID, serverName, token s
 			next = map[string]string{}
 		}
 		next[field] = token
+		c.setInMemoryExpiry(sessionID, ttl, false)
 		c.inmemory.Store(sessionID, next)
 		return nil
 	}
@@ -190,6 +270,7 @@ func (c *Cache) GetUserToken(ctx context.Context, sessionID, serverName string) 
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(sessionID, time.Now())
 		val, ok := c.inmemory.Load(sessionID)
 		if !ok {
 			return "", false, nil
@@ -235,6 +316,7 @@ func (c *Cache) DeleteUserToken(ctx context.Context, sessionID, serverName strin
 	if c.inmemory != nil {
 		c.innerMu.Lock()
 		defer c.innerMu.Unlock()
+		c.expireInMemoryKey(sessionID, time.Now())
 		val, ok := c.inmemory.Load(sessionID)
 		if !ok {
 			return nil
@@ -259,6 +341,8 @@ func NewCache(opts ...func(*Cache)) (*Cache, error) {
 		return c, nil
 	}
 	c.inmemory = &sync.Map{}
+	c.inmemoryExpiresAt = make(map[string]time.Time)
+	c.reaperStop = make(chan struct{})
 	return c, nil
 }
 

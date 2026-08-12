@@ -347,6 +347,7 @@ func (a *app) run(ctx context.Context) {
 			a.logger.Error("OpenTelemetry shutdown error", "error", err)
 		}
 	}
+	a.sessionCache.Close()
 
 	if err := a.brokerServer.Shutdown(shutdownCtx); err != nil {
 		a.logger.Error("HTTP shutdown error", "error", err)
