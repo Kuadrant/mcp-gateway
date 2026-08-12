@@ -149,6 +149,7 @@ type MCPGatewayExtensionSpec struct {
 	// Applies to request/response prefix stripping and guardrails checks.
 	// +optional
 	// +default=1048576
+	// +kubebuilder:validation:Minimum=1
 	MaxBodyBytes *int32 `json:"maxBodyBytes,omitempty"`
 }
 
