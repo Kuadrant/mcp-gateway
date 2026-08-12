@@ -336,7 +336,7 @@ func addToolMCPHandler(s *mcp.Server) mcp.ToolHandler {
 	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args map[string]any
 		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-			return stubToolResult("invalid arguments"), nil
+			return stubToolResult("invalid arguments"), err
 		}
 		name, _ := args["name"].(string)
 		if name == "" {
