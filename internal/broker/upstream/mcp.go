@@ -284,7 +284,9 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// arriving during or right after the handshake is missed
 	client.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			up.logger.Debug("upstream receiving middleware", "upstream", up.ID(), "method", method)
 			if method == "notifications/tools/list_changed" || method == "notifications/prompts/list_changed" {
+				up.logger.Debug("upstream notification received", "upstream", up.ID(), "notification", method)
 				up.notify(method)
 			}
 			return next(ctx, method, req)
@@ -297,6 +299,7 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 
 	connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	up.logger.Debug("connecting to upstream", "upstream", up.ID(), "endpoint", up.URL)
 	session, err := client.Connect(connectCtx, streamTransport, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect client for upstream %s : %w", up.ID(), err)
@@ -313,12 +316,16 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// future work: probe 2026 upstreams via server/discover to get
 	// the full SupportedVersions list for dual-version servers.
 	up.supportedVersions = []string{up.init.ProtocolVersion}
+	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", up.init.ProtocolVersion, "uses-stateless", up.UsesStatelessProtocol())
 
 	// 2026 upstreams receive notifications via the SDK's subscriptions/listen
 	// stream (opened automatically because ToolListChangedHandler is set).
 	// 2025 upstreams use the custom GET SSE notificationWatcher.
 	if !up.UsesStatelessProtocol() {
+		up.logger.Debug("starting GET SSE notification watcher (2025 upstream)", "upstream", up.ID())
 		up.startNotificationWatcher(ctx, httpC, session)
+	} else {
+		up.logger.Debug("using subscriptions/listen for notifications (2026 upstream)", "upstream", up.ID())
 	}
 
 	// register notification and connection-lost handlers after session is

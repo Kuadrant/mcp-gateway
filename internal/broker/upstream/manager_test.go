@@ -190,6 +190,7 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 
 func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return CacheMetadata{} }
 func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
+func (m *MockMCP) UsesStatelessProtocol() bool         { return m.protocolVersion >= "2026-07-28" }
 
 // newMockMCP creates a MockMCP with sensible defaults for testing
 func newMockMCP(name, prefix string) *MockMCP {

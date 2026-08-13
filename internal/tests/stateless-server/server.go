@@ -89,6 +89,17 @@ func RunServer(transport, port string) (StartupFunc, ShutdownFunc, error) {
 		},
 	}, addToolMCPHandler(s))
 
+	// trigger-elicitation-request returns InputRequiredResult on first call,
+	// completes when the client retries with InputResponses (MRTR pattern)
+	s.AddTool(&mcp.Tool{
+		Name:        "trigger-elicitation-request",
+		Description: "trigger an elicitation request from the server",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}, elicitationToolHandler())
+
 	s.AddReceivingMiddleware(userToolFilterMiddleware(), cacheMetadataMiddleware())
 
 	// greeting prompt
@@ -410,8 +421,64 @@ func deleteToolHandler(s *mcp.Server) http.HandlerFunc {
 	}
 }
 
-// requireStringArg parses an argument with mark3labs RequireString
-// semantics: any string passes, including empty.
+func elicitationToolHandler() mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if len(req.Params.InputResponses) == 0 {
+			return &mcp.CallToolResult{
+				InputRequests: mcp.InputRequestMap{
+					"user_info": &mcp.ElicitParams{
+						Message: "Please provide your information",
+						RequestedSchema: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"name": map[string]any{
+									"type":        "string",
+									"description": "Your name",
+								},
+							},
+							"required": []string{"name"},
+						},
+					},
+				},
+				RequestState: "elicitation-pending",
+			}, nil
+		}
+
+		resp, ok := req.Params.InputResponses["user_info"]
+		if !ok {
+			return &mcp.CallToolResult{
+				InputRequests: mcp.InputRequestMap{
+					"user_info": &mcp.ElicitParams{Message: "Please provide your information (retry)"},
+				},
+				RequestState: req.Params.RequestState,
+			}, nil
+		}
+
+		elicitResult, ok := resp.(*mcp.ElicitResult)
+		if !ok || elicitResult == nil {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid elicitation response"}},
+			}, nil
+		}
+
+		switch elicitResult.Action {
+		case "decline", "cancel":
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("User %sed the elicitation request", elicitResult.Action)}},
+			}, nil
+		default:
+			name, _ := elicitResult.Content["name"].(string)
+			if name == "" {
+				name = "unknown"
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("User provided the requested information. Name: %s", name)}},
+			}, nil
+		}
+	}
+}
+
 func requireStringArg(args map[string]any, key string) (string, error) {
 	val, ok := args[key]
 	if !ok {
