@@ -37,6 +37,10 @@ spec:
           value: "forecast,alerts"
         - name: AGENT_URL
           value: "http://a2a-test-server.mcp-test.svc.cluster.local:9090/a2a"
+        # bound retention of completed tasks (each large/image artifact holds ~1 MiB)
+        # so a burst of heavy tasks can't accumulate past the 128Mi limit
+        - name: TASK_TTL_MS
+          value: "120000"
         resources:
           limits:
             memory: "128Mi"

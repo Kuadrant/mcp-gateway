@@ -509,7 +509,10 @@ func (s *server) createTask(r *http.Request, msg message) *task {
 	// spawn background completion only after the task is in the map, so the
 	// goroutine's lookup can't race ahead of the insert and drop the task.
 	if t.Status.State == stateWorking {
-		go s.completeLater(t.ID, text, r)
+		// build the artifacts here, in the request goroutine — the completion runs
+		// after ServeHTTP returns, where the *http.Request must not be read.
+		artifacts := s.buildArtifacts(t.ID, text, fileB64For(text), r)
+		go s.completeLater(t.ID, artifacts)
 	}
 	return t
 }
@@ -589,8 +592,10 @@ func fileArtifact(b64 string) artifact {
 	}
 }
 
-func (s *server) completeLater(taskID, text string, r *http.Request) {
-	artifacts := s.buildArtifacts(taskID, text, fileB64For(text), r)
+// completeLater finishes a "slow" task after a delay. The artifacts are built by
+// the caller in the request goroutine and passed in, so this goroutine never
+// touches the *http.Request after ServeHTTP has returned.
+func (s *server) completeLater(taskID string, artifacts []artifact) {
 	time.Sleep(s.taskDelay)
 	s.mu.Lock()
 	defer s.mu.Unlock()
