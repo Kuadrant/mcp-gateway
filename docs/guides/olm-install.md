@@ -1,71 +1,147 @@
-# Installing MCP Gateway via OLM
+# Installing MCP Gateway via OLM (Kuadrant Operator)
 
-This guide covers installing the MCP Gateway controller using [Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/).
+This guide covers installing MCP Gateway on a cluster that uses
+[Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/).
+
+MCP Gateway does not ship a standalone OLM operator. On OLM-based clusters, MCP Gateway is
+installed and managed by the **Kuadrant Operator**, which embeds the MCP Gateway controller and
+deploys it on startup. This is the consolidated (umbrella) model described in
+[RFC 0019](https://github.com/Kuadrant/architecture/pull/189).
+
+> **Note:** If you are not using OLM, install MCP Gateway standalone with Helm — see
+> [Installing and Configuring MCP Gateway](./how-to-install-and-configure.md). Helm is the
+> preferred way to run MCP Gateway standalone.
+>
+> If you previously installed MCP Gateway via its own OLM subscription and want to move to the
+> Kuadrant Operator, follow
+> [Upgrading from Standalone MCP Gateway to the Kuadrant Operator](./olm-upgrade.md) instead —
+> that path is zero-downtime.
 
 ## Prerequisites
 
-OpenShift clusters include OLM by default. For non-OpenShift Kubernetes clusters, install OLM first:
+- A cluster with OLM. OpenShift includes OLM by default; on other Kubernetes distributions,
+  install OLM first.
+- Gateway API CRDs and an Istio-based Gateway API provider installed.
+- A catalog source that provides a Kuadrant Operator version which bundles MCP Gateway. Your
+  cluster administrator or the Kuadrant release notes will tell you which version and catalog to
+  use.
+
+> **Note:** Throughout this guide, `mcp-system` is the namespace where the operator and its
+> `OperatorGroup` live. Substitute your own namespace if different.
+
+## Step 1: Install the Kuadrant Operator
+
+Create an `OperatorGroup` and a `Subscription` for the Kuadrant Operator. Use the catalog source
+and channel provided by your administrator or the release notes.
 
 ```bash
-make olm-install
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: kuadrant
+  namespace: mcp-system
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: kuadrant-operator
+  namespace: mcp-system
+spec:
+  channel: <channel>
+  name: kuadrant-operator
+  source: <catalog-source>
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
 ```
 
-## Install
-
-Deploy from a release tag using kustomize with a remote ref:
+Wait for the operator's ClusterServiceVersion (CSV) to succeed. The CSV may take a moment to
+appear while OLM processes the subscription:
 
 ```bash
-export MCP_GATEWAY_VERSION=0.9.0
-kubectl apply -k "https://github.com/Kuadrant/mcp-gateway/config/deploy/olm?ref=v${MCP_GATEWAY_VERSION}"
+oc get csv -n mcp-system -w
+# kuadrant-operator.<version>   ...   Succeeded
 ```
 
-Wait for the controller to be ready. The CSV may take a moment to appear while OLM processes the subscription:
+If `oc get csv` returns nothing at first, wait a few seconds and retry — the CSV has not been
+created yet.
+
+## Step 2: Verify the MCP Gateway controller is running
+
+The Kuadrant Operator deploys the MCP Gateway controller unconditionally on startup, alongside
+its other component controllers. No `Kuadrant` custom resource is required for the controller to
+run. (A `Kuadrant` CR is only needed later if you want to apply `AuthPolicy` or
+`RateLimitPolicy`.)
 
 ```bash
-kubectl wait csv -n mcp-system -l operators.coreos.com/mcp-gateway.mcp-system="" \
-  --for=jsonpath='{.status.phase}'=Succeeded --timeout=5m
+# The MCP CRDs are installed and owned by the Kuadrant Operator CSV
+oc get crd | grep mcp.kuadrant.io
+# mcpgatewayextensions.mcp.kuadrant.io
+# mcpserverregistrations.mcp.kuadrant.io
+# mcpvirtualservers.mcp.kuadrant.io
+
+# The MCP Gateway controller is running
+oc get deployment mcp-gateway-controller -n mcp-system
+# READY 1/1
 ```
 
-If the command returns "no matching resources found", wait a few seconds and retry -- the CSV has not been created yet.
+## Step 3: Deploy an MCP Gateway instance
 
-## Next Steps
+Installing the operator deploys the controller only. To deploy the MCP Gateway data plane
+(broker-router), create an `MCPGatewayExtension` that targets your Gateway. The controller
+reconciles it and creates the broker-router `Deployment`, `Service`, `HTTPRoute`, and the
+`EnvoyFilter` on the Gateway.
 
-Installing via OLM deploys the operator only. To deploy the MCP Gateway itself, create an `MCPGatewayExtension` resource. See [Manual Resource Creation](./isolated-gateway-deployment.md#manual-resource-creation) for details.
+```bash
+oc apply -f - <<EOF
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway-extension
+  namespace: mcp-system
+spec:
+  gatewayRef:
+    name: <your-gateway>
+    namespace: <your-gateway-namespace>
+EOF
+```
+
+Verify the extension becomes Ready and the broker-router is running:
+
+```bash
+oc get mcpgatewayextension -n mcp-system
+# READY True
+
+oc get deployment mcp-gateway -n mcp-system
+# READY 1/1
+```
+
+> **Note:** For richer deployment options — multiple isolated instances, cross-namespace Gateway
+> references with `ReferenceGrant`, session storage, and listener configuration — see
+> [Isolated Gateway Deployment](./isolated-gateway-deployment.md) and
+> [Configure MCP Gateway Listener and Router](./configure-mcp-gateway-listener-and-router.md).
 
 ## Uninstall
 
-```bash
-make undeploy-olm
-```
-
-## Local Development (Kind)
-
-The default `local-env-setup` target uses kustomize:
+Removing MCP Gateway means removing your `MCPGatewayExtension` resources (which the controller
+uses to clean up the broker-router data plane), then removing the operator if you no longer need
+it.
 
 ```bash
-make local-env-setup
+# Remove the data plane (controller must still be running to clear finalizers)
+oc delete mcpgatewayextension --all -n mcp-system
+
+# Remove the operator
+oc delete subscription kuadrant-operator -n mcp-system
+oc delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-system
 ```
 
-To use the OLM-based deployment instead (installs both MCP Gateway and Kuadrant via OLM):
+> **Note:** OLM does not delete CRDs when a CSV is removed. Delete the MCP CRDs manually only if
+> you are sure no other operator or workload depends on them.
 
-```bash
-make local-env-setup-olm
-```
+## Next Steps
 
-This builds the bundle and catalog images locally, loads them into the Kind cluster, deploys the Kuadrant OLM catalog, and lets OLM resolve Kuadrant as a dependency automatically.
-
-## Available Make Targets
-
-| Target | Description |
-|--------|-------------|
-| `make bundle` | Generate OLM bundle manifests |
-| `make bundle-build` | Build the OLM bundle image |
-| `make bundle-push` | Push the OLM bundle image |
-| `make catalog-build` | Build the OLM catalog image |
-| `make catalog-push` | Push the OLM catalog image |
-| `make olm-install` | Install OLM on the cluster |
-| `make olm-uninstall` | Uninstall OLM from the cluster |
-| `make deploy-olm` | Deploy controller via OLM on local cluster |
-| `make deploy-kuadrant-catalog` | Deploy Kuadrant OLM catalog from upstream |
-| `make local-env-setup-olm` | Full local setup with MCP Gateway and Kuadrant via OLM |
-| `make undeploy-olm` | Remove OLM-deployed controller |
+- [Register MCP Servers](./register-mcp-servers.md)
+- [Authentication](./authentication.md)
+- [Authorization](./authorization.md)
