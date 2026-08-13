@@ -7,6 +7,8 @@
     - [Getting Started](./getting-started.md)
 - Installing the MCP Gateway
     - [Helm Install](./how-to-install-and-configure.md)
+    - [OLM Install (Kuadrant Operator)](./olm-install.md)
+    - [Upgrade from Standalone to Kuadrant Operator (OLM)](./olm-upgrade.md)
 - [Configure MCP Gateway Listener and Router](./configure-mcp-gateway-listener-and-router.md)
 - [Multi-Protocol Support](./multi-protocol-support.md)
 - Configuring MCP Servers
