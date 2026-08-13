@@ -236,7 +236,7 @@ type MCPManager struct {
 	promptEvents    chan struct{}
 	reconnectEvents chan struct{}
 	done            chan struct{} // closed when the event loop exits
-	status       ServerValidationStatus
+	status          ServerValidationStatus
 
 	// consecutiveFailures counts connect/ping failures since the last
 	// healthy pass. only touched from the event loop goroutine.
