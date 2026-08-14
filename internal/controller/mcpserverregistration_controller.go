@@ -138,6 +138,20 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	logger.Info("main reconcile logic starting for", "mcpregistrationname", mcpsr.Name)
 
+	// validate prefix uniqueness (no duplicate prefixes across active registrations)
+	if mcpsr.Spec.Prefix != "" {
+		if err := r.validatePrefixUniqueness(ctx, mcpsr); err != nil {
+			logger.Info("prefix uniqueness validation failed", "prefix", mcpsr.Spec.Prefix, "error", err)
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+		}
+	}
+
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
@@ -833,6 +847,32 @@ func (r *MCPReconciler) findMCPServerRegistrationsForSecret(ctx context.Context,
 // findMCPServerRegistrationsForMCPGatewayExtension finds all MCPServerRegistrations whose HTTPRoutes
 // are attached to the Gateway targeted by the given MCPGatewayExtension. When an MCPGatewayExtension
 // changes (created, updated, deleted), the associated MCPServerRegistrations need to be reconciled
+// validatePrefixUniqueness checks that the prefix is not already used by another MCPServerRegistration.
+// Substring collisions (e.g., "app_" vs "app_admin_") are allowed and resolved via longest-prefix-match.
+func (r *MCPReconciler) validatePrefixUniqueness(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
+	if mcpsr.Spec.Prefix == "" {
+		return nil // empty prefix is not a conflict
+	}
+
+	// list all MCPServerRegistrations cluster-wide
+	allRegistrations := &mcpv1.MCPServerRegistrationList{}
+	if err := r.List(ctx, allRegistrations); err != nil {
+		return fmt.Errorf("failed to list MCPServerRegistrations: %w", err)
+	}
+
+	// check for exact prefix duplicates (excluding self)
+	for _, other := range allRegistrations.Items {
+		if other.Name == mcpsr.Name && other.Namespace == mcpsr.Namespace {
+			continue // skip self
+		}
+		if other.Spec.Prefix == mcpsr.Spec.Prefix {
+			return fmt.Errorf("prefix '%s' is already in use by MCPServerRegistration %s/%s", mcpsr.Spec.Prefix, other.Namespace, other.Name)
+		}
+	}
+
+	return nil
+}
+
 // to ensure their config is written to the correct namespaces.
 func (r *MCPReconciler) findMCPServerRegistrationsForMCPGatewayExtension(ctx context.Context, obj client.Object) []reconcile.Request {
 	mcpExt := obj.(*mcpv1.MCPGatewayExtension)
