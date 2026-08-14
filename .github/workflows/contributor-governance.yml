@@ -8,5 +8,5 @@ on:
 
 jobs:
   governance:
-    uses: Kuadrant/.github/.github/workflows/contributor-governance.yml@d1617682a51d84a48fbab0db932f380824284b48 # ratchet:Kuadrant/.github/.github/workflows/contributor-governance.yml@main
+    uses: Kuadrant/.github/.github/workflows/contributor-governance.yml@dad3166a82c39deed215823685ffba2090a4271f # ratchet:Kuadrant/.github/.github/workflows/contributor-governance.yml@main
     secrets: inherit
