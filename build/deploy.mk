@@ -13,4 +13,18 @@ undeploy-gateway: $(KUSTOMIZE) ## Remove the MCP gateway
 .PHONY: deploy-namespaces
 deploy-namespaces: # Create MCP namespaces
 	kubectl apply -f config/mcp-system/namespace.yaml
-	kubectl apply -f config/istio/gateway/namespace.yaml	
+	kubectl apply -f config/istio/gateway/namespace.yaml
+
+# Deploy only the controller, using the images built and kind-loaded by
+# build-and-load-image (tagged 'latest') instead of the pinned release version
+.PHONY: deploy-controller-local
+deploy-controller-local: install-crd ## Deploy only the controller, using locally-built images
+	kubectl apply -k config/mcp-gateway/overlays/mcp-system-local/
+	@echo "Waiting for controller to be ready..."
+	@kubectl wait --for=condition=Available deployment/mcp-gateway-controller -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Waiting for MCPGatewayExtension to be ready..."
+	@kubectl wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension -n mcp-system --timeout=$(WAIT_TIME)
+	@echo "Controller and broker-router are ready"
+
+.PHONY: deploy-local
+deploy-local: install-crd deploy-namespaces deploy-controller-local ## Deploy controller to mcp-system namespace using locally-built images
