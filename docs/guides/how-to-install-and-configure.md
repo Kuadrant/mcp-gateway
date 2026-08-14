@@ -2,6 +2,8 @@
 
 This guide demonstrates how to install and configure the MCP Gateway to aggregate multiple Model Context Protocol (MCP) servers behind a single endpoint.
 
+> **Note:** This guide installs MCP Gateway standalone with Helm. On OLM-based clusters (including OpenShift), install via the Kuadrant Operator instead — see [OLM Install](./olm-install.md).
+
 ## Prerequisites
 
 MCP Gateway runs on Kubernetes and integrates with Gateway API and Istio. You should be familiar with:
