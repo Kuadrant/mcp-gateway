@@ -173,10 +173,13 @@ oc get mcpgatewayextension -A
 # READY True
 ```
 
-> **Note:** When the new controller reconciles your `MCPGatewayExtension`, it may roll the
-> broker-router pods (a rolling update behind the stable `Service`). New pods become Ready
-> before old ones are removed, so no requests are dropped — the broker-router `Deployment`,
-> `Service`, `HTTPRoute` and `EnvoyFilter` are never deleted.
+> **Note:** When the new controller reconciles your `MCPGatewayExtension`, it rolls the
+> broker-router pods whenever the Kuadrant Operator release pins a newer broker-router image
+> than the one currently running — which is normally the case on a version-advancing upgrade.
+> This is a rolling update behind the stable `Service`: new pods become Ready before old ones
+> are removed, so no requests are dropped. The pods restarting is expected; zero-downtime means
+> no request is dropped during the roll, not that the pods are never replaced. The broker-router
+> `Deployment`, `Service`, `HTTPRoute` and `EnvoyFilter` are never deleted.
 
 ## Step 6: Confirm traffic was uninterrupted
 

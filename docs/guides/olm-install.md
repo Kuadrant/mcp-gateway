@@ -101,9 +101,10 @@ metadata:
   name: mcp-gateway-extension
   namespace: mcp-system
 spec:
-  gatewayRef:
+  targetRef:
     name: <your-gateway>
     namespace: <your-gateway-namespace>
+    sectionName: <listener-name>
 EOF
 ```
 
