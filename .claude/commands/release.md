@@ -167,10 +167,22 @@ Docs on main are published to docs.kuadrant.io, so version references must point
 git checkout main && git pull upstream main
 git checkout -b bump-version-{VERSION}
 ./scripts/set-release-version.sh {VERSION}
-make bundle
+make bundle VERSION={VERSION}
 ```
 
-Note: `make bundle` runs without `VERSION` so the bundle CSV keeps the default `latest` image tags and `0.0.0` version. CI regenerates the bundle the same way, so the CRD sync check will pass. The versioned image refs in docs, scripts, and deployment manifests come from `set-release-version.sh`.
+Note: main tracks the last **released** version, not `latest`/dev placeholders. Run `make bundle` with `VERSION={VERSION}` set (matching the release branch step), otherwise the CSV (`config/manifests/bases/mcp-gateway.clusterserviceversion.yaml`) and `config/mcp-gateway/components/controller/deployment-controller.yaml` get stamped with `latest`/`0.0.0` placeholders instead of `v{VERSION}` — this breaks the OLM upgrade graph.
+
+`set-release-version.sh` does not update `charts/mcp-gateway/Chart.yaml`. Bump it manually:
+```bash
+# charts/mcp-gateway/Chart.yaml: set both to {VERSION}
+version: {VERSION}
+appVersion: "{VERSION}"
+```
+
+Before committing, verify no stale version references remain:
+```bash
+grep -rn "{PREVIOUS_VERSION}" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" config/ charts/ docs/guides/
+```
 
 Show the diff and ask the user to confirm, then commit:
 ```bash
