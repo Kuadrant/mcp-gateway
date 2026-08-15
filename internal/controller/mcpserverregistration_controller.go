@@ -138,19 +138,19 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	logger.Info("main reconcile logic starting for", "mcpregistrationname", mcpsr.Name)
 
-	// TODO: validate prefix uniqueness (temporarily disabled for debugging UserSpecificList test failures)
-	// if mcpsr.Spec.Prefix != "" {
-	// 	if err := r.validatePrefixUniqueness(ctx, mcpsr); err != nil {
-	// 		logger.Info("prefix uniqueness validation failed", "prefix", mcpsr.Spec.Prefix, "error", err)
-	// 		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-	// 			if apierrors.IsConflict(err) {
-	// 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-	// 			}
-	// 			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-	// 		}
-	// 		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
-	// 	}
-	// }
+	// validate prefix uniqueness (no duplicate prefixes across active registrations)
+	if mcpsr.Spec.Prefix != "" {
+		if err := r.validatePrefixUniqueness(ctx, mcpsr); err != nil {
+			logger.Info("prefix uniqueness validation failed", "prefix", mcpsr.Spec.Prefix, "error", err)
+			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+		}
+	}
 
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
