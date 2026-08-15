@@ -47,6 +47,12 @@ func CreateAuthorizedPromptsJWT(allowedPrompts map[string][]string) (string, err
 	return createCapabilitiesJWT(map[string]map[string][]string{"prompts": allowedPrompts})
 }
 
+// CreateAuthorizedResourcesJWT creates a signed JWT for the x-mcp-authorized header
+// allowedResources is a map of server name to list of resource authorities
+func CreateAuthorizedResourcesJWT(allowedResources map[string][]string) (string, error) {
+	return createCapabilitiesJWT(map[string]map[string][]string{"resources": allowedResources})
+}
+
 func createCapabilitiesJWT(capabilities map[string]map[string][]string) (string, error) {
 	keyBytes := []byte(testHeaderSigningKey)
 	claimPayload, err := json.Marshal(capabilities)
