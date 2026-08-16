@@ -52,7 +52,7 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(resp.Result.Contents[0].URI).To(Equal(resourceURI))
 
 		By("Sending multiple resources/read requests sequentially")
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			uri := fmt.Sprintf("resource://%d", i)
 			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"%s"}}`, i, uri)
 			status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
