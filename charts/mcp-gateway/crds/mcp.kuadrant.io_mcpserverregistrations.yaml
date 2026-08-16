@@ -293,6 +293,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastValidatedGeneration:
+                description: |-
+                  lastValidatedGeneration is the metadata.generation value when prefix validation last succeeded.
+                  Used to skip redundant validation on every reconciliation.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

@@ -138,8 +138,8 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	logger.Info("main reconcile logic starting for", "mcpregistrationname", mcpsr.Name)
 
-	// validate prefix uniqueness (no duplicate prefixes across active registrations)
-	if mcpsr.Spec.Prefix != "" {
+	// validate prefix uniqueness only if spec has changed (not on every reconciliation)
+	if mcpsr.Spec.Prefix != "" && mcpsr.Status.LastValidatedGeneration != mcpsr.ObjectMeta.Generation {
 		if err := r.validatePrefixUniqueness(ctx, mcpsr); err != nil {
 			logger.Info("prefix uniqueness validation failed", "prefix", mcpsr.Spec.Prefix, "error", err)
 			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
@@ -150,6 +150,8 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 			return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 		}
+		// validation passed, record generation
+		mcpsr.Status.LastValidatedGeneration = mcpsr.ObjectMeta.Generation
 	}
 
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
