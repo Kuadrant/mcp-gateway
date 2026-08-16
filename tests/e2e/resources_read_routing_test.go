@@ -12,8 +12,8 @@ import (
 
 var _ = Describe("Resources/Read Routing", func() {
 	It("[Happy] resources/read routing through Envoy with prefix rewriting", Serial, func() {
-		By("Registering MCP server with resources and unique prefix")
-		registration := NewMCPServerResources("resources-read", "resources-read.mcp-gateway.local", "mcp-test-server1", 9090, k8sClient).
+		By("Registering everything-server with resources and unique prefix")
+		registration := NewMCPServerResources("resources-read", "resources-read.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("docs_").
 			Build()
 		regObjects := registration.GetObjects()
@@ -30,10 +30,9 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client.Close() }()
 
-		By("Sending resources/read for prefixed resource URI")
-		// Gateway routes based on resource authority and forwards to backend
-		// Backend returns the resource content
-		resourceURI := "embedded:info"
+		By("Sending resources/read for test resource")
+		// everything-server provides resources like resource://0, resource://1, etc.
+		resourceURI := "resource://0"
 		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"%s"}}`, resourceURI)
 		status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -53,8 +52,8 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(resp.Result.Contents[0].URI).To(Equal(resourceURI))
 
 		By("Sending multiple resources/read requests sequentially")
-		for i := 1; i <= 1; i++ {
-			uri := "embedded:info"
+		for i := 0; i < 3; i++ {
+			uri := fmt.Sprintf("resource://%d", i)
 			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"%s"}}`, i, uri)
 			status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -72,7 +71,7 @@ var _ = Describe("Resources/Read Routing", func() {
 		}
 
 		By("Verifying unrecognized resource URI returns error")
-		unknownURI := "embedded:nonexistent"
+		unknownURI := "resource://9999"
 		body = fmt.Sprintf(`{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"%s"}}`, unknownURI)
 		status, respBody, _, err = mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -89,8 +88,8 @@ var _ = Describe("Resources/Read Routing", func() {
 	})
 
 	It("[Happy] resource authorization filtering via JWT header", Serial, func() {
-		By("Registering MCP server with resources and unique prefix")
-		registration := NewMCPServerResources("resources-auth", "resources-auth.mcp-gateway.local", "mcp-test-server1", 9090, k8sClient).
+		By("Registering everything-server with resources and unique prefix")
+		registration := NewMCPServerResources("resources-auth", "resources-auth.mcp-gateway.local", "everything-server", 9090, k8sClient).
 			WithPrefix("app_").
 			Build()
 		regObjects := registration.GetObjects()
