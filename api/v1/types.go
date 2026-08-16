@@ -216,10 +216,6 @@ type MCPServerRegistrationStatus struct {
 	// +patchMergeKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
-	// lastValidatedGeneration is the metadata.generation value when prefix validation last succeeded.
-	// Used to skip redundant validation on every reconciliation.
-	// +optional
-	LastValidatedGeneration int64 `json:"lastValidatedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true
