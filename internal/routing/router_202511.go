@@ -332,12 +332,12 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 	return r.routeToUpstream(ctx, span, mcpReq, serverInfo, headers)
 }
 
-// stripResourcePrefix removes prefix from a ui:// URI's authority segment,
+// stripResourcePrefix removes prefix from a ui:// or resource:// URI's authority segment,
 // reconstructing the original upstream URI - the inverse of the broker's
-// rewriteResourceURI. Non-ui:// and malformed URIs are returned unchanged.
+// rewriteResourceURI. Non-ui/resource and malformed URIs are returned unchanged.
 func stripResourcePrefix(uri, prefix string) string {
 	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "ui" || u.Host == "" {
+	if err != nil || (u.Scheme != "ui" && u.Scheme != "resource") || u.Host == "" {
 		return uri
 	}
 	u.Host = strings.TrimPrefix(u.Host, EnsureSeparator(prefix))
