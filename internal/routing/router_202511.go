@@ -323,6 +323,7 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 
 	headers[MethodHeader] = mcpReq.Method
 	mcpReq.ServerName = serverInfo.Name
+	mcpReq.ServerPrefix = serverInfo.Prefix
 	upstreamURI := stripResourcePrefix(resourceURI, serverInfo.Prefix)
 	headers[ResourceHeader] = upstreamURI
 	mcpReq.ReWriteResourceURI(upstreamURI)
