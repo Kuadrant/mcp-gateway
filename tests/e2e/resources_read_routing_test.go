@@ -11,7 +11,7 @@ import (
 )
 
 var _ = Describe("Resources/Read Routing", func() {
-	It("[Happy] resources/read routing through Envoy with prefix rewriting", func() {
+	It("[Happy] resources/read routing through Envoy with prefix rewriting", Serial, func() {
 		By("Registering MCP server with resources and unique prefix")
 		registration := NewMCPServerResourcesWithDefaults("resources-read", k8sClient).
 			WithPrefix("docs_").
