@@ -27,7 +27,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # ratchet:actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.5'
 
       - name: Install tools
         run: make tools
