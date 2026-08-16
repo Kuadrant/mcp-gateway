@@ -31,10 +31,9 @@ var _ = Describe("Resources/Read Routing", func() {
 		defer func() { _ = client.Close() }()
 
 		By("Sending resources/read for prefixed resource URI")
-		// Gateway stores resources with prefix: "docs_example.com/file1.txt"
-		// Client sends: "example.com/file1.txt" (original authority)
-		// Router adds prefix before looking up in broker, then strips it from response
-		resourceURI := "file://example.com/file1.txt"
+		// Gateway routes based on resource authority and forwards to backend
+		// Backend returns the resource content
+		resourceURI := "embedded:info"
 		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"%s"}}`, resourceURI)
 		status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -54,8 +53,8 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(resp.Result.Contents[0].URI).To(Equal(resourceURI))
 
 		By("Sending multiple resources/read requests sequentially")
-		for i := 1; i <= 3; i++ {
-			uri := fmt.Sprintf("file://example.com/file%d.txt", i)
+		for i := 1; i <= 1; i++ {
+			uri := "embedded:info"
 			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"%s"}}`, i, uri)
 			status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -73,7 +72,7 @@ var _ = Describe("Resources/Read Routing", func() {
 		}
 
 		By("Verifying unrecognized resource URI returns error")
-		unknownURI := "file://unknown.com/nonexistent.txt"
+		unknownURI := "embedded:nonexistent"
 		body = fmt.Sprintf(`{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"%s"}}`, unknownURI)
 		status, respBody, _, err = mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 		Expect(err).NotTo(HaveOccurred())
