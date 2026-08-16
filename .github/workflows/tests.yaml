@@ -28,7 +28,7 @@ jobs:
     name: Unit Tests
     strategy:
       matrix:
-        go-version: ['1.26.5']
+        go-version: ['1.26.6']
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     defaults:

@@ -22,7 +22,7 @@ This method runs MCP Gateway broker and router components as standalone binaries
 
 ## Prerequisites
 
-- [Go 1.26.5+](https://golang.org/doc/install) installed (for building from source)
+- [Go 1.26.6+](https://golang.org/doc/install) installed (for building from source)
 - [Git](https://git-scm.com/downloads) installed
 - [Envoy proxy](https://www.envoyproxy.io/docs/envoy/latest/start/install) installed (or Docker to run it as a container)
 - `openssl` (for generating the signing key)
