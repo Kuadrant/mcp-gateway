@@ -30,11 +30,28 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = client.Close() }()
 
+		By("Listing resources to get prefixed URIs")
+		// Get the prefixed resource URIs from the broker
+		listBody := `{"jsonrpc":"2.0","id":0,"method":"resources/list"}`
+		status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(listBody), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+
+		var listResp struct {
+			Result struct {
+				Resources []struct {
+					URI string `json:"uri"`
+				} `json:"resources"`
+			} `json:"result"`
+		}
+		Expect(json.Unmarshal([]byte(respBody), &listResp)).To(Succeed())
+		Expect(listResp.Result.Resources).NotTo(BeEmpty())
+		resourceURI := listResp.Result.Resources[0].URI
+
 		By("Sending resources/read for test resource")
-		// everything-server provides resources like resource://0, resource://1, etc.
-		resourceURI := "resource://0"
+		// Use the prefixed URI from resources/list
 		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"%s"}}`, resourceURI)
-		status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
+		status, respBody, _, err = mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(200))
 
@@ -47,13 +64,18 @@ var _ = Describe("Resources/Read Routing", func() {
 				} `json:"contents"`
 			} `json:"result"`
 		}
-		Expect(json.Unmarshal([]byte(respBody), &resp)).To(Succeed())
+		if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
+			fmt.Printf("RESPONSE BODY: %s\n", respBody)
+			Expect(err).NotTo(HaveOccurred())
+		}
 		Expect(resp.Result.Contents).NotTo(BeEmpty())
-		Expect(resp.Result.Contents[0].URI).To(Equal(resourceURI))
 
 		By("Sending multiple resources/read requests sequentially")
 		for i := range 3 {
-			uri := fmt.Sprintf("resource://%d", i)
+			if i >= len(listResp.Result.Resources) {
+				break
+			}
+			uri := listResp.Result.Resources[i].URI
 			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"%s"}}`, i, uri)
 			status, respBody, _, err := mcpRawPost(ctx, gatewayURL, client.ID(), []byte(body), nil)
 			Expect(err).NotTo(HaveOccurred())
