@@ -956,13 +956,13 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 	return out, nil
 }
 
-// rewriteResourceURI injects prefix into a ui:// URI's authority segment
-// (ui://template.html -> ui://<prefix_>template.html). Non-ui:// and
-// malformed URIs are returned unchanged, matching how the tools/call
+// rewriteResourceURI injects prefix into a ui:// or resource:// URI's authority segment
+// (ui://template.html -> ui://<prefix_>template.html, resource://0 -> resource://<prefix_>0).
+// Non-ui/resource and malformed URIs are returned unchanged, matching how the tools/call
 // response rewrite (resourceURIRewriter) treats them.
 func rewriteResourceURI(uri, prefix string) string {
 	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "ui" {
+	if err != nil || (u.Scheme != "ui" && u.Scheme != "resource") {
 		return uri
 	}
 	u.User = nil // never forward upstream credentials to clients
