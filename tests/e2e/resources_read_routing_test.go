@@ -13,7 +13,7 @@ import (
 var _ = Describe("Resources/Read Routing", func() {
 	It("[Happy] resources/read routing through Envoy with prefix rewriting", Serial, func() {
 		By("Registering MCP server with resources and unique prefix")
-		registration := NewMCPServerResourcesWithDefaults("resources-read", k8sClient).
+		registration := NewMCPServerResources("resources-read", "resources-read.mcp-gateway.local", "mcp-test-server1", 9090, k8sClient).
 			WithPrefix("docs_").
 			Build()
 		regObjects := registration.GetObjects()
@@ -91,7 +91,7 @@ var _ = Describe("Resources/Read Routing", func() {
 
 	It("[Happy] resource authorization filtering via JWT header", Serial, func() {
 		By("Registering MCP server with resources and unique prefix")
-		registration := NewMCPServerResourcesWithDefaults("resources-auth", k8sClient).
+		registration := NewMCPServerResources("resources-auth", "resources-auth.mcp-gateway.local", "mcp-test-server1", 9090, k8sClient).
 			WithPrefix("app_").
 			Build()
 		regObjects := registration.GetObjects()
