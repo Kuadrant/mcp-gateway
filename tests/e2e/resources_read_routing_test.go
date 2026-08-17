@@ -65,7 +65,7 @@ var _ = Describe("Resources/Read Routing", func() {
 			} `json:"result"`
 		}
 		if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
-			fmt.Printf("RESPONSE BODY: %s\n", respBody)
+			GinkgoWriter.Printf("RESPONSE BODY: %s\n", respBody)
 			Expect(err).NotTo(HaveOccurred())
 		}
 		Expect(resp.Result.Contents).NotTo(BeEmpty())

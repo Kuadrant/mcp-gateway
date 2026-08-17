@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
@@ -15,7 +14,7 @@ import (
 // FilterResources reduces the resource set based on authorization headers.
 func (broker *mcpBrokerImpl) FilterResources(ctx context.Context, headers http.Header, mcpRes *mcp.ListResourcesResult) {
 	attrs := []attribute.KeyValue{brokerComponentAttr}
-	ctx, span := brokerTracer().Start(ctx, "mcp-broker.resources-list", trace.WithAttributes(attrs...))
+	ctx, span := brokerTracer().Start(ctx, "mcp-broker.resources-filter", trace.WithAttributes(attrs...))
 	defer span.End()
 
 	broker.logger.DebugContext(ctx, "FilterResources called", "input_resources_count", len(mcpRes.Resources))
@@ -83,7 +82,7 @@ func (broker *mcpBrokerImpl) filterResourcesByServerMap(ctx context.Context, all
 		}
 
 		// extract original authority by stripping the prefix from the URI authority
-		prefixedAuthority := resourceAuthorityFromURI(resource.URI)
+		prefixedAuthority := routing.ResourceAuthority(resource.URI)
 		originalAuthority := stripResourcePrefix(prefixedAuthority, serverInfo.Prefix)
 
 		allowed := false
@@ -116,14 +115,4 @@ func stripResourcePrefix(authority, prefix string) string {
 		return authority[len(separator):]
 	}
 	return authority
-}
-
-// resourceAuthorityFromURI extracts the authority (host) from a resource URI.
-// For malformed URIs or URIs with no host, returns empty string.
-func resourceAuthorityFromURI(uri string) string {
-	u, err := url.Parse(uri)
-	if err != nil {
-		return uri
-	}
-	return u.Host
 }
