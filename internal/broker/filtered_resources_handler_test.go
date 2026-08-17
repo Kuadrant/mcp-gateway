@@ -145,7 +145,6 @@ func TestFilterResources(t *testing.T) {
 	}
 }
 
-
 type mockResourceServer struct {
 	name   string
 	prefix string
