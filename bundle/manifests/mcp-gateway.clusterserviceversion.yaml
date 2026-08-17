@@ -146,6 +146,15 @@ spec:
                 - get
                 - update
             - apiGroups:
+                - networking.k8s.io
+              resources:
+                - networkpolicies
+              verbs:
+                - create
+                - delete
+                - patch
+                - update
+            - apiGroups:
                 - networking.istio.io
               resources:
                 - envoyfilters
