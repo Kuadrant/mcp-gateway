@@ -760,7 +760,7 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	@echo "Setting up Local Demo Environment"
 	@echo "========================================="
 	"$(MAKE)" deploy-gateway
-	"$(MAKE)" deploy
+	"$(MAKE)" deploy-local
 	"${MAKE}" add-jwt-key
 	# Deploy everything server (2025) and stateless server (2026) for dual-protocol demo
 	"$(MAKE)" deploy-everything-server

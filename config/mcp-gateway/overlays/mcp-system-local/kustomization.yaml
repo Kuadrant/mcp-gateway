@@ -1,0 +1,37 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# local dev overlay - identical to mcp-system but points at the images
+# built and `kind load`-ed by `make build-and-load-image` (tagged 'latest')
+# instead of the release version hardcoded in the base manifests
+resources:
+  - ../mcp-system
+
+images:
+  - name: ghcr.io/kuadrant/mcp-controller
+    newTag: latest
+  - name: ghcr.io/kuadrant/mcp-gateway
+    newTag: latest
+
+patches:
+  # kustomize images: transformer only patches `image:` fields, not env var
+  # values, so patch RELATED_IMAGE_ROUTER_BROKER directly
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: mcp-gateway-controller
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mcp-gateway-controller
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mcp-controller
+                env:
+                  - name: RELATED_IMAGE_ROUTER_BROKER
+                    value: ghcr.io/kuadrant/mcp-gateway:latest
