@@ -2,13 +2,13 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -137,7 +137,7 @@ func TestFilterResources(t *testing.T) {
 			if tc.expectedCount > 0 {
 				for i, expected := range tc.expectedAuthors {
 					require.Less(t, i, len(result.Resources), "unexpected length")
-					actual := resourceAuthorityFromURI(result.Resources[i].URI)
+					actual := routing.ResourceAuthority(result.Resources[i].URI)
 					require.Equal(t, expected, actual, "authority mismatch at index %d", i)
 				}
 			}
@@ -145,25 +145,6 @@ func TestFilterResources(t *testing.T) {
 	}
 }
 
-func TestResourceAuthorityFromURI(t *testing.T) {
-	testCases := []struct {
-		uri      string
-		expected string
-	}{
-		{"ui://app.example.com/file.html", "app.example.com"},
-		{"file://localhost/data.txt", "localhost"},
-		{"http://example.com:8080/path", "example.com:8080"},
-		{"invalid-uri", ""}, // url.Parse treats this as path, returns empty host
-		{"", ""},
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("uri=%s", tc.uri), func(t *testing.T) {
-			actual := resourceAuthorityFromURI(tc.uri)
-			require.Equal(t, tc.expected, actual)
-		})
-	}
-}
 
 type mockResourceServer struct {
 	name   string
