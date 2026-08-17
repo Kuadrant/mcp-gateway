@@ -99,14 +99,17 @@ var _ = Describe("Resources/Read Routing", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(200))
 
-		var errResp struct {
-			Error struct {
-				Code    int    `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
+		var toolErrResp struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
 		}
-		Expect(json.Unmarshal([]byte(respBody), &errResp)).To(Succeed())
-		Expect(errResp.Error.Code).To(Equal(-32603)) // Internal error for unrecognized prefix
+		Expect(json.Unmarshal([]byte(respBody), &toolErrResp)).To(Succeed())
+		Expect(toolErrResp.Result.IsError).To(BeTrue())
+		Expect(toolErrResp.Result.Content[0].Text).To(ContainSubstring("Resource not found"))
 	})
 
 	It("[Happy] resource authorization filtering via JWT header", Serial, func() {
