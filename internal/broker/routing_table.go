@@ -37,7 +37,7 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 		// resources/read routing resolves purely by prefix, same skip
 		// conditions FetchResources applies when fetching resources/list
 		if up.SupportsResources() && cfg.Prefix != "" && resourcePrefixAllowlist.MatchString(cfg.Prefix) {
-			b.AddResourcePrefix(routing.EnsureSeparator(cfg.Prefix), route)
+			b.AddResourcePrefix(cfg.Prefix, route)
 		}
 
 		for _, tool := range up.GetManagedTools() {
