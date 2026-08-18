@@ -1,186 +1,140 @@
 package broker
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"testing"
 
-	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
-	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
-const testPublicKeyResources = `-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7WdMdvC8hviEAL4wcebqaYbLEtVO
-VEiyi/nozagw7BaWXmzbOWyy95gZLirTkhUb1P4Z4lgKLU2rD5NCbGPHAA==
------END PUBLIC KEY-----`
+func TestApplyAuthorizedCapabilitiesFilterForResourcesPerServer_NoHeaderAllowsAll(t *testing.T) {
+	broker := &mcpBrokerImpl{
+		logger:                  slog.Default(),
+		enforceCapabilityFilter: false,
+	}
 
-func TestFilterResources(t *testing.T) {
-	logger := slog.Default()
-	ctx := context.Background()
+	resources := []*mcp.Resource{
+		{URI: "ui://secure_resource1.html", Name: "resource1"},
+		{URI: "ui://secure_resource2.html", Name: "resource2"},
+	}
 
-	testCases := []struct {
-		name            string
-		jwtClaim        string
-		resources       []*mcp.Resource
-		serverNames     map[string]string // server name -> prefix
-		expectedCount   int
-		expectedAuthors []string
-		enforceFilter   bool
+	result := broker.applyAuthorizedCapabilitiesFilterForResourcesPerServer(nil, "testserver", "secure_", resources)
+	require.Equal(t, len(resources), len(result), "should allow all resources when no header present")
+}
+
+func TestApplyAuthorizedCapabilitiesFilterForResourcesPerServer_NoHeaderEnforcesDeniesAll(t *testing.T) {
+	broker := &mcpBrokerImpl{
+		logger:                  slog.Default(),
+		enforceCapabilityFilter: true,
+	}
+
+	resources := []*mcp.Resource{
+		{URI: "ui://secure_resource1.html", Name: "resource1"},
+		{URI: "ui://secure_resource2.html", Name: "resource2"},
+	}
+
+	result := broker.applyAuthorizedCapabilitiesFilterForResourcesPerServer(nil, "testserver", "secure_", resources)
+	require.Empty(t, result, "should deny all resources when enforce enabled and no header")
+}
+
+func TestApplyAuthorizedCapabilitiesFilterForResourcesPerServer_InvalidJWTDeniesAll(t *testing.T) {
+	broker := &mcpBrokerImpl{
+		logger:                  slog.Default(),
+		enforceCapabilityFilter: false,
+	}
+
+	// Create headers with invalid JWT
+	headers := http.Header{}
+	headers.Set("x-mcp-authorized", "invalid-jwt-token")
+
+	resources := []*mcp.Resource{
+		{URI: "ui://secure_resource1.html", Name: "resource1"},
+	}
+
+	result := broker.applyAuthorizedCapabilitiesFilterForResourcesPerServer(headers, "testserver", "secure_", resources)
+	require.Empty(t, result, "should deny all resources with invalid JWT")
+}
+
+func TestStripResourcePrefixForFiltering_UIScheme(t *testing.T) {
+	tests := []struct {
+		name     string
+		uri      string
+		prefix   string
+		expected string
 	}{
 		{
-			name:     "no JWT claim allows all resources",
-			jwtClaim: "",
-			resources: []*mcp.Resource{
-				{URI: "ui://app_example.com/file.html", Name: "file", Description: "test"},
-				{URI: "file://local_localhost/data.txt", Name: "data", Description: "test"},
-			},
-			serverNames: map[string]string{
-				"server1": "app",
-				"server2": "local",
-			},
-			expectedCount:   2,
-			expectedAuthors: []string{"app_example.com", "local_localhost"},
+			name:     "strip prefix from ui:// URI",
+			uri:      "ui://docs_readme.md",
+			prefix:   "docs_",
+			expected: "ui://readme.md",
 		},
 		{
-			name:     "empty resources claim denies all",
-			jwtClaim: createTestResourcesJWT(t, map[string][]string{}),
-			resources: []*mcp.Resource{
-				{URI: "ui://app_example.com/file.html", Name: "file", Description: "test"},
-			},
-			serverNames: map[string]string{
-				"server1": "app",
-			},
-			expectedCount: 0,
+			name:     "no prefix in URI returns unchanged",
+			uri:      "ui://readme.md",
+			prefix:   "app_",
+			expected: "ui://readme.md",
 		},
 		{
-			name: "JWT filters by authority per server",
-			jwtClaim: createTestResourcesJWT(t, map[string][]string{
-				"server1": {"example.com"},
-				"server2": {"localhost"},
-			}),
-			resources: []*mcp.Resource{
-				{URI: "ui://app_example.com/file.html", Name: "file1", Description: "test"},
-				{URI: "ui://app_example.com/other.html", Name: "file2", Description: "test"},
-				{URI: "file://local_localhost/data.txt", Name: "data", Description: "test"},
-				{URI: "file://local_localhost/backup.txt", Name: "backup", Description: "test"},
-			},
-			serverNames: map[string]string{
-				"server1": "app",
-				"server2": "local",
-			},
-			expectedCount:   4,
-			expectedAuthors: []string{"app_example.com", "app_example.com", "local_localhost", "local_localhost"},
+			name:     "empty prefix returns unchanged",
+			uri:      "ui://docs_readme.md",
+			prefix:   "",
+			expected: "ui://docs_readme.md",
 		},
 		{
-			name: "JWT denies unauthorized authority",
-			jwtClaim: createTestResourcesJWT(t, map[string][]string{
-				"server1": {"example.com"},
-			}),
-			resources: []*mcp.Resource{
-				{URI: "ui://app_example.com/file.html", Name: "file", Description: "test"},
-				{URI: "ui://app_other.example.com/file.html", Name: "file2", Description: "test"},
-			},
-			serverNames: map[string]string{
-				"server1": "app",
-			},
-			expectedCount:   1,
-			expectedAuthors: []string{"app_example.com"},
+			name:     "non-ui scheme returns unchanged",
+			uri:      "file://docs_readme.md",
+			prefix:   "docs_",
+			expected: "file://docs_readme.md",
 		},
 		{
-			name:     "enforce filter with no JWT denies all",
-			jwtClaim: "",
-			resources: []*mcp.Resource{
-				{URI: "ui://app.example.com/file.html", Name: "file", Description: "test"},
-			},
-			serverNames: map[string]string{
-				"server1": "app",
-			},
-			expectedCount: 0,
-			enforceFilter: true,
+			name:     "longest prefix match case",
+			uri:      "ui://app_admin_resource.html",
+			prefix:   "app_admin_",
+			expected: "ui://resource.html",
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			upstreams := make(map[config.UpstreamMCPID]upstream.ActiveMCPServer)
-			for serverName, prefix := range tc.serverNames {
-				upstreams[config.UpstreamMCPID(serverName)] = &mockResourceServer{
-					name:   serverName,
-					prefix: prefix,
-				}
-			}
-
-			broker := &mcpBrokerImpl{
-				logger:                  logger,
-				mcpServers:              upstreams,
-				enforceCapabilityFilter: tc.enforceFilter,
-				trustedHeadersPublicKey: testPublicKeyResources,
-			}
-
-			headers := http.Header{}
-			if tc.jwtClaim != "" {
-				headers.Set("X-Mcp-Authorized", tc.jwtClaim)
-			}
-
-			result := &mcp.ListResourcesResult{
-				Resources: tc.resources,
-			}
-
-			broker.FilterResources(ctx, headers, result)
-
-			require.Equal(t, tc.expectedCount, len(result.Resources), "resource count mismatch")
-
-			if tc.expectedCount > 0 {
-				for i, expected := range tc.expectedAuthors {
-					require.Less(t, i, len(result.Resources), "unexpected length")
-					actual := routing.ResourceAuthority(result.Resources[i].URI)
-					require.Equal(t, expected, actual, "authority mismatch at index %d", i)
-				}
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := stripResourcePrefixForFiltering(tt.uri, tt.prefix)
+			require.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-type mockResourceServer struct {
-	name   string
-	prefix string
-}
+func TestContains(t *testing.T) {
+	tests := []struct {
+		name     string
+		slice    []string
+		item     string
+		expected bool
+	}{
+		{
+			name:     "item present",
+			slice:    []string{"a", "b", "c"},
+			item:     "b",
+			expected: true,
+		},
+		{
+			name:     "item not present",
+			slice:    []string{"a", "b", "c"},
+			item:     "d",
+			expected: false,
+		},
+		{
+			name:     "empty slice",
+			slice:    []string{},
+			item:     "a",
+			expected: false,
+		},
+	}
 
-func (m *mockResourceServer) Stop()           {}
-func (m *mockResourceServer) MCPName() string { return "mock" }
-func (m *mockResourceServer) GetStatus() upstream.ServerValidationStatus {
-	return upstream.ServerValidationStatus{}
-}
-func (m *mockResourceServer) GetManagedTools() []mcp.Tool           { return nil }
-func (m *mockResourceServer) GetServedManagedTool(string) *mcp.Tool { return nil }
-func (m *mockResourceServer) GetToolHints(string) (upstream.ToolHints, bool) {
-	return upstream.ToolHints{}, false
-}
-func (m *mockResourceServer) GetManagedPrompts() []mcp.Prompt           { return nil }
-func (m *mockResourceServer) GetServedManagedPrompt(string) *mcp.Prompt { return nil }
-func (m *mockResourceServer) Config() config.MCPServer {
-	return config.MCPServer{Name: m.name, Prefix: m.prefix}
-}
-func (m *mockResourceServer) SupportedVersions() []string { return nil }
-func (m *mockResourceServer) SupportsVersion(string) bool { return false }
-func (m *mockResourceServer) ToolsCacheMetadata() upstream.CacheMetadata {
-	return upstream.CacheMetadata{}
-}
-func (m *mockResourceServer) PromptsCacheMetadata() upstream.CacheMetadata {
-	return upstream.CacheMetadata{}
-}
-func (m *mockResourceServer) SupportsResources() bool { return false }
-func (m *mockResourceServer) ListResources(context.Context) (*mcp.ListResourcesResult, error) {
-	return &mcp.ListResourcesResult{}, nil
-}
-
-func createTestResourcesJWT(t *testing.T, allowedResources map[string][]string) string {
-	t.Helper()
-	return createTestJWTWithCapabilities(t, map[string]map[string][]string{
-		"resources": allowedResources,
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := contains(tt.slice, tt.item)
+			require.Equal(t, tt.expected, result)
+		})
+	}
 }

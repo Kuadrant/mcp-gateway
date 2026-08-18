@@ -1,42 +1,20 @@
 package broker
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
-	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
-// FilterResources reduces the resource set based on authorization headers.
-func (broker *mcpBrokerImpl) FilterResources(ctx context.Context, headers http.Header, mcpRes *mcp.ListResourcesResult) {
-	attrs := []attribute.KeyValue{brokerComponentAttr}
-	ctx, span := brokerTracer().Start(ctx, "mcp-broker.resources-filter", trace.WithAttributes(attrs...))
-	defer span.End()
-
-	broker.logger.DebugContext(ctx, "FilterResources called", "input_resources_count", len(mcpRes.Resources))
-	resources := mcpRes.Resources
-	if len(mcpRes.Resources) == 0 {
-		mcpRes.Resources = []*mcp.Resource{}
-		return
+// applyAuthorizedCapabilitiesFilterForResourcesPerServer filters resources for a specific server based on JWT authorization.
+// Called per-server before merging results. Resources have prefix already injected; we strip it to match JWT claim.
+func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForResourcesPerServer(headers http.Header, serverName, prefix string, resources []*mcp.Resource) []*mcp.Resource {
+	if len(resources) == 0 {
+		return resources
 	}
 
-	resources = broker.applyAuthorizedCapabilitiesFilterForResources(ctx, headers, resources)
-
-	span.SetAttributes(attribute.Int("mcp.resources.count", len(resources)))
-
-	if resources == nil {
-		resources = []*mcp.Resource{}
-	}
-	mcpRes.Resources = resources
-}
-
-func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForResources(ctx context.Context, headers http.Header, resources []*mcp.Resource) []*mcp.Resource {
 	headerValues, present := headers[authorizedCapabilitiesHeader]
-
 	if !present {
 		if broker.enforceCapabilityFilter {
 			return []*mcp.Resource{}
@@ -46,7 +24,7 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForResources(ctx c
 
 	capabilities, err := broker.parseAuthorizedCapabilitiesJWT(headerValues)
 	if err != nil {
-		broker.logger.ErrorContext(ctx, "failed to parse x-mcp-authorized header for resources", "error", err)
+		broker.logger.Error("failed to parse x-mcp-authorized header for resources", "error", err)
 		return []*mcp.Resource{}
 	}
 
@@ -58,61 +36,55 @@ func (broker *mcpBrokerImpl) applyAuthorizedCapabilitiesFilterForResources(ctx c
 		return resources
 	}
 
-	return broker.filterResourcesByServerMap(ctx, allowedResources, resources)
-}
+	// Get allowed URIs for this specific server
+	allowedURIs, hasServer := allowedResources[serverName]
+	if !hasServer {
+		if broker.enforceCapabilityFilter {
+			return []*mcp.Resource{}
+		}
+		return resources
+	}
 
-func (broker *mcpBrokerImpl) filterResourcesByServerMap(ctx context.Context, allowedResources map[string][]string, resources []*mcp.Resource) []*mcp.Resource {
+	// Filter this server's resources against its allowed URI list
+	// Strip prefix from each resource's URI to match against JWT claim
 	var filtered []*mcp.Resource
-
 	for _, resource := range resources {
-		if resource == nil {
-			continue
-		}
-
-		serverInfo, err := broker.GetServerInfoByResource(resource.URI)
-		if err != nil {
-			broker.logger.DebugContext(ctx, "unable to determine server for resource, excluding", "uri", resource.URI, "error", err)
-			continue
-		}
-
-		allowedAuthorities, hasServer := allowedResources[serverInfo.Name]
-		if !hasServer {
-			broker.logger.DebugContext(ctx, "server not in resources claim, excluding resource", "server", serverInfo.Name, "uri", resource.URI)
-			continue
-		}
-
-		// extract original authority by stripping the prefix from the URI authority
-		prefixedAuthority := routing.ResourceAuthority(resource.URI)
-		originalAuthority := stripResourcePrefix(prefixedAuthority, serverInfo.Prefix)
-
-		allowed := false
-		for _, authority := range allowedAuthorities {
-			if originalAuthority == authority {
-				allowed = true
-				break
-			}
-		}
-
-		if allowed {
+		stripped := stripResourcePrefixForFiltering(resource.URI, prefix)
+		if contains(allowedURIs, stripped) {
 			filtered = append(filtered, resource)
-		} else {
-			broker.logger.DebugContext(ctx, "resource authority not in claim, excluding", "server", serverInfo.Name, "uri", resource.URI, "authority", originalAuthority)
 		}
 	}
 
 	return filtered
 }
 
-// stripResourcePrefix removes the prefix and separator from a prefixed authority.
-// For authority "app_example.com" with prefix "app", returns "example.com".
-// For authority without matching prefix, returns the authority unchanged.
-func stripResourcePrefix(authority, prefix string) string {
-	if prefix == "" {
-		return authority
+// stripResourcePrefixForFiltering removes the server's prefix from a resource URI's authority segment.
+// For ui://prefix_name, returns ui://name.
+// Prefix already includes the separator (e.g., "docs_").
+// If the URI doesn't start with the expected prefix, returns the URI unchanged.
+func stripResourcePrefixForFiltering(uri, prefix string) string {
+	if prefix == "" || !strings.HasPrefix(uri, "ui://") {
+		return uri
 	}
-	separator := routing.EnsureSeparator(prefix)
-	if strings.HasPrefix(authority, separator) {
-		return authority[len(separator):]
+
+	scheme := "ui://"
+	authority := uri[len(scheme):]
+
+	// Check if authority starts with prefix (which includes separator)
+	if !strings.HasPrefix(authority, prefix) {
+		return uri
 	}
-	return authority
+
+	// Strip the prefix and reconstruct
+	strippedAuthority := authority[len(prefix):]
+	return scheme + strippedAuthority
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
