@@ -14,6 +14,7 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -299,3 +300,93 @@ func TestDetermineProtocol_InternalServiceAlwaysHTTP(t *testing.T) {
 }
 
 func ptrTo[T any](v T) *T { return &v }
+
+func TestFindOldestMCPServerRegistration(t *testing.T) {
+	newReg := func(name string, created time.Time) mcpv1.MCPServerRegistration {
+		return mcpv1.MCPServerRegistration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				CreationTimestamp: metav1.NewTime(created),
+			},
+		}
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		regs []mcpv1.MCPServerRegistration
+		want string
+	}{
+		{
+			name: "two registrations, first is older",
+			regs: []mcpv1.MCPServerRegistration{
+				newReg("first", base),
+				newReg("second", base.Add(time.Hour)),
+			},
+			want: "first",
+		},
+		{
+			name: "two registrations, second is older",
+			regs: []mcpv1.MCPServerRegistration{
+				newReg("first", base.Add(time.Hour)),
+				newReg("second", base),
+			},
+			want: "second",
+		},
+		{
+			name: "three registrations, oldest in the middle",
+			regs: []mcpv1.MCPServerRegistration{
+				newReg("newest", base.Add(2*time.Hour)),
+				newReg("oldest", base),
+				newReg("middle", base.Add(time.Hour)),
+			},
+			want: "oldest",
+		},
+		{
+			name: "single registration",
+			regs: []mcpv1.MCPServerRegistration{
+				newReg("only", base),
+			},
+			want: "only",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findOldestMCPServerRegistration(tt.regs)
+			if got.Name != tt.want {
+				t.Errorf("findOldestMCPServerRegistration() = %q, want %q", got.Name, tt.want)
+			}
+		})
+	}
+}
+
+// TestFindOldestMCPServerRegistration_TieBreakIsSymmetric guards against the real
+// failure mode this tie-break exists to prevent: CreationTimestamp only has second
+// granularity, so two registrations created in the same second compare equal there.
+// checkPrefixConflict always puts the currently-reconciling registration at index 0
+// of the comparison slice, so if a tie resolved by index alone, EACH registration's
+// own reconcile would see itself as oldest and both would reach Ready - the exact
+// collision this check exists to prevent. The winner must be the same regardless of
+// which registration is asking (i.e. which one is at index 0).
+func TestFindOldestMCPServerRegistration_TieBreakIsSymmetric(t *testing.T) {
+	sameInstant := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	a := mcpv1.MCPServerRegistration{
+		ObjectMeta: metav1.ObjectMeta{Name: "a", UID: "aaaa", CreationTimestamp: sameInstant},
+	}
+	b := mcpv1.MCPServerRegistration{
+		ObjectMeta: metav1.ObjectMeta{Name: "b", UID: "bbbb", CreationTimestamp: sameInstant},
+	}
+
+	fromA := findOldestMCPServerRegistration([]mcpv1.MCPServerRegistration{a, b})
+	fromB := findOldestMCPServerRegistration([]mcpv1.MCPServerRegistration{b, a})
+
+	if fromA.UID != fromB.UID {
+		t.Fatalf("tie-break is not symmetric: asking as %q picked %q, asking as %q picked %q",
+			a.Name, fromA.Name, b.Name, fromB.Name)
+	}
+	if fromA.UID != a.UID {
+		t.Errorf("expected the lower UID (%q) to win the tie, got %q", a.UID, fromA.UID)
+	}
+}

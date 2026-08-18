@@ -1039,4 +1039,347 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 		)
 	})
 
+	Context("When two MCPServerRegistrations feeding the same MCPGatewayExtension share a prefix", func() {
+		const (
+			resourceName1 = "test-prefix-conflict-1"
+			resourceName2 = "test-prefix-conflict-2"
+			httpRouteName = "test-prefix-conflict-route"
+			gatewayName   = "test-prefix-conflict-gw"
+			serviceName   = "test-prefix-conflict-svc"
+			extName       = "test-prefix-conflict-ext"
+		)
+
+		ctx := context.Background()
+
+		mcpsrNamespacedName1 := types.NamespacedName{Name: resourceName1, Namespace: "default"}
+		mcpsrNamespacedName2 := types.NamespacedName{Name: resourceName2, Namespace: "default"}
+
+		BeforeEach(func() {
+			gw := createTestGateway(gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+
+			svc := createTestService(serviceName, "default", 8080)
+			Expect(testK8sClient.Create(ctx, svc)).To(Succeed())
+
+			httpRoute := createTestHTTPRoute(httpRouteName, "default", "test.example.com", serviceName, 8080, gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, httpRoute)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: httpRouteName, Namespace: "default"}, route)).To(Succeed())
+				g.Expect(setHTTPRouteAcceptedStatus(ctx, route, gatewayName, "default")).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			mcpExt := createTestMCPGatewayExtension(extName, "default", gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				ext := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, resourceName1, "default")
+			forceDeleteTestMCPServerRegistration(ctx, resourceName2, "default")
+			forceDeleteTestMCPGatewayExtension(ctx, extName, "default")
+			deleteTestHTTPRoute(ctx, httpRouteName, "default")
+			deleteTestService(ctx, serviceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+		})
+
+		It("rejects the second registration with a PrefixConflict status condition", func() {
+			reg1 := createTestMCPServerRegistration(resourceName1, "default", httpRouteName, "dup_")
+			Expect(testK8sClient.Create(ctx, reg1)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName1)
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName1)
+
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName1, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// ensure a distinct, later CreationTimestamp for the second registration
+			time.Sleep(1100 * time.Millisecond)
+
+			reg2 := createTestMCPServerRegistration(resourceName2, "default", httpRouteName, "dup_")
+			Expect(testK8sClient.Create(ctx, reg2)).To(Succeed())
+
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName2)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName2)
+
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName2, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(conditionReasonPrefixConflict))
+				g.Expect(cond.Message).To(ContainSubstring("conflict"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// re-reconciling (what an update to any watched object triggers) must not
+			// flip the older, already-Ready registration to conflicted
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated1 := &mcpv1.MCPServerRegistration{}
+			Expect(testK8sClient.Get(ctx, mcpsrNamespacedName1, updated1)).To(Succeed())
+			cond1 := meta.FindStatusCondition(updated1.Status.Conditions, "Ready")
+			Expect(cond1).NotTo(BeNil())
+			Expect(cond1.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("does not reject a sibling with a substring-colliding but non-identical prefix", func() {
+			reg1 := createTestMCPServerRegistration(resourceName1, "default", httpRouteName, "app_")
+			Expect(testK8sClient.Create(ctx, reg1)).To(Succeed())
+			reg2 := createTestMCPServerRegistration(resourceName2, "default", httpRouteName, "app_admin_")
+			Expect(testK8sClient.Create(ctx, reg2)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName1)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName2)
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName1)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName2)
+
+			for _, nn := range []types.NamespacedName{mcpsrNamespacedName1, mcpsrNamespacedName2} {
+				Eventually(func(g Gomega) {
+					_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+					g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+					updated := &mcpv1.MCPServerRegistration{}
+					g.Expect(testK8sClient.Get(ctx, nn, updated)).To(Succeed())
+					cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+					g.Expect(cond).NotTo(BeNil())
+					g.Expect(cond.Status).To(Equal(metav1.ConditionTrue),
+						"substring-colliding prefixes must not be rejected here - resolved deterministically by longest-prefix-match instead")
+				}, testTimeout, testRetryInterval).Should(Succeed())
+			}
+		})
+
+		It("stops rejecting once the conflicting sibling is deleted", func() {
+			reg1 := createTestMCPServerRegistration(resourceName1, "default", httpRouteName, "dup_")
+			Expect(testK8sClient.Create(ctx, reg1)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName1)
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName1)
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName1})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName1, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			time.Sleep(1100 * time.Millisecond)
+
+			reg2 := createTestMCPServerRegistration(resourceName2, "default", httpRouteName, "dup_")
+			Expect(testK8sClient.Create(ctx, reg2)).To(Succeed())
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName2)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName2)
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName2, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Reason).To(Equal(conditionReasonPrefixConflict))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// delete the conflicting sibling (reg1) entirely
+			forceDeleteTestMCPServerRegistration(ctx, resourceName1, "default")
+
+			// reconciling reg2 again must now succeed - no active sibling shares its prefix
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName2})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName2, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
+	Context("When two MCPServerRegistrations feeding different MCPGatewayExtensions share a prefix", func() {
+		const (
+			resourceNameA = "test-prefix-noconflict-a"
+			resourceNameB = "test-prefix-noconflict-b"
+			routeNameA    = "test-prefix-noconflict-route-a"
+			routeNameB    = "test-prefix-noconflict-route-b"
+			gatewayName   = "test-prefix-noconflict-gw"
+			serviceName   = "test-prefix-noconflict-svc"
+			extNamespaceA = "test-prefix-noconflict-ext-ns-a"
+			extNamespaceB = "test-prefix-noconflict-ext-ns-b"
+			extNameA      = "test-prefix-noconflict-ext-a"
+			extNameB      = "test-prefix-noconflict-ext-b"
+		)
+
+		ctx := context.Background()
+
+		mcpsrNamespacedNameA := types.NamespacedName{Name: resourceNameA, Namespace: "default"}
+		mcpsrNamespacedNameB := types.NamespacedName{Name: resourceNameB, Namespace: "default"}
+
+		var refGrantA, refGrantB client.Object
+
+		BeforeEach(func() {
+			createTestNamespace(ctx, extNamespaceA)
+			createTestNamespace(ctx, extNamespaceB)
+
+			// one Gateway, two listeners on different ports - mirrors how a single
+			// shared Gateway can host multiple independent MCPGatewayExtensions
+			// (see the resources-federation e2e listeners for the real-world example)
+			hostnameA := gatewayv1.Hostname("a.test.example.com")
+			hostnameB := gatewayv1.Hostname("b.test.example.com")
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: gatewayName, Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "test-class",
+					Listeners: []gatewayv1.Listener{
+						{Name: "listener-a", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, Hostname: &hostnameA},
+						{Name: "listener-b", Port: 8081, Protocol: gatewayv1.HTTPProtocolType, Hostname: &hostnameB},
+					},
+				},
+			}
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+
+			svc := createTestService(serviceName, "default", 8080)
+			Expect(testK8sClient.Create(ctx, svc)).To(Succeed())
+
+			routeA := createTestHTTPRoute(routeNameA, "default", "a.test.example.com", serviceName, 8080, gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, routeA)).To(Succeed())
+			routeB := createTestHTTPRoute(routeNameB, "default", "b.test.example.com", serviceName, 8080, gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, routeB)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: routeNameA, Namespace: "default"}, route)).To(Succeed())
+				g.Expect(setHTTPRouteAcceptedStatus(ctx, route, gatewayName, "default")).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			Eventually(func(g Gomega) {
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: routeNameB, Namespace: "default"}, route)).To(Succeed())
+				g.Expect(setHTTPRouteAcceptedStatus(ctx, route, gatewayName, "default")).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// extensions live in different namespaces than the Gateway, so each needs a ReferenceGrant
+			gwNameForGrant := gatewayName
+			refGrantA = createTestReferenceGrant("allow-ext-a", "default", extNamespaceA, &gwNameForGrant)
+			Expect(testK8sClient.Create(ctx, refGrantA)).To(Succeed())
+			refGrantB = createTestReferenceGrant("allow-ext-b", "default", extNamespaceB, &gwNameForGrant)
+			Expect(testK8sClient.Create(ctx, refGrantB)).To(Succeed())
+
+			extA := createTestMCPGatewayExtension(extNameA, extNamespaceA, gatewayName, "default")
+			extA.Spec.TargetRef.SectionName = "listener-a"
+			Expect(testK8sClient.Create(ctx, extA)).To(Succeed())
+			extB := createTestMCPGatewayExtension(extNameB, extNamespaceB, gatewayName, "default")
+			extB.Spec.TargetRef.SectionName = "listener-b"
+			Expect(testK8sClient.Create(ctx, extB)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				ext := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extNameA, Namespace: extNamespaceA}, ext)).To(Succeed())
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			Eventually(func(g Gomega) {
+				ext := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extNameB, Namespace: extNamespaceB}, ext)).To(Succeed())
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, resourceNameA, "default")
+			forceDeleteTestMCPServerRegistration(ctx, resourceNameB, "default")
+			forceDeleteTestMCPGatewayExtension(ctx, extNameA, extNamespaceA)
+			forceDeleteTestMCPGatewayExtension(ctx, extNameB, extNamespaceB)
+			_ = testK8sClient.Delete(ctx, refGrantA)
+			_ = testK8sClient.Delete(ctx, refGrantB)
+			deleteTestHTTPRoute(ctx, routeNameA, "default")
+			deleteTestHTTPRoute(ctx, routeNameB, "default")
+			deleteTestService(ctx, serviceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+		})
+
+		It("does not reject either registration - they feed separate broker instances", func() {
+			regA := createTestMCPServerRegistration(resourceNameA, "default", routeNameA, "dup_")
+			Expect(testK8sClient.Create(ctx, regA)).To(Succeed())
+			regB := createTestMCPServerRegistration(resourceNameB, "default", routeNameB, "dup_")
+			Expect(testK8sClient.Create(ctx, regB)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedNameA)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedNameB)
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedNameA})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedNameA)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedNameB})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedNameB)
+
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedNameA})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedNameA, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedNameB})
+				g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedNameB, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(cond.Reason).NotTo(Equal(conditionReasonPrefixConflict))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
 })
