@@ -43,8 +43,8 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			WithName(resourcesFedExtName).
 			InNamespace(resourcesFedNamespace).
 			TargetingGateway(GatewayName, GatewayNamespace).
-			WithSectionName("resources-federation").
-			WithPublicHost("resources-federation.127-0-0-1.sslip.io").
+			WithSectionName(ResourcesFederationListenerName).
+			WithPublicHost(ResourcesFederationPublicHost).
 			Build()
 		resourcesFedExt.Clean(ctx).Register(ctx)
 
@@ -60,7 +60,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-		resourcesFedURL = "http://mcp.resources-federation.127-0-0-1.sslip.io:8001/mcp"
+		resourcesFedURL = ResourcesFederationGatewayURL
 	})
 
 	AfterAll(func() {
@@ -92,7 +92,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		By("Creating MCPServerRegistration with resources")
 		reg := NewTestResourcesWithDefaults("jwt-filter-test", k8sClient).
 			WithPrefix("jwttest_").
-			WithSectionName("resources-federation").
+			WithSectionName(ResourcesFederationListenerName).
 			WithHostname("jwtserver.resources-federation.127-0-0-1.sslip.io").
 			Build()
 		regObjects := reg.GetObjects()
@@ -101,9 +101,8 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
-			Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Creating MCP client and connecting to gateway")
@@ -123,7 +122,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		By("Creating MCPServerRegistration with resources")
 		reg := NewTestResourcesWithDefaults("empty-claim-test", k8sClient).
 			WithPrefix("emptyclaim_").
-			WithSectionName("resources-federation").
+			WithSectionName(ResourcesFederationListenerName).
 			WithHostname("emptyclaimserver.resources-federation.127-0-0-1.sslip.io").
 			Build()
 		regObjects := reg.GetObjects()
@@ -132,9 +131,8 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
-			Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Creating MCP client with empty resources JWT claim")
@@ -151,7 +149,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		By("Creating MCPServerRegistration for elicitation testing")
 		reg := NewTestResourcesWithDefaults("elicitation-rename-test", k8sClient).
 			WithPrefix("elicit_").
-			WithSectionName("resources-federation").
+			WithSectionName(ResourcesFederationListenerName).
 			WithHostname("elicitserver.resources-federation.127-0-0-1.sslip.io").
 			Build()
 		regObjects := reg.GetObjects()
@@ -160,9 +158,8 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
-			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
-			Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		By("Creating MCP client and verifying connection works")
