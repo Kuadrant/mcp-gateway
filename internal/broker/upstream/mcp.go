@@ -423,15 +423,25 @@ func (up *MCPServer) notify(method string) {
 
 // OnConnectionLost registers a connection lost handler.
 // In the official SDK, connection loss is observed via session.Wait().
+// upstreams that return no Mcp-Session-Id from initialize do not need
+// connection-loss monitoring: the SDK's subscriptions/listen stream
+// will fail immediately with an empty session ID, which is expected
+// and not a real connection loss. the ticker health check and ping
+// handle failure detection for these upstreams.
 func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	session := up.currentSession()
-	if session != nil {
-		go func() {
-			if err := session.Wait(); err != nil {
-				handler(err)
-			}
-		}()
+	if session == nil {
+		return
 	}
+	if session.ID() == "" {
+		up.logger.Debug("skipping connection-lost watcher, no session ID from upstream", "upstream", up.ID())
+		return
+	}
+	go func() {
+		if err := session.Wait(); err != nil {
+			handler(err)
+		}
+	}()
 }
 
 // UsesStatelessProtocol returns true if the upstream negotiated protocol

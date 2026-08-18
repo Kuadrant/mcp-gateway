@@ -409,6 +409,74 @@ func TestOnNotification_RegisteredBeforeConnect(t *testing.T) {
 	}
 }
 
+// regression: a stateless streamable-HTTP upstream (no Mcp-Session-Id)
+// caused OnConnectionLost to fire immediately after Connect because the
+// SDK's subscriptions/listen stream died with an empty session ID,
+// producing a tight reconnect loop with zero backoff. the fix: skip
+// session.Wait when session.ID() is empty.
+func TestOnConnectionLost_SkippedWhenNoSession(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "stateless", URL: "http://unused"}, "", nil)
+
+	called := make(chan struct{}, 1)
+	up.OnConnectionLost(func(_ error) {
+		called <- struct{}{}
+	})
+
+	select {
+	case <-called:
+		t.Fatal("OnConnectionLost handler must not fire with nil session")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// regression: stateless streamable-HTTP upstream (responds to initialize but
+// returns no Mcp-Session-Id, returns 405 on GET). session.ID() is empty so
+// OnConnectionLost must not start a session.Wait goroutine.
+func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "stateless", Version: "0.0.1"}, nil)
+	inner := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return srv }, nil)
+
+	// proxy that strips Mcp-Session-Id from all responses and rejects GET
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		rec := httptest.NewRecorder()
+		inner.ServeHTTP(rec, r)
+		for k, vs := range rec.Header() {
+			if k == "Mcp-Session-Id" {
+				continue
+			}
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "stateless", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.Empty(t, up.currentSession().ID(), "session ID must be empty for stateless upstream")
+
+	connectionLost := make(chan error, 1)
+	up.OnConnectionLost(func(err error) {
+		connectionLost <- err
+	})
+
+	select {
+	case err := <-connectionLost:
+		t.Fatalf("OnConnectionLost fired for stateless upstream: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
 func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
 	caPEM, caKey, caCert := generateSelfSignedCA(t)
 	serverCert := generateServerCert(t, caCert, caKey)
