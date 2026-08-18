@@ -117,8 +117,11 @@ func (h *ResponseHandler202511) HandleResponse(ctx context.Context, input *Respo
 		}
 	}
 
-	// enable streamed response body mode for elicitation ID rewriting
-	if req != nil && req.IsToolCall() && req.ClientElicitation && input.StatusCode == strconv.Itoa(http.StatusOK) {
+	// enable streamed response body mode for elicitation ID rewriting and/or
+	// resource URI rewriting - either gate is sufficient on its own, tool calls
+	// to servers with no prefix and no elicitation stay pass-through
+	if req != nil && req.IsToolCall() && input.StatusCode == strconv.Itoa(http.StatusOK) &&
+		(req.ClientElicitation || req.ServerPrefix != "") {
 		decision.StreamBody = true
 	}
 

@@ -570,6 +570,110 @@ func TestResponseHandler_StreamBodyModeNotSetForNonSuccessStatus(t *testing.T) {
 	require.False(t, decision.StreamBody, "StreamBody should be false for non-200 status")
 }
 
+func TestResponseHandler_StreamBodyModeForResourcePrefixRewrite(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:       "tools/call",
+		ServerPrefix: "insights_",
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody, "StreamBody should be true for tool/call to a server with a prefix on 200, even without client elicitation")
+}
+
+func TestResponseHandler_StreamBodyModeNotSetForNoPrefixNoElicitation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method: "tools/call",
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+
+	require.NotNil(t, decision)
+	require.False(t, decision.StreamBody, "StreamBody should stay false for tool calls with no prefix and no client elicitation")
+}
+
+func TestResponseHandler_StreamBodyModeForResourcePrefixNotSetForNonSuccessStatus(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:       "tools/call",
+		ServerPrefix: "insights_",
+	}
+
+	input := &ResponseInput{
+		StatusCode: "404",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+
+	require.NotNil(t, decision)
+	require.False(t, decision.StreamBody, "StreamBody should be false for non-200 status even with a server prefix")
+}
+
+func TestResponseHandler_StreamBodyModeForBothElicitationAndResourcePrefix(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:            "tools/call",
+		ClientElicitation: true,
+		ServerPrefix:      "insights_",
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody, "StreamBody should be true when both elicitation and resource prefix apply")
+}
+
 func storeConfig(cfg *config.MCPServersConfig) *atomic.Pointer[config.MCPServersConfig] {
 	p := &atomic.Pointer[config.MCPServersConfig]{}
 	p.Store(cfg)
