@@ -33,7 +33,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			},
 		}
 		_ = k8sClient.Delete(ctx, ns)
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := k8sClient.Create(ctx, ns)
 			g.Expect(client.IgnoreAlreadyExists(err)).NotTo(HaveOccurred())
 		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
@@ -49,13 +49,13 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		resourcesFedExt.Clean(ctx).Register(ctx)
 
 		By("Waiting for MCPGatewayExtension to become ready")
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := VerifyMCPGatewayExtensionReady(ctx, k8sClient, resourcesFedExtName, resourcesFedNamespace)
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 		By("Waiting for broker/router deployment to be ready")
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := WaitForDeploymentReady(ctx, resourcesFedNamespace, "mcp-gateway")
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -81,7 +81,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 	})
 
 	newGatewayClient := func() {
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			var err error
 			mcpGatewayClient, err = NewStatefulClientWithNotifications(ctx, resourcesFedURL, nil)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -101,7 +101,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -132,7 +132,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -160,7 +160,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(_ Gomega) {
+		Eventually(func(g Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
