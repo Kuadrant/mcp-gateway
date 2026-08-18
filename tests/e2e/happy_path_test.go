@@ -1036,13 +1036,15 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[Happy] should become Ready even when tool conflicts exist from same prefix", func() {
+	It("[Happy] should reject the second registration when an exact-duplicate prefix conflicts", func() {
 		testResources := []client.Object{}
 		deferCleanupResources(&testResources)
 
-		// tool and prompt conflicts are detected by the broker at runtime, not
-		// by the controller. both registrations will be Ready in the CRD.
-		// conflicts surface through the broker's /status endpoint.
+		// exact-duplicate prefix conflicts are rejected by the controller at
+		// registration time (resources-federation Task 7): two registrations
+		// only collide if their configs reach the same broker/router instance,
+		// so the older registration (by creation time) stays Ready and the
+		// newer one is rejected with a PrefixConflict status condition.
 		By("Creating first MCPServerRegistration with a specific prefix pointing to server1")
 		registration1 := NewMCPServerResources("conflict-test-1", "conflict-s1.mcp-gateway.local", sharedMCPTestServer1, 9090, k8sClient).
 			WithPrefix("conflict_").Build()
@@ -1060,10 +1062,10 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		testResources = append(testResources, registration2.GetObjects()...)
 		server2 := registration2.Register(ctx)
 
-		By("Verifying both MCPServerRegistrations become Ready (conflicts are broker-side)")
+		By("Verifying the first registration stays Ready and the second is rejected as a prefix conflict")
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server1.Name, server1.Namespace)).To(BeNil())
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server2.Name, server2.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationNotReadyWithReason(ctx, k8sClient, server2.Name, server2.Namespace, "conflict")).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 

@@ -36,7 +36,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}
 	})
 
-	It("[Happy,UserSpecificList] user sees their own tools merged with cached tools", func() {
+	It("[Happy,UserSpecificList] user sees their own tools merged with cached tools", Serial, func() {
 		By("Creating a standard (cached) server registration")
 		stdReg := NewMCPServerResourcesWithDefaults("uspec-std", k8sClient).
 			WithPrefix("std_").Build()
@@ -79,7 +79,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[UserSpecificList] different users get different tool lists", func() {
+	It("[UserSpecificList] different users get different tool lists", Serial, func() {
 		By("Creating a user-specific server registration")
 		uspecReg := NewMCPServerResourcesWithDefaults("uspec-diff-users", k8sClient).
 			WithBackendTarget(userSpecificMCPTestServer, 9090).
@@ -169,7 +169,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
 
-	It("[UserSpecificList] standard servers unaffected by userSpecificList", func() {
+	It("[UserSpecificList] standard servers unaffected by userSpecificList", Serial, func() {
 		By("Creating a standard server registration")
 		stdReg := NewMCPServerResourcesWithDefaults("uspec-unaffected", k8sClient).
 			WithPrefix("std_").Build()
@@ -274,7 +274,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[UserSpecificList] tool call routing works for user-specific tools", func() {
+	It("[UserSpecificList] tool call routing works for user-specific tools", Serial, func() {
 		By("Creating a user-specific server registration")
 		uspecReg := NewMCPServerResourcesWithDefaults("uspec-call", k8sClient).
 			WithBackendTarget(userSpecificMCPTestServer, 9090).
@@ -312,7 +312,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		Expect(content.Text).To(ContainSubstring("user=user-a-token"))
 	})
 
-	It("[Security,UserSpecificList] internal headers not forwarded to upstream", func() {
+	It("[Security,UserSpecificList] internal headers not forwarded to upstream", Serial, func() {
 		By("Creating a user-specific server registration")
 		uspecReg := NewMCPServerResourcesWithDefaults("uspec-security", k8sClient).
 			WithBackendTarget(userSpecificMCPTestServer, 9090).
@@ -359,7 +359,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		Expect(headerText).To(ContainSubstring("authorization"))
 	})
 
-	It("[UserSpecificList] virtual server filter applies to user-specific tools", func() {
+	It("[UserSpecificList] virtual server filter applies to user-specific tools", Serial, func() {
 		By("Creating a user-specific server registration")
 		uspecReg := NewMCPServerResourcesWithDefaults("uspec-vs", k8sClient).
 			WithBackendTarget(userSpecificMCPTestServer, 9090).
