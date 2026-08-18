@@ -206,6 +206,15 @@ func main() {
 		URI:      "embedded:info",
 	}, handleEmbeddedResource)
 
+	server.AddResource(&mcp.Resource{
+		Name:     "widget",
+		MIMEType: "text/html",
+		URI:      "ui://widget.html",
+	}, handleWidgetResource)
+
+	mcp.AddTool(server, &mcp.Tool{Name: "show_widget", Description: "return a tool result with a _meta.ui.resourceUri"}, showWidgetTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "show_external_widget", Description: "return a tool result with a non-ui:// _meta.ui.resourceUri"}, showExternalWidgetTool)
+
 	if *httpAddr != "" {
 		server.AddReceivingMiddleware(rpcPrintMiddleware)
 		handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
@@ -261,6 +270,47 @@ func rpcPrintMiddleware(
 		result, err := next(ctx, method, req)
 		return result, err
 	}
+}
+
+// showWidgetTool returns a tool result carrying _meta.ui.resourceUri, for
+// exercising the gateway's resource URI rewriting (resources-federation Task 6).
+func showWidgetTool(
+	_ context.Context,
+	_ *mcp.CallToolRequest,
+	_ struct{},
+) (*mcp.CallToolResult, any, error) {
+	return &mcp.CallToolResult{
+		Meta: mcp.Meta{"ui": map[string]any{"resourceUri": "ui://widget.html"}},
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "widget shown"},
+		},
+	}, nil, nil
+}
+
+// showExternalWidgetTool returns a tool result with a non-ui:// _meta.ui.resourceUri,
+// for exercising the gateway's rule that only ui:// values get rewritten.
+func showExternalWidgetTool(
+	_ context.Context,
+	_ *mcp.CallToolRequest,
+	_ struct{},
+) (*mcp.CallToolResult, any, error) {
+	return &mcp.CallToolResult{
+		Meta: mcp.Meta{"ui": map[string]any{"resourceUri": "https://example.com/widget.html"}},
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "external widget shown"},
+		},
+	}, nil, nil
+}
+
+func handleWidgetResource(
+	_ context.Context,
+	_ *mcp.ReadResourceRequest,
+) (*mcp.ReadResourceResult, error) {
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{
+			{URI: "ui://widget.html", MIMEType: "text/html", Text: "<div>widget</div>"},
+		},
+	}, nil
 }
 
 var embeddedResources = map[string]string{
