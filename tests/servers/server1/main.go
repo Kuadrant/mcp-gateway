@@ -198,7 +198,7 @@ func main() {
 	toolManager := &dynamicToolManager{server: server}
 	mcp.AddTool(server, &mcp.Tool{Name: "add_tool", Description: "dynamically add a new tool (triggers notifications/tools/list_changed)", Annotations: &mcp.ToolAnnotations{Title: "add"}}, toolManager.addTool)
 
-	server.AddPrompt(&mcp.Prompt{Name: "greet"}, promptHi)
+	server.AddPrompt(&mcp.Prompt{Name: "greet", Description: "greet a person by name"}, promptHi)
 
 	server.AddResource(&mcp.Resource{
 		Name:     "info",

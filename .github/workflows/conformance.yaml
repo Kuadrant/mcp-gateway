@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CONFORMANCE_VERSION: "0.1.15"
+  CONFORMANCE_VERSION: "0.1.16"
   MCP_URL: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
 
 jobs:
@@ -143,6 +143,14 @@ jobs:
             tools-call-mixed-content
             tools-call-error
             tools-call-with-progress
+            json-schema-2020-12
+            server-sse-polling
+            server-sse-multiple-streams
+            prompts-list
+            prompts-get-simple
+            prompts-get-with-args
+            prompts-get-embedded-resource
+            prompts-get-with-image
           )
           for scenario in "${SCENARIOS[@]}"; do
             echo "=== Running scenario: $scenario ==="
