@@ -22,19 +22,26 @@ const (
 	gatewayCACertMountPath  = "/gateway-ca-cert"
 )
 
-// patchExtensionGatewayCACertSecret patches the shared MCPGatewayExtension in-place
-// to set or clear gatewayCACertSecretRef. A nil ref clears the field. This avoids
+// patchExtension patches the shared MCPGatewayExtension in-place
+// to set or clear gatewayCACertSecretRef and privateHost. This avoids
 // recreating the extension and losing other deployment patches applied by the suite.
-func patchExtensionGatewayCACertSecret(ref *mcpv1.CACertSecretReference) {
+func patchExtension(ref *mcpv1.CACertSecretReference, privateHost string) {
 	ext := &mcpv1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{
 		Name: MCPExtensionName, Namespace: SystemNamespace,
 	}, ext)).To(Succeed())
 
+	specPatch := map[string]interface{}{
+		"gatewayCACertSecretRef": ref,
+	}
+	if privateHost != "" {
+		specPatch["privateHost"] = privateHost
+	} else {
+		specPatch["privateHost"] = nil
+	}
+
 	patch := map[string]interface{}{
-		"spec": map[string]interface{}{
-			"gatewayCACertSecretRef": ref,
-		},
+		"spec": specPatch,
 	}
 	patchBytes, err := json.Marshal(patch)
 	Expect(err).NotTo(HaveOccurred())
@@ -77,8 +84,8 @@ var _ = Describe("Gateway CA Cert", Ordered, Serial, func() {
 		}
 		testResources = []client.Object{}
 
-		By("Removing gatewayCACertSecretRef from MCPGatewayExtension")
-		patchExtensionGatewayCACertSecret(nil)
+		By("Removing gatewayCACertSecretRef and privateHost from MCPGatewayExtension")
+		patchExtension(nil, "")
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, MCPExtensionName, SystemNamespace)).To(Succeed())
@@ -110,28 +117,31 @@ var _ = Describe("Gateway CA Cert", Ordered, Serial, func() {
 		return secret
 	}
 
-	setupRef := func(ref *mcpv1.CACertSecretReference) {
-		By("Patching MCPGatewayExtension with gatewayCACertSecretRef")
-		patchExtensionGatewayCACertSecret(ref)
+	setupRef := func(ref *mcpv1.CACertSecretReference, privateHost string) {
+		By("Patching MCPGatewayExtension with gatewayCACertSecretRef and privateHost")
+		patchExtension(ref, privateHost)
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, MCPExtensionName, SystemNamespace)).To(Succeed())
 		}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 	}
 
-	It("[Happy,GatewayCACert] Gateway CA cert secret is wired into the broker deployment", func() {
+	It("[Happy,GatewayCACert] Gateway CA cert secret is wired into the broker deployment along with HTTPS privateHost", func() {
 		By("Creating gateway CA cert secret with default key ca.crt")
 		caSecret := createLabeledCASecret(gatewayCACertSecretName, "ca.crt", correctCAPEM)
 		testResources = append(testResources, caSecret)
 
-		setupRef(&mcpv1.CACertSecretReference{Name: gatewayCACertSecretName, Key: "ca.crt"})
+		httpsHost := "https://mcp-gateway-istio.gateway-system.svc.cluster.local:443"
+		setupRef(&mcpv1.CACertSecretReference{Name: gatewayCACertSecretName, Key: "ca.crt"}, httpsHost)
 
-		By("Verifying the broker deployment mounts the gateway CA cert and sets --gateway-ca-cert")
+		By("Verifying the broker deployment mounts the gateway CA cert and sets --gateway-ca-cert and --mcp-gateway-private-host")
 		Eventually(func(g Gomega) {
 			deployment := getBrokerRouterDeployment(g)
 
 			g.Expect(commandContains(deployment, "--gateway-ca-cert="+gatewayCACertMountPath+"/ca.crt")).
 				To(BeTrue(), "expected --gateway-ca-cert flag in broker command")
+			g.Expect(commandContains(deployment, "--mcp-gateway-private-host="+httpsHost)).
+				To(BeTrue(), "expected --mcp-gateway-private-host flag in broker command to match https privateHost")
 
 			vol, ok := findVolume(deployment, gatewayCACertVolumeName)
 			g.Expect(ok).To(BeTrue(), "expected gateway-ca-cert-volume on deployment")
@@ -152,7 +162,7 @@ var _ = Describe("Gateway CA Cert", Ordered, Serial, func() {
 		caSecret := createLabeledCASecret(gatewayCACertSecretName, customKey, correctCAPEM)
 		testResources = append(testResources, caSecret)
 
-		setupRef(&mcpv1.CACertSecretReference{Name: gatewayCACertSecretName, Key: customKey})
+		setupRef(&mcpv1.CACertSecretReference{Name: gatewayCACertSecretName, Key: customKey}, "")
 
 		By("Verifying the --gateway-ca-cert path uses the custom key")
 		Eventually(func(g Gomega) {
@@ -164,7 +174,7 @@ var _ = Describe("Gateway CA Cert", Ordered, Serial, func() {
 
 	It("[Full,GatewayCACert] Invalid gateway CA cert secret — MCPGatewayExtension reports error", func() {
 		By("Patching MCPGatewayExtension to reference a non-existent secret")
-		patchExtensionGatewayCACertSecret(&mcpv1.CACertSecretReference{Name: "nonexistent-gateway-ca", Key: "ca.crt"})
+		patchExtension(&mcpv1.CACertSecretReference{Name: "nonexistent-gateway-ca", Key: "ca.crt"}, "")
 
 		By("Verifying MCPGatewayExtension reports SecretNotFound")
 		Eventually(func(g Gomega) {
@@ -187,7 +197,7 @@ var _ = Describe("Gateway CA Cert", Ordered, Serial, func() {
 		testResources = append(testResources, unlabeled)
 
 		By("Patching extension to reference the unlabeled secret")
-		patchExtensionGatewayCACertSecret(&mcpv1.CACertSecretReference{Name: "gwca-no-label", Key: "ca.crt"})
+		patchExtension(&mcpv1.CACertSecretReference{Name: "gwca-no-label", Key: "ca.crt"}, "")
 
 		By("Verifying MCPGatewayExtension reports SecretInvalid for the missing label")
 		Eventually(func(g Gomega) {
