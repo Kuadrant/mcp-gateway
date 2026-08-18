@@ -483,8 +483,7 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 				if extra := req.GetExtra(); extra != nil {
 					headers = extra.Header
 				}
-				m.FetchResources(ctx, resourcesResult)
-				m.FilterResources(ctx, headers, resourcesResult)
+				m.FetchResources(ctx, headers, resourcesResult)
 			}
 
 			return result, nil
@@ -860,7 +859,7 @@ func (m *mcpBrokerImpl) ValidateAllServers() StatusResponse {
 // upstream, each with its own timeout, so one slow or down server doesn't
 // add its latency to every other server's contribution. A failing upstream
 // is logged and excluded; it never fails the overall request.
-func (m *mcpBrokerImpl) FetchResources(ctx context.Context, result *mcp.ListResourcesResult) {
+func (m *mcpBrokerImpl) FetchResources(ctx context.Context, headers http.Header, result *mcp.ListResourcesResult) {
 	m.mcpLock.RLock()
 	servers := make([]upstream.ActiveMCPServer, 0, len(m.mcpServers))
 	for _, srv := range m.mcpServers {
@@ -900,8 +899,12 @@ func (m *mcpBrokerImpl) FetchResources(ctx context.Context, result *mcp.ListReso
 				m.logger.Error("failed to fetch resources", "server", srv.MCPName(), "error", err)
 				return nil // graceful degradation: log and exclude, don't fail the request
 			}
+
+			// filter per-upstream before merging
+			filtered := m.applyAuthorizedCapabilitiesFilterForResourcesPerServer(headers, srv.MCPName(), cfg.Prefix, resources)
+
 			mu.Lock()
-			allResources = append(allResources, resources...)
+			allResources = append(allResources, filtered...)
 			mu.Unlock()
 			return nil
 		})

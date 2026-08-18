@@ -122,7 +122,7 @@ func TestFetchResources_SkipConditions(t *testing.T) {
 	b.mcpServers["erroring"] = erroringUpstream
 
 	result := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result)
+	b.FetchResources(context.Background(), nil, result)
 
 	assert.Equal(t, []string{"ui://good_good.html"}, resourceURIs(result))
 }
@@ -147,7 +147,7 @@ func TestFetchResources_ConcurrentFanOut(t *testing.T) {
 
 	result := &mcp.ListResourcesResult{}
 	start := time.Now()
-	b.FetchResources(context.Background(), result)
+	b.FetchResources(context.Background(), nil, result)
 	elapsed := time.Since(start)
 
 	assert.Equal(t, []string{"ui://fast_fast.html"}, resourceURIs(result))
@@ -168,7 +168,7 @@ func TestFetchResources_OnlyUIRewrittenOthersUntouched(t *testing.T) {
 	b.mcpServers["mixed"] = connectedResourceUpstream(t, config.MCPServer{Name: "mixed", Prefix: "mx_"}, ts)
 
 	result := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result)
+	b.FetchResources(context.Background(), nil, result)
 
 	assert.ElementsMatch(t, []string{"ui://mx_template.html", "https://example.com/doc.html"}, resourceURIs(result))
 }
@@ -190,7 +190,7 @@ func TestFetchResources_NextCursorLoggedNotFollowed(t *testing.T) {
 	b.mcpServers["paged"] = connectedResourceUpstream(t, config.MCPServer{Name: "paged", Prefix: "pg_"}, ts)
 
 	result := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result)
+	b.FetchResources(context.Background(), nil, result)
 
 	assert.Len(t, result.Resources, 1, "only the first page should be merged, pagination is not followed")
 	assert.True(t, buf.hasMessage("paginated"), "expected a log entry noting the unfollowed nextCursor")
@@ -272,7 +272,7 @@ func TestFetchResources_AllUpstreamsSkipped(t *testing.T) {
 	b.mcpServers["badprefix"] = connectedResourceUpstream(t, config.MCPServer{Name: "badprefix", Prefix: "Bad-Prefix!"}, badPrefix)
 
 	result := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result)
+	b.FetchResources(context.Background(), nil, result)
 
 	// result.Resources must be empty slice [], not nil. If nil, JSON marshals as {"resources":null},
 	// violating MCP spec which expects {"resources":[]}.
@@ -295,13 +295,13 @@ func TestFetchResources_CachedResultNotMutated(t *testing.T) {
 
 	// First call
 	result1 := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result1)
+	b.FetchResources(context.Background(), nil, result1)
 	assert.Equal(t, []string{"ui://pfx_template.html"}, resourceURIs(result1))
 
 	// Second call should return the same URI, not pfx_pfx_template.html
 	// (which would happen if we mutated the cached SDK result in-place).
 	result2 := &mcp.ListResourcesResult{}
-	b.FetchResources(context.Background(), result2)
+	b.FetchResources(context.Background(), nil, result2)
 	assert.Equal(t, []string{"ui://pfx_template.html"}, resourceURIs(result2), "repeated call must not double-prefix cached URIs")
 }
 
