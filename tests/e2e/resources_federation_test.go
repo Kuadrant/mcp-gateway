@@ -101,7 +101,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(g Gomega) {
+		Eventually(func(_ Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -132,7 +132,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(g Gomega) {
+		Eventually(func(_ Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -160,7 +160,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		regServer := reg.Register(ctx)
 
 		By("Verifying MCPServerRegistration becomes ready")
-		Eventually(func(g Gomega) {
+		Eventually(func(_ Gomega) {
 			err := VerifyMCPServerRegistrationReady(ctx, k8sClient, regServer.Name, regServer.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
