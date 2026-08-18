@@ -27,6 +27,7 @@ const (
 	UserSpecificListDisabled UserSpecificListPolicy = "Disabled"
 )
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPServerRegistration is deprecated; migrate to mcp.kuadrant.io/v1"
@@ -218,6 +219,7 @@ type MCPServerRegistrationStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 
 // MCPServerRegistrationList contains a list of MCPServerRegistration
@@ -227,6 +229,7 @@ type MCPServerRegistrationList struct {
 	Items           []MCPServerRegistration `json:"items"`
 }
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPVirtualServer is deprecated; migrate to mcp.kuadrant.io/v1"
@@ -286,6 +289,7 @@ type MCPVirtualServerStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 
 // MCPVirtualServerList contains a list of MCPVirtualServer

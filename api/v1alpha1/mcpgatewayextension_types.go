@@ -237,6 +237,7 @@ type MCPGatewayExtensionStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="mcp.kuadrant.io/v1alpha1 MCPGatewayExtension is deprecated; migrate to mcp.kuadrant.io/v1"
@@ -270,6 +271,7 @@ type MCPGatewayExtension struct {
 	Status MCPGatewayExtensionStatus `json:"status,omitzero"`
 }
 
+// +kubebuilder:unservedversion
 // +kubebuilder:object:root=true
 
 // MCPGatewayExtensionList contains a list of MCPGatewayExtension
