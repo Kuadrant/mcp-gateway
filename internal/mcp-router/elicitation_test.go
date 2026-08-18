@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSSERewriter_Process(t *testing.T) {
+func TestElicitationRewriter_Process(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := context.Background()
 
@@ -135,7 +135,7 @@ func TestSSERewriter_Process(t *testing.T) {
 	}
 }
 
-func TestSSERewriter_Process_RewrittenIDIsValid(t *testing.T) {
+func TestElicitationRewriter_Process_RewrittenIDIsValid(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	m, err := idmap.New()
@@ -172,7 +172,7 @@ func TestSSERewriter_Process_RewrittenIDIsValid(t *testing.T) {
 	require.Equal(t, "session-abc", entry.SessionID)
 }
 
-func TestSSERewriter_Process_MultipleElicitations(t *testing.T) {
+func TestElicitationRewriter_Process_MultipleElicitations(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	m, err := idmap.New()
@@ -204,7 +204,7 @@ func TestSSERewriter_Process_MultipleElicitations(t *testing.T) {
 	}
 }
 
-func TestSSERewriter_Flush(t *testing.T) {
+func TestElicitationRewriter_Flush(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -302,7 +302,7 @@ func TestSSERewriter_Flush(t *testing.T) {
 	})
 }
 
-func TestSSERewriter_MaybeRewriteElicitation(t *testing.T) {
+func TestElicitationRewriter_MaybeRewriteElicitation(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
