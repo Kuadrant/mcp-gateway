@@ -27,7 +27,7 @@ A third field addresses a different TLS connection. When the MCP Gateway listene
 | Per-server CA | `caCertSecretRef` on MCPServerRegistration | Single server | Server has a unique CA not covered by the gateway bundle |
 | Gateway listener CA | `gatewayCACertSecretRef` on MCPGatewayExtension | Broker to gateway listener (hairpin) | Gateway listener uses HTTPS with a private CA |
 
-> **Note:** This only affects the broker's connections to upstream MCP servers (tool discovery, initialization, session management). Client `tools/call` requests flow through Envoy, which has its own TLS configuration via Gateway API.
+> **Note:** The `caCertBundleRef` and `caCertSecretRef` fields only affect the broker's connections to upstream MCP servers (tool discovery, initialization, session management). The `gatewayCACertSecretRef` field affects the broker's internal hairpin connection to the gateway. Client `tools/call` requests flow through Envoy, which has its own TLS configuration via Gateway API.
 
 ## Prerequisites
 
