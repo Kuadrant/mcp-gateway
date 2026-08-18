@@ -47,7 +47,7 @@ func TestApplyAuthorizedCapabilitiesFilterForResourcesPerServer_InvalidJWTDenies
 
 	// Create headers with invalid JWT
 	headers := http.Header{}
-	headers.Set("x-mcp-authorized", "invalid-jwt-token")
+	headers.Set("X-Mcp-Authorized", "invalid-jwt-token")
 
 	resources := []*mcp.Resource{
 		{URI: "ui://secure_resource1.html", Name: "resource1"},

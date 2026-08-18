@@ -91,18 +91,18 @@ var _ = Describe("Resources Authorization", func() {
 		Expect(json.Unmarshal([]byte(respBody), &listResp)).To(Succeed())
 
 		By("Verifying resources are prefixed correctly for isolation")
-		app_count := 0
-		docs_count := 0
+		appCount := 0
+		docsCount := 0
 		for _, r := range listResp.Result.Resources {
 			if strings.Contains(r.URI, "app_") {
-				app_count++
+				appCount++
 			}
 			if strings.Contains(r.URI, "docs_") {
-				docs_count++
+				docsCount++
 			}
 		}
 		// At least some resources should be prefixed (if servers expose any)
-		Expect(app_count+docs_count).To(BeNumerically(">=", 0), "resources should maintain prefix isolation")
+		Expect(appCount+docsCount).To(BeNumerically(">=", 0), "resources should maintain prefix isolation")
 	})
 
 	It("[AuthFiltering,EdgeCase] invalid JWT claim denies access", func() {
