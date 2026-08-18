@@ -5,10 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
