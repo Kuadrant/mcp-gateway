@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -948,26 +947,12 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 			continue
 		}
 		copied := *r
-		copied.URI = rewriteResourceURI(r.URI, prefix)
+		copied.URI, _ = routing.InjectResourcePrefix(r.URI, prefix)
 		out = append(out, &copied)
 	}
 
 	span.SetAttributes(attribute.Int("mcp.resources.resources_count", len(out)))
 	return out, nil
-}
-
-// rewriteResourceURI injects prefix into a ui:// URI's authority segment
-// (ui://template.html -> ui://<prefix_>template.html). Non-ui:// and
-// malformed URIs are returned unchanged, matching how the tools/call
-// response rewrite (resourceURIRewriter) treats them.
-func rewriteResourceURI(uri, prefix string) string {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "ui" {
-		return uri
-	}
-	u.User = nil // never forward upstream credentials to clients
-	u.Host = routing.EnsureSeparator(prefix) + u.Host
-	return u.String()
 }
 
 // IsReady reports whether the broker can serve traffic.

@@ -333,3 +333,39 @@ func EnsureSeparator(prefix string) string {
 	}
 	return prefix
 }
+
+// InjectResourcePrefix injects prefix into a ui:// URI's authority segment
+// (ui://template.html -> ui://<prefix_>template.html). Non-ui:// and
+// malformed URIs are returned unchanged with ok=false.
+func InjectResourcePrefix(uri, prefix string) (rewritten string, ok bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "ui" {
+		return uri, false
+	}
+	u.User = nil // never forward upstream credentials to clients
+	u.Host = EnsureSeparator(prefix) + u.Host
+	return u.String(), true
+}
+
+// StripResourcePrefix removes prefix from a ui:// URI's authority segment,
+// the inverse of InjectResourcePrefix. Non-ui:// and malformed URIs are
+// returned unchanged.
+func StripResourcePrefix(uri, prefix string) string {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "ui" || u.Host == "" {
+		return uri
+	}
+	u.Host = StripAuthorityPrefix(u.Host, prefix)
+	return u.String()
+}
+
+// StripAuthorityPrefix removes prefix and its separator from an authority
+// string. For authority "app_example.com" with prefix "app", returns
+// "example.com". If the authority doesn't start with the prefix, it's
+// returned unchanged.
+func StripAuthorityPrefix(authority, prefix string) string {
+	if prefix == "" {
+		return authority
+	}
+	return strings.TrimPrefix(authority, EnsureSeparator(prefix))
+}

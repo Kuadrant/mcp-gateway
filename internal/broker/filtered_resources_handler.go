@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -84,7 +83,7 @@ func (broker *mcpBrokerImpl) filterResourcesByServerMap(ctx context.Context, all
 
 		// extract original authority by stripping the prefix from the URI authority
 		prefixedAuthority := resourceAuthorityFromURI(resource.URI)
-		originalAuthority := stripResourcePrefix(prefixedAuthority, serverInfo.Prefix)
+		originalAuthority := routing.StripAuthorityPrefix(prefixedAuthority, serverInfo.Prefix)
 
 		allowed := false
 		for _, authority := range allowedAuthorities {
@@ -102,20 +101,6 @@ func (broker *mcpBrokerImpl) filterResourcesByServerMap(ctx context.Context, all
 	}
 
 	return filtered
-}
-
-// stripResourcePrefix removes the prefix and separator from a prefixed authority.
-// For authority "app_example.com" with prefix "app", returns "example.com".
-// For authority without matching prefix, returns the authority unchanged.
-func stripResourcePrefix(authority, prefix string) string {
-	if prefix == "" {
-		return authority
-	}
-	separator := routing.EnsureSeparator(prefix)
-	if strings.HasPrefix(authority, separator) {
-		return authority[len(separator):]
-	}
-	return authority
 }
 
 // resourceAuthorityFromURI extracts the authority (host) from a resource URI.

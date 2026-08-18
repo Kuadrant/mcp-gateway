@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -323,24 +322,12 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 
 	headers[MethodHeader] = mcpReq.Method
 	mcpReq.ServerName = serverInfo.Name
-	upstreamURI := stripResourcePrefix(resourceURI, serverInfo.Prefix)
+	upstreamURI := StripResourcePrefix(resourceURI, serverInfo.Prefix)
 	headers[ResourceHeader] = upstreamURI
 	mcpReq.ReWriteResourceURI(upstreamURI)
 	headers[MCPServerNameHeader] = serverInfo.Name
 
 	return r.routeToUpstream(ctx, span, mcpReq, serverInfo, headers)
-}
-
-// stripResourcePrefix removes prefix from a ui:// URI's authority segment,
-// reconstructing the original upstream URI - the inverse of the broker's
-// rewriteResourceURI. Non-ui:// and malformed URIs are returned unchanged.
-func stripResourcePrefix(uri, prefix string) string {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "ui" || u.Host == "" {
-		return uri
-	}
-	u.Host = strings.TrimPrefix(u.Host, EnsureSeparator(prefix))
-	return u.String()
 }
 
 func (r *Router202511) routeToUpstream(ctx context.Context, span trace.Span, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers map[string]string) *Decision {

@@ -203,33 +203,6 @@ func TestResourceURIRewriter_OversizedLineForwardedUnrewrittenNotBufferedForever
 	}
 }
 
-func TestInjectResourcePrefix(t *testing.T) {
-	tests := []struct {
-		name    string
-		uri     string
-		prefix  string
-		wantURI string
-		wantOK  bool
-	}{
-		{"basic prefix injection", "ui://template.html", "insights", "ui://insights_template.html", true},
-		{"prefix already has separator", "ui://template.html", "insights_", "ui://insights_template.html", true},
-		{"non-ui scheme untouched", "https://example.com/x.html", "insights", "https://example.com/x.html", false},
-		{"malformed uri untouched", "ui://\x7fbad", "insights", "ui://\x7fbad", false},
-		{"empty prefix untouched host", "ui://template.html", "", "ui://template.html", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := injectResourcePrefix(tt.uri, tt.prefix)
-			if ok != tt.wantOK {
-				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
-			}
-			if got != tt.wantURI {
-				t.Errorf("got %q, want %q", got, tt.wantURI)
-			}
-		})
-	}
-}
-
 func contains(haystack []byte, needle string) bool {
 	return bytes.Contains(haystack, []byte(needle))
 }

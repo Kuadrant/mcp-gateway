@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/url"
 
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
@@ -153,7 +152,7 @@ func (r *resourceURIRewriter) rewriteToolResultJSON(ctx context.Context, jsonDat
 		return jsonData, false
 	}
 
-	newURI, ok := injectResourcePrefix(uri, r.prefix)
+	newURI, ok := routing.InjectResourcePrefix(uri, r.prefix)
 	if !ok {
 		return jsonData, false // not a ui:// URI - left untouched per design
 	}
@@ -192,18 +191,4 @@ func (r *resourceURIRewriter) rewriteToolResultJSON(ctx context.Context, jsonDat
 		return jsonData, false
 	}
 	return out, true
-}
-
-// injectResourcePrefix injects the server prefix into a ui:// URI's authority
-// segment (ui://template.html -> ui://<prefix_>template.html), mirroring
-// broker.go's rewriteResourceURI so resources/list and tools/call responses stay
-// consistent. Non-ui:// or malformed URIs are returned unchanged with ok=false.
-func injectResourcePrefix(uri, prefix string) (rewritten string, ok bool) {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "ui" {
-		return uri, false
-	}
-	u.User = nil // never forward upstream credentials to clients
-	u.Host = routing.EnsureSeparator(prefix) + u.Host
-	return u.String(), true
 }
