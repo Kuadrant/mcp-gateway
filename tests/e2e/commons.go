@@ -188,7 +188,7 @@ var (
 	URLElicitationGatewayURL      = goenv.GetDefault("URL_ELICITATION_GATEWAY_URL", gatewayURLDefault(URLElicitationPublicHost, "https://url-elicit.mcp-gateway.local:8010/mcp"))
 	ToolDiscoveryGatewayURL       = goenv.GetDefault("TOOL_DISCOVERY_GATEWAY_URL", gatewayURLDefault(ToolDiscoveryPublicHost, "http://mcp.tool-discovery.127-0-0-1.sslip.io:8001/mcp"))
 	Protocol2026GatewayURL        = goenv.GetDefault("PROTOCOL_2026_GATEWAY_URL", gatewayURLDefault(Protocol2026PublicHost, "http://mcp.protocol-2026.127-0-0-1.sslip.io:8011/mcp"))
-	ResourcesFederationGatewayURL = goenv.GetDefault("RESOURCES_FEDERATION_GATEWAY_URL", gatewayURLDefault(ResourcesFederationPublicHost, "http://mcp.resources-federation.127-0-0-1.sslip.io:8001/mcp"))
+	ResourcesFederationGatewayURL = goenv.GetDefault("RESOURCES_FEDERATION_GATEWAY_URL", gatewayURLDefault(ResourcesFederationPublicHost, "http://mcp.resources-federation.127-0-0-1.sslip.io:8012/mcp"))
 )
 
 // gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,

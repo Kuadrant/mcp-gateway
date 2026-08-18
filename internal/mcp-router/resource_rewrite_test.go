@@ -145,13 +145,8 @@ func TestResourceURIRewriter_FlushTwiceIsSafe(t *testing.T) {
 	}
 }
 
-// TestResourceURIRewriter_CompleteLineForwardedByProcessNotHeldUntilFlush guards
-// against the deadlock this design specifically exists to avoid: when composed
-// with elicitationRewriter on the same response, a complete SSE line (e.g.
-// "elicitation/create") must be forwarded by Process() itself, not held until
-// Flush() - the client needs to see it while the backend call is still open, and
-// Flush() only happens at end-of-stream, which the backend won't reach until the
-// client answers a message it never received.
+// guards against holding a complete line until Flush, which would deadlock a
+// live elicitation exchange composed on the same response.
 func TestResourceURIRewriter_CompleteLineForwardedByProcessNotHeldUntilFlush(t *testing.T) {
 	r := newTestResourceRewriter("insights_")
 	ctx := context.Background()
@@ -179,6 +174,32 @@ func TestResourceURIRewriter_PartialLineHeldUntilComplete(t *testing.T) {
 	out = r.Process(ctx, []byte("{\"_meta\":{\"ui\":{\"resourceUri\":\"ui://template.html\"}}}}\n"))
 	if !contains(out, `"resourceUri":"ui://insights_template.html"`) {
 		t.Errorf("expected rewritten resourceUri once the line completed, got: %s", out)
+	}
+}
+
+func TestResourceURIRewriter_OversizedLineForwardedUnrewrittenNotBufferedForever(t *testing.T) {
+	r := newTestResourceRewriter("insights_")
+	ctx := context.Background()
+
+	oversized := bytes.Repeat([]byte("x"), maxBufferedLineBytes+1)
+	out := r.Process(ctx, oversized)
+	if len(out) != len(oversized) {
+		t.Fatalf("expected the oversized unterminated chunk to be forwarded once the cap is exceeded, got %d bytes, want %d", len(out), len(oversized))
+	}
+	if r.buf != nil {
+		t.Errorf("expected buf to be cleared after overflow, got %d bytes still buffered", len(r.buf))
+	}
+
+	// the rest of the abandoned line, plus its terminator, should still pass through unrewritten
+	out = r.Process(ctx, []byte("tail\n"))
+	if string(out) != "tail\n" {
+		t.Errorf("expected the remainder of the abandoned line to pass through unrewritten, got: %s", out)
+	}
+
+	// normal rewriting resumes for the next line
+	out = r.Process(ctx, []byte(`{"jsonrpc":"2.0","id":1,"result":{"_meta":{"ui":{"resourceUri":"ui://template.html"}}}}`+"\n"))
+	if !contains(out, `"resourceUri":"ui://insights_template.html"`) {
+		t.Errorf("expected rewriting to resume on the next line after overflow, got: %s", out)
 	}
 }
 

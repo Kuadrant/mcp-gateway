@@ -212,6 +212,12 @@ func main() {
 		URI:      "ui://widget.html",
 	}, handleWidgetResource)
 
+	server.AddResource(&mcp.Resource{
+		Name:     "gadget",
+		MIMEType: "text/html",
+		URI:      "ui://gadget.html",
+	}, handleGadgetResource)
+
 	mcp.AddTool(server, &mcp.Tool{Name: "show_widget", Description: "return a tool result with a _meta.ui.resourceUri"}, showWidgetTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "show_external_widget", Description: "return a tool result with a non-ui:// _meta.ui.resourceUri"}, showExternalWidgetTool)
 
@@ -272,8 +278,7 @@ func rpcPrintMiddleware(
 	}
 }
 
-// showWidgetTool returns a tool result carrying _meta.ui.resourceUri, for
-// exercising the gateway's resource URI rewriting (resources-federation Task 6).
+// showWidgetTool returns a tool result carrying _meta.ui.resourceUri.
 func showWidgetTool(
 	_ context.Context,
 	_ *mcp.CallToolRequest,
@@ -309,6 +314,17 @@ func handleWidgetResource(
 	return &mcp.ReadResourceResult{
 		Contents: []*mcp.ResourceContents{
 			{URI: "ui://widget.html", MIMEType: "text/html", Text: "<div>widget</div>"},
+		},
+	}, nil
+}
+
+func handleGadgetResource(
+	_ context.Context,
+	_ *mcp.ReadResourceRequest,
+) (*mcp.ReadResourceResult, error) {
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{
+			{URI: "ui://gadget.html", MIMEType: "text/html", Text: "<div>gadget</div>"},
 		},
 	}, nil
 }

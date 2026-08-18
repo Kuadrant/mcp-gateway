@@ -44,3 +44,6 @@ nodes:
   - containerPort: 30083 # protocol-2026 listener
     hostPort: 8011
     protocol: TCP
+  - containerPort: 30084 # resources-federation listener
+    hostPort: 8012
+    protocol: TCP

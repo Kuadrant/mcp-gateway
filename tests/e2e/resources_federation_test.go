@@ -121,8 +121,9 @@ var _ = Describe("Resources Federation", Ordered, func() {
 
 		serverKey := fmt.Sprintf("%s/%s", regServer.Namespace, regServer.Name)
 		wantURI := "ui://" + regServer.Spec.Prefix + "widget.html"
+		excludedURI := "ui://" + regServer.Spec.Prefix + "gadget.html"
 
-		By("Creating a JWT that allows widget.html for this server")
+		By("Creating a JWT that allows widget.html but not gadget.html for this server")
 		jwtToken, err := CreateAuthorizedResourcesJWT(map[string][]string{
 			serverKey: {"widget.html"},
 		})
@@ -143,6 +144,8 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			g.Expect(listResult).NotTo(BeNil())
 			g.Expect(resourceURIs(listResult.Resources)).To(ContainElement(wantURI),
 				"widget.html should be visible when the JWT claim allows it for this server")
+			g.Expect(resourceURIs(listResult.Resources)).NotTo(ContainElement(excludedURI),
+				"gadget.html should be excluded since it's not in the JWT claim for this server")
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 

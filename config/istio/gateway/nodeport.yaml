@@ -39,6 +39,12 @@ spec:
     port: 8081
     protocol: TCP
     targetPort: 8081
+  - appProtocol: http
+    name: resources-federation
+    nodePort: 30084
+    port: 8082
+    protocol: TCP
+    targetPort: 8082
   selector:
     gateway.networking.k8s.io/gateway-name: mcp-gateway
   sessionAffinity: None

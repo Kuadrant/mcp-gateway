@@ -10,38 +10,50 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
-// resourceURIRewriter rewrites _meta.ui.resourceUri in tools/call responses so the
-// URI a client gets back from a tool call matches the prefixed form resources/list
-// already returns for the same resource.
-//
-// It follows the same incremental Process/Flush line-buffering discipline as
-// elicitationRewriter (split on '\n', hold the trailing partial line for the next
-// chunk) rather than buffering the whole body until Flush. That matters because
-// resourceURIRewriter runs chained after elicitationRewriter on the same response:
-// when both are active (a tool call to a resource-federated server from an
-// elicitation-capable client), elicitationRewriter must forward "elicitation/create"
-// immediately so the client can answer it while the backend call is still open. A
-// rewriter further down the chain that holds every byte until end-of-stream would
-// swallow that message and deadlock the whole exchange. Rewriting per complete line
-// as it arrives avoids that, and still handles both body shapes a tools/call
-// response can arrive in - SSE "data: {...}" lines, or a single-line plain JSON
-// object with no framing at all.
+// maxBufferedLineBytes caps how much of an unterminated line Process will hold
+// waiting for '\n'. Past this, the line is forwarded unrewritten rather than
+// buffered indefinitely - bounds memory against a body with a pathologically
+// long or missing line terminator.
+const maxBufferedLineBytes = 1 << 20 // 1 MiB
+
+// resourceURIRewriter rewrites _meta.ui.resourceUri in tools/call responses to
+// match the prefixed form resources/list already returns for the same resource.
+// Rewrites incrementally per complete line, never buffering a full line past
+// Flush, so it composes safely with elicitationRewriter on the same response.
 type resourceURIRewriter struct {
-	buf    []byte
-	prefix string
-	logger *slog.Logger
+	buf        []byte
+	overflowed bool // true while forwarding an abandoned oversized line unrewritten, until its '\n'
+	prefix     string
+	logger     *slog.Logger
 }
 
 // Process receives a chunk of response data and rewrites any complete lines it
 // contains. Splitting on '\n' ensures only fully received JSON is parsed and
-// rewritten; an incomplete trailing line is held for the next chunk (or Flush).
+// rewritten; an incomplete trailing line is held for the next chunk (or Flush),
+// unless it exceeds maxBufferedLineBytes, in which case it's forwarded unrewritten.
 func (r *resourceURIRewriter) Process(ctx context.Context, chunk []byte) []byte {
+	var output []byte
+
+	if r.overflowed {
+		idx := bytes.IndexByte(chunk, '\n')
+		if idx == -1 {
+			return chunk // still inside the abandoned line - keep passing through
+		}
+		output = append(output, chunk[:idx+1]...)
+		chunk = chunk[idx+1:]
+		r.overflowed = false
+	}
+
 	r.buf = append(r.buf, chunk...)
 
-	var output []byte
 	for {
 		idx := bytes.IndexByte(r.buf, '\n')
 		if idx == -1 {
+			if len(r.buf) > maxBufferedLineBytes {
+				output = append(output, r.buf...)
+				r.buf = nil
+				r.overflowed = true
+			}
 			break // no complete line - hold remainder for next chunk
 		}
 

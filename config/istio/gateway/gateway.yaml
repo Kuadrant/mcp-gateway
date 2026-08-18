@@ -89,7 +89,7 @@ spec:
           from: All
     - name: resources-federation
       hostname: '*.resources-federation.127-0-0-1.sslip.io'
-      port: 8080
+      port: 8082
       protocol: HTTP
       allowedRoutes:
         namespaces:
