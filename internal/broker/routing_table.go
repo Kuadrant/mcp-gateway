@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
@@ -17,6 +18,8 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 			Prefix:           cfg.Prefix,
 			URL:              cfg.URL,
 			UserSpecificList: cfg.UserSpecificList,
+			Stateless:        m.ServerSupportsVersion(id, protocol.Version2026),
+			Stateful:         m.ServerSupportsVersion(id, protocol.Version2025),
 		}
 		if p, err := cfg.Path(); err == nil {
 			route.Path = p

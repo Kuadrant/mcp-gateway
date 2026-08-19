@@ -136,6 +136,22 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 			},
 		}
 	}
+
+	if !route.Stateful {
+		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "toolName", toolName, "server", route.Name)
+		mcpotel.SpanError(span, fmt.Errorf("tool not found: %s", toolName), "tool not available for stateful protocol")
+		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		return &Decision{
+			Error: &Error{
+				StatusCode: 200,
+				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Tool not found"),
+			},
+			SetHeaders: map[string]string{
+				SessionHeader: mcpReq.GetSessionID(),
+			},
+		}
+	}
+
 	serverInfo := routeToMCPServer(route)
 
 	span.SetAttributes(
@@ -248,6 +264,22 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 			},
 		}
 	}
+
+	if !route.Stateful {
+		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "promptName", promptName, "server", route.Name)
+		mcpotel.SpanError(span, fmt.Errorf("prompt not found: %s", promptName), "prompt not available for stateful protocol")
+		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		return &Decision{
+			Error: &Error{
+				StatusCode: 200,
+				JSONRPCErr: "\nevent: message\ndata: {\"error\":{\"code\":-32602,\"message\":\"Prompt not found\"},\"jsonrpc\":\"2.0\"}\n\n",
+			},
+			SetHeaders: map[string]string{
+				SessionHeader: mcpReq.GetSessionID(),
+			},
+		}
+	}
+
 	serverInfo := routeToMCPServer(route)
 
 	span.SetAttributes(
@@ -313,6 +345,22 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 			},
 		}
 	}
+
+	if !route.Stateful {
+		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "uri", resourceURI, "server", route.Name)
+		mcpotel.SpanError(span, fmt.Errorf("resource not found: %s", resourceURI), "resource not available for stateful protocol")
+		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		return &Decision{
+			Error: &Error{
+				StatusCode: 200,
+				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Resource not found"),
+			},
+			SetHeaders: map[string]string{
+				SessionHeader: mcpReq.GetSessionID(),
+			},
+		}
+	}
+
 	serverInfo := routeToMCPServer(route)
 
 	span.SetAttributes(
