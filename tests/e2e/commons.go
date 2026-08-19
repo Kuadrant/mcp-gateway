@@ -164,6 +164,11 @@ func resourcesFederationPublicHostDefault() string {
 	return "mcp.resources-federation." + e2eDomain
 }
 
+// resourcesFederationServerHost returns a server hostname for the resources-federation listener.
+func resourcesFederationServerHost(subdomain string) string {
+	return subdomain + ".resources-federation." + e2eDomain
+}
+
 // public hosts - derived from E2E_DOMAIN
 var (
 	gatewayPublicHost             = goenv.GetDefault("GATEWAY_PUBLIC_HOST", gatewayPublicHostDefault())

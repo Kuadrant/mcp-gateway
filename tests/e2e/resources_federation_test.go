@@ -107,7 +107,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("jwttest_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("jwtserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("jwtserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
@@ -157,7 +157,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("emptyclaim_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("emptyclaimserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("emptyclaimserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
@@ -199,7 +199,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("everything-server", 9090).
 			WithPrefix("elicit_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("elicitserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("elicitserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
@@ -253,7 +253,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("widget_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("widgetserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("widgetserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
@@ -288,7 +288,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("widgeta_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("widgetservera.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("widgetservera")).
 			Build()
 		testResources = append(testResources, regA.GetObjects()...)
 		serverA := regA.Register(ctx)
@@ -297,7 +297,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("widgetb_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("widgetserverb.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("widgetserverb")).
 			Build()
 		testResources = append(testResources, regB.GetObjects()...)
 		serverB := regB.Register(ctx)
@@ -336,7 +336,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("plain_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("plainserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("plainserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
@@ -377,7 +377,7 @@ var _ = Describe("Resources Federation", Ordered, func() {
 			ForInternalService("mcp-test-server1", 9090).
 			WithPrefix("nonui_").
 			WithSectionName(ResourcesFederationListenerName).
-			WithHostname("nonuiserver.resources-federation.127-0-0-1.sslip.io").
+			WithHostname(resourcesFederationServerHost("nonuiserver")).
 			Build()
 		regObjects := reg.GetObjects()
 		testResources = append(testResources, regObjects...)
