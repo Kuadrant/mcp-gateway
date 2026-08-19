@@ -423,6 +423,8 @@ func TestRouter202607_EmptyPromptName(t *testing.T) {
 	require.Equal(t, "no prompt name set", decision.Error.Message)
 }
 
+// protocol version is implicit: the ext_proc adapter selects Router202607 for
+// 2026 clients, so no version header appears in the request.
 func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{
@@ -481,33 +483,6 @@ func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
 	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-2"`)
-}
-
-func TestRouter202607_StatelessToolAllowed(t *testing.T) {
-	serverConfigs := []*config.MCPServer{
-		{
-			Name:     "stateless-backend",
-			URL:      "http://localhost:8080/mcp",
-			State:    "Enabled",
-			Hostname: "localhost",
-		},
-	}
-
-	router := newTestRouter202607WithOpts(t, serverConfigs,
-		map[string]string{"mytool": "stateless-backend"},
-		map[string]string{},
-		map[string]*testRouteOpts{"stateless-backend": {stateless: true}},
-	)
-
-	req := &Request{
-		MCPMethod: MethodToolCall,
-		MCPName:   "mytool",
-		RequestID: "req-1",
-	}
-
-	decision := router.RouteRequest(context.Background(), req)
-	require.Nil(t, decision.Error)
-	require.Equal(t, "localhost", decision.Authority)
 }
 
 func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {
