@@ -18,8 +18,9 @@ TEST_SERVER_IMAGES = test-server1 test-server2 test-server3 test-api-key-server 
 	test-everything-server test-custom-response-server test-user-specific-server \
 	test-stateless-server test-a2a-server
 
-# buildx builder with the security.insecure entitlement: containerd's layer
-# extraction in the bake RUN step needs mount(2), which plain builds deny
+# dedicated docker-container buildx builder: needed to push straight from the
+# builder in CI. the bake RUN only fetches content (no layer unpack), so no
+# security.insecure entitlement is required
 CI_NODE_BUILDER = mcp-ci-node-baker
 # true pushes straight from the builder (CI), false loads into the local
 # docker image store
@@ -61,10 +62,9 @@ ci-node-image-build: ## Bake e2e infra and test server images into a kind node i
 	tag="$$(./utils/ci-node-image-hash.sh)"; \
 	if [ "$(CI_NODE_IMAGE_PUSH)" = "true" ]; then output_flag="--push"; else output_flag="--load"; fi; \
 	$(CONTAINER_ENGINE) buildx inspect $(CI_NODE_BUILDER) >/dev/null 2>&1 \
-		|| $(CONTAINER_ENGINE) buildx create --name $(CI_NODE_BUILDER) --driver docker-container \
-			--buildkitd-flags '--allow-insecure-entitlement security.insecure'; \
+		|| $(CONTAINER_ENGINE) buildx create --name $(CI_NODE_BUILDER) --driver docker-container; \
 	echo "Baking $(CI_NODE_IMAGE):$$tag ($$output_flag)"; \
-	$(CONTAINER_ENGINE) buildx build --builder $(CI_NODE_BUILDER) --allow security.insecure $$output_flag \
+	$(CONTAINER_ENGINE) buildx build --builder $(CI_NODE_BUILDER) $$output_flag \
 		-f $(CI_NODE_DOCKERFILE) \
 		--build-arg KIND_NODE_IMAGE="$(KIND_NODE_IMAGE)" \
 		--build-arg BAKED_IMAGE_REFS="$$refs" \
