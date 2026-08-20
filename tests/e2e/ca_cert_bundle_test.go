@@ -29,8 +29,8 @@ const (
 )
 
 // patchExtensionCACertBundle patches the existing MCPGatewayExtension in-place to
-// set or clear the caCertBundleRef. This avoids recreating the extension and losing
-// deployment patches (e.g. --gateway-ca-cert for hairpin requests).
+// set or clear the caCertBundleRef. AfterEach restores the suite gateway CA via
+// PatchBrokerCA so 2025-11-25 HTTPS hairpin trust is not left cleared.
 func patchExtensionCACertBundle(ref *mcpv1.CACertBundleReference) {
 	ext := &mcpv1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{
@@ -80,8 +80,8 @@ var _ = Describe("CA Cert Bundle", Ordered, Serial, func() {
 		}
 		testResources = []client.Object{}
 
-		By("Removing caCertBundleRef from MCPGatewayExtension")
-		patchExtensionCACertBundle(nil)
+		By("Restoring suite caCertBundleRef so later specs keep HTTPS hairpin trust")
+		PatchBrokerCA(ctx, k8sClient, SystemNamespace)
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, MCPExtensionName, SystemNamespace)).To(Succeed())

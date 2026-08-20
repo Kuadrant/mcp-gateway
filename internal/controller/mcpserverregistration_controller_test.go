@@ -260,42 +260,55 @@ func TestIsValidHostname(t *testing.T) {
 	}
 }
 
-// TestDetermineProtocol_InternalServiceAlwaysHTTP is a regression test:
-// the upstream protocol for internal services must always be http, regardless
-// of the gateway listener protocol. The gateway listener (HTTP vs HTTPS) only
-// affects the hairpin path, not the broker→upstream connection. TLS upstreams
-// are handled separately via caCertSecretRef in buildMCPServerConfig.
-func TestDetermineProtocol_InternalServiceAlwaysHTTP(t *testing.T) {
-	r := &MCPReconciler{}
-	route := WrapHTTPRoute(&gatewayv1.HTTPRoute{
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{{
-					SectionName: ptrTo(gatewayv1.SectionName("mcp-tls")),
+// TestDetermineProtocol is a regression test: the upstream scheme comes from the
+// backend service port, not the gateway listener protocol. A port with appProtocol
+// or name "https" is a TLS upstream; everything else is http. The gateway listener
+// (HTTP vs HTTPS) only affects the hairpin path, never the broker→upstream URL.
+func TestDetermineProtocol(t *testing.T) {
+	// route always targets the HTTPS listener to prove the listener protocol
+	// does not bleed into the upstream scheme.
+	newRoute := func(port int32) *HTTPRouteWrapper {
+		return WrapHTTPRoute(&gatewayv1.HTTPRoute{
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{
+						SectionName: ptrTo(gatewayv1.SectionName("mcp-tls")),
+					}},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{{
+					BackendRefs: []gatewayv1.HTTPBackendRef{{
+						BackendRef: gatewayv1.BackendRef{
+							BackendObjectReference: gatewayv1.BackendObjectReference{
+								Name: "my-server",
+								Port: ptrTo(port),
+							},
+						},
+					}},
 				}},
 			},
-			Rules: []gatewayv1.HTTPRouteRule{{
-				BackendRefs: []gatewayv1.HTTPBackendRef{{
-					BackendRef: gatewayv1.BackendRef{
-						BackendObjectReference: gatewayv1.BackendObjectReference{
-							Name: "my-server",
-							Port: ptrTo(gatewayv1.PortNumber(9090)),
-						},
-					},
-				}},
-			}},
-		},
-	})
-	svc := &corev1.Service{
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{{Port: 9090}},
-		},
+		})
 	}
 
-	got := r.determineProtocol(route, svc, false)
-	if got != "http" {
-		t.Errorf("determineProtocol() = %q for internal service, want %q — "+
-			"gateway listener protocol must not affect upstream URL scheme", got, "http")
+	tests := []struct {
+		name string
+		port corev1.ServicePort
+		want string
+	}{
+		{"unnamed port defaults to http", corev1.ServicePort{Port: 9090}, "http"},
+		{"port named http", corev1.ServicePort{Port: 9090, Name: "http"}, "http"},
+		{"port named https", corev1.ServicePort{Port: 8443, Name: "https"}, "https"},
+		{"appProtocol https", corev1.ServicePort{Port: 8443, AppProtocol: ptrTo("https")}, "https"},
+	}
+
+	r := &MCPReconciler{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &corev1.Service{Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{tt.port}}}
+			got := r.determineProtocol(newRoute(tt.port.Port), svc)
+			if got != tt.want {
+				t.Errorf("determineProtocol() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -60,6 +60,7 @@ servers:
 - `hostname`: Routing hostname for this server. The router uses this to direct tool calls through Envoy to the correct backend. Each server needs a unique hostname that matches a virtual host in the Envoy configuration (see Step 3).
 - `prefix`: Prefix added to all tools from this server (avoids naming conflicts when aggregating multiple servers)
 - `state`: Set to `Enabled` or omit (defaults to `Enabled`)
+- `gatewayCACertPEM` (optional, top-level in the file, not per-server): PEM CA bundle used as the base trust pool for upstream HTTPS servers **and** for 2025-11-25 protocol hairpin requests to an HTTPS Envoy listener. 2026-07-28 calls do not hairpin. Concatenate multiple PEMs if the listener CA and upstream CAs differ.
 
 Save this as `config.yaml`.
 

@@ -15,10 +15,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 // ScaleDeployment scales a deployment to the specified replicas
@@ -192,68 +194,73 @@ func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listen
 	return nil
 }
 
-// PatchBrokerCA copies the private CA cert into the given namespace and patches
-// the broker-router deployment to trust it for HTTPS hairpin requests.
+// PatchBrokerCA configures the broker-router in the given namespace to trust the
+// private CA that signs the gateway's HTTPS listener, so 2025-11-25 hairpin init
+// requests succeed. It creates a labeled CA Secret and sets caCertBundleRef on
+// the namespace's MCPGatewayExtension. The same bundle is the broker's upstream
+// trust pool; concatenate additional PEMs in this Secret when upstream CAs differ.
 func PatchBrokerCA(ctx context.Context, k8sClient client.Client, namespace string) {
-	deployment := &appsv1.Deployment{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway", Namespace: namespace}, deployment); err == nil {
-		for _, v := range deployment.Spec.Template.Spec.Volumes {
-			if v.Name == "gateway-ca" {
-				return
-			}
+	ext := getSingleMCPGatewayExtension(ctx, k8sClient, namespace)
+	if ext.Spec.CACertBundleRef != nil && ext.Spec.CACertBundleRef.Name == "gateway-ca-bundle" {
+		existing := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: "gateway-ca-bundle", Namespace: namespace}, existing); err == nil {
+			return
 		}
 	}
 
+	var caCertPEM []byte
 	if e2eDomain == defaultE2EDomain {
 		// KIND: use cert-manager private CA
 		caSecret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)).To(Succeed())
-		caCertPEM, ok := caSecret.Data["ca.crt"]
+		pem, ok := caSecret.Data["ca.crt"]
 		Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
-
-		caBundle := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "gateway-ca-bundle",
-				Namespace: namespace,
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{"ca.crt": caCertPEM},
-		}
-		_ = k8sClient.Delete(ctx, caBundle)
-		Expect(k8sClient.Create(ctx, caBundle)).To(Succeed())
-
-		combinedPatch := `[` +
-			`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"gateway-ca-bundle"}}},` +
-			`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},` +
-			`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
-			`]`
-		Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
+		caCertPEM = pem
 	} else {
-		// OpenShift/real clusters: copy GATEWAY_CA_BUNDLE_CONFIGMAP (defaults to trusted-ca-bundle) ConfigMap from mcp-system
-		if namespace != SystemNamespace {
-			sourceConfigMap := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: GatewayCABundleConfigMap, Namespace: SystemNamespace}, sourceConfigMap)).To(Succeed())
-
-			targetConfigMap := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      GatewayCABundleConfigMap,
-					Namespace: namespace,
-					Labels:    sourceConfigMap.Labels,
-				},
-				Data: sourceConfigMap.Data,
-			}
-			_ = k8sClient.Delete(ctx, targetConfigMap)
-			Expect(k8sClient.Create(ctx, targetConfigMap)).To(Succeed())
-		}
-
-		combinedPatch := `[` +
-			`{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","configMap":{"name":"` + GatewayCABundleConfigMap + `"}}},` +
-			`{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca-bundle.crt","readOnly":true}},` +
-			`{"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}` +
-			`]`
-		Expect(PatchDeploymentJSON(ctx, namespace, "mcp-gateway", combinedPatch)).To(Succeed())
+		// OpenShift/real clusters: source from the trusted CA bundle ConfigMap
+		cm := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: GatewayCABundleConfigMap, Namespace: SystemNamespace}, cm)).To(Succeed())
+		data, ok := cm.Data["ca-bundle.crt"]
+		Expect(ok).To(BeTrue(), "%s should have ca-bundle.crt", GatewayCABundleConfigMap)
+		caCertPEM = []byte(data)
 	}
-	Expect(WaitForDeploymentReady(ctx, namespace, "mcp-gateway")).To(Succeed())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-ca-bundle",
+			Namespace: namespace,
+			Labels:    map[string]string{"mcp.kuadrant.io/secret": "true"},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"ca.crt": caCertPEM},
+	}
+	_ = k8sClient.Delete(ctx, secret)
+	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+	if ext.Spec.CACertBundleRef != nil && ext.Spec.CACertBundleRef.Name == "gateway-ca-bundle" {
+		return
+	}
+
+	patch := []byte(`{"spec":{"caCertBundleRef":{"name":"gateway-ca-bundle","key":"ca.crt"}}}`)
+	Expect(k8sClient.Patch(ctx, ext, client.RawPatch(types.MergePatchType, patch))).To(Succeed())
+
+	Eventually(func(g Gomega) {
+		g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, ext.Name, namespace)).To(Succeed())
+		cfg := &corev1.Secret{}
+		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway-config", Namespace: namespace}, cfg)).To(Succeed())
+		configYAML, ok := cfg.Data["config.yaml"]
+		g.Expect(ok).To(BeTrue(), "config secret should have config.yaml")
+		g.Expect(string(configYAML)).To(ContainSubstring("gatewayCACertPEM"))
+	}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
+}
+
+// getSingleMCPGatewayExtension returns the sole MCPGatewayExtension in a
+// namespace. Each test namespace owns exactly one.
+func getSingleMCPGatewayExtension(ctx context.Context, k8sClient client.Client, namespace string) *mcpv1.MCPGatewayExtension {
+	list := &mcpv1.MCPGatewayExtensionList{}
+	Expect(k8sClient.List(ctx, list, client.InNamespace(namespace))).To(Succeed())
+	Expect(list.Items).To(HaveLen(1), "expected exactly one MCPGatewayExtension in %s", namespace)
+	return &list.Items[0]
 }
 
 // PatchDeploymentJSON applies a JSON patch (RFC 6902) to a deployment.
@@ -265,62 +272,6 @@ func PatchDeploymentJSON(ctx context.Context, namespace, deploymentName, patchJS
 		return fmt.Errorf("failed to patch deployment %s: %s: %w", deploymentName, string(output), err)
 	}
 	return nil
-}
-
-// RemoveDeploymentVolume removes a volume by name from a deployment's pod spec.
-func RemoveDeploymentVolume(ctx context.Context, namespace, deploymentName, volumeName string) error {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
-		"-n", namespace, "-o", "jsonpath={.spec.template.spec.volumes}")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to get volumes: %s: %w", string(output), err)
-	}
-	var volumes []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(output, &volumes); err != nil {
-		return fmt.Errorf("failed to parse volumes: %w: %s", err, string(output))
-	}
-	idx := -1
-	for i, v := range volumes {
-		if v.Name == volumeName {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return nil
-	}
-	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/volumes/%d"}]`, idx)
-	return PatchDeploymentJSON(ctx, namespace, deploymentName, patch)
-}
-
-// RemoveDeploymentVolumeMount removes a volume mount by name from the first container.
-func RemoveDeploymentVolumeMount(ctx context.Context, namespace, deploymentName, mountName string) error {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "deployment", deploymentName,
-		"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].volumeMounts}")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to get volumeMounts: %s: %w", string(output), err)
-	}
-	var mounts []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(output, &mounts); err != nil {
-		return fmt.Errorf("failed to parse volumeMounts: %w: %s", err, string(output))
-	}
-	idx := -1
-	for i, m := range mounts {
-		if m.Name == mountName {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return nil
-	}
-	patch := fmt.Sprintf(`[{"op":"remove","path":"/spec/template/spec/containers/0/volumeMounts/%d"}]`, idx)
-	return PatchDeploymentJSON(ctx, namespace, deploymentName, patch)
 }
 
 // SetURLElicitation patches the MCPGatewayExtension to enable or disable URL elicitation.

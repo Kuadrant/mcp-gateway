@@ -10,7 +10,7 @@ With custom TLS support ([#659](https://github.com/Kuadrant/mcp-gateway/issues/6
 
 ## Summary
 
-Add a `caCertBundleRef` field to `MCPGatewayExtension` that references a shared CA certificate bundle Secret. The broker loads this bundle at startup as a base trust pool. Per-server `caCertSecretRef` on `MCPServerRegistration` appends additional CAs for backends with unique CAs. This mirrors how Kubernetes itself works — cluster-wide CA bundle plus per-resource overrides.
+Add a `caCertBundleRef` field to `MCPGatewayExtension` that references a shared CA certificate bundle Secret. The broker loads this bundle from config as `gatewayCACertPEM` as a base trust pool for upstream MCP servers. The same PEM is the trust pool for the 2025-11-25 hairpin client that initializes backends through the gateway HTTPS listener. 2026-07-28 MCP calls do not hairpin. Per-server `caCertSecretRef` on `MCPServerRegistration` appends additional CAs for backends with unique CAs. This mirrors how Kubernetes itself works — cluster-wide CA bundle plus per-resource overrides.
 
 ## Goals
 
@@ -21,7 +21,7 @@ Add a `caCertBundleRef` field to `MCPGatewayExtension` that references a shared 
 ## Non-Goals
 
 - Replace `caCertSecretRef` on `MCPServerRegistration` (still needed for server-specific CAs)
-- Modify how Envoy/Gateway handles TLS (this only affects broker-to-upstream connections)
+- Modify how Envoy/Gateway handles client-facing TLS
 - Implement mutual TLS (mTLS) between broker and upstream servers
 - Support non-PEM certificate formats
 

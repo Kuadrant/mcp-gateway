@@ -70,33 +70,17 @@ spec:
               caCertBundleRef:
                 description: |-
                   caCertBundleRef references a Secret containing a PEM-encoded CA certificate
-                  bundle used as the base trust pool for all upstream MCP server connections.
-                  Per-server caCertSecretRef on MCPServerRegistration appends to this pool.
+                  bundle used as the base trust pool for:
+                  - broker connections to all upstream MCP servers (per-server caCertSecretRef appends)
+                  - 2025-11-25 protocol hairpin requests to the gateway HTTPS listener
+                  2026-07-28 MCP calls do not hairpin and do not use this bundle for gateway TLS.
+                  Include both the gateway listener CA and upstream CAs when they differ.
                   The Secret must have the label mcp.kuadrant.io/secret=true.
                 properties:
                   key:
                     default: ca.crt
                     description: |-
                       key is the key within the Secret that contains the CA bundle PEM data.
-                      If not specified, defaults to "ca.crt".
-                    type: string
-                  name:
-                    description: name is the name of the Secret resource.
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
-              gatewayCACertSecretRef:
-                description: |-
-                  gatewayCACertSecretRef references a Secret containing a custom CA certificate
-                  used by the broker to verify TLS connections to the gateway's internal service.
-                  The Secret must have the label mcp.kuadrant.io/secret=true.
-                properties:
-                  key:
-                    default: ca.crt
-                    description: |-
-                      key is the key within the Secret that contains the CA certificate PEM data.
                       If not specified, defaults to "ca.crt".
                     type: string
                   name:
@@ -419,33 +403,17 @@ spec:
               caCertBundleRef:
                 description: |-
                   caCertBundleRef references a Secret containing a PEM-encoded CA certificate
-                  bundle used as the base trust pool for all upstream MCP server connections.
-                  Per-server caCertSecretRef on MCPServerRegistration appends to this pool.
+                  bundle used as the base trust pool for:
+                  - broker connections to all upstream MCP servers (per-server caCertSecretRef appends)
+                  - 2025-11-25 protocol hairpin requests to the gateway HTTPS listener
+                  2026-07-28 MCP calls do not hairpin and do not use this bundle for gateway TLS.
+                  Include both the gateway listener CA and upstream CAs when they differ.
                   The Secret must have the label mcp.kuadrant.io/secret=true.
                 properties:
                   key:
                     default: ca.crt
                     description: |-
                       key is the key within the Secret that contains the CA bundle PEM data.
-                      If not specified, defaults to "ca.crt".
-                    type: string
-                  name:
-                    description: name is the name of the Secret resource.
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
-              gatewayCACertSecretRef:
-                description: |-
-                  gatewayCACertSecretRef references a Secret containing a custom CA certificate
-                  used by the broker to verify TLS connections to the gateway's internal service.
-                  The Secret must have the label mcp.kuadrant.io/secret=true.
-                properties:
-                  key:
-                    default: ca.crt
-                    description: |-
-                      key is the key within the Secret that contains the CA certificate PEM data.
                       If not specified, defaults to "ca.crt".
                     type: string
                   name:

@@ -6,17 +6,23 @@ package clients
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -247,19 +253,69 @@ func TestBuildHairpinHTTPClientPool(t *testing.T) {
 		require.Same(t, defaultClient, overrideClient)
 	})
 
-	t.Run("errors on non-existent CA cert path", func(t *testing.T) {
-		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "/nonexistent/ca.crt")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to read gateway CA cert")
+	t.Run("HTTPS with valid PEM CA succeeds", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", string(generateHairpinTestCAPEM(t)))
+		require.NoError(t, err)
+		require.NotNil(t, pool.baseTLSConfig)
+		require.NotNil(t, pool.baseTLSConfig.RootCAs)
 	})
 
 	t.Run("errors on invalid PEM content", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		badCert := filepath.Join(tmpDir, "bad.crt")
-		require.NoError(t, os.WriteFile(badCert, []byte("not a certificate"), 0600))
-
-		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", badCert)
+		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "not a certificate")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse gateway CA cert PEM")
 	})
+}
+
+func TestHairpinClientPoolRebuild(t *testing.T) {
+	t.Run("Rebuild applies HTTPS and PEM to an HTTP pool", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("http://gw.svc:8080", "mcp.example.com", "")
+		require.NoError(t, err)
+		require.Nil(t, pool.baseTLSConfig)
+
+		require.NoError(t, pool.Rebuild("https://gw.svc:443", "mcp.example.com", string(generateHairpinTestCAPEM(t))))
+		require.NotNil(t, pool.baseTLSConfig)
+		c := pool.Get("")
+		tr, ok := c.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.Equal(t, "mcp.example.com", tr.TLSClientConfig.ServerName)
+	})
+
+	t.Run("Rebuild with invalid PEM leaves pool unchanged", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+		before := pool.Get("")
+
+		err = pool.Rebuild("https://gw.svc:443", "mcp.example.com", "not a certificate")
+		require.Error(t, err)
+		require.Same(t, before, pool.Get(""))
+	})
+
+	t.Run("Rebuild drops cached SNI clients", func(t *testing.T) {
+		pool, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "")
+		require.NoError(t, err)
+		cached := pool.Get("server.mcp-alt.local")
+
+		require.NoError(t, pool.Rebuild("https://gw.svc:443", "mcp.example.com", ""))
+		rebuilt := pool.Get("server.mcp-alt.local")
+		require.NotSame(t, cached, rebuilt)
+	})
+}
+
+func generateHairpinTestCAPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "hairpin-test-ca"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 }

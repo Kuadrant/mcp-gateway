@@ -85,29 +85,15 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 
 > **Note:** The router authenticates its own hairpin backend-init requests with a short-lived JWT signed by the same HMAC key as client session JWTs (`GATEWAY_SIGNING_KEY`). There is no separate router-key secret to manage; the previous `--mcp-router-key` flag has been removed.
 
-The `--mcp-gateway-private-host` flag enables hair-pinning: when a `tools/call` request arrives, the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec.
+The `--mcp-gateway-private-host` flag enables hair-pinning for **2025-11-25** protocol `tools/call`: the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec. **2026-07-28** calls do not hairpin.
 
-#### HTTPS Listeners and `--gateway-ca-cert`
+#### HTTPS Listeners and `caCertBundleRef`
 
-When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. The broker-router's hairpin request connects to the internal service address but verifies the TLS certificate against the public hostname (`--mcp-gateway-public-host`).
+When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. For **2025-11-25** protocol `tools/call`, the router hairpins an `initialize` request back through that listener and verifies the TLS certificate against the public hostname (`--mcp-gateway-public-host`).
 
-For listeners using a **private CA** (e.g. cert-manager with a self-signed CA), the broker-router also needs the CA certificate to trust the gateway's TLS cert. Add the `--gateway-ca-cert` flag pointing to the CA cert file:
+For listeners using a **private CA** (e.g. cert-manager with a self-signed CA), include that CA in `MCPGatewayExtension.spec.caCertBundleRef`. The same bundle is the broker's base trust pool for upstream MCP servers. If the gateway listener CA and upstream CAs differ, concatenate both PEMs in the Secret. See [Custom CA Certificates](./custom-ca-certificates.md).
 
-| Flag | Description |
-|------|-------------|
-| `--gateway-ca-cert` | Path to a PEM CA certificate file for the gateway's TLS listener. Only needed when the listener uses a private CA. |
-
-The operator does not set this flag automatically. To configure it, mount the CA certificate as a volume and add the flag to the broker-router deployment:
-
-```bash
-kubectl patch deployment mcp-gateway -n mcp-system --type=json -p '[
-  {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gateway-ca","secret":{"secretName":"my-ca-bundle"}}},
-  {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gateway-ca","mountPath":"/certs/gateway-ca.crt","subPath":"ca.crt","readOnly":true}},
-  {"op":"add","path":"/spec/template/spec/containers/0/command/-","value":"--gateway-ca-cert=/certs/gateway-ca.crt"}
-]'
-```
-
-The operator preserves user-added volumes, volume mounts, and command flags across reconciliations.
+**2026-07-28** MCP calls do not hairpin; they are routed through Envoy and do not use `caCertBundleRef` for gateway-listener TLS.
 
 #### Supported TLS Configurations
 
@@ -116,7 +102,7 @@ The gateway uses TLS termination (`tls.mode: Terminate`) on HTTPS listeners. Env
 **Fully supported — tool discovery and tool calls work:**
 
 - **HTTP listener → HTTP backend** — no TLS involved.
-- **HTTPS listener → HTTP backend** — Envoy terminates client TLS, forwards HTTP to backend. Requires `--gateway-ca-cert` if the listener uses a private CA.
+- **HTTPS listener → HTTP backend** — Envoy terminates client TLS, forwards HTTP to backend. For 2025-11-25 hairpin over a private-CA listener, set `caCertBundleRef`.
 - **HTTPS listener → external HTTPS backend (with DestinationRule)** — Envoy terminates client TLS, then a DestinationRule configures TLS origination to the external service. See [External MCP Servers](./external-mcp-server.md).
 
 **Partial support — tool discovery works, tool calls require additional configuration:**

@@ -46,7 +46,6 @@ type commonConfig struct {
 	privateHost           string
 	configFile            string
 	enableURLElicitation  bool
-	gatewayCACert         string
 }
 
 type routerConfig struct {
@@ -127,8 +126,6 @@ func parseFlags() *app {
 	flag.StringVar(&bc.configFile, "mcp-gateway-config", "./config/samples/config.yaml", "where to locate the mcp server config")
 	flag.Int64Var(&bc.sessionDurationMins, "session-length", 60*24, "default session length with the gateway in minutes. Default 24h")
 	flag.BoolVar(&bc.enableURLElicitation, "enable-url-elicitation", false, "enable URL elicitation for per-user credential collection")
-	flag.StringVar(&bc.gatewayCACert, "gateway-ca-cert", "",
-		"path to a PEM CA certificate for the gateway's TLS listener (private CA support for hairpin requests)")
 
 	gatewaySigningKeyDef := goenv.GetDefault("GATEWAY_SIGNING_KEY", "")
 	if gatewaySigningKeyDef == "" {
@@ -251,7 +248,7 @@ func (a *app) buildHairpinClient() {
 	pool, err := clients.BuildHairpinHTTPClientPool(
 		a.brokerCfg.privateHost,
 		a.brokerCfg.publicHost,
-		a.brokerCfg.gatewayCACert,
+		"",
 	)
 	if err != nil {
 		panic("failed to build hairpin HTTP client pool: " + err.Error())
@@ -423,8 +420,14 @@ func (a *app) loadConfig(path string) error {
 	} else {
 		a.logger.Debug("No virtualServers section found in configuration")
 	}
+	gatewayCACertPEM := viper.GetString("gatewayCACertPEM")
+	if a.hairpinPool != nil {
+		if err := a.hairpinPool.Rebuild(a.brokerCfg.privateHost, a.brokerCfg.publicHost, gatewayCACertPEM); err != nil {
+			return fmt.Errorf("rebuilding hairpin client: %w", err)
+		}
+	}
 	a.mcpConfig.SetServers(newServers, newVirtualServers)
-	a.mcpConfig.SetGatewayCACertPEM(viper.GetString("gatewayCACertPEM"))
+	a.mcpConfig.SetGatewayCACertPEM(gatewayCACertPEM)
 
 	a.logger.Debug("config successfully loaded", "# servers", len(newServers))
 

@@ -186,7 +186,6 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
-	hasGatewayCACertBundle := false
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -218,9 +217,6 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
-			if vext.Spec.CACertBundleRef != nil {
-				hasGatewayCACertBundle = true
-			}
 		}
 	}
 
@@ -244,7 +240,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return ctrl.Result{}, nil
 	}
 
-	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr, hasGatewayCACertBundle)
+	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
 		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
@@ -465,7 +461,7 @@ func isOlderMCPServerRegistration(a, b *mcpv1.MCPServerRegistration) bool {
 	return a.UID < b.UID
 }
 
-func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1.MCPServerRegistration, hasGatewayCACertBundle bool) (*config.MCPServer, error) {
+func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *gatewayv1.HTTPRoute, mcpsr *mcpv1.MCPServerRegistration) (*config.MCPServer, error) {
 	if mcpsr.DeletionTimestamp != nil {
 		// don't add deleting mcpserver
 		return nil, fmt.Errorf("cant generate config for deleting server %s/%s", mcpsr.Namespace, mcpsr.Name)
@@ -477,9 +473,12 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	// cspell:ignore mcpsr
 	serverName := mcpServerName(mcpsr)
-	// if a CA cert is configured (per-server or gateway-level), the upstream must be HTTPS
+	// a per-server CA cert is an explicit signal the upstream is HTTPS, so upgrade the
+	// scheme. the gateway CA bundle is shared trust material only and must not change the
+	// scheme: a plain-HTTP backend on a gateway that has a bundle stays HTTP. the upstream
+	// scheme otherwise comes from the service port (appProtocol/name https) in determineProtocol.
 	endpoint := serverInfo.Endpoint
-	if mcpsr.Spec.CACertSecretRef != nil || hasGatewayCACertBundle {
+	if mcpsr.Spec.CACertSecretRef != nil {
 		u, err := url.Parse(endpoint)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse endpoint URL %q: %w", endpoint, err)
@@ -639,7 +638,7 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 		hostAndPort = fmt.Sprintf("%s:%d", hostAndPort, *route.BackendPort())
 	}
 
-	protocol := r.determineProtocol(route, service, isExternal)
+	protocol := r.determineProtocol(route, service)
 	endpoint = fmt.Sprintf("%s://%s%s", protocol, hostAndPort, path)
 
 	if isExternal {
@@ -655,19 +654,21 @@ func (r *MCPReconciler) buildServiceEndpoint(route *HTTPRouteWrapper, service *c
 	return endpoint, routingHostname
 }
 
-// determineProtocol determines the protocol (http/https) for the service endpoint.
-// For external services it checks the appProtocol on the matching port.
-// For internal services it defaults to http; TLS upstreams are handled by the
-// caCertSecretRef or caCertBundleRef scheme upgrade in buildMCPServerConfig.
-func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service, isExternal bool) string {
-	if isExternal {
-		for _, port := range service.Spec.Ports {
-			if route.BackendPort() != nil && port.Port == *route.BackendPort() {
-				if port.AppProtocol != nil && strings.ToLower(*port.AppProtocol) == "https" {
-					return "https"
-				}
-				break
+// determineProtocol determines the protocol (http/https) for the service endpoint
+// from the matching service port. A port whose appProtocol or name is "https" is a
+// TLS upstream; this applies to both internal and external services. Trust material
+// (per-server caCertSecretRef or the gateway CA bundle) is layered on separately and
+// does not by itself change the scheme.
+func (r *MCPReconciler) determineProtocol(route *HTTPRouteWrapper, service *corev1.Service) string {
+	for _, port := range service.Spec.Ports {
+		if route.BackendPort() != nil && port.Port == *route.BackendPort() {
+			if port.AppProtocol != nil && strings.EqualFold(*port.AppProtocol, "https") {
+				return "https"
 			}
+			if strings.EqualFold(port.Name, "https") {
+				return "https"
+			}
+			break
 		}
 	}
 	return "http"

@@ -203,7 +203,7 @@ var _ = SynchronizedBeforeSuite(func() {
 		g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">=", 1))
 	}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-	By("patching broker-router: CA cert for HTTPS listener")
+	By("setting caCertBundleRef so the 2025 hairpin client trusts the HTTPS listener")
 	PatchBrokerCA(ctx, k8sClient, SystemNamespace)
 }, func() {
 	// runs on every process: set up local k8s client
@@ -221,14 +221,11 @@ var _ = SynchronizedAfterSuite(func() {
 
 	By("Tearing down the test environment")
 
-	By("cleaning up gateway CA bundle and deployment patches")
+	By("cleaning up gateway CA bundle secret")
 	caBundle := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: SystemNamespace},
 	}
 	_ = k8sClient.Delete(ctx, caBundle)
-	_ = RemoveDeploymentCommandFlag(ctx, SystemNamespace, "mcp-gateway", "--gateway-ca-cert=/certs/gateway-ca.crt")
-	_ = RemoveDeploymentVolumeMount(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
-	_ = RemoveDeploymentVolume(ctx, SystemNamespace, "mcp-gateway", "gateway-ca")
 
 	if defaultMCPGatewayExt != nil {
 		defaultMCPGatewayExt.TearDown(ctx)

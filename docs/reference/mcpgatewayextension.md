@@ -4,7 +4,6 @@
 - [MCPGatewayExtensionSpec](#mcpgatewayextensionspec)
 - [MCPGatewayExtensionTargetReference](#mcpgatewayextensiontargetreference)
 - [CACertBundleReference](#cacertbundlereference)
-- [CACertSecretReference](#cacertsecretreference)
 - [TrustedHeadersKey](#trustedheaderskey)
 - [SessionStore](#sessionstore)
 - [OAuthProtectedResource](#oauthprotectedresource)
@@ -30,8 +29,7 @@
 | `logLevel` | String | No | Controls the broker-router log verbosity. Maps to the broker's `--log-level` flag: `debug=-4`, `info=0`, `warn=4`, `error=8`. When unset, the operator-wide `BROKER_ROUTER_LOG_LEVEL` default is used if configured. Accepted values: `debug`, `info`, `warn`, `error` |
 | `sessionStore` | [SessionStore](#sessionstore) | No | References a secret for redis-based session storage. When not set, in-memory session storage is used |
 | `urlElicitation` | String | No | Controls URL-based token elicitation. `Enabled`: creates a separate `/tokens` HTTPRoute and passes `--enable-url-elicitation` to the broker. `Disabled` (default): no `/tokens` route is created |
-| `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle used as the base trust pool for all upstream MCP server connections. Per-server `caCertSecretRef` on MCPServerRegistration appends to this pool. The Secret must have the label `mcp.kuadrant.io/secret: "true"` and must not exceed 256 KiB |
-| `gatewayCACertSecretRef` | [CACertSecretReference](#cacertsecretreference) | No | References a Secret containing a PEM-encoded CA certificate used by the broker to verify TLS connections to the gateway's internal service. The controller mounts the Secret into the broker-router deployment and passes it to the broker via `--gateway-ca-cert`. The Secret must exist in the MCPGatewayExtension namespace, must have the label `mcp.kuadrant.io/secret: "true"`, and must not exceed 256 KiB |
+| `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle. Used as the base trust pool for broker connections to all upstream MCP servers, and for 2025-11-25 protocol hairpin requests to the gateway HTTPS listener. 2026-07-28 MCP calls do not hairpin. Per-server `caCertSecretRef` on MCPServerRegistration appends to this pool for upstreams. If the gateway listener CA differs from upstream CAs, include both PEMs in the Secret. The Secret must have the label `mcp.kuadrant.io/secret: "true"` and must not exceed 256 KiB |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
 
 
@@ -52,18 +50,9 @@
 | `name` | String | Yes | Name of the Secret containing the PEM-encoded CA certificate bundle. The Secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"` |
 | `key` | String | No | Key within the Secret data that contains the PEM data. Default: `ca.crt` |
 
-The gateway CA bundle is written once to the config Secret as `gatewayCACertPEM`, replacing N per-server copies with a single entry. The broker loads it as the base trust pool for all upstream connections. Per-server `caCertSecretRef` on MCPServerRegistration appends additional CAs for backends with unique certificates.
+The gateway CA bundle is written once to the config Secret as `gatewayCACertPEM`. The broker loads it as the base trust pool for all upstream connections. The 2025-11-25 hairpin client uses the same PEM to verify TLS to the gateway HTTPS listener. 2026-07-28 MCP calls do not hairpin and do not use this bundle for gateway TLS. Per-server `caCertSecretRef` on MCPServerRegistration appends additional CAs for backends with unique certificates.
 
-Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-server CA (if set). Each layer is additive.
-
-## CACertSecretReference
-
-| **Field** | **Type** | **Required** | **Description** |
-|-----------|----------|:------------:|-----------------|
-| `name` | String | Yes | Name of the Secret containing the PEM-encoded CA certificate. The Secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"` |
-| `key` | String | No | Key within the Secret data that contains the PEM data. Default: `ca.crt` |
-
-The controller validates the referenced Secret and, when valid, mounts it into the broker-router deployment, passing `--gateway-ca-cert=/gateway-ca-cert/<key>` to the broker. The broker uses this CA to verify TLS connections to the gateway's internal (hair-pin) service.
+Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-server CA (if set, upstreams only). Each layer is additive.
 
 ## TrustedHeadersKey
 
@@ -108,5 +97,5 @@ The controller validates the referenced Secret and, when valid, mounts it into t
 | `InvalidMCPGatewayExtension` | Invalid configuration detected |
 | `ReferenceGrantRequired` | A ReferenceGrant is missing for a cross-namespace Gateway reference |
 | `DeploymentNotReady` | The broker-router deployment is not ready |
-| `SecretNotFound` | A referenced secret is missing (trusted headers, session store, CA cert bundle, or gateway CA cert) |
-| `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle or gateway CA cert) |
+| `SecretNotFound` | A referenced secret is missing (trusted headers, session store, or CA cert bundle) |
+| `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle) |

@@ -36,7 +36,7 @@ spec:
     secretName: private-ca-keypair
 ---
 # gateway HTTPS listener certificate, issued by the same private CA
-# so the broker-router can trust it via --gateway-ca-cert
+# so the broker-router can trust it via caCertBundleRef
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

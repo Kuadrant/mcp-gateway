@@ -132,17 +132,14 @@ type MCPGatewayExtensionSpec struct {
 	OAuthProtectedResource *OAuthProtectedResource `json:"oauthProtectedResource,omitempty"`
 
 	// caCertBundleRef references a Secret containing a PEM-encoded CA certificate
-	// bundle used as the base trust pool for all upstream MCP server connections.
-	// Per-server caCertSecretRef on MCPServerRegistration appends to this pool.
+	// bundle used as the base trust pool for:
+	// - broker connections to all upstream MCP servers (per-server caCertSecretRef appends)
+	// - 2025-11-25 protocol hairpin requests to the gateway HTTPS listener
+	// 2026-07-28 MCP calls do not hairpin and do not use this bundle for gateway TLS.
+	// Include both the gateway listener CA and upstream CAs when they differ.
 	// The Secret must have the label mcp.kuadrant.io/secret=true.
 	// +optional
 	CACertBundleRef *CACertBundleReference `json:"caCertBundleRef,omitempty"`
-
-	// gatewayCACertSecretRef references a Secret containing a custom CA certificate
-	// used by the broker to verify TLS connections to the gateway's internal service.
-	// The Secret must have the label mcp.kuadrant.io/secret=true.
-	// +optional
-	GatewayCACertSecretRef *CACertSecretReference `json:"gatewayCACertSecretRef,omitempty"`
 }
 
 // OAuthProtectedResource configures the OAuth protected resource metadata

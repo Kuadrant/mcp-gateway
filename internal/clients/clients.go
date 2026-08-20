@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -34,8 +33,11 @@ type HairpinClientPool struct {
 // Get returns an *http.Client with the appropriate TLS ServerName.
 // If sniOverride is empty, the default client (gateway hostname SNI) is returned.
 func (p *HairpinClientPool) Get(sniOverride string) *http.Client {
+	p.mu.RLock()
 	if sniOverride == "" || p.baseTLSConfig == nil {
-		return p.defaultClient
+		c := p.defaultClient
+		p.mu.RUnlock()
+		return c
 	}
 
 	sni := sniOverride
@@ -43,10 +45,6 @@ func (p *HairpinClientPool) Get(sniOverride string) *http.Client {
 		sni = h
 	}
 
-	// double-checked locking: read lock for the fast path (concurrent readers),
-	// then write lock with a re-check to avoid duplicate creation when multiple
-	// goroutines race past the read lock simultaneously
-	p.mu.RLock()
 	c, ok := p.clients[sni]
 	p.mu.RUnlock()
 	if ok {
@@ -55,6 +53,9 @@ func (p *HairpinClientPool) Get(sniOverride string) *http.Client {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.baseTLSConfig == nil {
+		return p.defaultClient
+	}
 	if c, ok = p.clients[sni]; ok {
 		return c
 	}
@@ -66,6 +67,32 @@ func (p *HairpinClientPool) Get(sniOverride string) *http.Client {
 	c = &http.Client{Transport: t}
 	p.clients[sni] = c
 	return c
+}
+
+// Rebuild replaces the pool's clients from privateHost, publicHost, and an
+// optional PEM CA bundle (same source as broker upstream trust).
+func (p *HairpinClientPool) Rebuild(privateHost, publicHost, caCertPEM string) error {
+	fresh, err := BuildHairpinHTTPClientPool(privateHost, publicHost, caCertPEM)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	oldDefault := p.defaultClient
+	oldClients := p.clients
+	p.defaultClient = fresh.defaultClient
+	p.baseTLSConfig = fresh.baseTLSConfig
+	p.clients = fresh.clients
+	p.mu.Unlock()
+
+	// release idle keep-alive connections held by the replaced clients so a
+	// bundle change doesn't leak sockets. CloseIdleConnections doesn't block.
+	if oldDefault != nil {
+		oldDefault.CloseIdleConnections()
+	}
+	for _, oc := range oldClients {
+		oc.CloseIdleConnections()
+	}
+	return nil
 }
 
 // buildHairpinURL composes the hairpin URL the broker uses to send the internal
@@ -151,8 +178,10 @@ func Initialize(ctx context.Context, gatewayHost string, conf *config.MCPServer,
 // For HTTPS private hosts it configures TLS with the publicHost as the default
 // ServerName (SNI). Servers on a different HTTPS listener can obtain a client
 // with a different SNI via pool.Get(serverHostname).
-// For plain HTTP it returns a pool whose default client has no TLS.
-func BuildHairpinHTTPClientPool(privateHost, publicHost, caCertPath string) (*HairpinClientPool, error) {
+// caCertPEM is optional PEM appended to the system trust pool (from
+// gatewayCACertPEM / caCertBundleRef). For plain HTTP it returns a pool whose
+// default client has no TLS.
+func BuildHairpinHTTPClientPool(privateHost, publicHost, caCertPEM string) (*HairpinClientPool, error) {
 	if !strings.HasPrefix(strings.ToLower(privateHost), "https://") {
 		return &HairpinClientPool{
 			defaultClient: &http.Client{},
@@ -165,12 +194,8 @@ func BuildHairpinHTTPClientPool(privateHost, publicHost, caCertPath string) (*Ha
 		certPool = x509.NewCertPool()
 	}
 
-	if caCertPath != "" {
-		pem, err := os.ReadFile(caCertPath) //nolint:gosec // path comes from a CLI flag, not user input
-		if err != nil {
-			return nil, fmt.Errorf("failed to read gateway CA cert: %w", err)
-		}
-		if !certPool.AppendCertsFromPEM(pem) {
+	if caCertPEM != "" {
+		if !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
 			return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
 		}
 	}

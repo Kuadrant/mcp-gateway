@@ -32,13 +32,13 @@ Istio is ONLY a Gateway API provider — no sidecars, no ambient mode, no servic
 
 ## TLS Trust Pool
 
-Broker upstream TLS trust is additive, three layers:
+Broker and 2025-11-25 hairpin TLS trust is additive:
 
 1. **System roots** — always loaded
-2. **Gateway CA bundle** — `MCPGatewayExtension.caCertBundleRef` references a shared Secret, written once to config as `gatewayCACertPEM`
-3. **Per-server CA** — `MCPServerRegistration.caCertSecretRef` appends for servers with unique CAs
+2. **Gateway CA bundle** — `MCPGatewayExtension.caCertBundleRef` references a shared Secret, written once to config as `gatewayCACertPEM`. Used for broker→upstream connections **and** for 2025-11-25 protocol hairpin requests to the gateway HTTPS listener. 2026-07-28 MCP calls do not hairpin. If the listener CA and upstream CAs differ, concatenate both PEMs in that Secret.
+3. **Per-server CA** — `MCPServerRegistration.caCertSecretRef` appends for servers with unique CAs (upstream only, not hairpin)
 
-Each layer appends to the previous. Gateway bundle changes trigger broker to recreate all upstream managers.
+Each layer appends to the previous. Gateway bundle changes trigger broker to recreate TLS upstream managers and rebuild the hairpin client.
 
 ## Authentication (Two Separate Paths)
 
