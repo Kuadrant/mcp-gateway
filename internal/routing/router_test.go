@@ -1342,6 +1342,80 @@ func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 	}
 }
 
+func TestInitializeMCPServerSession_HairpinRetry(t *testing.T) {
+	testCases := []struct {
+		name      string
+		initErr   error
+		wantCalls int
+	}{
+		{
+			name:      "transient error retried up to the budget",
+			initErr:   fmt.Errorf("failed to create client: %w", fmt.Errorf("dial tcp: connection refused")),
+			wantCalls: hairpinInitMaxRetries + 1,
+		},
+		{
+			name:      "5xx retried up to the budget",
+			initErr:   fmt.Errorf("failed to create client: %w", &transport.HTTPStatusError{Code: 502, Body: "Bad Gateway"}),
+			wantCalls: hairpinInitMaxRetries + 1,
+		},
+		{
+			name:      "4xx not retried",
+			initErr:   fmt.Errorf("failed to create client: %w", &transport.HTTPStatusError{Code: 403, Body: "denied"}),
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
+				calls++
+				return nil, tc.initErr
+			}
+
+			serverConfigs := []*config.MCPServer{
+				{
+					Name:     "dummy",
+					URL:      "http://localhost:8080/mcp",
+					Prefix:   "s_",
+					State:    "Enabled",
+					Hostname: "backend.example.com",
+				},
+			}
+			router, _ := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+			router.InitForClient = mockInitForClient
+			router.RoutingConfig.Store(&config.MCPServersConfig{
+				Servers:                    serverConfigs,
+				MCPGatewayInternalHostname: "mcp-gateway.local",
+			})
+
+			validToken := router.JWTManager.Generate()
+			table := NewTableBuilder().
+				AddTool("s_mytool", &ServerRoute{
+					Name:   "dummy",
+					Host:   "backend.example.com",
+					Prefix: "s_",
+					Path:   "/mcp",
+					URL:    "http://localhost:8080/mcp",
+				}).
+				Build()
+			router.Table = func() RoutingTable { return table }
+
+			req := &MCPRequest{
+				ID:      ptr.To(0),
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params:  map[string]any{"name": "s_mytool"},
+				Headers: map[string]string{"mcp-session-id": validToken},
+			}
+
+			decision := router.RouteRequest(context.Background(), &Request{Parsed: req})
+			require.NotNil(t, decision.Error)
+			require.Equal(t, tc.wantCalls, calls, "InitForClient call count")
+		})
+	}
+}
+
 //nolint:dupl
 func TestMCPRequest_PromptName(t *testing.T) {
 	testCases := []struct {

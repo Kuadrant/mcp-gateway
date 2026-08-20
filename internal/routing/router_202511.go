@@ -19,10 +19,19 @@ import (
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
+)
+
+// hairpin init retry budget for transient failures (connection refused,
+// transport reset) seen under concurrency. 4xx is never retried. total
+// backoff (100ms+200ms) stays well under the ext_proc message_timeout (10s).
+const (
+	hairpinInitMaxRetries  = 2
+	hairpinInitBaseBackoff = 100 * time.Millisecond
 )
 
 // RoutingTableFunc returns the current routing table snapshot.
@@ -590,15 +599,30 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 		}
 		passThroughHeaders[RoutingKey] = initToken
 		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
-		clientHandle, err := r.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.ClientElicitation, r.HairpinClientPool)
-		if err != nil {
-			r.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
-			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
+		var clientHandle *mcp.ClientSession
+		for attempt := 0; ; attempt++ {
+			clientHandle, err = r.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.ClientElicitation, r.HairpinClientPool)
+			if err == nil {
+				break
+			}
 			var httpErr *transport.HTTPStatusError
 			if errors.As(err, &httpErr) && httpErr.Code >= 400 && httpErr.Code < 500 {
+				r.Logger.ErrorContext(ctx, "failed to get remote session", "error", err)
+				mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
 				return "", NewRouterError(int32(httpErr.Code), fmt.Errorf("failed to create session for mcp server: %w", err)) //nolint:gosec,nolintlint // code bounded to [400,499] by check above
 			}
-			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
+			if attempt >= hairpinInitMaxRetries {
+				r.Logger.ErrorContext(ctx, "failed to get remote session", "error", err, "attempts", attempt+1)
+				mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
+				return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
+			}
+			backoff := hairpinInitBaseBackoff << attempt
+			r.Logger.WarnContext(ctx, "hairpin init failed, retrying", "attempt", attempt+1, "backoff", backoff, "error", err)
+			select {
+			case <-ctx.Done():
+				return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 		}
 		var sessionCloser = func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
