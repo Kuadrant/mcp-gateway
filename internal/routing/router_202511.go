@@ -41,10 +41,13 @@ const (
 const clientSessionIdleTimeout = 30 * time.Minute
 
 // clientSessionEntry tracks a live backend client handle and its idle timer,
-// keyed by gateway-session-id + server-name.
+// keyed by gateway-session-id + server-name. gen is a monotonic arm id: the
+// idle callback only closes when the entry's gen still matches the value it was
+// armed with, so a Reset that races an already-fired timer is a no-op.
 type clientSessionEntry struct {
 	handle *mcp.ClientSession
 	timer  *time.Timer
+	gen    uint64
 }
 
 // RoutingTableFunc returns the current routing table snapshot.
@@ -65,9 +68,11 @@ type Router202511 struct {
 	ElicitationEnabled  bool
 	Logger              *slog.Logger
 	IdleTimeout         time.Duration // backend client idle timeout; defaults to clientSessionIdleTimeout
+	InitBackoff         time.Duration // hairpin init base backoff; defaults to hairpinInitBaseBackoff
 	initGroup           singleflight.Group
 	clientSessionsMu    sync.Mutex
 	clientSessions      map[string]*clientSessionEntry
+	sessionGen          atomic.Uint64
 }
 
 func (r *Router202511) idleTimeout() time.Duration {
@@ -75,6 +80,13 @@ func (r *Router202511) idleTimeout() time.Duration {
 		return r.IdleTimeout
 	}
 	return clientSessionIdleTimeout
+}
+
+func (r *Router202511) initBackoff() time.Duration {
+	if r.InitBackoff > 0 {
+		return r.InitBackoff
+	}
+	return hairpinInitBaseBackoff
 }
 
 var _ Router = &Router202511{}
@@ -569,7 +581,7 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			return "", NewRouterErrorf(500, "failed to check for existing session: %w", err)
 		}
 		if id, ok := exists[mcpReq.ServerName]; ok {
-			r.resetClientSessionIdle(groupKey)
+			r.resetClientSessionIdle(groupKey, mcpReq.GetSessionID(), mcpReq.ServerName)
 			r.Logger.DebugContext(ctx, "found session in cache", "session id", internaljwt.LogSafeSessionID(mcpReq.GetSessionID()), "for server", mcpServerConfig.Name, "remote session", internaljwt.LogSafeSessionID(id))
 			return id, nil
 		}
@@ -640,7 +652,7 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 				mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
 				return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
 			}
-			backoff := hairpinInitBaseBackoff << attempt
+			backoff := r.initBackoff() << attempt
 			r.Logger.WarnContext(ctx, "hairpin init failed, retrying", "attempt", attempt+1, "backoff", backoff, "error", err)
 			select {
 			case <-ctx.Done():
@@ -693,9 +705,10 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 // registerClientSession stores a live backend client handle and arms its idle
 // timer. Any prior handle for the same key is stopped and closed.
 func (r *Router202511) registerClientSession(groupKey, sessionID, serverName string, handle *mcp.ClientSession) {
-	entry := &clientSessionEntry{handle: handle}
+	gen := r.sessionGen.Add(1)
+	entry := &clientSessionEntry{handle: handle, gen: gen}
 	entry.timer = time.AfterFunc(r.idleTimeout(), func() {
-		r.closeClientSession(groupKey, sessionID, serverName)
+		r.closeClientSession(groupKey, sessionID, serverName, gen)
 	})
 	r.clientSessionsMu.Lock()
 	if r.clientSessions == nil {
@@ -714,28 +727,37 @@ func (r *Router202511) registerClientSession(groupKey, sessionID, serverName str
 	}
 }
 
-// resetClientSessionIdle pushes back the idle timer on activity for a key.
-func (r *Router202511) resetClientSessionIdle(groupKey string) {
+// resetClientSessionIdle re-arms the idle timer on activity for a key. It bumps
+// gen and installs a fresh timer so an already-fired callback (carrying the old
+// gen) becomes a no-op.
+func (r *Router202511) resetClientSessionIdle(groupKey, sessionID, serverName string) {
 	r.clientSessionsMu.Lock()
 	if entry, ok := r.clientSessions[groupKey]; ok {
-		entry.timer.Reset(r.idleTimeout())
+		gen := r.sessionGen.Add(1)
+		entry.gen = gen
+		entry.timer.Stop()
+		entry.timer = time.AfterFunc(r.idleTimeout(), func() {
+			r.closeClientSession(groupKey, sessionID, serverName, gen)
+		})
 	}
 	r.clientSessionsMu.Unlock()
 }
 
 // closeClientSession closes the idle backend handle and drops its per-server
-// cache mapping. The gateway session is left intact so the next tool call
-// re-inits lazily.
-func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string) {
+// cache mapping. It is a no-op if the entry was re-armed (gen mismatch) since
+// this callback fired, avoiding a race where a concurrent tool call routes to a
+// handle about to be closed. The gateway session is left intact (or fully
+// deleted when this was its last server) so the next tool call re-inits lazily.
+func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string, expectedGen uint64) {
 	r.clientSessionsMu.Lock()
 	entry, ok := r.clientSessions[groupKey]
-	if ok {
-		delete(r.clientSessions, groupKey)
-	}
-	r.clientSessionsMu.Unlock()
-	if !ok {
+	if !ok || entry.gen != expectedGen {
+		r.clientSessionsMu.Unlock()
 		return
 	}
+	delete(r.clientSessions, groupKey)
+	r.clientSessionsMu.Unlock()
+
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	r.Logger.DebugContext(cleanupCtx, "closing idle backend client session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName)
@@ -746,6 +768,14 @@ func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string
 	}
 	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
 		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
+		return
+	}
+	// in-memory RemoveServerSession leaves an empty map behind (Redis drops the
+	// key on last field); delete the key when no servers or user tokens remain.
+	if remaining, err := r.SessionCache.GetSession(cleanupCtx, sessionID); err == nil && len(remaining) == 0 {
+		if err := r.SessionCache.DeleteSessions(cleanupCtx, sessionID); err != nil {
+			r.Logger.DebugContext(cleanupCtx, "failed to delete emptied session", "session", internaljwt.LogSafeSessionID(sessionID), "err", err)
+		}
 	}
 }
 
