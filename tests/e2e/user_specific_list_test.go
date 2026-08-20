@@ -151,7 +151,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Creating a client with user-a auth")
-		userAClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -162,6 +162,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			toolsList, err := userAClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(len(toolsList.Tools)).NotTo(BeZero(), "there should be tools returned")
 			g.Expect(verifyMCPServerRegistrationToolPresent("myprefix_list_repos", toolsList)).To(BeTrueBecause("user-a tools should have myprefix_"))
 			g.Expect(verifyMCPServerRegistrationToolPresent("myprefix_server_info", toolsList)).To(BeTrueBecause("common tools should have myprefix_"))
 			// unprefixed versions should NOT exist
