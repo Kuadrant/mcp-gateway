@@ -34,9 +34,15 @@ const dialTimeout = 1 * time.Second
 // concurrency hint.
 const defaultMaxIdleConnsPerHost = 100
 
+// defaultMaxBodyBytes bounds the guardrails server's check response when the
+// caller doesn't specify a limit, matching the MCPGatewayExtension
+// maxBodyBytes default (1 MiB).
+const defaultMaxBodyBytes = 1 << 20
+
 // Status is the outcome of a guardrails check.
 type Status string
 
+// Status values a Decision can carry.
 const (
 	StatusAllowed  Status = "allowed"
 	StatusBlocked  Status = "blocked"
@@ -73,10 +79,10 @@ type provider interface {
 	ParseCheckResponse(body []byte) (status Status, content, reason string, err error)
 }
 
-// nemoProvider adapts *nemo.NeMoTransformer to the provider interface,
+// nemoProvider adapts *nemo.Transformer to the provider interface,
 // translating NeMo's status strings into the transport-agnostic Status.
 type nemoProvider struct {
-	transformer *nemo.NeMoTransformer
+	transformer *nemo.Transformer
 }
 
 func (p *nemoProvider) TransformRequest(toolName string, arguments json.RawMessage, configIDs []string) ([]byte, error) {
@@ -100,7 +106,7 @@ func (p *nemoProvider) ParseCheckResponse(body []byte) (Status, string, string, 
 	case nemo.StatusBlocked:
 		return StatusBlocked, resp.Content, resp.Rail, nil
 	default:
-		// unreachable: NeMoTransformer.ParseCheckResponse already rejects
+		// unreachable: nemo.Transformer.ParseCheckResponse already rejects
 		// unrecognized status values.
 		return "", "", "", fmt.Errorf("guardrails: unrecognized status %q", resp.Status)
 	}
@@ -112,13 +118,19 @@ type nemoChecker struct {
 	baseURL         string
 	globalConfigIDs []string
 	failMode        string
+	maxBodyBytes    int64
 	provider        provider
 }
 
 // NewChecker constructs a Checker for the given resolved guardrails config.
-func NewChecker(cfg *config.GuardrailsConfig, tlsConfig *tls.Config, maxIdleConnsPerHost int) *nemoChecker {
+// maxBodyBytes bounds the guardrails server's check response; non-positive
+// values fall back to defaultMaxBodyBytes.
+func NewChecker(cfg *config.GuardrailsConfig, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
 	if maxIdleConnsPerHost <= 0 {
 		maxIdleConnsPerHost = defaultMaxIdleConnsPerHost
+	}
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = defaultMaxBodyBytes
 	}
 
 	dialer := &net.Dialer{Timeout: dialTimeout}
@@ -134,7 +146,8 @@ func NewChecker(cfg *config.GuardrailsConfig, tlsConfig *tls.Config, maxIdleConn
 		baseURL:         strings.TrimSuffix(cfg.URL, "/"),
 		globalConfigIDs: cfg.ConfigIDs,
 		failMode:        normalizeFailMode(cfg.FailMode),
-		provider:        &nemoProvider{transformer: nemo.NewNeMoTransformer(cfg.Model)},
+		maxBodyBytes:    maxBodyBytes,
+		provider:        &nemoProvider{transformer: nemo.NewTransformer(cfg.Model)},
 	}
 }
 
@@ -160,9 +173,10 @@ func (c *nemoChecker) CheckResponse(ctx context.Context, toolName string, conten
 }
 
 // check performs the guardrails HTTP round trip and maps the outcome to a
-// Decision. Non-2xx, transport errors, and unparseable responses all fall
-// back to failMode rather than propagating an error — only a translation
-// failure (handled by the caller) skips failMode entirely.
+// Decision. Non-2xx, transport errors, oversized bodies, and unparseable
+// responses all fall back to failMode rather than propagating an error —
+// only a translation failure (handled by the caller) skips failMode
+// entirely.
 func (c *nemoChecker) check(ctx context.Context, body []byte) (*Decision, error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
@@ -180,9 +194,12 @@ func (c *nemoChecker) check(ctx context.Context, body []byte) (*Decision, error)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close, response already consumed
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBodyBytes+1))
 	if err != nil {
 		return c.failModeDecision(fmt.Errorf("guardrails: failed to read response: %w", err)), nil
+	}
+	if int64(len(respBody)) > c.maxBodyBytes {
+		return c.failModeDecision(fmt.Errorf("guardrails: response exceeds %d byte limit", c.maxBodyBytes)), nil
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {

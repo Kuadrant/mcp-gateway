@@ -7,57 +7,57 @@ import (
 	"fmt"
 )
 
-// Status values in NeMoCheckResponse.Status.
+// Status values in CheckResponse.Status.
 const (
 	StatusSuccess  = "success"
 	StatusModified = "modified"
 	StatusBlocked  = "blocked"
 )
 
-// NeMoCheckRequest is the request body for NeMo's /v1/guardrail/checks endpoint.
-type NeMoCheckRequest struct {
-	Model      string               `json:"model"`
-	Messages   []NeMoMessage        `json:"messages"`
-	Guardrails NeMoGuardrailsConfig `json:"guardrails"`
+// CheckRequest is the request body for NeMo's /v1/guardrail/checks endpoint.
+type CheckRequest struct {
+	Model      string           `json:"model"`
+	Messages   []Message        `json:"messages"`
+	Guardrails GuardrailsConfig `json:"guardrails"`
 }
 
-// NeMoMessage is a single message in a NeMoCheckRequest.
-type NeMoMessage struct {
+// Message is a single message in a CheckRequest.
+type Message struct {
 	Role    string `json:"role"`
 	Name    string `json:"name,omitempty"`
 	Content string `json:"content"`
 	Config  string `json:"config,omitempty"`
 }
 
-// NeMoGuardrailsConfig stores the merged global+per-server config IDs.
-type NeMoGuardrailsConfig struct {
+// GuardrailsConfig stores the merged global+per-server config IDs.
+type GuardrailsConfig struct {
 	ConfigIDs []string `json:"config_ids"`
 }
 
-// NeMoCheckResponse is the response body from NeMo's /v1/guardrail/checks endpoint.
-type NeMoCheckResponse struct {
+// CheckResponse is the response body from NeMo's /v1/guardrail/checks endpoint.
+type CheckResponse struct {
 	Status  string `json:"status"`
 	Content string `json:"content"`
 	Rail    string `json:"rail,omitempty"`
 }
 
-// NeMoTransformer translates between MCP guardrails checks and NeMo's
+// Transformer translates between MCP guardrails checks and NeMo's
 // /v1/guardrail/checks request/response schema.
-type NeMoTransformer struct {
+type Transformer struct {
 	Model string
 }
 
-// NewNeMoTransformer returns a transformer bound to the model identifier
+// NewTransformer returns a transformer bound to the model identifier
 // resolved from the guardrails Secret.
-func NewNeMoTransformer(model string) *NeMoTransformer {
-	return &NeMoTransformer{Model: model}
+func NewTransformer(model string) *Transformer {
+	return &Transformer{Model: model}
 }
 
 // TransformRequest translates a tools/call request into a NeMo
 // /v1/guardrail/checks request body. Maps params.name to messages[0].name,
 // params.arguments (JSON-encoded) to messages[0].content, and role to
 // "user".
-func (t *NeMoTransformer) TransformRequest(toolName string, arguments json.RawMessage, configIDs []string) ([]byte, error) {
+func (t *Transformer) TransformRequest(toolName string, arguments json.RawMessage, configIDs []string) ([]byte, error) {
 	if toolName == "" {
 		return nil, fmt.Errorf("nemo: tool name is required")
 	}
@@ -67,9 +67,9 @@ func (t *NeMoTransformer) TransformRequest(toolName string, arguments json.RawMe
 		content = string(arguments)
 	}
 
-	req := NeMoCheckRequest{
+	req := CheckRequest{
 		Model: t.Model,
-		Messages: []NeMoMessage{
+		Messages: []Message{
 			{
 				Role:    "user",
 				Name:    toolName,
@@ -77,7 +77,7 @@ func (t *NeMoTransformer) TransformRequest(toolName string, arguments json.RawMe
 				Config:  "tool",
 			},
 		},
-		Guardrails: NeMoGuardrailsConfig{
+		Guardrails: GuardrailsConfig{
 			ConfigIDs: nonNilConfigIDs(configIDs),
 		},
 	}
@@ -93,21 +93,21 @@ func (t *NeMoTransformer) TransformRequest(toolName string, arguments json.RawMe
 // /v1/guardrail/checks request body. Maps the tool name (from request context)
 // to messages[0].name, the text content to messages[0].content, and role to
 // "assistant".
-func (t *NeMoTransformer) TransformResponse(toolName string, content []byte, configIDs []string) ([]byte, error) {
+func (t *Transformer) TransformResponse(toolName string, content []byte, configIDs []string) ([]byte, error) {
 	if toolName == "" {
 		return nil, fmt.Errorf("nemo: tool name is required")
 	}
 
-	req := NeMoCheckRequest{
+	req := CheckRequest{
 		Model: t.Model,
-		Messages: []NeMoMessage{
+		Messages: []Message{
 			{
 				Role:    "assistant",
 				Name:    toolName,
 				Content: string(content),
 			},
 		},
-		Guardrails: NeMoGuardrailsConfig{
+		Guardrails: GuardrailsConfig{
 			ConfigIDs: nonNilConfigIDs(configIDs),
 		},
 	}
@@ -121,8 +121,8 @@ func (t *NeMoTransformer) TransformResponse(toolName string, content []byte, con
 
 // ParseCheckResponse unmarshals a raw /v1/guardrail/checks HTTP response body.
 // An unrecognized Status is a translation failure.
-func (t *NeMoTransformer) ParseCheckResponse(body []byte) (*NeMoCheckResponse, error) {
-	var resp NeMoCheckResponse
+func (t *Transformer) ParseCheckResponse(body []byte) (*CheckResponse, error) {
+	var resp CheckResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("nemo: failed to unmarshal check response: %w", err)
 	}

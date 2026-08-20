@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,23 +13,27 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
-func newTestChecker(t *testing.T, handler http.HandlerFunc, failMode string) (*nemoChecker, *httptest.Server) {
+func newTestChecker(t *testing.T, handler http.HandlerFunc, failMode string) Checker {
+	t.Helper()
+	return newTestCheckerWithMaxBodyBytes(t, handler, failMode, 0)
+}
+
+func newTestCheckerWithMaxBodyBytes(t *testing.T, handler http.HandlerFunc, failMode string, maxBodyBytes int64) Checker {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	checker := NewChecker(&config.GuardrailsConfig{
+	return NewChecker(&config.GuardrailsConfig{
 		URL:       server.URL,
 		Model:     "meta/llama-3.1-8b-instruct",
 		ConfigIDs: []string{"global-1"},
 		FailMode:  failMode,
-	}, nil, 0)
-	return checker, server
+	}, nil, 0, maxBodyBytes)
 }
 
 func TestNeMoChecker_CheckRequest(t *testing.T) {
 	t.Run("success verdict is allowed", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			require.Equal(t, "/v1/guardrail/checks", r.URL.Path)
@@ -51,7 +56,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("blocked verdict carries the triggering rail as reason", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"status":"blocked","content":"denied","rail":"tool-safety-v1"}`))
 		}, FailModeDeny)
@@ -62,7 +67,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("translation failure is a hard error regardless of failMode", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(_ http.ResponseWriter, _ *http.Request) {
 			t.Fatal("guardrails server should not be called on translation failure")
 		}, FailModeAllow)
 
@@ -72,7 +77,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("non-2xx applies failMode: deny blocks", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}, FailModeDeny)
 
@@ -83,7 +88,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("non-2xx applies failMode: allow releases", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}, FailModeAllow)
 
@@ -94,7 +99,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("malformed guardrails response applies failMode rather than erroring", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`not json`))
 		}, FailModeDeny)
@@ -105,12 +110,24 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 		require.Error(t, decision.Err)
 	})
 
+	t.Run("oversized guardrails response applies failMode rather than erroring", func(t *testing.T) {
+		checker := newTestCheckerWithMaxBodyBytes(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"success","content":"` + strings.Repeat("a", 32) + `"}`))
+		}, FailModeDeny, 8)
+
+		decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{}`), nil)
+		require.NoError(t, err)
+		require.Equal(t, StatusBlocked, decision.Status)
+		require.Error(t, decision.Err, "a failMode fallback must be distinguishable from a real blocked verdict")
+	})
+
 	t.Run("unreachable guardrails server applies failMode", func(t *testing.T) {
 		checker := NewChecker(&config.GuardrailsConfig{
 			URL:      "http://127.0.0.1:1",
 			Model:    "meta/llama-3.1-8b-instruct",
 			FailMode: FailModeAllow,
-		}, nil, 0)
+		}, nil, 0, 0)
 
 		decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{}`), nil)
 		require.NoError(t, err)
@@ -119,7 +136,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("a real blocked verdict carries no Err, unlike a failMode fallback", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"status":"blocked","content":"denied","rail":"tool-safety-v1"}`))
 		}, FailModeDeny)
@@ -133,7 +150,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 
 func TestNeMoChecker_CheckResponse(t *testing.T) {
 	t.Run("modified verdict returns substituted content", func(t *testing.T) {
-		checker, _ := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		checker := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 			messages := body["messages"].([]any)

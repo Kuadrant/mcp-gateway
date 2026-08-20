@@ -9,7 +9,7 @@ import (
 
 func TestNeMoTransformer_TransformRequest(t *testing.T) {
 	t.Run("maps tool name, arguments, and config IDs", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		body, err := transformer.TransformRequest(
 			"execute_sql",
@@ -18,12 +18,12 @@ func TestNeMoTransformer_TransformRequest(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		var got NeMoCheckRequest
+		var got CheckRequest
 		require.NoError(t, json.Unmarshal(body, &got))
 
-		require.Equal(t, NeMoCheckRequest{
+		require.Equal(t, CheckRequest{
 			Model: "meta/llama-3.1-8b-instruct",
-			Messages: []NeMoMessage{
+			Messages: []Message{
 				{
 					Role:    "user",
 					Name:    "execute_sql",
@@ -31,26 +31,26 @@ func TestNeMoTransformer_TransformRequest(t *testing.T) {
 					Config:  "tool",
 				},
 			},
-			Guardrails: NeMoGuardrailsConfig{
+			Guardrails: GuardrailsConfig{
 				ConfigIDs: []string{"tool-safety-v1", "input_checking"},
 			},
 		}, got)
 	})
 
 	t.Run("defaults arguments to an empty object when absent", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		body, err := transformer.TransformRequest("no_args_tool", nil, nil)
 		require.NoError(t, err)
 
-		var got NeMoCheckRequest
+		var got CheckRequest
 		require.NoError(t, json.Unmarshal(body, &got))
 		require.Equal(t, "{}", got.Messages[0].Content)
 		require.Equal(t, []string{}, got.Guardrails.ConfigIDs)
 	})
 
 	t.Run("errors without a tool name", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		_, err := transformer.TransformRequest("", json.RawMessage(`{}`), nil)
 		require.Error(t, err)
@@ -59,7 +59,7 @@ func TestNeMoTransformer_TransformRequest(t *testing.T) {
 
 func TestNeMoTransformer_TransformResponse(t *testing.T) {
 	t.Run("maps tool name, text content, and config IDs with assistant role", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		body, err := transformer.TransformResponse(
 			"execute_sql",
@@ -68,26 +68,26 @@ func TestNeMoTransformer_TransformResponse(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		var got NeMoCheckRequest
+		var got CheckRequest
 		require.NoError(t, json.Unmarshal(body, &got))
 
-		require.Equal(t, NeMoCheckRequest{
+		require.Equal(t, CheckRequest{
 			Model: "meta/llama-3.1-8b-instruct",
-			Messages: []NeMoMessage{
+			Messages: []Message{
 				{
 					Role:    "assistant",
 					Name:    "execute_sql",
 					Content: "Query returned 42 rows. Customer emails: alice@example.com, bob@example.com",
 				},
 			},
-			Guardrails: NeMoGuardrailsConfig{
+			Guardrails: GuardrailsConfig{
 				ConfigIDs: []string{"tool-safety-v1", "pii-detection"},
 			},
 		}, got)
 	})
 
 	t.Run("does not set the tool config tag on response checks", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		body, err := transformer.TransformResponse("execute_sql", []byte("ok"), nil)
 		require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestNeMoTransformer_TransformResponse(t *testing.T) {
 	})
 
 	t.Run("errors without a tool name", func(t *testing.T) {
-		transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+		transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 		_, err := transformer.TransformResponse("", []byte("ok"), nil)
 		require.Error(t, err)
@@ -103,18 +103,18 @@ func TestNeMoTransformer_TransformResponse(t *testing.T) {
 }
 
 func TestNeMoTransformer_ParseCheckResponse(t *testing.T) {
-	transformer := NewNeMoTransformer("meta/llama-3.1-8b-instruct")
+	transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
 	t.Run("parses a success verdict", func(t *testing.T) {
 		resp, err := transformer.ParseCheckResponse([]byte(`{"status":"success","content":"ok","rail":null}`))
 		require.NoError(t, err)
-		require.Equal(t, &NeMoCheckResponse{Status: StatusSuccess, Content: "ok"}, resp)
+		require.Equal(t, &CheckResponse{Status: StatusSuccess, Content: "ok"}, resp)
 	})
 
 	t.Run("parses a modified verdict with the substituted content and triggering rail", func(t *testing.T) {
 		resp, err := transformer.ParseCheckResponse([]byte(`{"status":"modified","content":"[REDACTED]","rail":"pii-detection"}`))
 		require.NoError(t, err)
-		require.Equal(t, &NeMoCheckResponse{Status: StatusModified, Content: "[REDACTED]", Rail: "pii-detection"}, resp)
+		require.Equal(t, &CheckResponse{Status: StatusModified, Content: "[REDACTED]", Rail: "pii-detection"}, resp)
 	})
 
 	t.Run("parses a blocked verdict", func(t *testing.T) {
