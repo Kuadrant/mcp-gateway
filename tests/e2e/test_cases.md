@@ -353,6 +353,20 @@
 - When an MCPGatewayExtension has `caCertBundleRef` set with a CA that covers an upstream TLS server, and the same server's MCPServerRegistration also has `caCertSecretRef` pointing to the same CA, the broker should connect successfully. Both the gateway bundle and per-server CA contribute to the trust pool additively. This verifies no conflict when the same CA appears in both places.
 - **Nightly / on-demand only** (`[Full]` tag).
 
+### [Happy,GatewayCACert] Gateway CA cert secret is wired into the broker deployment
+
+- When an MCPGatewayExtension is configured with `gatewayCACertSecretRef` pointing to a labeled Secret containing a CA certificate, the operator should mount that Secret into the broker-router deployment as a read-only volume at `/gateway-ca-cert` and add `--gateway-ca-cert=/gateway-ca-cert/ca.crt` to the broker command. Clearing the field should remove the managed volume and mount again. This CA is used by the broker to verify TLS to the gateway's internal service for hairpin requests.
+
+### [Full,GatewayCACert] Custom secret key is honored in the --gateway-ca-cert path
+
+- When `gatewayCACertSecretRef` specifies a `key` other than the default `ca.crt`, the operator should point `--gateway-ca-cert` at `/gateway-ca-cert/<key>` so the broker reads the CA from the correct Secret key.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [Full,GatewayCACert] Invalid gateway CA cert secret — MCPGatewayExtension reports error
+
+- When `gatewayCACertSecretRef` references a Secret that does not exist, the MCPGatewayExtension should report a `SecretNotFound` status condition. A Secret without the required label `mcp.kuadrant.io/secret=true` should result in a `SecretInvalid` validation error in the status.
+- **Nightly / on-demand only** (`[Full]` tag).
+
 Both external tests are tagged `[HTTPS_EXTERNAL]` and skip on PR CI. Run them manually for sanity checks (e.g. before releases):
 
 ```bash

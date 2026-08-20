@@ -82,6 +82,22 @@ func TestValidateGatewayCACertSecret(t *testing.T) {
 			errReason: "is invalid",
 		},
 		{
+			name: "exceeds size limit",
+			ref:  &mcpv1.CACertSecretReference{Name: "big-secret"},
+			secrets: []runtime.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "big-secret",
+						Namespace: "default",
+						Labels:    map[string]string{ManagedSecretLabel: ManagedSecretValue},
+					},
+					Data: map[string][]byte{"ca.crt": make([]byte, maxCACertBundleSize+1)},
+				},
+			},
+			wantErr:   true,
+			errReason: "exceeds maximum size",
+		},
+		{
 			name: "valid ca cert",
 			ref:  &mcpv1.CACertSecretReference{Name: "valid-ca"},
 			secrets: []runtime.Object{

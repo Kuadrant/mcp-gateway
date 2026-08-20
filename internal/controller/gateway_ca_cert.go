@@ -40,6 +40,10 @@ func (r *MCPGatewayExtensionReconciler) validateGatewayCACertSecret(ctx context.
 		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("gateway CA cert secret %s missing key %s", ref.Name, key))
 	}
+	if len(val) > maxCACertBundleSize {
+		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+			fmt.Sprintf("gateway CA cert data in secret %s exceeds maximum size (%d bytes)", ref.Name, maxCACertBundleSize))
+	}
 	if err := validateCACertPEM(val); err != nil {
 		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("gateway CA cert in secret %s is invalid: %v", ref.Name, err))

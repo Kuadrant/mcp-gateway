@@ -17,10 +17,15 @@ When the broker encounters a server using a private CA, it rejects the connectio
 
 Both are additive: the broker builds its trust pool from system roots, plus the gateway bundle (if set), plus the per-server CA (if set). Per-server CAs append to the gateway bundle, never replace it.
 
+A third field addresses a different TLS connection. When the MCP Gateway listener itself terminates TLS with a certificate signed by a private CA, the broker must trust that CA for the internal hairpin requests it makes back through the gateway to initialize upstream servers:
+
+- **`gatewayCACertSecretRef`** on `MCPGatewayExtension` — the CA for the gateway's own HTTPS listener. This is independent of the upstream trust pool above: it applies to the broker's connection to the gateway, not to upstream MCP servers.
+
 | Approach | Field | Scope | When to use |
 |----------|-------|-------|-------------|
 | Gateway bundle | `caCertBundleRef` on MCPGatewayExtension | All upstream servers | Many servers share the same CA |
 | Per-server CA | `caCertSecretRef` on MCPServerRegistration | Single server | Server has a unique CA not covered by the gateway bundle |
+| Gateway listener CA | `gatewayCACertSecretRef` on MCPGatewayExtension | Broker to gateway listener (hairpin) | Gateway listener uses HTTPS with a private CA |
 
 > **Note:** This only affects the broker's connections to upstream MCP servers (tool discovery, initialization, session management). Client `tools/call` requests flow through Envoy, which has its own TLS configuration via Gateway API.
 
@@ -228,6 +233,83 @@ A successful configuration shows `Ready: True`. Common errors appear in the stat
 | missing key | The specified key doesn't exist in the Secret | Check the key name matches |
 | CA certificate is invalid | PEM data can't be parsed as a certificate | Verify the PEM content is valid |
 | exceeds maximum size | CA cert data is larger than 64 KiB | Use a smaller bundle |
+
+## Gateway Listener CA Certificate
+
+When the MCP Gateway listener terminates TLS with a certificate signed by a private CA, the broker's internal hairpin requests (used to initialize upstream MCP servers back through the gateway) fail certificate verification. `gatewayCACertSecretRef` on `MCPGatewayExtension` supplies the CA the broker uses to trust the gateway listener.
+
+This is separate from `caCertBundleRef`: `caCertBundleRef` provides trust for the broker's connections to upstream MCP servers, while `gatewayCACertSecretRef` provides trust for the broker's connection to the gateway's own HTTPS listener. The two are independent and can be set together or on their own.
+
+### Step 1: Create the Gateway CA Secret
+
+Create a Kubernetes Secret containing the CA certificate that signed the gateway listener's certificate. The Secret must have the label `mcp.kuadrant.io/secret: "true"`.
+
+```bash
+kubectl create secret generic gateway-listener-ca \
+  --from-file=ca.crt=/path/to/gateway-ca.pem \
+  -n mcp-gateway
+
+kubectl label secret gateway-listener-ca \
+  mcp.kuadrant.io/secret=true \
+  -n mcp-gateway
+```
+
+### Step 2: Reference the Secret in MCPGatewayExtension
+
+Add `gatewayCACertSecretRef` to your MCPGatewayExtension:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPGatewayExtension
+metadata:
+  name: mcp-gateway
+  namespace: mcp-gateway
+spec:
+  targetRef:
+    name: mcp-gateway
+    sectionName: mcp
+  gatewayCACertSecretRef:
+    name: gateway-listener-ca
+EOF
+```
+
+The `key` field defaults to `ca.crt`. If your Secret uses a different key:
+
+```yaml
+spec:
+  gatewayCACertSecretRef:
+    name: gateway-listener-ca
+    key: tls.crt
+```
+
+The controller mounts this Secret into the broker-router deployment and passes the certificate to the broker via the `--gateway-ca-cert` flag.
+
+The gateway CA cert Secret has a maximum size limit of 256 KiB.
+
+### Step 3: Verify the Configuration
+
+Check the MCPGatewayExtension status:
+
+```bash
+kubectl get mcpgatewayextension mcp-gateway -n mcp-gateway -o jsonpath='{.status.conditions}'
+```
+
+A successful configuration shows `Ready: True`. Common errors appear in the status conditions:
+
+| Status message | Cause | Fix |
+|----------------|-------|-----|
+| gateway CA cert secret not found | Secret doesn't exist | Create the Secret in the same namespace |
+| missing required label | Secret lacks `mcp.kuadrant.io/secret: "true"` | Add the label |
+| missing key | The specified key doesn't exist in the Secret | Check the key name matches |
+| gateway CA cert in secret is invalid | PEM data can't be parsed as a CA certificate | Verify the PEM content is valid |
+| exceeds maximum size | Gateway CA cert data is larger than 256 KiB | Use a smaller certificate |
+
+The broker reads the gateway CA at startup. Changing the referenced Secret's contents without changing its name does not trigger a redeploy, so restart the broker-router deployment for the new CA to take effect:
+
+```bash
+kubectl rollout restart deployment/mcp-gateway -n mcp-gateway
+```
 
 ## OpenShift Service-Serving CA
 
