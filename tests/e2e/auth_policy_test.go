@@ -34,6 +34,9 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		ext := &mcpv1.MCPGatewayExtension{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
 		if ext.Spec.TrustedHeadersKey == nil {
+			gen, err := GetDeploymentGeneration(ctx, SystemNamespace, "mcp-gateway")
+			Expect(err).NotTo(HaveOccurred())
+
 			patch := client.MergeFrom(ext.DeepCopy())
 			ext.Spec.TrustedHeadersKey = &mcpv1.TrustedHeadersKey{
 				SecretName: "trusted-headers-public-key",
@@ -42,7 +45,7 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 			Expect(k8sClient.Patch(ctx, ext, patch)).To(Succeed())
 
 			By("Waiting for gateway to roll out with trusted headers")
-			Expect(WaitForDeploymentReady(ctx, SystemNamespace, "mcp-gateway")).To(Succeed())
+			Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, "mcp-gateway", 1, gen)).To(Succeed())
 		}
 
 		By("Creating MCPServerRegistrations matching Keycloak client IDs")
