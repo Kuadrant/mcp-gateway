@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787218448549,
+  "lastUpdate": 1787218450629,
   "repoUrl": "https://github.com/Kuadrant/mcp-gateway",
   "entries": {
     "MCP Gateway Performance": [
@@ -271,6 +271,53 @@ window.BENCHMARK_DATA = {
           {
             "name": "avg_tool_call_ms",
             "value": 2.930201342281879,
+            "unit": "ms"
+          },
+          {
+            "name": "tool_error_rate",
+            "value": 0,
+            "unit": "percent"
+          },
+          {
+            "name": "session_fail_rate",
+            "value": 0,
+            "unit": "percent"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Craig Brookes",
+            "username": "maleck13",
+            "email": "maleck13@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "c18d2db78e2814bb13dd7318a52be4076f6327a6",
+          "message": "Merge pull request #1375 from david-martin/release-0.9.0\n\nUpdate version to 0.9.0",
+          "timestamp": "2026-08-14T12:36:45Z",
+          "url": "https://github.com/Kuadrant/mcp-gateway/commit/c18d2db78e2814bb13dd7318a52be4076f6327a6"
+        },
+        "date": 1787218447584,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p95_tool_call_ms",
+            "value": 7,
+            "unit": "ms"
+          },
+          {
+            "name": "p99_tool_call_ms",
+            "value": 0,
+            "unit": "ms"
+          },
+          {
+            "name": "avg_tool_call_ms",
+            "value": 3.0496598639455783,
             "unit": "ms"
           },
           {
