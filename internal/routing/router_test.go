@@ -1553,6 +1553,35 @@ func TestClientSessionIdleClose_KeepsSessionWithUserToken(t *testing.T) {
 	require.True(t, ok, "user token must survive idle close")
 }
 
+func TestClientSessionIdleClose_KeepsClientElicitationFlag(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = 20 * time.Millisecond
+	ctx := context.Background()
+
+	_, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-sid", time.Hour)
+	require.NoError(t, err)
+	require.NoError(t, router.SessionCache.SetClientElicitation(ctx, token, time.Hour))
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+
+	require.Eventually(t, func() bool {
+		router.clientSessionsMu.Lock()
+		_, stillTracked := router.clientSessions[groupKey]
+		router.clientSessionsMu.Unlock()
+		return !stillTracked
+	}, time.Second, 5*time.Millisecond, "idle timer must fire")
+
+	// the JWT is still valid, so the elicitation flag must outlive the idle close;
+	// the client will not re-initialize and would otherwise lose elicitation support
+	elicit, err := router.SessionCache.GetClientElicitation(ctx, token)
+	require.NoError(t, err)
+	require.True(t, elicit, "client elicitation flag must survive idle close")
+}
+
 func TestClientSessionIdleReset(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},

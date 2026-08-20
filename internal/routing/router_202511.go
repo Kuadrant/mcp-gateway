@@ -752,8 +752,10 @@ func (r *Router202511) resetClientSessionIdle(groupKey, sessionID, serverName st
 // already read the mapping before RemoveServerSession can still route to the
 // handle as it closes, yielding one spurious failure the client retries. This is
 // bounded to genuinely idle sessions, since activity re-arms the timer via
-// resetClientSessionIdle before it can fire. The gateway session is left intact
-// (or fully deleted when this was its last server) so the next call re-inits.
+// resetClientSessionIdle before it can fire. RemoveServerSession drops the
+// gateway session key when this was its last server (matching Redis semantics),
+// leaving the separate client-elicitation flag intact for the still-valid JWT so
+// the next call re-inits lazily with elicitation preserved.
 func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string, expectedGen uint64) {
 	r.clientSessionsMu.Lock()
 	entry, ok := r.clientSessions[groupKey]
@@ -769,12 +771,6 @@ func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string
 	r.Logger.DebugContext(cleanupCtx, "closing idle backend client session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName)
 	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
 		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
-	} else if remaining, err := r.SessionCache.GetSession(cleanupCtx, sessionID); err == nil && len(remaining) == 0 {
-		// in-memory RemoveServerSession leaves an empty map behind (Redis drops
-		// the key on last field); delete the key when nothing remains.
-		if err := r.SessionCache.DeleteSessions(cleanupCtx, sessionID); err != nil {
-			r.Logger.DebugContext(cleanupCtx, "failed to delete emptied session", "session", internaljwt.LogSafeSessionID(sessionID), "err", err)
-		}
 	}
 	if entry.handle != nil {
 		if err := entry.handle.Close(); err != nil {
