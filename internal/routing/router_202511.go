@@ -385,6 +385,7 @@ func (r *Router202511) routeToUpstream(ctx context.Context, span trace.Span, mcp
 
 	var remoteMCPServerSession string
 	if id, ok := exists[mcpReq.ServerName]; ok {
+		r.resetClientSessionIdle(mcpReq.GetSessionID()+"/"+mcpReq.ServerName, mcpReq.GetSessionID(), mcpReq.ServerName)
 		r.Logger.DebugContext(ctx, "found session in cache", "session id", internaljwt.LogSafeSessionID(mcpReq.GetSessionID()), "for server", serverInfo.Name, "remote session", internaljwt.LogSafeSessionID(id))
 		remoteMCPServerSession = id
 	}
@@ -743,11 +744,16 @@ func (r *Router202511) resetClientSessionIdle(groupKey, sessionID, serverName st
 	r.clientSessionsMu.Unlock()
 }
 
-// closeClientSession closes the idle backend handle and drops its per-server
-// cache mapping. It is a no-op if the entry was re-armed (gen mismatch) since
-// this callback fired, avoiding a race where a concurrent tool call routes to a
-// handle about to be closed. The gateway session is left intact (or fully
-// deleted when this was its last server) so the next tool call re-inits lazily.
+// closeClientSession drops the per-server cache mapping, then closes the idle
+// backend handle. The gen check makes it a no-op if the entry was re-armed since
+// this callback fired. Ordering: the cache mapping is removed before the handle
+// closes so new tool calls miss the cache and re-init a fresh handle rather than
+// finding a mapping to a dying one. A residual narrow window remains: a call that
+// already read the mapping before RemoveServerSession can still route to the
+// handle as it closes, yielding one spurious failure the client retries. This is
+// bounded to genuinely idle sessions, since activity re-arms the timer via
+// resetClientSessionIdle before it can fire. The gateway session is left intact
+// (or fully deleted when this was its last server) so the next call re-inits.
 func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string, expectedGen uint64) {
 	r.clientSessionsMu.Lock()
 	entry, ok := r.clientSessions[groupKey]
@@ -761,20 +767,18 @@ func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	r.Logger.DebugContext(cleanupCtx, "closing idle backend client session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName)
+	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
+		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
+	} else if remaining, err := r.SessionCache.GetSession(cleanupCtx, sessionID); err == nil && len(remaining) == 0 {
+		// in-memory RemoveServerSession leaves an empty map behind (Redis drops
+		// the key on last field); delete the key when nothing remains.
+		if err := r.SessionCache.DeleteSessions(cleanupCtx, sessionID); err != nil {
+			r.Logger.DebugContext(cleanupCtx, "failed to delete emptied session", "session", internaljwt.LogSafeSessionID(sessionID), "err", err)
+		}
+	}
 	if entry.handle != nil {
 		if err := entry.handle.Close(); err != nil {
 			r.Logger.DebugContext(cleanupCtx, "failed to close idle client connection", "err", err)
-		}
-	}
-	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
-		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
-		return
-	}
-	// in-memory RemoveServerSession leaves an empty map behind (Redis drops the
-	// key on last field); delete the key when no servers or user tokens remain.
-	if remaining, err := r.SessionCache.GetSession(cleanupCtx, sessionID); err == nil && len(remaining) == 0 {
-		if err := r.SessionCache.DeleteSessions(cleanupCtx, sessionID); err != nil {
-			r.Logger.DebugContext(cleanupCtx, "failed to delete emptied session", "session", internaljwt.LogSafeSessionID(sessionID), "err", err)
 		}
 	}
 }

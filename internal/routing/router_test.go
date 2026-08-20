@@ -26,6 +26,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const testSigningKey = "test-signing-key-must-be-at-least-32-bytes"
@@ -1568,6 +1569,37 @@ func TestClientSessionIdleReset(t *testing.T) {
 	router.clientSessionsMu.Unlock()
 	require.True(t, present, "reset must not drop the entry")
 	require.NotNil(t, entry.timer)
+}
+
+// TestRouteToUpstreamResetsIdleOnCacheHit guards the steady-state path: a tool
+// call served from the session cache must re-arm the idle timer, otherwise the
+// timer degrades to a fixed lifetime from init and closes actively-used sessions.
+func TestRouteToUpstreamResetsIdleOnCacheHit(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = time.Hour
+
+	ctx := context.Background()
+	if _, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-session-id", time.Hour); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+	router.clientSessionsMu.Lock()
+	genBefore := router.clientSessions[groupKey].gen
+	router.clientSessionsMu.Unlock()
+
+	mcpReq := &MCPRequest{JSONRPC: "2.0", Method: "tools/call", SessionID: token, ServerName: "dummy"}
+	decision := router.routeToUpstream(ctx, trace.SpanFromContext(ctx), mcpReq, serverConfigs[0], map[string]string{})
+	require.Nil(t, decision.Error, "cache hit should route without error")
+
+	router.clientSessionsMu.Lock()
+	genAfter := router.clientSessions[groupKey].gen
+	router.clientSessionsMu.Unlock()
+	require.Greater(t, genAfter, genBefore, "cache-hit fast path must re-arm the idle timer")
 }
 
 //nolint:dupl
