@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"k8s.io/utils/ptr"
 
@@ -1414,6 +1415,56 @@ func TestInitializeMCPServerSession_HairpinRetry(t *testing.T) {
 			require.Equal(t, tc.wantCalls, calls, "InitForClient call count")
 		})
 	}
+}
+
+func TestClientSessionIdleClose(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = 20 * time.Millisecond
+	ctx := context.Background()
+
+	_, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-sid", time.Hour)
+	require.NoError(t, err)
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+
+	router.clientSessionsMu.Lock()
+	_, present := router.clientSessions[groupKey]
+	router.clientSessionsMu.Unlock()
+	require.True(t, present, "session must be registered")
+
+	require.Eventually(t, func() bool {
+		router.clientSessionsMu.Lock()
+		_, stillTracked := router.clientSessions[groupKey]
+		router.clientSessionsMu.Unlock()
+		if stillTracked {
+			return false
+		}
+		exists, _ := router.SessionCache.GetSession(ctx, token)
+		_, mapped := exists["dummy"]
+		return !mapped
+	}, time.Second, 5*time.Millisecond, "idle timer must close the handle and drop the per-server mapping")
+}
+
+func TestClientSessionIdleReset(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = time.Hour
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+	router.resetClientSessionIdle(groupKey)
+
+	router.clientSessionsMu.Lock()
+	entry, present := router.clientSessions[groupKey]
+	router.clientSessionsMu.Unlock()
+	require.True(t, present, "reset must not drop the entry")
+	require.NotNil(t, entry.timer)
 }
 
 //nolint:dupl

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +35,18 @@ const (
 	hairpinInitBaseBackoff = 100 * time.Millisecond
 )
 
+// clientSessionIdleTimeout closes a backend client session after inactivity so
+// idle upstream connections are not held for the full 24h JWT lifetime. Mirrors
+// the broker's SessionIdleTimeout. The next tool call re-inits lazily.
+const clientSessionIdleTimeout = 30 * time.Minute
+
+// clientSessionEntry tracks a live backend client handle and its idle timer,
+// keyed by gateway-session-id + server-name.
+type clientSessionEntry struct {
+	handle *mcp.ClientSession
+	timer  *time.Timer
+}
+
 // RoutingTableFunc returns the current routing table snapshot.
 //
 //nolint:revive // package-qualified name is clearer
@@ -51,7 +64,17 @@ type Router202511 struct {
 	TokenElicitationMap elicitation.Map
 	ElicitationEnabled  bool
 	Logger              *slog.Logger
+	IdleTimeout         time.Duration // backend client idle timeout; defaults to clientSessionIdleTimeout
 	initGroup           singleflight.Group
+	clientSessionsMu    sync.Mutex
+	clientSessions      map[string]*clientSessionEntry
+}
+
+func (r *Router202511) idleTimeout() time.Duration {
+	if r.IdleTimeout > 0 {
+		return r.IdleTimeout
+	}
+	return clientSessionIdleTimeout
 }
 
 var _ Router = &Router202511{}
@@ -546,6 +569,7 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			return "", NewRouterErrorf(500, "failed to check for existing session: %w", err)
 		}
 		if id, ok := exists[mcpReq.ServerName]; ok {
+			r.resetClientSessionIdle(groupKey)
 			r.Logger.DebugContext(ctx, "found session in cache", "session id", internaljwt.LogSafeSessionID(mcpReq.GetSessionID()), "for server", mcpServerConfig.Name, "remote session", internaljwt.LogSafeSessionID(id))
 			return id, nil
 		}
@@ -657,13 +681,72 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			}
 			return "", NewRouterError(500, fmt.Errorf("internal error"))
 		}
-		time.AfterFunc(ttl, sessionCloser)
+		r.registerClientSession(groupKey, mcpReq.GetSessionID(), mcpServerConfig.Name, clientHandle)
 		return remoteSessionID, nil
 	})
 	if err != nil {
 		return "", err
 	}
 	return result.(string), nil
+}
+
+// registerClientSession stores a live backend client handle and arms its idle
+// timer. Any prior handle for the same key is stopped and closed.
+func (r *Router202511) registerClientSession(groupKey, sessionID, serverName string, handle *mcp.ClientSession) {
+	entry := &clientSessionEntry{handle: handle}
+	entry.timer = time.AfterFunc(r.idleTimeout(), func() {
+		r.closeClientSession(groupKey, sessionID, serverName)
+	})
+	r.clientSessionsMu.Lock()
+	if r.clientSessions == nil {
+		r.clientSessions = make(map[string]*clientSessionEntry)
+	}
+	prev := r.clientSessions[groupKey]
+	r.clientSessions[groupKey] = entry
+	r.clientSessionsMu.Unlock()
+	if prev != nil {
+		prev.timer.Stop()
+		if prev.handle != nil {
+			if err := prev.handle.Close(); err != nil {
+				r.Logger.Debug("failed to close superseded client connection", "err", err)
+			}
+		}
+	}
+}
+
+// resetClientSessionIdle pushes back the idle timer on activity for a key.
+func (r *Router202511) resetClientSessionIdle(groupKey string) {
+	r.clientSessionsMu.Lock()
+	if entry, ok := r.clientSessions[groupKey]; ok {
+		entry.timer.Reset(r.idleTimeout())
+	}
+	r.clientSessionsMu.Unlock()
+}
+
+// closeClientSession closes the idle backend handle and drops its per-server
+// cache mapping. The gateway session is left intact so the next tool call
+// re-inits lazily.
+func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string) {
+	r.clientSessionsMu.Lock()
+	entry, ok := r.clientSessions[groupKey]
+	if ok {
+		delete(r.clientSessions, groupKey)
+	}
+	r.clientSessionsMu.Unlock()
+	if !ok {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.Logger.DebugContext(cleanupCtx, "closing idle backend client session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName)
+	if entry.handle != nil {
+		if err := entry.handle.Close(); err != nil {
+			r.Logger.DebugContext(cleanupCtx, "failed to close idle client connection", "err", err)
+		}
+	}
+	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
+		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
+	}
 }
 
 func (r *Router202511) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers map[string]string) (*ElicitationInfo, error) {
