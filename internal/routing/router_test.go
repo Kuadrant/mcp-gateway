@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"k8s.io/utils/ptr"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const testSigningKey = "test-signing-key-must-be-at-least-32-bytes"
@@ -1340,6 +1342,293 @@ func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 				"4xx should propagate, 5xx and non-HTTP errors should become 500")
 		})
 	}
+}
+
+func TestInitializeMCPServerSession_HairpinRetry(t *testing.T) {
+	testCases := []struct {
+		name      string
+		initErr   error
+		wantCalls int
+	}{
+		{
+			name:      "transient error retried up to the budget",
+			initErr:   fmt.Errorf("failed to create client: %w", fmt.Errorf("dial tcp: connection refused")),
+			wantCalls: hairpinInitMaxRetries + 1,
+		},
+		{
+			name:      "5xx retried up to the budget",
+			initErr:   fmt.Errorf("failed to create client: %w", &transport.HTTPStatusError{Code: 502, Body: "Bad Gateway"}),
+			wantCalls: hairpinInitMaxRetries + 1,
+		},
+		{
+			name:      "4xx not retried",
+			initErr:   fmt.Errorf("failed to create client: %w", &transport.HTTPStatusError{Code: 403, Body: "denied"}),
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
+				calls++
+				return nil, tc.initErr
+			}
+
+			serverConfigs := []*config.MCPServer{
+				{
+					Name:     "dummy",
+					URL:      "http://localhost:8080/mcp",
+					Prefix:   "s_",
+					State:    "Enabled",
+					Hostname: "backend.example.com",
+				},
+			}
+			router, _ := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+			router.InitForClient = mockInitForClient
+			router.InitBackoff = time.Millisecond
+			router.RoutingConfig.Store(&config.MCPServersConfig{
+				Servers:                    serverConfigs,
+				MCPGatewayInternalHostname: "mcp-gateway.local",
+			})
+
+			validToken := router.JWTManager.Generate()
+			table := NewTableBuilder().
+				AddTool("s_mytool", &ServerRoute{
+					Name:   "dummy",
+					Host:   "backend.example.com",
+					Prefix: "s_",
+					Path:   "/mcp",
+					URL:    "http://localhost:8080/mcp",
+				}).
+				Build()
+			router.Table = func() RoutingTable { return table }
+
+			req := &MCPRequest{
+				ID:      ptr.To(0),
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params:  map[string]any{"name": "s_mytool"},
+				Headers: map[string]string{"mcp-session-id": validToken},
+			}
+
+			decision := router.RouteRequest(context.Background(), &Request{Parsed: req})
+			require.NotNil(t, decision.Error)
+			require.Equal(t, tc.wantCalls, calls, "InitForClient call count")
+		})
+	}
+}
+
+// newInMemoryClientSession returns a live *mcp.ClientSession backed by an
+// in-memory server, for exercising the init success path.
+func newInMemoryClientSession(t *testing.T) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "0.0.1"}, nil)
+	ss, err := server.Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ss.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs
+}
+
+func TestInitializeMCPServerSession_HairpinRetryRecovers(t *testing.T) {
+	handle := newInMemoryClientSession(t)
+
+	calls := 0
+	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, _ map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
+		calls++
+		if calls <= hairpinInitMaxRetries {
+			return nil, fmt.Errorf("failed to create client: %w", fmt.Errorf("dial tcp: connection refused"))
+		}
+		return handle, nil
+	}
+
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, _ := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.InitForClient = mockInitForClient
+	router.InitBackoff = time.Millisecond
+	router.IdleTimeout = time.Hour
+	router.RoutingConfig.Store(&config.MCPServersConfig{
+		Servers:                    serverConfigs,
+		MCPGatewayInternalHostname: "mcp-gateway.local",
+	})
+
+	validToken := router.JWTManager.Generate()
+	table := NewTableBuilder().
+		AddTool("s_mytool", &ServerRoute{
+			Name:   "dummy",
+			Host:   "backend.example.com",
+			Prefix: "s_",
+			Path:   "/mcp",
+			URL:    "http://localhost:8080/mcp",
+		}).
+		Build()
+	router.Table = func() RoutingTable { return table }
+
+	req := &MCPRequest{
+		ID:      ptr.To(0),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params:  map[string]any{"name": "s_mytool"},
+		Headers: map[string]string{"mcp-session-id": validToken},
+	}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: req})
+	require.Nil(t, decision.Error, "init should succeed after transient failures")
+	require.Equal(t, hairpinInitMaxRetries+1, calls, "should retry then succeed")
+}
+
+func TestClientSessionIdleClose(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = 20 * time.Millisecond
+	ctx := context.Background()
+
+	_, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-sid", time.Hour)
+	require.NoError(t, err)
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+
+	router.clientSessionsMu.Lock()
+	_, present := router.clientSessions[groupKey]
+	router.clientSessionsMu.Unlock()
+	require.True(t, present, "session must be registered")
+
+	require.Eventually(t, func() bool {
+		router.clientSessionsMu.Lock()
+		_, stillTracked := router.clientSessions[groupKey]
+		router.clientSessionsMu.Unlock()
+		if stillTracked {
+			return false
+		}
+		exists, _ := router.SessionCache.GetSession(ctx, token)
+		_, mapped := exists["dummy"]
+		return !mapped
+	}, time.Second, 5*time.Millisecond, "idle timer must close the handle and drop the per-server mapping")
+
+	// last server removed: the whole key is deleted, not left as an empty map
+	keyExists, err := router.SessionCache.KeyExists(ctx, token)
+	require.NoError(t, err)
+	require.False(t, keyExists, "emptied session key must be deleted, not left behind")
+}
+
+func TestClientSessionIdleClose_KeepsSessionWithUserToken(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = 20 * time.Millisecond
+	ctx := context.Background()
+
+	_, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-sid", time.Hour)
+	require.NoError(t, err)
+	require.NoError(t, router.SessionCache.SetUserToken(ctx, token, "dummy", "user-token", time.Hour))
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+
+	require.Eventually(t, func() bool {
+		router.clientSessionsMu.Lock()
+		_, stillTracked := router.clientSessions[groupKey]
+		router.clientSessionsMu.Unlock()
+		return !stillTracked
+	}, time.Second, 5*time.Millisecond, "idle timer must fire")
+
+	// a cached user token keeps the session key alive
+	keyExists, err := router.SessionCache.KeyExists(ctx, token)
+	require.NoError(t, err)
+	require.True(t, keyExists, "session with a remaining user token must not be deleted")
+	_, ok, err := router.SessionCache.GetUserToken(ctx, token, "dummy")
+	require.NoError(t, err)
+	require.True(t, ok, "user token must survive idle close")
+}
+
+func TestClientSessionIdleClose_KeepsClientElicitationFlag(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = 20 * time.Millisecond
+	ctx := context.Background()
+
+	_, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-sid", time.Hour)
+	require.NoError(t, err)
+	require.NoError(t, router.SessionCache.SetClientElicitation(ctx, token, time.Hour))
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+
+	require.Eventually(t, func() bool {
+		router.clientSessionsMu.Lock()
+		_, stillTracked := router.clientSessions[groupKey]
+		router.clientSessionsMu.Unlock()
+		return !stillTracked
+	}, time.Second, 5*time.Millisecond, "idle timer must fire")
+
+	// the JWT is still valid, so the elicitation flag must outlive the idle close;
+	// the client will not re-initialize and would otherwise lose elicitation support
+	elicit, err := router.SessionCache.GetClientElicitation(ctx, token)
+	require.NoError(t, err)
+	require.True(t, elicit, "client elicitation flag must survive idle close")
+}
+
+func TestClientSessionIdleReset(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = time.Hour
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+	router.resetClientSessionIdle(groupKey, token, "dummy")
+
+	router.clientSessionsMu.Lock()
+	entry, present := router.clientSessions[groupKey]
+	router.clientSessionsMu.Unlock()
+	require.True(t, present, "reset must not drop the entry")
+	require.NotNil(t, entry.timer)
+}
+
+// TestRouteToUpstreamResetsIdleOnCacheHit guards the steady-state path: a tool
+// call served from the session cache must re-arm the idle timer, otherwise the
+// timer degrades to a fixed lifetime from init and closes actively-used sessions.
+func TestRouteToUpstreamResetsIdleOnCacheHit(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{Name: "dummy", URL: "http://localhost:8080/mcp", Prefix: "s_", State: "Enabled", Hostname: "backend.example.com"},
+	}
+	router, token := newTestRouter(t, serverConfigs, map[string]string{}, map[string]string{})
+	router.IdleTimeout = time.Hour
+
+	ctx := context.Background()
+	if _, err := router.SessionCache.AddSession(ctx, token, "dummy", "remote-session-id", time.Hour); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	groupKey := token + "/dummy"
+	router.registerClientSession(groupKey, token, "dummy", nil)
+	router.clientSessionsMu.Lock()
+	genBefore := router.clientSessions[groupKey].gen
+	router.clientSessionsMu.Unlock()
+
+	mcpReq := &MCPRequest{JSONRPC: "2.0", Method: "tools/call", SessionID: token, ServerName: "dummy"}
+	decision := router.routeToUpstream(ctx, trace.SpanFromContext(ctx), mcpReq, serverConfigs[0], map[string]string{})
+	require.Nil(t, decision.Error, "cache hit should route without error")
+
+	router.clientSessionsMu.Lock()
+	genAfter := router.clientSessions[groupKey].gen
+	router.clientSessionsMu.Unlock()
+	require.Greater(t, genAfter, genBefore, "cache-hit fast path must re-arm the idle timer")
 }
 
 //nolint:dupl

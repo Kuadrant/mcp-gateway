@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,11 +20,35 @@ import (
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
 )
+
+// hairpin init retry budget for transient failures (connection refused,
+// transport reset) seen under concurrency. 4xx is never retried. total
+// backoff (100ms+200ms) stays well under the ext_proc message_timeout (10s).
+const (
+	hairpinInitMaxRetries  = 2
+	hairpinInitBaseBackoff = 100 * time.Millisecond
+)
+
+// clientSessionIdleTimeout closes a backend client session after inactivity so
+// idle upstream connections are not held for the full 24h JWT lifetime. Mirrors
+// the broker's SessionIdleTimeout. The next tool call re-inits lazily.
+const clientSessionIdleTimeout = 30 * time.Minute
+
+// clientSessionEntry tracks a live backend client handle and its idle timer,
+// keyed by gateway-session-id + server-name. gen is a monotonic arm id: the
+// idle callback only closes when the entry's gen still matches the value it was
+// armed with, so a Reset that races an already-fired timer is a no-op.
+type clientSessionEntry struct {
+	handle *mcp.ClientSession
+	timer  *time.Timer
+	gen    uint64
+}
 
 // RoutingTableFunc returns the current routing table snapshot.
 //
@@ -42,7 +67,26 @@ type Router202511 struct {
 	TokenElicitationMap elicitation.Map
 	ElicitationEnabled  bool
 	Logger              *slog.Logger
+	IdleTimeout         time.Duration // backend client idle timeout; defaults to clientSessionIdleTimeout
+	InitBackoff         time.Duration // hairpin init base backoff; defaults to hairpinInitBaseBackoff
 	initGroup           singleflight.Group
+	clientSessionsMu    sync.Mutex
+	clientSessions      map[string]*clientSessionEntry
+	sessionGen          atomic.Uint64
+}
+
+func (r *Router202511) idleTimeout() time.Duration {
+	if r.IdleTimeout > 0 {
+		return r.IdleTimeout
+	}
+	return clientSessionIdleTimeout
+}
+
+func (r *Router202511) initBackoff() time.Duration {
+	if r.InitBackoff > 0 {
+		return r.InitBackoff
+	}
+	return hairpinInitBaseBackoff
 }
 
 var _ Router = &Router202511{}
@@ -341,6 +385,7 @@ func (r *Router202511) routeToUpstream(ctx context.Context, span trace.Span, mcp
 
 	var remoteMCPServerSession string
 	if id, ok := exists[mcpReq.ServerName]; ok {
+		r.resetClientSessionIdle(mcpReq.GetSessionID()+"/"+mcpReq.ServerName, mcpReq.GetSessionID(), mcpReq.ServerName)
 		r.Logger.DebugContext(ctx, "found session in cache", "session id", internaljwt.LogSafeSessionID(mcpReq.GetSessionID()), "for server", serverInfo.Name, "remote session", internaljwt.LogSafeSessionID(id))
 		remoteMCPServerSession = id
 	}
@@ -537,6 +582,7 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			return "", NewRouterErrorf(500, "failed to check for existing session: %w", err)
 		}
 		if id, ok := exists[mcpReq.ServerName]; ok {
+			r.resetClientSessionIdle(groupKey, mcpReq.GetSessionID(), mcpReq.ServerName)
 			r.Logger.DebugContext(ctx, "found session in cache", "session id", internaljwt.LogSafeSessionID(mcpReq.GetSessionID()), "for server", mcpServerConfig.Name, "remote session", internaljwt.LogSafeSessionID(id))
 			return id, nil
 		}
@@ -590,15 +636,30 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 		}
 		passThroughHeaders[RoutingKey] = initToken
 		passThroughHeaders["mcp-init-host"] = mcpServerConfig.Hostname
-		clientHandle, err := r.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.ClientElicitation, r.HairpinClientPool)
-		if err != nil {
-			r.Logger.ErrorContext(ctx, "failed to get remote session ", "error", err)
-			mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
+		var clientHandle *mcp.ClientSession
+		for attempt := 0; ; attempt++ {
+			clientHandle, err = r.InitForClient(ctx, routingCfg.MCPGatewayInternalHostname, mcpServerConfig, passThroughHeaders, mcpReq.ClientElicitation, r.HairpinClientPool)
+			if err == nil {
+				break
+			}
 			var httpErr *transport.HTTPStatusError
 			if errors.As(err, &httpErr) && httpErr.Code >= 400 && httpErr.Code < 500 {
+				r.Logger.ErrorContext(ctx, "failed to get remote session", "error", err)
+				mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
 				return "", NewRouterError(int32(httpErr.Code), fmt.Errorf("failed to create session for mcp server: %w", err)) //nolint:gosec,nolintlint // code bounded to [400,499] by check above
 			}
-			return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
+			if attempt >= hairpinInitMaxRetries {
+				r.Logger.ErrorContext(ctx, "failed to get remote session", "error", err, "attempts", attempt+1)
+				mcpotel.SpanError(initSpan, err, "failed to initialize backend session")
+				return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", err)
+			}
+			backoff := r.initBackoff() << attempt
+			r.Logger.WarnContext(ctx, "hairpin init failed, retrying", "attempt", attempt+1, "backoff", backoff, "error", err)
+			select {
+			case <-ctx.Done():
+				return "", NewRouterErrorf(500, "failed to create session for mcp server: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 		}
 		var sessionCloser = func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -633,13 +694,89 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			}
 			return "", NewRouterError(500, fmt.Errorf("internal error"))
 		}
-		time.AfterFunc(ttl, sessionCloser)
+		r.registerClientSession(groupKey, mcpReq.GetSessionID(), mcpServerConfig.Name, clientHandle)
 		return remoteSessionID, nil
 	})
 	if err != nil {
 		return "", err
 	}
 	return result.(string), nil
+}
+
+// registerClientSession stores a live backend client handle and arms its idle
+// timer. Any prior handle for the same key is stopped and closed.
+func (r *Router202511) registerClientSession(groupKey, sessionID, serverName string, handle *mcp.ClientSession) {
+	gen := r.sessionGen.Add(1)
+	entry := &clientSessionEntry{handle: handle, gen: gen}
+	entry.timer = time.AfterFunc(r.idleTimeout(), func() {
+		r.closeClientSession(groupKey, sessionID, serverName, gen)
+	})
+	r.clientSessionsMu.Lock()
+	if r.clientSessions == nil {
+		r.clientSessions = make(map[string]*clientSessionEntry)
+	}
+	prev := r.clientSessions[groupKey]
+	r.clientSessions[groupKey] = entry
+	r.clientSessionsMu.Unlock()
+	if prev != nil {
+		prev.timer.Stop()
+		if prev.handle != nil {
+			if err := prev.handle.Close(); err != nil {
+				r.Logger.Debug("failed to close superseded client connection", "err", err)
+			}
+		}
+	}
+}
+
+// resetClientSessionIdle re-arms the idle timer on activity for a key. It bumps
+// gen and installs a fresh timer so an already-fired callback (carrying the old
+// gen) becomes a no-op.
+func (r *Router202511) resetClientSessionIdle(groupKey, sessionID, serverName string) {
+	r.clientSessionsMu.Lock()
+	if entry, ok := r.clientSessions[groupKey]; ok {
+		gen := r.sessionGen.Add(1)
+		entry.gen = gen
+		entry.timer.Stop()
+		entry.timer = time.AfterFunc(r.idleTimeout(), func() {
+			r.closeClientSession(groupKey, sessionID, serverName, gen)
+		})
+	}
+	r.clientSessionsMu.Unlock()
+}
+
+// closeClientSession drops the per-server cache mapping, then closes the idle
+// backend handle. The gen check makes it a no-op if the entry was re-armed since
+// this callback fired. Ordering: the cache mapping is removed before the handle
+// closes so new tool calls miss the cache and re-init a fresh handle rather than
+// finding a mapping to a dying one. A residual narrow window remains: a call that
+// already read the mapping before RemoveServerSession can still route to the
+// handle as it closes, yielding one spurious failure the client retries. This is
+// bounded to genuinely idle sessions, since activity re-arms the timer via
+// resetClientSessionIdle before it can fire. RemoveServerSession drops the
+// gateway session key when this was its last server (matching Redis semantics),
+// leaving the separate client-elicitation flag intact for the still-valid JWT so
+// the next call re-inits lazily with elicitation preserved.
+func (r *Router202511) closeClientSession(groupKey, sessionID, serverName string, expectedGen uint64) {
+	r.clientSessionsMu.Lock()
+	entry, ok := r.clientSessions[groupKey]
+	if !ok || entry.gen != expectedGen {
+		r.clientSessionsMu.Unlock()
+		return
+	}
+	delete(r.clientSessions, groupKey)
+	r.clientSessionsMu.Unlock()
+
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.Logger.DebugContext(cleanupCtx, "closing idle backend client session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName)
+	if err := r.SessionCache.RemoveServerSession(cleanupCtx, sessionID, serverName); err != nil {
+		r.Logger.DebugContext(cleanupCtx, "failed to remove idle server session", "session", internaljwt.LogSafeSessionID(sessionID), "server", serverName, "err", err)
+	}
+	if entry.handle != nil {
+		if err := entry.handle.Close(); err != nil {
+			r.Logger.DebugContext(cleanupCtx, "failed to close idle client connection", "err", err)
+		}
+	}
 }
 
 func (r *Router202511) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequest, serverInfo *config.MCPServer, headers map[string]string) (*ElicitationInfo, error) {

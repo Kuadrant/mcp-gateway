@@ -111,7 +111,14 @@ func (c *Cache) RemoveServerSession(ctx context.Context, key, mcpServerID string
 		existing := val.(map[string]string)
 		next := maps.Clone(existing)
 		delete(next, mcpServerID)
-		c.inmemory.Store(key, next)
+		// mirror Redis: HDel drops the hash key on its last field. Dropping the
+		// empty key (rather than storing an empty map) keeps KeyExists parity and
+		// leaves the separate client-elicitation key untouched.
+		if len(next) == 0 {
+			c.inmemory.Delete(key)
+		} else {
+			c.inmemory.Store(key, next)
+		}
 		return nil
 	}
 	return c.extClient.HDel(ctx, key, mcpServerID).Err()
