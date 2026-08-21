@@ -228,6 +228,11 @@ type MCPManager struct {
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy InvalidToolPolicy
 
+	// onConnect is called after a successful upstream connection. the broker
+	// uses this to refresh the routing table when version detection changes
+	// (e.g. userSpecificList servers that don't add tools to the gateway server).
+	onConnect func()
+
 	// toolEvents, promptEvents, and reconnectEvents funnel notifications into
 	// the Start() loop. Separate channels with buffer of 1 each ensure one
 	// event type cannot block another while still coalescing rapid same-type
@@ -338,6 +343,11 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 	}, nil
 }
 
+// SetOnConnect registers a callback invoked after a successful upstream connection.
+func (man *MCPManager) SetOnConnect(fn func()) {
+	man.onConnect = fn
+}
+
 // MCPName returns the name of the upstream MCP server being managed
 func (man *MCPManager) MCPName() string {
 	return man.mcp.GetName()
@@ -440,7 +450,7 @@ func (man *MCPManager) registerCallbacks() func() {
 	})
 	return func() {
 		man.mcp.OnConnectionLost(func(err error) {
-			man.logger.Error("connection lost, clearing session for reconnect", "upstream mcp server", man.mcp.ID(), "error", err)
+			man.logger.Warn("connection lost, clearing session for reconnect", "upstream mcp server", man.mcp.ID(), "error", err)
 			_ = man.mcp.Disconnect()
 			select {
 			case man.reconnectEvents <- struct{}{}:
@@ -498,6 +508,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		return
 	}
 	man.consecutiveFailures = 0
+	man.logger.Info("upstream negotiated", "upstream", man.mcp.ID(), "supported-versions", man.mcp.SupportedVersions())
+	if man.onConnect != nil {
+		man.onConnect()
+	}
 
 	serverAttr := attribute.String("server_name", man.mcp.GetName())
 

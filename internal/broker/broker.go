@@ -594,6 +594,11 @@ func (m *mcpBrokerImpl) startManagers(ctx context.Context, servers []*config.MCP
 			m.logger.ErrorContext(ctx, "failed to create manager", "server id", mcpServer.ID(), "error", err)
 			continue
 		}
+		manager.SetOnConnect(func() {
+			m.mcpLock.RLock()
+			defer m.mcpLock.RUnlock()
+			m.refreshRoutingTable()
+		})
 		m.logger.InfoContext(ctx, "Starting manager for", "mcpID", mcpServer.ID())
 		m.mcpServers[mcpServer.ID()] = manager.Start(ctx)
 	}

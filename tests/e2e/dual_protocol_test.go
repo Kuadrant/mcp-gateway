@@ -229,14 +229,67 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 		})
 	})
 
-	// blocked: broker currently records only the negotiated version per upstream
-	// (upstream/mcp.go:292). dual-version detection requires a server/discover
-	// probe after connect to get the full SupportedVersions list.
-	PIt("[DualProtocol] dual-version server tools visible to both clients", func() {
-		// register a backend that supports both protocol versions
-		// (returns ["2025-11-25", "2026-07-28"] in server/discover supportedVersions)
-		// connect a 2025 client — sees the server's tools
-		// connect a 2026 client — also sees the server's tools
+	It("[DualProtocol] dual-version server tools visible to both clients", func() {
+		By("Registering a dual-protocol backend (user-specific test server, Stateless: true)")
+		reg := NewTestResources("dp-dual", k8sClient).
+			InNamespace(dualProtoNamespace).
+			WithBackendTarget("mcp-test-user-specific-server", 9090).
+			WithBackendNamespace(TestServerNameSpace).
+			WithHostname(protocol2026ServerHost("dual")).
+			WithPrefix("dual_").
+			WithSectionName(Protocol2026ListenerName).
+			WithParentGateway(GatewayName, GatewayNamespace).
+			Build()
+		defer func() {
+			for _, obj := range reg.GetObjects() {
+				CleanupResource(ctx, k8sClient, obj)
+			}
+		}()
+		server := reg.Register(ctx)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2026 client sees dual_ tools")
+		c26 := newStatelessClient()
+		defer func() { _ = c26.Close() }()
+
+		Eventually(func(g Gomega) {
+			result, err := c26.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+				return strings.HasPrefix(n, "dual_")
+			})).To(BeTrue(), "2026 client should see dual_ tools")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2026 client can call dual_server_info")
+		res26, err := c26.CallTool(ctx, &mcp.CallToolParams{Name: "dual_server_info"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res26.Content).NotTo(BeEmpty())
+		text26, ok := res26.Content[0].(*mcp.TextContent)
+		Expect(ok).To(BeTrue())
+		Expect(text26.Text).To(ContainSubstring("server=user-specific-test-server"))
+
+		By("2025 client sees dual_ tools")
+		c25 := newStatefulClient()
+		defer func() { _ = c25.Close() }()
+
+		Eventually(func(g Gomega) {
+			result, err := c25.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+				return strings.HasPrefix(n, "dual_")
+			})).To(BeTrue(), "2025 client should see dual_ tools")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2025 client can call dual_server_info")
+		res25, err := c25.CallTool(ctx, &mcp.CallToolParams{Name: "dual_server_info"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res25.Content).NotTo(BeEmpty())
+		text25, ok := res25.Content[0].(*mcp.TextContent)
+		Expect(ok).To(BeTrue())
+		Expect(text25.Text).To(ContainSubstring("server=user-specific-test-server"))
 	})
 
 	Context("broker meta-tools visibility", func() {

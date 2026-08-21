@@ -492,6 +492,30 @@ deploy-stateless-server: kind-load-stateless-server ## Deploy the stateless test
 	@echo "Waiting for MCPServerRegistration to be ready..."
 	@kubectl wait --for=condition=Ready mcpserverregistration/stateless-server -n mcp-test --timeout=240s
 
+# Build and load user-specific server image
+.PHONY: build-user-specific-server
+build-user-specific-server: ## Build user-specific server Docker image
+	@echo "Building user-specific server image..."
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -f tests/servers/user-specific-server/Dockerfile -t ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest .
+
+.PHONY: kind-load-user-specific-server
+kind-load-user-specific-server: kind build-user-specific-server ## Load user-specific server image into Kind cluster
+	@echo "Loading user-specific server image into Kind cluster..."
+	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-user-specific-server:latest)
+
+.PHONY: deploy-user-specific-server
+deploy-user-specific-server: kind-load-user-specific-server ## Deploy the user-specific test server
+	@echo "Deploying user-specific server..."
+	kubectl apply -f config/test-servers/namespace.yaml
+	kubectl apply -f config/test-servers/user-specific-server-deployment.yaml -n mcp-test
+	@echo "Waiting for user-specific server to be ready..."
+	@kubectl wait --for=condition=Available deployment -n mcp-test -l app=mcp-test-user-specific-server --timeout=$(WAIT_TIME)
+	@echo "Deploying HTTPRoute and MCPServerRegistration for user-specific server..."
+	kubectl apply -f config/test-servers/user-specific-server-httproute.yaml -n mcp-test
+	kubectl apply -f config/test-servers/user-specific-server-mcpserverregistration.yaml
+	@echo "Waiting for MCPServerRegistration to be ready..."
+	@kubectl wait --for=condition=Ready mcpserverregistration/test-user-specific-server -n mcp-test --timeout=240s
+
 # Deploy test servers
 deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local testing
 	@echo "Deploying test MCP servers..."
@@ -762,10 +786,11 @@ local-env-setup: setup-cluster-base ## Setup complete local demo environment wit
 	"$(MAKE)" deploy-gateway
 	"$(MAKE)" deploy-local
 	"${MAKE}" add-jwt-key
-	# Deploy everything server (2025) and stateless server (2026) for dual-protocol demo
+	# Deploy everything server (2025), stateless server (2026), and user-specific server
 	"$(MAKE)" deploy-everything-server
 	"$(MAKE)" deploy-example-minimal
 	"$(MAKE)" deploy-stateless-server
+	"$(MAKE)" deploy-user-specific-server
 	@"$(MAKE)" -s local-env-setup-complete-message
 
 .PHONY: local-env-setup-olm

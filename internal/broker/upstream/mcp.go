@@ -78,9 +78,14 @@ type MCPServer struct {
 
 	// supportedVersions lists protocol versions this upstream supports.
 	// set to the single negotiated version after Connect. future work:
-	// probe 2026 upstreams via server/discover to detect servers that
-	// support both versions.
+	// intercept the SDK's server/discover response to capture the full
+	// SupportedVersions list for dual-version servers.
 	supportedVersions []string
+
+	// intentionalDisconnect is set before session.Close() so that
+	// OnConnectionLost handlers can distinguish planned recycling from
+	// unexpected transport failures.
+	intentionalDisconnect bool
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided
@@ -110,8 +115,9 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 // buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
 // server, with header injection via a custom round tripper. the trust pool is
 // built from system roots, plus the gateway-level CA bundle (if set), plus the
-// per-server CACert (if set).
-func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
+// per-server CACert (if set). the returned discoverCapture intercepts the
+// SDK's server/discover response to capture SupportedVersions.
+func (up *MCPServer) buildHTTPClient() (*http.Client, *discoverCapture, error) {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
 	base.ExpectContinueTimeout = defaultExpectContinueTimeout
@@ -126,12 +132,12 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		}
 		if up.gatewayCACertPEM != "" {
 			if !rootCAs.AppendCertsFromPEM([]byte(up.gatewayCACertPEM)) {
-				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+				return nil, nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
 			}
 		}
 		if up.CACert != "" {
 			if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-				return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+				return nil, nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
 			}
 		}
 		base.TLSClientConfig = &tls.Config{
@@ -140,12 +146,13 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		}
 	}
 
-	return &http.Client{
-		Transport: &toolHintsTee{
+	dc := &discoverCapture{
+		base: &toolHintsTee{
 			base: &transport.HeaderRoundTripper{Base: base, Headers: up.headers},
 			sink: up.storeToolHints,
 		},
-	}, nil
+	}
+	return &http.Client{Transport: dc}, dc, nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
@@ -237,14 +244,15 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // Connect establishes a connection to the upstream MCP server using the
 // official SDK's Client+ClientSession pattern.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
-	up.clientMu.RLock()
+	up.clientMu.Lock()
+	up.intentionalDisconnect = false
 	if up.session != nil {
-		up.clientMu.RUnlock()
+		up.clientMu.Unlock()
 		return nil
 	}
-	up.clientMu.RUnlock()
+	up.clientMu.Unlock()
 
-	httpC, err := up.buildHTTPClient()
+	httpC, dc, err := up.buildHTTPClient()
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
@@ -312,11 +320,16 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
-	// record the negotiated version as the only supported version.
-	// future work: probe 2026 upstreams via server/discover to get
-	// the full SupportedVersions list for dual-version servers.
-	up.supportedVersions = []string{up.init.ProtocolVersion}
-	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", up.init.ProtocolVersion, "uses-stateless", up.UsesStatelessProtocol())
+	negotiated := up.init.ProtocolVersion
+	if captured := dc.Versions(); len(captured) > 0 {
+		up.supportedVersions = captured
+		if !slices.Contains(up.supportedVersions, negotiated) {
+			up.supportedVersions = append(up.supportedVersions, negotiated)
+		}
+	} else {
+		up.supportedVersions = []string{negotiated}
+	}
+	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// 2026 upstreams receive notifications via the SDK's subscriptions/listen
 	// stream (opened automatically because ToolListChangedHandler is set).
@@ -379,6 +392,7 @@ func (up *MCPServer) Disconnect() error {
 	up.clientMu.Lock()
 	defer up.clientMu.Unlock()
 
+	up.intentionalDisconnect = true
 	if up.session != nil {
 		if err := up.session.Close(); err != nil {
 			up.session = nil

@@ -596,7 +596,8 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 				k == "mcp-init-host" ||
 				k == RoutingKey ||
 				k == MCPAuthorizedHeader ||
-				k == MCPVirtualServerHeader {
+				k == MCPVirtualServerHeader ||
+				k == "accept" {
 				continue
 			}
 			passThroughHeaders[key] = val
