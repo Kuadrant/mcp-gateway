@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -380,7 +381,7 @@ func (r *Router202511) routeToUpstream(ctx context.Context, span trace.Span, mcp
 		Authority:    serverInfo.Hostname,
 		Path:         path,
 		SetHeaders:   headers,
-		UnsetHeaders: InternalOnlyHeaders,
+		UnsetHeaders: stripHeadersForUpstream(mcpReq),
 		BodyMutation: body,
 	}
 }
@@ -448,7 +449,7 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 			MCPServerNameHeader: entry.ServerName,
 			"content-length":    fmt.Sprintf("%d", len(body)),
 		},
-		UnsetHeaders: InternalOnlyHeaders,
+		UnsetHeaders: stripHeadersForUpstream(mcpReq),
 		BodyMutation: body,
 	}
 }
@@ -485,7 +486,7 @@ func (r *Router202511) routeBrokerPassthrough(ctx context.Context, mcpReq *MCPRe
 			return &Decision{
 				Authority:    remoteInitializeTarget,
 				SetHeaders:   headers,
-				UnsetHeaders: append([]string{"mcp-init-host", RoutingKey}, InternalOnlyHeaders...),
+				UnsetHeaders: stripHeadersForUpstream(mcpReq),
 			}
 		}
 	}
@@ -541,14 +542,15 @@ func (r *Router202511) initializeMCPServerSession(ctx context.Context, mcpReq *M
 			return id, nil
 		}
 		passThroughHeaders := map[string]string{}
+		browserRequest := mcpReq.GetSingleHeaderValue("origin") != ""
 		for key, val := range mcpReq.Headers {
 			k := strings.ToLower(key)
 			if strings.HasPrefix(k, ":") ||
 				k == SessionHeader ||
 				k == "mcp-init-host" ||
 				k == RoutingKey ||
-				k == MCPAuthorizedHeader ||
-				k == MCPVirtualServerHeader {
+				slices.Contains(InternalOnlyHeaders, k) ||
+				(browserRequest && sharedheaders.IsBrowserHop(k)) {
 				continue
 			}
 			passThroughHeaders[key] = val

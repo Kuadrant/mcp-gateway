@@ -248,6 +248,10 @@ type MCPGatewayExtensionStatus struct {
 	// +patchMergeKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+
+	// mcpEndpoint is the public URL for MCP clients.
+	// +optional
+	MCPEndpoint string `json:"mcpEndpoint,omitempty"`
 }
 
 // +kubebuilder:object:root=true

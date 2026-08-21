@@ -10,7 +10,8 @@ import (
 
 // ResponseBuilder builds envoy external processor responses
 type ResponseBuilder struct {
-	response []*eppb.ProcessingResponse
+	response         []*eppb.ProcessingResponse
+	immediateHeaders []*basepb.HeaderValueOption
 }
 
 // WithRequestHeadersResponse adds a request headers response with header mutations, clears route cache
@@ -94,6 +95,11 @@ func (rb *ResponseBuilder) WithRequestBodySetUnsetHeadersResponse(set []*basepb.
 
 // WithImmediateResponse adds an immediate error response that terminates request processing
 func (rb *ResponseBuilder) WithImmediateResponse(statusCode int32, message string) *ResponseBuilder {
+	headers := make([]*basepb.HeaderValueOption, 0, len(rb.immediateHeaders)+1)
+	headers = append(headers, rb.immediateHeaders...)
+	headers = append(headers, &basepb.HeaderValueOption{
+		Header: &basepb.HeaderValue{Key: "content-type", RawValue: []byte("text/plain")},
+	})
 	rb.response = append(rb.response, &eppb.ProcessingResponse{
 		Response: &eppb.ProcessingResponse_ImmediateResponse{
 			ImmediateResponse: &eppb.ImmediateResponse{
@@ -103,11 +109,7 @@ func (rb *ResponseBuilder) WithImmediateResponse(statusCode int32, message strin
 				Body:    []byte(message),
 				Details: fmt.Sprintf("ext-proc error: %s", message),
 				Headers: &eppb.HeaderMutation{
-					SetHeaders: []*basepb.HeaderValueOption{
-						{
-							Header: &basepb.HeaderValue{Key: "content-type", RawValue: []byte("text/plain")},
-						},
-					},
+					SetHeaders: headers,
 				},
 			},
 		},
@@ -117,7 +119,8 @@ func (rb *ResponseBuilder) WithImmediateResponse(statusCode int32, message strin
 
 // WithImmediateJSONRPCResponse adds an immediate response that terminates request processing.
 func (rb *ResponseBuilder) WithImmediateJSONRPCResponse(statusCode int32, setHeaders []*basepb.HeaderValueOption, message, contentType string) *ResponseBuilder {
-	allHeaders := make([]*basepb.HeaderValueOption, 0, len(setHeaders)+1)
+	allHeaders := make([]*basepb.HeaderValueOption, 0, len(rb.immediateHeaders)+len(setHeaders)+1)
+	allHeaders = append(allHeaders, rb.immediateHeaders...)
 	allHeaders = append(allHeaders, setHeaders...)
 	allHeaders = append(allHeaders, &basepb.HeaderValueOption{
 		Header: &basepb.HeaderValue{Key: "content-type", RawValue: []byte(contentType)},
@@ -189,9 +192,10 @@ func (rb *ResponseBuilder) Build() []*eppb.ProcessingResponse {
 	return rb.response
 }
 
-// NewResponse creates a new response builder
-func NewResponse() *ResponseBuilder {
+// NewResponse creates a new response builder.
+func NewResponse(immediateHeaders ...*basepb.HeaderValueOption) *ResponseBuilder {
 	return &ResponseBuilder{
-		response: []*eppb.ProcessingResponse{},
+		response:         []*eppb.ProcessingResponse{},
+		immediateHeaders: immediateHeaders,
 	}
 }

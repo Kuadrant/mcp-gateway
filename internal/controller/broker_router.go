@@ -364,6 +364,19 @@ func derivePrivateHost(mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *Listen
 	return host
 }
 
+func mcpEndpoint(publicHost string, listenerConfig *ListenerConfig) string {
+	scheme := "http"
+	defaultPort := uint32(80)
+	if strings.EqualFold(listenerConfig.Protocol, "HTTPS") {
+		scheme = "https"
+		defaultPort = 443
+	}
+	if listenerConfig.Port == defaultPort {
+		return fmt.Sprintf("%s://%s/mcp", scheme, publicHost)
+	}
+	return fmt.Sprintf("%s://%s:%d/mcp", scheme, publicHost, listenerConfig.Port)
+}
+
 func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *ListenerConfig, gatewayClassName string) (bool, error) {
 	// derive values from listener config before building resources
 	publicHost, err := derivePublicHost(listenerConfig, mcpExt.Spec.PublicHost)
@@ -371,6 +384,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		return false, newValidationError(mcpv1.ConditionReasonInvalid, err.Error())
 	}
 	internalHost := derivePrivateHost(mcpExt, listenerConfig, gatewayClassName)
+
+	mcpExt.Status.MCPEndpoint = mcpEndpoint(publicHost, listenerConfig)
 
 	// reconcile service account (must exist before deployment)
 	serviceAccount := r.buildBrokerRouterServiceAccount(mcpExt)

@@ -88,6 +88,10 @@ func TestRouter202607_ToolCallWithoutPrefix(t *testing.T) {
 	require.Nil(t, decision.BodyMutation)
 	require.Contains(t, decision.UnsetHeaders, MCPAuthorizedHeader)
 	require.Contains(t, decision.UnsetHeaders, MCPVirtualServerHeader)
+	require.Contains(t, decision.UnsetHeaders, "mcp-init-host")
+	require.Contains(t, decision.UnsetHeaders, RoutingKey)
+	require.NotContains(t, decision.UnsetHeaders, "origin")
+	require.NotContains(t, decision.UnsetHeaders, "cookie")
 }
 
 func TestRouter202607_ToolCallWithPrefix(t *testing.T) {

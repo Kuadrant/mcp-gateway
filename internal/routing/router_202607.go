@@ -145,7 +145,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		Authority:    serverInfo.Hostname,
 		Path:         path,
 		SetHeaders:   headers,
-		UnsetHeaders: InternalOnlyHeaders,
+		UnsetHeaders: stripHeadersForUpstream(req.Parsed),
 		BodyMutation: bodyMutation,
 	}
 }
@@ -215,7 +215,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		Authority:    serverInfo.Hostname,
 		Path:         path,
 		SetHeaders:   headers,
-		UnsetHeaders: InternalOnlyHeaders,
+		UnsetHeaders: stripHeadersForUpstream(req.Parsed),
 		BodyMutation: bodyMutation,
 	}
 }

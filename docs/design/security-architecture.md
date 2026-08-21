@@ -56,9 +56,9 @@ MCP Client
 |----------|---------------|
 | Client → Gateway | Bearer token, MCP JSON-RPC body, custom headers |
 | Gateway → Router (ext_proc) | Request headers, buffered body |
-| Gateway → Upstream MCP Server | All client headers, MCP JSON-RPC body |
+| Gateway → Upstream MCP Server | Client headers excluding gateway-internal headers and, for browser requests, browser-hop headers; MCP JSON-RPC body |
 | Gateway → Broker | MCP JSON-RPC body, gateway session JWT, `x-mcp-authorized` signed header |
-| Broker → Upstream (per-user fetch) | Client `Authorization` header; gateway-scoped credentials (`cookie`, `proxy-authorization`) stripped |
+| Broker → Upstream (per-user fetch) | Client `Authorization` header; gateway-scoped credentials and browser-hop headers from browser requests stripped |
 | Upstream MCP Server → Client | MCP JSON-RPC response body (streamed as-is), backend session IDs (rewritten to gateway session IDs) |
 
 ### Information shared with upstream MCP servers (model providers)
@@ -66,7 +66,7 @@ MCP Client
 When an MCP server sits in front of an LLM or model provider, the following data reaches it:
 
 - The full MCP JSON-RPC request body, including tool arguments
-- All client headers, barring those specifically managed by the gateway (e.g., `mcp-session-id`, pseudo-headers). This includes the `Authorization` header — the original bearer token is forwarded unless token exchange is configured, in which case a scoped token replaces it
+- Client headers except gateway-internal headers. Browser requests also drop browser-hop headers (`Origin`, `Referer`, `Cookie`, and `Sec-Fetch-*`). The `Authorization` header is forwarded unless token exchange replaces it with a scoped token
 
 The gateway does not add user identity claims, PII, or conversation context beyond what the client includes in the MCP request body.
 
@@ -92,10 +92,10 @@ The gateway is NOT responsible for:
 - The router (`internal/mcp-router/`) never accesses `credentialRef` values; it only reads routing headers and the JSON-RPC method/tool name from the request body
 - The broker (`internal/broker/`) never writes `credentialRef` values to client-facing responses, logs, or headers forwarded through Envoy
 - The controller (`internal/controller/`) scopes generated Secrets to the operator namespace and sets owner references for garbage collection. The controller's ClusterRole grants cluster-wide secrets access, but the informer cache is filtered by label (`mcp.kuadrant.io/secret: "true"`) to limit the working set
-- Routing headers set by the router (tool name, session ID, server name) are derived from parsed JSON-RPC bodies or gateway-issued JWTs, not from raw client input. Client-supplied headers are proxied through to upstream backends as-is — header filtering is the responsibility of the gateway HTTPRoute configuration and AuthPolicy
-- The router strips or rewrites gateway-internal headers (`mcp-session-id`, `mcp-init-host`, `router-key`) before traffic reaches upstream backends
+- Routing headers set by the router (tool name, session ID, server name) are derived from parsed JSON-RPC bodies or gateway-issued JWTs, not from raw client input. Other client-supplied headers are proxied unless explicitly stripped by the router or replaced by AuthPolicy
+- The router strips or rewrites gateway-internal headers (`mcp-session-id`, `mcp-init-host`, `router-key`, `x-mcp-authorized`, `x-mcp-virtualserver`, `x-mcp-verified-sub`) and strips browser-hop headers (`Origin`, `Referer`, `Cookie`, `Sec-Fetch-*`) from browser requests before traffic reaches upstream backends
 - **`cacheScope` correctness**: the broker uses pessimistic aggregation — any upstream with `cacheScope: "private"`, `ttlMs: 0`, or CRD `userSpecificList: true` makes the entire `tools/list` response `"private"`. Wrong `"public"` on a response containing per-user tools would leak tool lists across users. `cacheScope: "private"` triggers per-user fetching automatically, superseding the CRD field for 2026 upstreams
-- **User-specific fetch credential isolation**: when the broker fetches per-user tools from upstreams, `filterUserHeaders` strips gateway-scoped credentials (`cookie`, `proxy-authorization`) and transport headers (`content-type`, `mcp-session-id`, etc.) before forwarding. The client's `Authorization` header is preserved for upstream authentication
+- **User-specific fetch credential isolation**: when the broker fetches per-user tools from upstreams, `filterUserHeaders` strips gateway-scoped credentials, transport headers (`content-type`, `mcp-session-id`, etc.), and browser-hop headers from browser requests before forwarding. The client's `Authorization` header is preserved for upstream authentication
 
 ## Authentication and Authorization
 
@@ -204,12 +204,12 @@ Context pollution — where untrusted data from one tool call influences subsequ
 |------|----------|---------------|------------|
 | No payload-level prompt injection detection | Medium | By design — gateway for tool calls is just a routing layer | Use prompt guard tooling alongside the gateway |
 | Tool responses streamed as-is from backends | Medium | By design | Upstream servers must validate outputs; prompt guards can inspect, reject, modify responses |
-| Client custom headers forwarded to backends | Low | `mcp-session-id` replaced with specific target mcp backend session; `mcp-init-host` and `router-key` are stripped by the router before traffic reaches a backend | Review header forwarding policy if backends are untrusted |
+| Client custom headers forwarded to backends | Low | Gateway-internal headers are stripped; browser-hop headers are also stripped from browser requests; the backend session ID replaces `mcp-session-id` | Review the remaining header forwarding policy if backends are untrusted |
 | No response size limits on SSE streams | Low | Not implemented | Envoy buffer limits and timeouts provide partial mitigation |
 | JWT signing key absent | High | Mitigated | The broker/router refuses to start if `GATEWAY_SIGNING_KEY` is not set. In controller-managed deployments the controller generates a 32-byte random key and injects it via `env.valueFrom.secretKeyRef` ([#714](https://github.com/Kuadrant/mcp-gateway/issues/714)). |
 | Hairpin backend-init request bypass | Critical | Mitigated (GHSA-g53w-w6mj-hrpp) | The router only accepts an `mcp-init-host` rewrite when accompanied by a short-lived JWT (30s, `aud=mcp-router`, `purpose=backend-init`, host-bound, `jti`) signed by the gateway's HMAC session signing key. The static `--mcp-router-key` flag and `MCP_ROUTER_API_KEY` env var have been removed. |
 | MCPVirtualServer only hides tools from listing, does not prevent calling | Medium | By design — virtual servers filter tools/list but authorized clients can still call any tool directly | Use AuthPolicy with tool-level RBAC to enforce access control; virtual servers control visibility, not authorization. Document this clearly in virtual server docs |
-| Client OAuth tokens forwarded to backends without token exchange | Medium | By design — all headers forwarded | Configure token exchange via AuthPolicy to replace client tokens with scoped tokens |
+| Client OAuth tokens forwarded to backends without token exchange | Medium | By design — `Authorization` is forwarded | Configure token exchange via AuthPolicy to replace client tokens with scoped tokens |
 | TLS configurations are not included in examples | Low | Relies on infrastructure layer | Deploy behind Istio or configure TLS on Gateway listeners for production |
 
 ## Recommendations for Secure Deployment
