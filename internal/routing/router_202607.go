@@ -94,6 +94,19 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		span.SetAttributes(attribute.String("mcp.route", "broker-unknown-tool"))
 		return r.routeBrokerPassthrough(ctx, req)
 	}
+
+	if !route.Stateless {
+		r.Logger.DebugContext(ctx, "stateful-only backend, rejecting from 2026 router", "toolName", toolName, "server", route.Name)
+		span.SetStatus(codes.Error, "tool not available for stateless protocol")
+		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		return &Decision{
+			Error: &Error{
+				StatusCode:  200,
+				JSONRPCErr:  BuildJSONToolError(req.RequestID, "MCP error -32602: Tool not found"),
+				ContentType: "application/json",
+			},
+		}
+	}
 	serverInfo := routeToMCPServer(route)
 
 	span.SetAttributes(
@@ -182,6 +195,20 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 			},
 		}
 	}
+
+	if !route.Stateless {
+		r.Logger.DebugContext(ctx, "stateful-only backend, rejecting from 2026 router", "promptName", promptName, "server", route.Name)
+		span.SetStatus(codes.Error, "prompt not available for stateless protocol")
+		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		return &Decision{
+			Error: &Error{
+				StatusCode:  200,
+				JSONRPCErr:  BuildJSONToolError(req.RequestID, "MCP error -32602: Prompt not found"),
+				ContentType: "application/json",
+			},
+		}
+	}
+
 	serverInfo := routeToMCPServer(route)
 
 	span.SetAttributes(

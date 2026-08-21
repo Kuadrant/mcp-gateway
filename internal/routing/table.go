@@ -25,6 +25,8 @@ type ServerRoute struct {
 	URL                 string
 	TokenURLElicitation *TokenURLElicitationRoute
 	UserSpecificList    bool
+	Stateless           bool // true when the upstream supports the 2026-07-28 stateless protocol
+	Stateful            bool // true when the upstream supports the 2025-11-25 stateful protocol
 }
 
 // TokenURLElicitationRoute holds the URL elicitation config relevant to routing.

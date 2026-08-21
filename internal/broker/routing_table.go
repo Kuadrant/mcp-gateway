@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
@@ -17,6 +18,10 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 			Prefix:           cfg.Prefix,
 			URL:              cfg.URL,
 			UserSpecificList: cfg.UserSpecificList,
+			// dual-protocol servers have both set to true; each router
+			// checks its own flag independently
+			Stateless: up.SupportsVersion(protocol.Version2026),
+			Stateful:  up.SupportsVersion(protocol.Version2025),
 		}
 		if p, err := cfg.Path(); err == nil {
 			route.Path = p

@@ -82,7 +82,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server25.Name, server25.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-		By("Registering a 2026-only server (stateless-server)")
+		By("Registering a dual-protocol server (stateless-server, supports 2025+2026)")
 		reg26 := NewTestResources("dp-stateless", k8sClient).
 			InNamespace(dualProtoNamespace).
 			WithBackendTarget("mcp-test-stateless-server", 9090).
@@ -151,7 +151,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 	}
 
 	Context("protocol-filtered tools/list", func() {
-		It("[Happy,DualProtocol] 2026 client sees only stateless backend tools", func() {
+		It("[Happy,DualProtocol] 2026 client sees only 2026-capable backend tools", func() {
 			c := newStatelessClient()
 			defer func() { _ = c.Close() }()
 
@@ -170,7 +170,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			})).To(BeFalse(), "2026 client should NOT see sf_ (stateful) tools")
 		})
 
-		It("[Happy,DualProtocol] 2025 client sees only stateful backend tools", func() {
+		It("[Happy,DualProtocol] 2025 client sees stateful and dual-protocol backend tools", func() {
 			c := newStatefulClient()
 			defer func() { _ = c.Close() }()
 
@@ -183,11 +183,13 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(slices.ContainsFunc(names, func(n string) bool {
 					return strings.HasPrefix(n, "sf_")
 				})).To(BeTrue(), "2025 client should see sf_ tools")
+				// stateless-server uses StreamableHTTP with Stateless:true, so the
+				// SDK reports supportedVersions for both 2025 and 2026 — a 2025
+				// client sees sl_ tools too.
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "2025 client should see sl_ tools (dual-protocol server)")
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "sl_")
-			})).To(BeFalse(), "2025 client should NOT see sl_ (stateless) tools")
 		})
 
 		It("[Happy,DualProtocol] 2025 client can call tools on stateful backend", func() {
@@ -229,14 +231,67 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 		})
 	})
 
-	// blocked: broker currently records only the negotiated version per upstream
-	// (upstream/mcp.go:292). dual-version detection requires a server/discover
-	// probe after connect to get the full SupportedVersions list.
-	PIt("[DualProtocol] dual-version server tools visible to both clients", func() {
-		// register a backend that supports both protocol versions
-		// (returns ["2025-11-25", "2026-07-28"] in server/discover supportedVersions)
-		// connect a 2025 client — sees the server's tools
-		// connect a 2026 client — also sees the server's tools
+	It("[DualProtocol] dual-version server tools visible to both clients", func() {
+		By("Registering a dual-protocol backend (user-specific test server, Stateless: true)")
+		reg := NewTestResources("dp-dual", k8sClient).
+			InNamespace(dualProtoNamespace).
+			WithBackendTarget("mcp-test-user-specific-server", 9090).
+			WithBackendNamespace(TestServerNameSpace).
+			WithHostname(protocol2026ServerHost("dual")).
+			WithPrefix("dual_").
+			WithSectionName(Protocol2026ListenerName).
+			WithParentGateway(GatewayName, GatewayNamespace).
+			Build()
+		defer func() {
+			for _, obj := range reg.GetObjects() {
+				CleanupResource(ctx, k8sClient, obj)
+			}
+		}()
+		server := reg.Register(ctx)
+
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2026 client sees dual_ tools")
+		c26 := newStatelessClient()
+		defer func() { _ = c26.Close() }()
+
+		Eventually(func(g Gomega) {
+			result, err := c26.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+				return strings.HasPrefix(n, "dual_")
+			})).To(BeTrue(), "2026 client should see dual_ tools")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2026 client can call dual_server_info")
+		res26, err := c26.CallTool(ctx, &mcp.CallToolParams{Name: "dual_server_info"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res26.Content).NotTo(BeEmpty())
+		text26, ok := res26.Content[0].(*mcp.TextContent)
+		Expect(ok).To(BeTrue())
+		Expect(text26.Text).To(ContainSubstring("server=user-specific-test-server"))
+
+		By("2025 client sees dual_ tools")
+		c25 := newStatefulClient()
+		defer func() { _ = c25.Close() }()
+
+		Eventually(func(g Gomega) {
+			result, err := c25.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+				return strings.HasPrefix(n, "dual_")
+			})).To(BeTrue(), "2025 client should see dual_ tools")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+
+		By("2025 client can call dual_server_info")
+		res25, err := c25.CallTool(ctx, &mcp.CallToolParams{Name: "dual_server_info"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res25.Content).NotTo(BeEmpty())
+		text25, ok := res25.Content[0].(*mcp.TextContent)
+		Expect(ok).To(BeTrue())
+		Expect(text25.Text).To(ContainSubstring("server=user-specific-test-server"))
 	})
 
 	Context("broker meta-tools visibility", func() {
@@ -312,7 +367,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 
-		It("[DualProtocol,UserSpecificList] 2025 client does not see tools from 2026-only UserSpecificList server", func() {
+		It("[DualProtocol,UserSpecificList] 2025 client sees tools from dual-protocol UserSpecificList server", func() {
 			reg := NewTestResources("dp-uspec-cross", k8sClient).
 				InNamespace(dualProtoNamespace).
 				WithBackendTarget("mcp-test-stateless-server", 9090).
@@ -334,24 +389,27 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			By("confirming ucross_ tools are visible via a 2026 client before testing 2025 filtering")
+			By("confirming ucross_ tools are visible via a 2026 client")
 			slC := newStatelessClient()
 			defer func() { _ = slC.Close() }()
 			waitForToolsWithPrefix(slC, "ucross_")
 
-			By("2025 client should not see tools from a 2026-only UserSpecificList server")
+			// stateless-server with Stateless:true reports supportedVersions for
+			// both 2025 and 2026, so a 2025 client sees ucross_ tools too.
+			By("2025 client sees ucross_ tools from dual-protocol server")
 			c := newStatefulClient()
 			defer func() { _ = c.Close() }()
 
-			// wait for the stateful tools to load (sf_ from BeforeAll)
 			waitForToolsWithPrefix(c, "sf_")
 
-			result, err := c.ListTools(ctx, nil)
-			Expect(err).NotTo(HaveOccurred())
-			names := toolNames(result.Tools)
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "ucross_")
-			})).To(BeFalse(), "2025 client should NOT see ucross_ tools from 2026-only server, got: %v", names)
+			Eventually(func(g Gomega) {
+				result, err := c.ListTools(ctx, nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				names := toolNames(result.Tools)
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "ucross_")
+				})).To(BeTrue(), "2025 client should see ucross_ tools from dual-protocol server, got: %v", names)
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 	})
 
@@ -454,7 +512,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 	Context("protocol-specific routes", func() {
 		statefulURL := strings.TrimSuffix(dpURL, "/mcp") + "/mcp/stateful"
 
-		It("[Happy,DualProtocol] /mcp/stateful returns only 2025 tools", func() {
+		It("[Happy,DualProtocol] /mcp/stateful returns 2025-compatible tools", func() {
 			var c *mcp.ClientSession
 			Eventually(func(g Gomega) {
 				var err error
@@ -463,21 +521,20 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 			defer func() { _ = c.Close() }()
 
-			var names []string
 			Eventually(func(g Gomega) {
 				result, err := c.ListTools(ctx, nil)
 				g.Expect(err).NotTo(HaveOccurred())
-				names = toolNames(result.Tools)
+				names := toolNames(result.Tools)
 				g.Expect(slices.ContainsFunc(names, func(n string) bool {
 					return strings.HasPrefix(n, "sf_")
 				})).To(BeTrue(), "/mcp/stateful should return sf_ tools")
+				// stateless-server is dual-protocol, so sl_ tools appear for 2025 clients too
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "/mcp/stateful should return sl_ tools (dual-protocol server)")
+				g.Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
+					"/mcp/stateful should include discover_tools")
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "sl_")
-			})).To(BeFalse(), "/mcp/stateful should NOT return sl_ tools")
-			Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
-				"/mcp/stateful should include discover_tools")
 		})
 
 		It("[DualProtocol] /mcp/stateful tools/call succeeds", func() {

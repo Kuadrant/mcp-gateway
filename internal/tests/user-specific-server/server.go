@@ -118,6 +118,7 @@ func RunServer(port string) (StartupFunc, ShutdownFunc, error) {
 	}
 
 	handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{
+		Stateless:                  true,
 		DisableLocalhostProtection: true,
 	})
 	mux.Handle("/mcp", handler)
