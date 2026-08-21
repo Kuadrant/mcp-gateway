@@ -32,6 +32,7 @@ func (a *app) createBroker() {
 		broker.WithDiscoveryToolsEnabled(a.brokerCfg.discoveryToolsEnabled),
 		broker.WithDiscoveryToolThreshold(a.brokerCfg.discoveryToolThreshold),
 		broker.WithSessionCache(a.sessionCache),
+		broker.WithVersion(version),
 	}
 	if a.jwtMgr != nil {
 		brokerOpts = append(brokerOpts,
