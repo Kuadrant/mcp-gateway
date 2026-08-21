@@ -61,16 +61,33 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Creating a client with user-a auth")
-		userAClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
+		By("Creating a 2026 (stateless) client with user-a auth")
+		statelessClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		defer func() { _ = userAClient.Close() }()
+		defer func() { _ = statelessClient.Close() }()
 
-		By("Verifying user-a sees both standard and user-specific tools")
+		By("Verifying user-a sees both standard and user-specific tools via 2026 client")
 		Eventually(func(g Gomega) {
-			toolsList, err := userAClient.ListTools(ctx, nil)
+			toolsList, err := statelessClient.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard server tools should be present"))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(uspecServer.Spec.Prefix, toolsList)).To(BeTrueBecause("user-specific tools should be present"))
+			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_list_repos", toolsList)).To(BeTrueBecause("user-a should see list_repos"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating a 2025 (stateful) client with user-a auth")
+		statefulClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"Authorization": "Bearer user-a-token",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = statefulClient.Close() }()
+
+		By("Verifying user-a sees both standard and user-specific tools via 2025 client")
+		Eventually(func(g Gomega) {
+			toolsList, err := statefulClient.ListTools(ctx, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard server tools should be present"))
