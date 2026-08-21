@@ -367,7 +367,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 
-		It("[DualProtocol,UserSpecificList] 2025 client does not see tools from 2026-only UserSpecificList server", func() {
+		It("[DualProtocol,UserSpecificList] 2025 client sees tools from dual-protocol UserSpecificList server", func() {
 			reg := NewTestResources("dp-uspec-cross", k8sClient).
 				InNamespace(dualProtoNamespace).
 				WithBackendTarget("mcp-test-stateless-server", 9090).
@@ -389,24 +389,27 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server.Name, server.Namespace)).To(Succeed())
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			By("confirming ucross_ tools are visible via a 2026 client before testing 2025 filtering")
+			By("confirming ucross_ tools are visible via a 2026 client")
 			slC := newStatelessClient()
 			defer func() { _ = slC.Close() }()
 			waitForToolsWithPrefix(slC, "ucross_")
 
-			By("2025 client should not see tools from a 2026-only UserSpecificList server")
+			// stateless-server with Stateless:true reports supportedVersions for
+			// both 2025 and 2026, so a 2025 client sees ucross_ tools too.
+			By("2025 client sees ucross_ tools from dual-protocol server")
 			c := newStatefulClient()
 			defer func() { _ = c.Close() }()
 
-			// wait for the stateful tools to load (sf_ from BeforeAll)
 			waitForToolsWithPrefix(c, "sf_")
 
-			result, err := c.ListTools(ctx, nil)
-			Expect(err).NotTo(HaveOccurred())
-			names := toolNames(result.Tools)
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "ucross_")
-			})).To(BeFalse(), "2025 client should NOT see ucross_ tools from 2026-only server, got: %v", names)
+			Eventually(func(g Gomega) {
+				result, err := c.ListTools(ctx, nil)
+				g.Expect(err).NotTo(HaveOccurred())
+				names := toolNames(result.Tools)
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "ucross_")
+				})).To(BeTrue(), "2025 client should see ucross_ tools from dual-protocol server, got: %v", names)
+			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		})
 	})
 
@@ -509,7 +512,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 	Context("protocol-specific routes", func() {
 		statefulURL := strings.TrimSuffix(dpURL, "/mcp") + "/mcp/stateful"
 
-		It("[Happy,DualProtocol] /mcp/stateful returns only 2025 tools", func() {
+		It("[Happy,DualProtocol] /mcp/stateful returns 2025-compatible tools", func() {
 			var c *mcp.ClientSession
 			Eventually(func(g Gomega) {
 				var err error
@@ -518,21 +521,20 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 			defer func() { _ = c.Close() }()
 
-			var names []string
 			Eventually(func(g Gomega) {
 				result, err := c.ListTools(ctx, nil)
 				g.Expect(err).NotTo(HaveOccurred())
-				names = toolNames(result.Tools)
+				names := toolNames(result.Tools)
 				g.Expect(slices.ContainsFunc(names, func(n string) bool {
 					return strings.HasPrefix(n, "sf_")
 				})).To(BeTrue(), "/mcp/stateful should return sf_ tools")
+				// stateless-server is dual-protocol, so sl_ tools appear for 2025 clients too
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "/mcp/stateful should return sl_ tools (dual-protocol server)")
+				g.Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
+					"/mcp/stateful should include discover_tools")
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "sl_")
-			})).To(BeFalse(), "/mcp/stateful should NOT return sl_ tools")
-			Expect(slices.Contains(names, "discover_tools")).To(BeTrue(),
-				"/mcp/stateful should include discover_tools")
 		})
 
 		It("[DualProtocol] /mcp/stateful tools/call succeeds", func() {
