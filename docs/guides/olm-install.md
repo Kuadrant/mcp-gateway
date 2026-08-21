@@ -9,33 +9,28 @@ deploys it on startup. This is the consolidated (umbrella) model described in
 [RFC 0019](https://github.com/Kuadrant/architecture/pull/189).
 
 > **Note:** If you are not using OLM, install MCP Gateway standalone with Helm — see
-> [Installing and Configuring MCP Gateway](./how-to-install-and-configure.md). Helm is the
-> preferred way to run MCP Gateway standalone.
+> [Installing and Configuring MCP Gateway](./how-to-install-and-configure.md).
 >
 > If you previously installed MCP Gateway via its own OLM subscription and want to move to the
 > Kuadrant Operator, follow
-> [Upgrading from Standalone MCP Gateway to the Kuadrant Operator](./olm-upgrade.md) instead —
-> that path is zero-downtime.
+> [Upgrading from Standalone MCP Gateway to the Kuadrant Operator](./olm-upgrade.md) instead.
 
 ## Prerequisites
 
 - A cluster with OLM. OpenShift includes OLM by default; on other Kubernetes distributions,
   install OLM first.
 - Gateway API CRDs and an Istio-based Gateway API provider installed.
-- A catalog source that provides a Kuadrant Operator version which bundles MCP Gateway. Your
-  cluster administrator or the Kuadrant release notes will tell you which version and catalog to
-  use.
+- A catalog source providing a Kuadrant Operator version that bundles MCP Gateway.
 
 > **Note:** Throughout this guide, `mcp-system` is the namespace where the operator and its
 > `OperatorGroup` live. Substitute your own namespace if different.
 
 ## Step 1: Install the Kuadrant Operator
 
-Create an `OperatorGroup` and a `Subscription` for the Kuadrant Operator. Use the catalog source
-and channel provided by your administrator or the release notes.
+Create an `OperatorGroup` and a `Subscription` for the Kuadrant Operator.
 
 ```bash
-oc apply -f - <<EOF
+kubectl apply -f - <<EOF
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
@@ -51,38 +46,40 @@ spec:
   channel: <channel>
   name: kuadrant-operator
   source: <catalog-source>
-  sourceNamespace: openshift-marketplace
+  sourceNamespace: <catalog-namespace>
   installPlanApproval: Automatic
 EOF
 ```
+
+> **Note:** `<catalog-namespace>` is the namespace of your catalog source: `openshift-marketplace`
+> on OpenShift, `olm` on most other OLM installs.
 
 Wait for the operator's ClusterServiceVersion (CSV) to succeed. The CSV may take a moment to
 appear while OLM processes the subscription:
 
 ```bash
-oc get csv -n mcp-system -w
+kubectl get csv -n mcp-system -w
 # kuadrant-operator.<version>   ...   Succeeded
 ```
 
-If `oc get csv` returns nothing at first, wait a few seconds and retry — the CSV has not been
+If `kubectl get csv` returns nothing at first, wait a few seconds and retry — the CSV has not been
 created yet.
 
 ## Step 2: Verify the MCP Gateway controller is running
 
-The Kuadrant Operator deploys the MCP Gateway controller unconditionally on startup, alongside
-its other component controllers. No `Kuadrant` custom resource is required for the controller to
-run. (A `Kuadrant` CR is only needed later if you want to apply `AuthPolicy` or
+The Kuadrant Operator deploys the MCP Gateway controller on startup, without requiring a
+`Kuadrant` custom resource. (A `Kuadrant` CR is only needed later to apply `AuthPolicy` or
 `RateLimitPolicy`.)
 
 ```bash
 # The MCP CRDs are installed and owned by the Kuadrant Operator CSV
-oc get crd | grep mcp.kuadrant.io
+kubectl get crd | grep mcp.kuadrant.io
 # mcpgatewayextensions.mcp.kuadrant.io
 # mcpserverregistrations.mcp.kuadrant.io
 # mcpvirtualservers.mcp.kuadrant.io
 
 # The MCP Gateway controller is running
-oc get deployment mcp-gateway-controller -n mcp-system
+kubectl get deployment mcp-gateway-controller -n mcp-system
 # READY 1/1
 ```
 
@@ -94,7 +91,7 @@ reconciles it and creates the broker-router `Deployment`, `Service`, `HTTPRoute`
 `EnvoyFilter` on the Gateway.
 
 ```bash
-oc apply -f - <<EOF
+kubectl apply -f - <<EOF
 apiVersion: mcp.kuadrant.io/v1alpha1
 kind: MCPGatewayExtension
 metadata:
@@ -111,14 +108,14 @@ EOF
 Verify the extension becomes Ready and the broker-router is running:
 
 ```bash
-oc get mcpgatewayextension -n mcp-system
+kubectl get mcpgatewayextension -n mcp-system
 # READY True
 
-oc get deployment mcp-gateway -n mcp-system
+kubectl get deployment mcp-gateway -n mcp-system
 # READY 1/1
 ```
 
-> **Note:** For richer deployment options — multiple isolated instances, cross-namespace Gateway
+> **Note:** For more deployment options — multiple isolated instances, cross-namespace Gateway
 > references with `ReferenceGrant`, session storage, and listener configuration — see
 > [Isolated Gateway Deployment](./isolated-gateway-deployment.md) and
 > [Configure MCP Gateway Listener and Router](./configure-mcp-gateway-listener-and-router.md).
@@ -131,11 +128,11 @@ it.
 
 ```bash
 # Remove the data plane (controller must still be running to clear finalizers)
-oc delete mcpgatewayextension --all -n mcp-system
+kubectl delete mcpgatewayextension --all -n mcp-system
 
 # Remove the operator
-oc delete subscription kuadrant-operator -n mcp-system
-oc delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-system
+kubectl delete subscription kuadrant-operator -n mcp-system
+kubectl delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-system
 ```
 
 > **Note:** OLM does not delete CRDs when a CSV is removed. Delete the MCP CRDs manually only if
