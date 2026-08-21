@@ -82,11 +82,6 @@ type MCPServer struct {
 
 	// supportedVersions lists protocol versions this upstream supports.
 	supportedVersions []string
-
-	// intentionalDisconnect is set before session.Close() so that
-	// OnConnectionLost handlers can distinguish planned recycling from
-	// unexpected transport failures.
-	intentionalDisconnect bool
 }
 
 // NewUpstreamMCP creates a new MCPServer instance from the provided
@@ -246,7 +241,6 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // official SDK's Client+ClientSession pattern.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.clientMu.Lock()
-	up.intentionalDisconnect = false
 	if up.session != nil {
 		up.clientMu.Unlock()
 		return nil
@@ -393,7 +387,6 @@ func (up *MCPServer) Disconnect() error {
 	up.clientMu.Lock()
 	defer up.clientMu.Unlock()
 
-	up.intentionalDisconnect = true
 	if up.session != nil {
 		if err := up.session.Close(); err != nil {
 			up.session = nil

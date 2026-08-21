@@ -233,7 +233,7 @@ type MCPManager struct {
 	// routing table (e.g. userSpecificList servers that don't add tools to
 	// the gateway server and therefore never trigger onTableChange).
 	onConnect    func()
-	lastVersions string
+	lastVersions []string
 
 	// toolEvents, promptEvents, and reconnectEvents funnel notifications into
 	// the Start() loop. Separate channels with buffer of 1 each ensure one
@@ -512,9 +512,9 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.consecutiveFailures = 0
 	man.logger.Info("upstream negotiated", "upstream", man.mcp.ID(), "supported-versions", man.mcp.SupportedVersions())
 	if man.onConnect != nil {
-		vk := fmt.Sprintf("%v", man.mcp.SupportedVersions())
-		if vk != man.lastVersions {
-			man.lastVersions = vk
+		versions := slices.Sorted(slices.Values(man.mcp.SupportedVersions()))
+		if !slices.Equal(versions, man.lastVersions) {
+			man.lastVersions = versions
 			man.onConnect()
 		}
 	}

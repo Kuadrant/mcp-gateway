@@ -76,6 +76,8 @@ func isDiscoverRequest(req *http.Request) bool {
 	return json.Unmarshal(body, &env) == nil && env.Method == "server/discover"
 }
 
+const maxDiscoverResponseBytes = 64 * 1024
+
 // discoverTeeBody accumulates the discover response while the SDK reads it,
 // then extracts SupportedVersions on EOF/Close.
 type discoverTeeBody struct {
@@ -88,8 +90,9 @@ type discoverTeeBody struct {
 
 func (b *discoverTeeBody) Read(p []byte) (int, error) {
 	n, err := b.rc.Read(p)
-	if n > 0 {
-		b.buf.Write(p[:n])
+	if n > 0 && b.buf.Len() < maxDiscoverResponseBytes {
+		remaining := min(n, maxDiscoverResponseBytes-b.buf.Len())
+		b.buf.Write(p[:remaining])
 	}
 	if err == io.EOF {
 		b.harvest()

@@ -272,7 +272,7 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: "\nevent: message\ndata: {\"error\":{\"code\":-32602,\"message\":\"Prompt not found\"},\"jsonrpc\":\"2.0\"}\n\n",
+				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Prompt not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
