@@ -1193,6 +1193,28 @@ func TestDerivePrivateHost(t *testing.T) {
 	}
 }
 
+func TestMCPEndpoint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		listener ListenerConfig
+		want     string
+	}{
+		{name: "default HTTP port", listener: ListenerConfig{Protocol: "HTTP", Port: 80}, want: "http://mcp.example.com/mcp"},
+		{name: "default HTTPS port", listener: ListenerConfig{Protocol: "HTTPS", Port: 443}, want: "https://mcp.example.com/mcp"},
+		{name: "non-default HTTP port", listener: ListenerConfig{Protocol: "HTTP", Port: 8001}, want: "http://mcp.example.com:8001/mcp"},
+		{name: "non-default HTTPS port", listener: ListenerConfig{Protocol: "HTTPS", Port: 8443}, want: "https://mcp.example.com:8443/mcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mcpEndpoint("mcp.example.com", &tt.listener); got != tt.want {
+				t.Fatalf("mcpEndpoint() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindListenerConfig(t *testing.T) {
 	hostname := gatewayv1.Hostname("mcp.example.com")
 	wildcardHostname := gatewayv1.Hostname("*.example.com")

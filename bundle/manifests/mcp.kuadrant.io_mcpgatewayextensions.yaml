@@ -345,6 +345,9 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              mcpEndpoint:
+                description: mcpEndpoint is the public URL for MCP clients.
+                type: string
             type: object
         required:
         - spec

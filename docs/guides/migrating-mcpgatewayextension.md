@@ -94,7 +94,7 @@ spec:
     sectionName: mcp
 ```
 
-This is useful when your HTTPRoute includes custom configuration such as CORS headers, additional path rules, or OAuth well-known endpoints that the auto-generated route does not include.
+This is useful when your HTTPRoute includes custom configuration such as additional path rules, backends, or filters that the auto-generated route does not include.
 
 > **Important:** Setting `httpRouteManagement: Disabled` prevents the controller from creating or updating the HTTPRoute, but does not delete a previously auto-created `mcp-gateway-route`. You must delete it manually once your custom HTTPRoute is in place:
 > ```bash
@@ -193,4 +193,3 @@ spec:
 | `kuadrant.io/alpha-disable-httproute` | `spec.httpRouteManagement` | `"true"` becomes `Disabled`, default is `Enabled` |
 | `kuadrant.io/alpha-gateway-listener-port` | removed | port is derived from `sectionName` listener |
 | (new) | `spec.privateHost` | overrides internal host for hair-pinning |
-

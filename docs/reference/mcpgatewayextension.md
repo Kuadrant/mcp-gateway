@@ -82,6 +82,7 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | **Field** | **Type** | **Description** |
 |-----------|----------|-----------------|
 | `conditions` | [][Kubernetes meta/v1.Condition](https://pkg.go.dev/k8s.io/apimachinery/pkg/apis/meta/v1#Condition) | List of conditions that define the status of the resource |
+| `mcpEndpoint` | String | The public MCP endpoint derived from the targeted listener, including a non-default listener port |
 
 ### Conditions
 

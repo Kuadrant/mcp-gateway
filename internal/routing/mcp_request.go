@@ -81,6 +81,16 @@ var MCPVerifiedSubHeader = sharedheaders.VerifiedSubHeader
 // and routing that must be stripped before forwarding to upstream MCP servers.
 var InternalOnlyHeaders = []string{MCPAuthorizedHeader, MCPVirtualServerHeader, MCPVerifiedSubHeader}
 
+var upstreamStripHeaders = append(append([]string{}, InternalOnlyHeaders...), "mcp-init-host", RoutingKey)
+var browserUpstreamStripHeaders = append(append([]string{}, upstreamStripHeaders...), sharedheaders.BrowserHopHeaders...)
+
+func stripHeadersForUpstream(req *MCPRequest) []string {
+	if req != nil && req.GetSingleHeaderValue("origin") != "" {
+		return browserUpstreamStripHeaders
+	}
+	return upstreamStripHeaders
+}
+
 // MCPRequest encapsulates a mcp protocol request to the gateway
 type MCPRequest struct {
 	ID                any               `json:"id"`

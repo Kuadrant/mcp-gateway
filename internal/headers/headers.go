@@ -1,6 +1,11 @@
 // Package headers defines shared HTTP header constants used across router and broker.
 package headers
 
+import (
+	"slices"
+	"strings"
+)
+
 // Elicitation headers used by both the ext-proc router and the broker HTTP handler.
 const (
 	ElicitationRequestID = "x-mcp-request-id"
@@ -12,6 +17,14 @@ const (
 	// Stripped from any client-supplied value by the router.
 	VerifiedSubHeader = "x-mcp-verified-sub"
 )
+
+// BrowserHopHeaders are removed before requests leave the gateway.
+var BrowserHopHeaders = []string{"origin", "referer", "cookie", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"}
+
+// IsBrowserHop reports whether name is scoped to the browser-to-gateway hop.
+func IsBrowserHop(name string) bool {
+	return slices.Contains(BrowserHopHeaders, strings.ToLower(name))
+}
 
 // A2A protocol-metadata headers, set by the ext-proc router from the request
 // path and body when A2A passthrough is enabled, so Istio Telemetry and

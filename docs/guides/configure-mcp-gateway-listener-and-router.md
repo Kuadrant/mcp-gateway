@@ -1,7 +1,7 @@
 
 # Configure MCP Gateway Listener and Route
 
-This guide covers adding the required MCP listeners to your existing Gateway. The controller automatically creates an HTTPRoute when the MCPGatewayExtension becomes ready. This guide also covers how to use a custom HTTPRoute if you need CORS headers or additional path rules.
+This guide covers adding the required MCP listeners to your existing Gateway. The controller automatically creates an HTTPRoute when the MCPGatewayExtension becomes ready. It also shows how to manage a custom route.
 
 ## Prerequisites
 
@@ -112,9 +112,20 @@ Verify the HTTPRoute was created:
 kubectl get httproute mcp-gateway-route -n mcp-system
 ```
 
+### Browser access (CORS)
+
+The gateway allows non-credentialed requests from any browser origin and
+answers preflights before authentication policies run. Authentication still
+applies to the actual request, including bearer tokens. Cookies and other
+credentialed cross-origin requests are not allowed. Native MCP clients are
+unaffected.
+
+Browser access is handled by the external processor, so it works with either
+the managed HTTPRoute or a custom one.
+
 ### Custom HTTPRoute (Optional)
 
-If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, or OAuth well-known endpoints), disable automatic creation and manage your own:
+If you need a custom HTTPRoute for additional path rules or backends, disable automatic creation and manage your own:
 
 1. Find your MCPGatewayExtension name and set `httpRouteManagement: Disabled`:
    ```bash
@@ -148,20 +159,6 @@ If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, o
            - path:
                type: PathPrefix
                value: /mcp
-         filters:
-           - type: ResponseHeaderModifier
-             responseHeaderModifier:
-               add:
-                 - name: Access-Control-Allow-Origin
-                   value: "*"
-                 - name: Access-Control-Allow-Methods
-                   value: "GET, POST, PUT, DELETE, OPTIONS, HEAD"
-                 - name: Access-Control-Allow-Headers
-                   value: "Content-Type, Authorization, Accept, Origin, X-Requested-With"
-                 - name: Access-Control-Max-Age
-                   value: "3600"
-                 - name: Access-Control-Allow-Credentials
-                   value: "true"
          backendRefs:
            - name: mcp-gateway
              port: 8080
@@ -174,7 +171,6 @@ If you need a custom HTTPRoute (e.g. with CORS headers, additional path rules, o
              port: 8080
    EOF
    ```
-
 ## Step 3: Verify EnvoyFilter Configuration
 
 The MCP Gateway controller automatically creates the EnvoyFilter when the MCPGatewayExtension is ready. Check that it exists:
