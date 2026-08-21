@@ -79,9 +79,11 @@ func TestFilterUserHeaders(t *testing.T) {
 			},
 		},
 		{
-			name: "strips cookie and proxy-authorization, preserves authorization",
+			name: "strips browser and proxy headers, preserves authorization",
 			input: http.Header{
 				"Cookie":              []string{"session=secret"},
+				"Origin":              []string{"https://console.example.com"},
+				"Sec-Fetch-Site":      []string{"cross-site"},
 				"Proxy-Authorization": []string{"Basic abc"},
 				"Authorization":       []string{"Bearer user-token"},
 			},

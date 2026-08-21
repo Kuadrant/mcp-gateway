@@ -321,6 +321,7 @@ func TestHandleRequestBody(t *testing.T) {
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
+			"origin":         "https://console.example.com",
 		},
 	}
 
@@ -337,6 +338,9 @@ func TestHandleRequestBody(t *testing.T) {
 	// internal-only headers must be stripped before forwarding to upstream
 	require.Contains(t, decision.UnsetHeaders, "x-mcp-authorized")
 	require.Contains(t, decision.UnsetHeaders, "x-mcp-virtualserver")
+	require.Contains(t, decision.UnsetHeaders, "mcp-init-host")
+	require.Contains(t, decision.UnsetHeaders, RoutingKey)
+	require.Contains(t, decision.UnsetHeaders, "origin")
 
 	require.Equal(t,
 		`{"id":0,"jsonrpc":"2.0","method":"tools/call","params":{"name":"mytool","other":"other"}}`,
@@ -1172,9 +1176,8 @@ func TestHandleNoneToolCall_HairpinJWTValidation(t *testing.T) {
 // TestInitializeMCPServerSession_PassThroughHeaders verifies that headers
 // forwarded to the upstream initialize call drop the router-internal headers
 // (mcp-init-host, router-key) and the gateway-bound mcp-session-id even when
-// supplied by a client. Anything else is preserved so custom headers still
-// flow through. This is defense-in-depth on top of the explicit override in
-// clients.Initialize.
+// supplied by a client. Browser-hop headers are also dropped; custom headers
+// and authorization still flow through.
 func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	var captured map[string]string
 	mockInitForClient := func(_ context.Context, _ string, _ *config.MCPServer, headers map[string]string, _ bool, _ *clients.HairpinClientPool) (*mcp.ClientSession, error) {
@@ -1226,6 +1229,8 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 			RoutingKey:            "attacker-supplied-key",
 			"x-custom-header":     "custom-value",
 			"authorization":       "Bearer client-token",
+			"origin":              "https://console.example.com",
+			"sec-fetch-site":      "cross-site",
 			"x-mcp-authorized":    "signed-jwt-value",
 			"x-mcp-virtualserver": "test/vs",
 		},
@@ -1240,6 +1245,8 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.NotContains(t, captured, "mcp-session-id", "gateway session id must not be forwarded")
 	require.NotContains(t, captured, "x-mcp-authorized", "broker-only filtering header must not reach upstream")
 	require.NotContains(t, captured, "x-mcp-virtualserver", "broker-only filtering header must not reach upstream")
+	require.NotContains(t, captured, "origin")
+	require.NotContains(t, captured, "sec-fetch-site")
 
 	// router-key and mcp-init-host must be set by the router (not from client input)
 	require.Contains(t, captured, RoutingKey, "router must set the routing key")

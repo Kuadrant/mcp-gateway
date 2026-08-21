@@ -13,6 +13,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
@@ -477,15 +478,6 @@ func (broker *mcpBrokerImpl) fetchStatelessUserTools(ctx context.Context, server
 	}
 }
 
-// sensitiveForwardHeaders are client headers that must never be forwarded to
-// upstream MCP servers. cookie and proxy-authorization are scoped to the
-// gateway origin/hop, not the upstream, so forwarding them would leak
-// gateway-scoped credentials to every user-specific upstream queried.
-var sensitiveForwardHeaders = map[string]struct{}{
-	"cookie":              {},
-	"proxy-authorization": {},
-}
-
 // filterUserHeaders returns user headers suitable for forwarding to upstream,
 // stripping internal gateway headers and gateway-scoped credentials. the
 // client's Authorization header is intentionally preserved: user-specific
@@ -504,6 +496,7 @@ var transportHeaders = map[string]struct{}{
 
 func filterUserHeaders(h http.Header) map[string]string {
 	headers := make(map[string]string, len(h))
+	browserRequest := h.Get("Origin") != ""
 	for key, vals := range h {
 		lower := strings.ToLower(key)
 		if _, skip := transportHeaders[lower]; skip {
@@ -512,7 +505,7 @@ func filterUserHeaders(h http.Header) map[string]string {
 		if strings.HasPrefix(lower, "x-mcp-") {
 			continue
 		}
-		if _, sensitive := sensitiveForwardHeaders[lower]; sensitive {
+		if lower == "proxy-authorization" || lower == "cookie" || (browserRequest && sharedheaders.IsBrowserHop(lower)) {
 			continue
 		}
 		if len(vals) > 0 {

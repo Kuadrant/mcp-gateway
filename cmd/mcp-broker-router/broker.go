@@ -85,11 +85,6 @@ func (a *app) setUpHTTPServer() {
 		WriteTimeout: writeTimeout,
 	}
 
-	mux.HandleFunc("OPTIONS /mcp", func(w http.ResponseWriter, r *http.Request) {
-		a.logger.Debug("Handling OPTIONS", "Mcp-Session-Id", r.Header.Get("Mcp-Session-Id"))
-		w.WriteHeader(http.StatusOK)
-	})
-
 	mux.HandleFunc("/status", a.mcpBroker.HandleStatusRequest)
 	mux.HandleFunc("/status/", a.mcpBroker.HandleStatusRequest)
 	if cfg.enableURLElicitation {

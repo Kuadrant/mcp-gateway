@@ -67,8 +67,8 @@ This automatically installs:
 When the MCPGatewayExtension becomes ready, the controller automatically creates:
 - **MCP Broker/Router Deployment** - Aggregates tools from upstream MCP servers
 - **MCP Broker/Router Service** - Named `mcp-gateway` in the MCPGatewayExtension namespace
-- **HTTPRoute** - Named `mcp-gateway-route`, routes traffic from the Gateway listener to the broker service for `/mcp` and `/.well-known/oauth-protected-resource`. The hostname is derived from the listener (wildcards like `*.example.com` become `mcp.example.com`). This can be disabled by setting `spec.httpRouteManagement: Disabled` on the MCPGatewayExtension if you need a custom HTTPRoute (e.g. with CORS headers or custom filters). Note: disabling does not delete a previously created `mcp-gateway-route`; you must remove it manually
-- **EnvoyFilter** - Configures Istio to route requests through the external processor (created in the Gateway's namespace)
+- **HTTPRoute** - Named `mcp-gateway-route`, routes traffic from the Gateway listener to the broker service for `/mcp` and `/.well-known/oauth-protected-resource`. The hostname is derived from the listener (wildcards like `*.example.com` become `mcp.example.com`). This can be disabled by setting `spec.httpRouteManagement: Disabled` on the MCPGatewayExtension if you need a custom HTTPRoute. Note: disabling does not delete a previously created `mcp-gateway-route`; you must remove it manually
+- **EnvoyFilter** - Configures Istio to route requests through the external processor, which also enables browser access (created in the Gateway's namespace)
 - **ServiceAccount** - For the broker/router pods
 - **Configuration Secret** - `mcp-gateway-config` containing server configuration
 
@@ -130,7 +130,7 @@ After installation, the controller automatically creates the HTTPRoute for gatew
 1. **[Register MCP Servers](./register-mcp-servers.md)** - Connect internal MCP servers
 2. **[Connect to External MCP Servers](./external-mcp-server.md)** - Connect to external APIs
 
-If you need to customize the HTTPRoute (e.g. add CORS headers), see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
+If you need to customize the HTTPRoute, see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
 
 ## API Reference
 

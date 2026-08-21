@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -557,8 +558,9 @@ func (m *mockProcessServer) Send(actualResp *extProcV3.ProcessingResponse) error
 		requireMatchingCommonHeaderMutation(m.t, v.RequestBody.Response, actualRequestBody.RequestBody.Response)
 		requireMatchingBodyMutation(m.t, v.RequestBody.Response, actualRequestBody.RequestBody.Response)
 	case *extProcV3.ProcessingResponse_ResponseHeaders:
-		_, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ResponseHeaders)
+		actualResponseHeaders, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ResponseHeaders)
 		require.True(m.t, ok, "expected response type to be ResponseHeaders, but it was a %T", actualResp.Response)
+		requireMatchingCommonHeaderMutation(m.t, v.ResponseHeaders.Response, actualResponseHeaders.ResponseHeaders.Response)
 	case *extProcV3.ProcessingResponse_ImmediateResponse:
 		actualImmediateBody, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ImmediateResponse)
 		require.True(m.t, ok, "expected response type to be ImmediateResponse, but it was a %T", actualResp.Response)
@@ -604,8 +606,9 @@ func (m *mockProcessServer) SetTrailer(metadata.MD) {
 
 func requireMatchingCommonHeaderMutation(t *testing.T, expected, actual *extProcV3.CommonResponse) {
 	if expected == nil || expected.HeaderMutation == nil {
-		if actual != nil {
-			require.Nil(t, actual.HeaderMutation, "expected no response, got %+v", actual)
+		if actual != nil && actual.HeaderMutation != nil {
+			require.Empty(t, actual.HeaderMutation.SetHeaders)
+			require.Empty(t, actual.HeaderMutation.RemoveHeaders)
 		}
 		return
 	}
@@ -629,14 +632,16 @@ func requireMatchingHeaderMutation(t *testing.T, expected, actual *extProcV3.Hea
 		}
 	}
 	require.Equal(t, len(expected.SetHeaders), len(actual.SetHeaders))
-	actualByKey := make(map[string]*corev3.HeaderValue, len(actual.SetHeaders))
+	actualByKey := make(map[string]*corev3.HeaderValueOption, len(actual.SetHeaders))
 	for _, h := range actual.SetHeaders {
-		actualByKey[h.Header.Key] = h.Header
+		actualByKey[h.Header.Key] = h
 	}
 	for _, expOpt := range expected.SetHeaders {
 		exp := expOpt.Header
-		act, ok := actualByKey[exp.Key]
+		actOpt, ok := actualByKey[exp.Key]
 		require.True(t, ok, "expected header %q not found in actual headers", exp.Key)
+		require.Equal(t, expOpt.AppendAction, actOpt.AppendAction, "mismatch on header %q append action", exp.Key)
+		act := actOpt.Header
 		if exp.Value != "" || act.Value != "" {
 			require.Equal(t, exp.Value, act.Value, "mismatch on header %q Value", act.Key)
 		}
@@ -701,6 +706,56 @@ type stubErrorRouter struct{ statusCode int }
 
 func (s *stubErrorRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
 	return &routing.Decision{Error: &routing.Error{StatusCode: s.statusCode, Message: "routing error"}}
+}
+
+func TestProcessBrowserCORS(t *testing.T) {
+	t.Run("answers preflight", func(t *testing.T) {
+		expected := immediateResponse(typev3.StatusCode_NoContent)
+		expected.Response.(*extProcV3.ProcessingResponse_ImmediateResponse).ImmediateResponse.Headers.SetHeaders = append(
+			append([]*corev3.HeaderValueOption{}, browserCORSHeaders...),
+			headerOption("content-type", "text/plain"),
+		)
+		mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{{
+			msg:  browserRequestHeaders(http.MethodOptions, true),
+			resp: []*extProcV3.ProcessingResponse{expected},
+		}})
+
+		require.NoError(t, newTestServer(t).Process(mock))
+		mock.verifyAllResponsesConsumed()
+	})
+
+	t.Run("adds response headers", func(t *testing.T) {
+		requestStep := requestHeadersStep()
+		requestStep.msg = browserRequestHeaders(http.MethodGet, false)
+		requestStep.msg.GetRequestHeaders().EndOfStream = true
+		responseStep := responseHeadersStep()
+		responseStep.resp[0].Response.(*extProcV3.ProcessingResponse_ResponseHeaders).ResponseHeaders.Response = &extProcV3.CommonResponse{
+			HeaderMutation: &extProcV3.HeaderMutation{SetHeaders: browserCORSHeaders},
+		}
+		mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+			requestStep,
+			responseStep,
+		})
+
+		require.NoError(t, newTestServer(t).Process(mock))
+		mock.verifyAllResponsesConsumed()
+	})
+}
+
+func browserRequestHeaders(method string, preflight bool) *extProcV3.ProcessingRequest {
+	headers := []*corev3.HeaderValue{
+		{Key: ":method", RawValue: []byte(method)},
+		{Key: "content-type", RawValue: []byte("application/json")},
+		{Key: "origin", RawValue: []byte("https://console.example.com")},
+	}
+	if preflight {
+		headers = append(headers, &corev3.HeaderValue{Key: "access-control-request-method", RawValue: []byte(http.MethodPost)})
+	}
+	return &extProcV3.ProcessingRequest{
+		Request: &extProcV3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &extProcV3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: headers}},
+		},
+	}
 }
 
 // stubResponseHandler is a ResponseHandler that always returns an empty decision.

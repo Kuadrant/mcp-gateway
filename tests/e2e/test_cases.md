@@ -142,7 +142,7 @@
 
 ### [Happy] MCPGatewayExtension with httpRouteManagement Disabled skips HTTPRoute creation
 
-- When an MCPGatewayExtension has `spec.httpRouteManagement: Disabled`, the controller should NOT create an HTTPRoute. This allows users to manage their own HTTPRoute with custom configuration (e.g. CORS response headers or custom filters). The MCPGatewayExtension should still become Ready and all other resources (Deployment, Service, EnvoyFilter) should be created normally.
+- When an MCPGatewayExtension has `spec.httpRouteManagement: Disabled`, the controller should NOT create an HTTPRoute. This allows users to manage their own HTTPRoute with custom path rules or filters. The MCPGatewayExtension should still become Ready and all other resources (Deployment, Service, EnvoyFilter) should be created normally.
 
 ### [multi-gateway] Each MCPGatewayExtension gets its own HTTPRoute
 

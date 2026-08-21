@@ -81,21 +81,9 @@ func getOAuthConfig() *OAuthProtectedResource {
 }
 
 // Handle handles the /.well-known/oauth-protected-resource endpoint
-func (prh *ProtectedResourceHandler) Handle(w http.ResponseWriter, r *http.Request) {
+func (prh *ProtectedResourceHandler) Handle(w http.ResponseWriter, _ *http.Request) {
 	prh.Logger.Info("service protected resource endpoint")
 	oauthConfig := getOAuthConfig()
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, X-Requested-With")
-	w.Header().Set("Access-Control-Max-Age", "3600")
-	w.Header().Set("Access-Control-Allow-Credentials", "true")
-
-	// Handle preflight requests
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
 
 	// Set content type and return JSON response
 	w.Header().Set("Content-Type", "application/json")

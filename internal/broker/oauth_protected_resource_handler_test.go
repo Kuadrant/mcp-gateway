@@ -58,12 +58,6 @@ func TestProtectedResourceHandler_Handle(t *testing.T) {
 			expectedStatus: http.StatusOK,
 			checkBody:      true,
 		},
-		{
-			name:           "OPTIONS preflight request returns 200",
-			method:         http.MethodOptions,
-			expectedStatus: http.StatusOK,
-			checkBody:      false,
-		},
 	}
 
 	for _, tc := range testCases {
@@ -77,10 +71,8 @@ func TestProtectedResourceHandler_Handle(t *testing.T) {
 
 			require.Equal(t, tc.expectedStatus, rec.Code)
 
-			// check CORS headers
-			require.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
-			require.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), "GET")
-			require.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "Authorization")
+			// CORS headers are emitted by the gateway, not this handler
+			require.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"))
 
 			if tc.checkBody {
 				require.Equal(t, "application/json", rec.Header().Get("Content-Type"))

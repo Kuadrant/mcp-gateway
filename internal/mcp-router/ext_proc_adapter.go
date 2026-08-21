@@ -26,6 +26,25 @@ import (
 
 var _ config.Observer = &ExtProcServer{}
 
+var browserCORSHeaders = []*basepb.HeaderValueOption{
+	corsHeader("access-control-allow-origin", "*"),
+	corsHeader("access-control-allow-methods", "GET,POST,DELETE,OPTIONS"),
+	corsHeader("access-control-allow-headers", "Content-Type,Authorization,Accept,Mcp-Session-Id,MCP-Protocol-Version,Last-Event-ID,Mcp-Method,Mcp-Name"),
+	corsHeader("access-control-expose-headers", "Mcp-Session-Id,MCP-Protocol-Version,WWW-Authenticate"),
+	corsHeader("access-control-max-age", "3600"),
+}
+
+func corsHeader(key, value string) *basepb.HeaderValueOption {
+	return &basepb.HeaderValueOption{
+		Header:       &basepb.HeaderValue{Key: key, RawValue: []byte(value)},
+		AppendAction: basepb.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+	}
+}
+
+func headerOption(key, value string) *basepb.HeaderValueOption {
+	return &basepb.HeaderValueOption{Header: &basepb.HeaderValue{Key: key, RawValue: []byte(value)}}
+}
+
 // ExtProcServer is the ext_proc adapter that translates between Envoy's
 // external processing protocol and the Router interface.
 type ExtProcServer struct {
@@ -64,8 +83,8 @@ func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *extPr
 
 // decisionToResponse translates a transport-agnostic RoutingDecision into
 // ext_proc ProcessingResponse(s) for the body phase.
-func decisionToResponse(d *routing.Decision) []*extProcV3.ProcessingResponse {
-	rb := NewResponse()
+func decisionToResponse(d *routing.Decision, immediateHeaders ...*basepb.HeaderValueOption) []*extProcV3.ProcessingResponse {
+	rb := NewResponse(immediateHeaders...)
 
 	if d.Error != nil {
 		if d.Error.JSONRPCErr != "" {
@@ -96,35 +115,28 @@ func decisionToResponse(d *routing.Decision) []*extProcV3.ProcessingResponse {
 func decisionHeaders(d *routing.Decision) []*basepb.HeaderValueOption {
 	headers := make([]*basepb.HeaderValueOption, 0, len(d.SetHeaders)+2)
 	if d.Authority != "" {
-		headers = append(headers, &basepb.HeaderValueOption{
-			Header: &basepb.HeaderValue{Key: ":authority", RawValue: []byte(d.Authority)},
-		})
+		headers = append(headers, headerOption(":authority", d.Authority))
 	}
 	if d.Path != "" {
-		headers = append(headers, &basepb.HeaderValueOption{
-			Header: &basepb.HeaderValue{Key: ":path", RawValue: []byte(d.Path)},
-		})
+		headers = append(headers, headerOption(":path", d.Path))
 	}
 	for k, v := range d.SetHeaders {
 		if k == ":authority" || k == ":path" {
 			continue
 		}
-		headers = append(headers, &basepb.HeaderValueOption{
-			Header: &basepb.HeaderValue{Key: k, RawValue: []byte(v)},
-		})
+		headers = append(headers, headerOption(k, v))
 	}
 	return headers
 }
 
 // responseDecisionToResponse translates a ResponseDecision to ext_proc responses.
-func responseDecisionToResponse(d *routing.ResponseDecision) []*extProcV3.ProcessingResponse {
+func responseDecisionToResponse(d *routing.ResponseDecision, extraHeaders ...*basepb.HeaderValueOption) []*extProcV3.ProcessingResponse {
 	rb := NewResponse()
-	headers := make([]*basepb.HeaderValueOption, 0, len(d.SetHeaders))
+	headers := make([]*basepb.HeaderValueOption, 0, len(d.SetHeaders)+len(extraHeaders))
 	for k, v := range d.SetHeaders {
-		headers = append(headers, &basepb.HeaderValueOption{
-			Header: &basepb.HeaderValue{Key: k, RawValue: []byte(v)},
-		})
+		headers = append(headers, headerOption(k, v))
 	}
+	headers = append(headers, extraHeaders...)
 	responses := rb.WithResponseHeaderResponse(headers).Build()
 
 	if d.StreamBody && len(responses) > 0 {
@@ -170,6 +182,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		isA2A               = false              // true for /a2a traffic when A2A passthrough is enabled
 		rewriter            *elicitationRewriter // nil until a tool call response arrives
 		resourceRewriter    *resourceURIRewriter // nil until a tool call response with resources arrives
+		corsHeaders         []*basepb.HeaderValueOption
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -192,7 +205,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			recordError(span, err, 500)
 			return err
 		}
-		responseBuilder := NewResponse()
+		responseBuilder := NewResponse(corsHeaders...)
 		switch r := req.Request.(type) {
 		case *extProcV3.ProcessingRequest_RequestHeaders:
 			if r.RequestHeaders == nil {
@@ -213,6 +226,18 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			requestID = getSingleValueHeader(localRequestHeaders.Headers, "x-request-id")
 			requestPath = getSingleValueHeader(localRequestHeaders.Headers, ":path")
 			method := getSingleValueHeader(localRequestHeaders.Headers, ":method")
+			if getSingleValueHeader(localRequestHeaders.Headers, "origin") != "" && !isA2APath(requestPath) {
+				corsHeaders = browserCORSHeaders
+				responseBuilder = NewResponse(corsHeaders...)
+				if method == http.MethodOptions && getSingleValueHeader(localRequestHeaders.Headers, "access-control-request-method") != "" {
+					for _, response := range responseBuilder.WithImmediateResponse(http.StatusNoContent, "").Build() {
+						if err := stream.Send(response); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
 			protocolVersion = getSingleValueHeader(localRequestHeaders.Headers, "mcp-protocol-version")
 			mcpMethodHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-method")
 			mcpNameHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-name")
@@ -459,7 +484,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					"session", internaljwt.LogSafeSessionID(mcpRequest.GetSessionID()),
 				)
 			}
-			routeResponses := decisionToResponse(decision)
+			routeResponses := decisionToResponse(decision, corsHeaders...)
 			for _, response := range routeResponses {
 				s.Logger.DebugContext(ctx, "sending mcp body routing instructions to envoy", "response", response)
 				if err := stream.Send(response); err != nil {
@@ -540,7 +565,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				)
 			}
 
-			responses := responseDecisionToResponse(respDecision)
+			responses := responseDecisionToResponse(respDecision, corsHeaders...)
 
 			if respDecision.StreamBody {
 				rewriter = &elicitationRewriter{
