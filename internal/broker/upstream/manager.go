@@ -228,10 +228,12 @@ type MCPManager struct {
 	// invalidToolPolicy controls behavior when upstream tools have invalid schemas
 	invalidToolPolicy InvalidToolPolicy
 
-	// onConnect is called after a successful upstream connection. the broker
-	// uses this to refresh the routing table when version detection changes
-	// (e.g. userSpecificList servers that don't add tools to the gateway server).
-	onConnect func()
+	// onConnect is called after a successful upstream connection when the
+	// detected protocol versions change. the broker uses this to refresh the
+	// routing table (e.g. userSpecificList servers that don't add tools to
+	// the gateway server and therefore never trigger onTableChange).
+	onConnect    func()
+	lastVersions string
 
 	// toolEvents, promptEvents, and reconnectEvents funnel notifications into
 	// the Start() loop. Separate channels with buffer of 1 each ensure one
@@ -510,7 +512,11 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.consecutiveFailures = 0
 	man.logger.Info("upstream negotiated", "upstream", man.mcp.ID(), "supported-versions", man.mcp.SupportedVersions())
 	if man.onConnect != nil {
-		man.onConnect()
+		vk := fmt.Sprintf("%v", man.mcp.SupportedVersions())
+		if vk != man.lastVersions {
+			man.lastVersions = vk
+			man.onConnect()
+		}
 	}
 
 	serverAttr := attribute.String("server_name", man.mcp.GetName())
