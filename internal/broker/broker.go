@@ -183,6 +183,9 @@ type mcpBrokerImpl struct {
 	// protocol handlers encapsulate version-specific broker behavior
 	handler2025 ProtocolHandler
 	handler2026 ProtocolHandler
+
+	// version is the injected build version
+	version string
 }
 
 // this ensures that mcpBrokerImpl implements the MCPBroker interface
@@ -275,6 +278,13 @@ func WithUserSpecificFetchTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithVersion sets the build version of the MCP Broker
+func WithVersion(version string) Option {
+	return func(mb *mcpBrokerImpl) {
+		mb.version = version
+	}
+}
+
 // NewBroker creates a new MCPBroker accepts optional config functions such as WithEnforceCapabilityFilter
 func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	mcpBkr := &mcpBrokerImpl{
@@ -284,6 +294,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 		managerTickerInterval:    time.Second * 60,
 		discovery:                discoveryConfig{enabled: true},
 		userSpecificFetchTimeout: 30 * time.Second,
+		version:                  "dev",
 	}
 
 	for _, option := range opts {
@@ -323,7 +334,7 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	srv := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "Kuadrant MCP Gateway",
-			Version: "0.0.1",
+			Version: mcpBkr.version,
 		},
 		serverOpts,
 	)
