@@ -82,7 +82,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server25.Name, server25.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-		By("Registering a 2026-only server (stateless-server)")
+		By("Registering a dual-protocol server (stateless-server, supports 2025+2026)")
 		reg26 := NewTestResources("dp-stateless", k8sClient).
 			InNamespace(dualProtoNamespace).
 			WithBackendTarget("mcp-test-stateless-server", 9090).
@@ -151,7 +151,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 	}
 
 	Context("protocol-filtered tools/list", func() {
-		It("[Happy,DualProtocol] 2026 client sees only stateless backend tools", func() {
+		It("[Happy,DualProtocol] 2026 client sees only 2026-capable backend tools", func() {
 			c := newStatelessClient()
 			defer func() { _ = c.Close() }()
 
@@ -170,7 +170,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			})).To(BeFalse(), "2026 client should NOT see sf_ (stateful) tools")
 		})
 
-		It("[Happy,DualProtocol] 2025 client sees only stateful backend tools", func() {
+		It("[Happy,DualProtocol] 2025 client sees stateful and dual-protocol backend tools", func() {
 			c := newStatefulClient()
 			defer func() { _ = c.Close() }()
 
@@ -183,11 +183,13 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(slices.ContainsFunc(names, func(n string) bool {
 					return strings.HasPrefix(n, "sf_")
 				})).To(BeTrue(), "2025 client should see sf_ tools")
+				// stateless-server uses StreamableHTTP with Stateless:true, so the
+				// SDK reports supportedVersions for both 2025 and 2026 — a 2025
+				// client sees sl_ tools too.
+				g.Expect(slices.ContainsFunc(names, func(n string) bool {
+					return strings.HasPrefix(n, "sl_")
+				})).To(BeTrue(), "2025 client should see sl_ tools (dual-protocol server)")
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-			Expect(slices.ContainsFunc(names, func(n string) bool {
-				return strings.HasPrefix(n, "sl_")
-			})).To(BeFalse(), "2025 client should NOT see sl_ (stateless) tools")
 		})
 
 		It("[Happy,DualProtocol] 2025 client can call tools on stateful backend", func() {
