@@ -76,10 +76,11 @@ type MCPServer struct {
 	notifyMu      sync.RWMutex
 	notifyHandler func(method string)
 
+	// dc intercepts the SDK's server/discover response during Connect
+	// to capture the upstream's SupportedVersions.
+	dc *discoverCapture
+
 	// supportedVersions lists protocol versions this upstream supports.
-	// set to the single negotiated version after Connect. future work:
-	// intercept the SDK's server/discover response to capture the full
-	// SupportedVersions list for dual-version servers.
 	supportedVersions []string
 
 	// intentionalDisconnect is set before session.Close() so that
@@ -115,9 +116,9 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 // buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
 // server, with header injection via a custom round tripper. the trust pool is
 // built from system roots, plus the gateway-level CA bundle (if set), plus the
-// per-server CACert (if set). the returned discoverCapture intercepts the
-// SDK's server/discover response to capture SupportedVersions.
-func (up *MCPServer) buildHTTPClient() (*http.Client, *discoverCapture, error) {
+// per-server CACert (if set). the discoverCapture is stored on up.dc to
+// intercept the SDK's server/discover response during Connect.
+func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
 	base.ExpectContinueTimeout = defaultExpectContinueTimeout
@@ -132,12 +133,12 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, *discoverCapture, error) {
 		}
 		if up.gatewayCACertPEM != "" {
 			if !rootCAs.AppendCertsFromPEM([]byte(up.gatewayCACertPEM)) {
-				return nil, nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
+				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
 			}
 		}
 		if up.CACert != "" {
 			if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-				return nil, nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
+				return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
 			}
 		}
 		base.TLSClientConfig = &tls.Config{
@@ -146,13 +147,13 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, *discoverCapture, error) {
 		}
 	}
 
-	dc := &discoverCapture{
+	up.dc = &discoverCapture{
 		base: &toolHintsTee{
 			base: &transport.HeaderRoundTripper{Base: base, Headers: up.headers},
 			sink: up.storeToolHints,
 		},
 	}
-	return &http.Client{Transport: dc}, dc, nil
+	return &http.Client{Transport: up.dc}, nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
@@ -252,11 +253,10 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	}
 	up.clientMu.Unlock()
 
-	httpC, dc, err := up.buildHTTPClient()
+	httpC, err := up.buildHTTPClient()
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
-
 	streamTransport := &mcp.StreamableClientTransport{
 		Endpoint:   up.URL,
 		HTTPClient: httpC,
@@ -321,7 +321,8 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.init = session.InitializeResult()
 
 	negotiated := up.init.ProtocolVersion
-	if captured := dc.Versions(); len(captured) > 0 {
+	up.dc.SetConnected()
+	if captured, err := up.dc.Versions(); err == nil && len(captured) > 0 {
 		up.supportedVersions = captured
 		if !slices.Contains(up.supportedVersions, negotiated) {
 			up.supportedVersions = append(up.supportedVersions, negotiated)

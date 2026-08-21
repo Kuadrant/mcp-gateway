@@ -153,7 +153,7 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 		Name: "no-ca",
 		URL:  "http://localhost:8080/mcp",
 	}, "", nil)
-	client, _, err := up.buildHTTPClient()
+	client, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, client, "should always return a client with timeouts set")
 
@@ -227,7 +227,7 @@ func TestBuildHTTPClient_WithValidCACert(t *testing.T) {
 		URL:    "https://localhost:8443/mcp",
 		CACert: string(caPEM),
 	}, "", nil)
-	client, _, err := up.buildHTTPClient()
+	client, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, client, "should return custom client when CACert configured")
 }
@@ -238,7 +238,7 @@ func TestBuildHTTPClient_WithInvalidPEM(t *testing.T) {
 		URL:    "https://localhost:8443/mcp",
 		CACert: "not-valid-pem-data",
 	}, "", nil)
-	_, _, err := up.buildHTTPClient()
+	_, err := up.buildHTTPClient()
 	require.Error(t, err, "should error on invalid PEM")
 	require.Contains(t, err.Error(), "failed to parse CA certificate")
 }
@@ -259,7 +259,7 @@ func TestBuildHTTPClient_TLSConnection(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(caPEM),
 	}, "", nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -286,7 +286,7 @@ func TestBuildHTTPClient_TLSConnectionFailsWithoutCA(t *testing.T) {
 		Name: "no-ca-test",
 		URL:  srv.URL + "/mcp",
 	}, "", nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient, "client is always returned, only TLS pool varies")
 
@@ -314,7 +314,7 @@ func TestBuildHTTPClient_WrongCACertFailsTLS(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(wrongCaPEM),
 	}, "", nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -343,7 +343,7 @@ func TestBuildHTTPClient_MultiCertBundle(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(bundle),
 	}, "", nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -374,7 +374,7 @@ func TestResponseHeaderTimeoutDoesNotKillEstablishedSSE(t *testing.T) {
 	defer srv.Close()
 
 	up := NewUpstreamMCP(&config.MCPServer{Name: "sse-alive", URL: srv.URL}, "", nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -494,7 +494,7 @@ func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
 		Name: "gw-ca-test",
 		URL:  srv.URL + "/mcp",
 	}, string(caPEM), nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
@@ -522,7 +522,7 @@ func TestBuildHTTPClient_GatewayCAPlusPerServerCA(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(serverCAPEM),
 	}, string(gwCAPEM), nil)
-	httpClient, _, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient()
 	require.NoError(t, err)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
@@ -538,7 +538,7 @@ func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
 		Name: "bad-gw-ca",
 		URL:  "https://localhost:8443/mcp",
 	}, "not-valid-pem", nil)
-	_, _, err := up.buildHTTPClient()
+	_, err := up.buildHTTPClient()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
