@@ -85,7 +85,7 @@ func setupHandler(t *testing.T) (*TokenHandler, elicitation.Map, *stubTokenCache
 // getCSRFToken performs a GET to the token page and returns the csrf cookie value.
 func getCSRFToken(t *testing.T, handler *TokenHandler, elicitationID string) string {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/tokens?elicitation_id="+elicitationID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tokens?elicitation_id="+elicitationID, nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -103,9 +103,9 @@ func getCSRFToken(t *testing.T, handler *TokenHandler, elicitationID string) str
 // postTokenForm builds a POST request with CSRF cookie and form field.
 func postTokenForm(elicitationID, token, csrf string) *http.Request {
 	form := url.Values{"elicitation_id": {elicitationID}, "token": {token}, "csrf_token": {csrf}}
-	req := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf})
+	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf}) //nolint:gosec // G124: test cookie
 	return req
 }
 
@@ -113,7 +113,7 @@ func TestTokenHandler_GET_RendersForm(t *testing.T) {
 	handler, eMap, _ := setupHandler(t)
 	id, _ := eMap.Store(context.Background(), "sess1", "github", "")
 
-	req := httptest.NewRequest(http.MethodGet, "/tokens?elicitation_id="+id, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tokens?elicitation_id="+id, nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -136,7 +136,7 @@ func TestTokenHandler_GET_SetsCSRFCookie(t *testing.T) {
 	handler, eMap, _ := setupHandler(t)
 	id, _ := eMap.Store(context.Background(), "sess1", "github", "")
 
-	req := httptest.NewRequest(http.MethodGet, "/tokens?elicitation_id="+id, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tokens?elicitation_id="+id, nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -166,7 +166,7 @@ func TestTokenHandler_GET_SetsCSRFCookie(t *testing.T) {
 func TestTokenHandler_GET_MissingElicitationID(t *testing.T) {
 	handler, _, _ := setupHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/tokens", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tokens", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -178,7 +178,7 @@ func TestTokenHandler_GET_MissingElicitationID(t *testing.T) {
 func TestTokenHandler_GET_InvalidElicitationID(t *testing.T) {
 	handler, _, _ := setupHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/tokens?elicitation_id=bogus", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/tokens?elicitation_id=bogus", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -257,9 +257,9 @@ func TestTokenHandler_POST_MissingToken(t *testing.T) {
 	csrf := getCSRFToken(t, handler, id)
 
 	form := url.Values{"elicitation_id": {id}, "csrf_token": {csrf}}
-	req := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf})
+	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf}) //nolint:gosec // G124: test cookie
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -384,7 +384,7 @@ func TestTokenHandler_POST_RawJWTNoLongerGrantsIdentity(t *testing.T) {
 			case "bearer_only":
 				req.Header.Set("Authorization", buildBearerJWT("user123"))
 			case "cookie_only":
-				req.AddCookie(&http.Cookie{Name: "jwt", Value: buildRawJWT("user123")})
+				req.AddCookie(&http.Cookie{Name: "jwt", Value: buildRawJWT("user123")}) //nolint:gosec // G124: test cookie
 			}
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
@@ -402,7 +402,7 @@ func TestTokenHandler_POST_CSRFMissing(t *testing.T) {
 	id, _ := eMap.Store(context.Background(), "sess1", "github", "")
 
 	form := url.Values{"elicitation_id": {id}, "token": {"ghp_secret"}}
-	req := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// no csrf cookie or form field
 	w := httptest.NewRecorder()
@@ -419,9 +419,9 @@ func TestTokenHandler_POST_CSRFMismatch(t *testing.T) {
 	csrf := getCSRFToken(t, handler, id)
 
 	form := url.Values{"elicitation_id": {id}, "token": {"ghp_secret"}, "csrf_token": {"wrong-token"}}
-	req := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf})
+	req.AddCookie(&http.Cookie{Name: "csrf", Value: csrf}) //nolint:gosec // G124: test cookie
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -433,7 +433,7 @@ func TestTokenHandler_POST_CSRFMismatch(t *testing.T) {
 func TestTokenHandler_MethodNotAllowed(t *testing.T) {
 	handler, _, _ := setupHandler(t)
 
-	req := httptest.NewRequest(http.MethodDelete, "/tokens", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/tokens", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -446,14 +446,14 @@ func TestTokenHandler_POST_ErrorResponseIsJSON(t *testing.T) {
 	handler, _, _ := setupHandler(t)
 
 	form := url.Values{"elicitation_id": {"bogus"}, "token": {"secret"}}
-	req := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "csrf", Value: "test"})
+	req.AddCookie(&http.Cookie{Name: "csrf", Value: "test"}) //nolint:gosec // G124: test cookie
 	form.Set("csrf_token", "test")
 	// rebuild with csrf_token
-	req = httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/tokens", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "csrf", Value: "test"})
+	req.AddCookie(&http.Cookie{Name: "csrf", Value: "test"}) //nolint:gosec // G124: test cookie
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

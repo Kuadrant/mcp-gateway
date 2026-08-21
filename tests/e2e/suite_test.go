@@ -92,7 +92,7 @@ func TestE2E(t *testing.T) {
 func setupK8sClient() {
 	logf.SetLogger(logr.FromSlogHandler(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	ctx, cancel = context.WithCancel(context.Background())
+	ctx, cancel = context.WithCancel(context.Background()) //nolint:gosec // G118: cancel called in SynchronizedAfterSuite
 
 	testScheme = runtime.NewScheme()
 	Expect(scheme.AddToScheme(testScheme)).To(Succeed())
