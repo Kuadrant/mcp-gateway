@@ -45,6 +45,12 @@ spec:
     port: 8082
     protocol: TCP
     targetPort: 8082
+  - appProtocol: http
+    name: a2a-passthrough
+    nodePort: 30085
+    port: 8083
+    protocol: TCP
+    targetPort: 8083
   selector:
     gateway.networking.k8s.io/gateway-name: mcp-gateway
   sessionAffinity: None

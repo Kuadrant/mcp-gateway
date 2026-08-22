@@ -67,6 +67,13 @@ route lives in a different namespace from the gateway (as below — the route is
 the gateway in `gateway-system`), that listener must permit the route's namespace via its
 `allowedRoutes.namespaces`, otherwise the gateway will not accept the route.
 
+The router lifts the metadata but does **not** rewrite the path — carrying the request to the
+agent is your route's job. The `/a2a/{agent}` prefix exists so the router can derive the agent
+identity, but the agent itself serves its A2A endpoint at its own path (commonly `/a2a`). Unless
+the agent happens to serve at the full `/a2a/{agent}` path, add a `URLRewrite` filter that
+replaces the `/a2a/{agent}` prefix with the agent's endpoint, so the backend receives the path it
+expects:
+
 ```bash
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
@@ -85,6 +92,12 @@ spec:
         - path:
             type: PathPrefix
             value: /a2a/weather
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /a2a
       backendRefs:
         - name: weather-agent
           port: 9090
@@ -100,9 +113,9 @@ kubectl get httproute weather-agent-route -n mcp-test \
 ```
 
 A `SendMessage` to `/a2a/weather` now traverses the router — which sets
-`x-a2a-agent: weather` and `x-a2a-method: SendMessage` — before your route forwards it to
-the `weather-agent` backend. You can confirm the headers reach the agent by inspecting what
-the agent received, or the access log configured in Step 4.
+`x-a2a-agent: weather` and `x-a2a-method: SendMessage` — before your route rewrites the prefix
+and forwards it to the `weather-agent` backend at `/a2a`. You can confirm the headers reach the
+agent by inspecting what the agent received, or the access log configured in Step 4.
 
 ## Step 3: Authorize per agent
 
