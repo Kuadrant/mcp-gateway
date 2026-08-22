@@ -21,10 +21,9 @@ RUN apk --no-cache add ca-certificates \
 
 WORKDIR /app
 
-COPY --from=builder /workspace/mcp_gateway .
+COPY --from=builder --chown=appuser:appgroup /workspace/mcp_gateway .
 
-RUN chmod +x mcp_gateway \
-    && chown appuser:appgroup mcp_gateway
+RUN chmod +x mcp_gateway
 
 USER 65532
 

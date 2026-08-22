@@ -20,10 +20,9 @@ RUN apk --no-cache add ca-certificates \
 
 WORKDIR /app
 
-COPY --from=builder /workspace/mcp_controller .
+COPY --from=builder --chown=appuser:appgroup /workspace/mcp_controller .
 
-RUN chmod +x mcp_controller \
-    && chown appuser:appgroup mcp_controller
+RUN chmod +x mcp_controller
 
 USER 65532
 
