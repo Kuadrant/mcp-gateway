@@ -15,13 +15,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "${LDFLAGS}" -o mcp_gateway ./cmd
 
 FROM alpine:3.22.1
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates \
+    && addgroup -S appgroup \
+    && adduser -S -G appgroup -u 65532 appuser
 
 WORKDIR /app
 
-COPY --from=builder /workspace/mcp_gateway .
+COPY --from=builder --chown=appuser:appgroup /workspace/mcp_gateway .
 
 RUN chmod +x mcp_gateway
+
+USER 65532
 
 # default to standalone mode with config file
 # add the `--controller` flag for controller mode
