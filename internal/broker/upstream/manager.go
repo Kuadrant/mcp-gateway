@@ -546,7 +546,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 
 			if toolErr == nil {
 				// always compare the tools without prefix
-				toAdd, toRemove := man.diffTools(current, fetched)
+				toAdd, toRemove := man.diffTools(ctx, current, fetched)
 				if conflictErr := man.findToolConflicts(toAdd); conflictErr != nil {
 					toolErr = fmt.Errorf("upstream mcp failed to add tools to gateway %s : %w", man.mcp.ID(), conflictErr)
 					man.recordBackendError(span, toolErr)
@@ -928,7 +928,7 @@ func (man *MCPManager) toolToServerTool(newTool mcp.Tool) GatewayTool {
 	}
 }
 
-func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]GatewayTool, []string) {
+func (man *MCPManager) diffTools(ctx context.Context, oldTools, newTools []mcp.Tool) ([]GatewayTool, []string) {
 	oldToolMap := make(map[string]mcp.Tool)
 	for _, oldTool := range oldTools {
 		oldToolMap[oldTool.Name] = oldTool
@@ -940,18 +940,40 @@ func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]GatewayTool, 
 	}
 
 	addedTools := make([]GatewayTool, 0)
+	removedTools := make([]string, 0)
+
 	for _, newTool := range newToolMap {
-		_, ok := oldToolMap[newTool.Name]
+		oldTool, ok := oldToolMap[newTool.Name]
 		if !ok {
 			addedTools = append(addedTools, man.toolToServerTool(newTool))
+			man.logger.InfoContext(ctx, "Upstream tool changed",
+				"upstream", man.mcp.ID(),
+				"tool", newTool.Name,
+				"change_type", "added",
+			)
+		} else {
+			modified := oldTool.Description != newTool.Description || !reflect.DeepEqual(oldTool.InputSchema, newTool.InputSchema)
+			if modified {
+				man.logger.InfoContext(ctx, "Upstream tool changed",
+					"upstream", man.mcp.ID(),
+					"tool", newTool.Name,
+					"change_type", "modified",
+				)
+				addedTools = append(addedTools, man.toolToServerTool(newTool))
+				removedTools = append(removedTools, prefixedName(man.mcp.GetPrefix(), oldTool.Name))
+			}
 		}
 	}
 
-	removedTools := make([]string, 0)
 	for _, oldTool := range oldToolMap {
 		_, ok := newToolMap[oldTool.Name]
 		if !ok {
 			removedTools = append(removedTools, prefixedName(man.mcp.GetPrefix(), oldTool.Name))
+			man.logger.InfoContext(ctx, "Upstream tool changed",
+				"upstream", man.mcp.ID(),
+				"tool", oldTool.Name,
+				"change_type", "removed",
+			)
 		}
 	}
 
