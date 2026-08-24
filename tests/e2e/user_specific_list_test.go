@@ -112,7 +112,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Creating clients for user-a and user-b")
+		By("Creating clients for user-a (2025) and user-b (2026) to verify cross-protocol user-specific lists")
 		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})

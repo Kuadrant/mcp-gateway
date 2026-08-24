@@ -240,12 +240,12 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // Connect establishes a connection to the upstream MCP server using the
 // official SDK's Client+ClientSession pattern.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
-	up.clientMu.Lock()
+	up.clientMu.RLock()
 	if up.session != nil {
-		up.clientMu.Unlock()
+		up.clientMu.RUnlock()
 		return nil
 	}
-	up.clientMu.Unlock()
+	up.clientMu.RUnlock()
 
 	httpC, err := up.buildHTTPClient()
 	if err != nil {
@@ -316,7 +316,7 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 
 	negotiated := up.init.ProtocolVersion
 	up.dc.SetConnected()
-	if captured, err := up.dc.Versions(); err == nil && len(captured) > 0 {
+	if captured, verr := up.dc.Versions(); verr == nil && len(captured) > 0 {
 		up.supportedVersions = captured
 		if !slices.Contains(up.supportedVersions, negotiated) {
 			up.supportedVersions = append(up.supportedVersions, negotiated)
