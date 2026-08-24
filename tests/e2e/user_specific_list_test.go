@@ -61,23 +61,6 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, uspecServer.Name, uspecServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Creating a 2026 (stateless) client with user-a auth")
-		statelessClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
-			"Authorization": "Bearer user-a-token",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		defer func() { _ = statelessClient.Close() }()
-
-		By("Verifying user-a sees both standard and user-specific tools via 2026 client")
-		Eventually(func(g Gomega) {
-			toolsList, err := statelessClient.ListTools(ctx, nil)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(toolsList).NotTo(BeNil())
-			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard server tools should be present"))
-			g.Expect(verifyMCPServerRegistrationToolsPresent(uspecServer.Spec.Prefix, toolsList)).To(BeTrueBecause("user-specific tools should be present"))
-			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_list_repos", toolsList)).To(BeTrueBecause("user-a should see list_repos"))
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
 		By("Creating a 2025 (stateful) client with user-a auth")
 		statefulClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
@@ -91,6 +74,25 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(toolsList).NotTo(BeNil())
 			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeTrueBecause("standard server tools should be present"))
+			g.Expect(verifyMCPServerRegistrationToolsPresent(uspecServer.Spec.Prefix, toolsList)).To(BeTrueBecause("user-specific tools should be present"))
+			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_list_repos", toolsList)).To(BeTrueBecause("user-a should see list_repos"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating a 2026 (stateless) client with user-a auth")
+		statelessClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"Authorization": "Bearer user-a-token",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = statelessClient.Close() }()
+
+		// server2 (std_ backend) uses Stateless:false so only supports 2025;
+		// user-specific-server uses Stateless:true so supports both protocols.
+		By("Verifying user-a sees user-specific tools via 2026 client (standard server is 2025-only)")
+		Eventually(func(g Gomega) {
+			toolsList, err := statelessClient.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent(stdServer.Spec.Prefix, toolsList)).To(BeFalseBecause("standard server (2025-only) tools should not appear for 2026 client"))
 			g.Expect(verifyMCPServerRegistrationToolsPresent(uspecServer.Spec.Prefix, toolsList)).To(BeTrueBecause("user-specific tools should be present"))
 			g.Expect(verifyMCPServerRegistrationToolPresent("uspec_list_repos", toolsList)).To(BeTrueBecause("user-a should see list_repos"))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
@@ -198,9 +200,11 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, stdServer.Name, stdServer.Namespace)).To(BeNil())
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
-		By("Listing tools without user-specific server — record baseline")
+		// server2 (std_ backend) uses Stateless:false so only supports 2025;
+		// use a 2025 client to verify standard server tools.
+		By("Listing tools without user-specific server — record baseline via 2025 client")
 		var baselineCount int
-		mcpClient, err := NewStatelessClient(ctx, gatewayURL)
+		mcpClient, err := NewStatefulClient(ctx, gatewayURL)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = mcpClient.Close() }()
 
@@ -224,7 +228,7 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 
 		By("Verifying client without auth still sees same standard tools (no user-specific tools leak)")
-		noAuthClient, err := NewStatelessClient(ctx, gatewayURL)
+		noAuthClient, err := NewStatefulClient(ctx, gatewayURL)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = noAuthClient.Close() }()
 
@@ -267,8 +271,9 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 		testResources = append(testResources, uspecReg.GetObjects()...)
 		uspecReg.Register(ctx)
 
-		By("Creating a client with auth")
-		userAClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
+		// server2 (std_ backend) is 2025-only; use a 2025 client to verify graceful degradation.
+		By("Creating a 2025 client with auth")
+		userAClient, err := NewStatefulClientWithHeaders(ctx, gatewayURL, map[string]string{
 			"Authorization": "Bearer user-a-token",
 		})
 		Expect(err).NotTo(HaveOccurred())
