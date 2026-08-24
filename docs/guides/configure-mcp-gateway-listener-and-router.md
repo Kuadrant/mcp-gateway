@@ -114,14 +114,19 @@ kubectl get httproute mcp-gateway-route -n mcp-system
 
 ### Browser access (CORS)
 
-The gateway allows non-credentialed requests from any browser origin and
-answers preflights before authentication policies run. Authentication still
-applies to the actual request, including bearer tokens. Cookies and other
-credentialed cross-origin requests are not allowed. Native MCP clients are
-unaffected.
+The gateway allows cross-origin requests from any browser origin. It answers
+preflight requests before authentication policies run, but authentication and
+authorization still apply to the subsequent MCP request. Cookies and other
+browser-managed credentials are not allowed; clients can send bearer tokens in
+the `Authorization` header. Native MCP clients are unaffected.
 
 Browser access is handled by the external processor, so it works with either
 the managed HTTPRoute or a custom one.
+
+> **Warning:** Protect the MCP endpoint with authentication even when it is only
+> reachable through a VPN or private network. Without authentication, a website
+> visited by a user connected to that network could invoke MCP tools through the
+> user's browser and read the responses.
 
 ### Custom HTTPRoute (Optional)
 

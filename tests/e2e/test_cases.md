@@ -192,6 +192,10 @@
 
 - When a client authenticates via Keycloak and sends a prompts/list request, only prompts the user has `prompt:*` roles for should be returned. The `mcp` user in the `accounting` group should see `test1_greet` but not prompts from servers where they have no prompt roles.
 
+### [Auth] Browser preflight bypasses authentication, actual tool calls do not
+
+- An unauthenticated CORS preflight request should return 204 with wildcard CORS headers. A browser-originated `tools/call` using a valid gateway session but no bearer token should still pass through AuthPolicy and return 401 with both `WWW-Authenticate` and CORS response headers. Credentialed CORS must remain disabled.
+
 ### [Auth] prompts/get with auth as first request (hairpin test)
 
 - When a client sends a prompts/get request as the first request to a server (no prior tools/call), the hairpin initialize should pass through the AuthPolicy correctly and return prompt messages.

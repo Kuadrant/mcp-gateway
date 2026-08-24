@@ -106,6 +106,49 @@ var _ = Describe("AuthPolicy Authentication and Authorization", Ordered, func() 
 		Expect(status).To(Equal(http.StatusUnauthorized))
 	})
 
+	It("[Auth] should bypass authentication only for browser preflight", func() {
+		const origin = "https://console.example.com"
+
+		By("Sending an unauthenticated browser preflight request")
+		req, err := http.NewRequestWithContext(ctx, http.MethodOptions, authGatewayURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,mcp-session-id")
+
+		resp, err := getMCPHTTPClient().Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusNoContent))
+		Expect(resp.Header.Get("Access-Control-Allow-Origin")).To(Equal("*"))
+		Expect(resp.Header.Get("Access-Control-Allow-Credentials")).To(BeEmpty())
+
+		By("Initialising a browser session with a valid token")
+		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")
+		Expect(err).NotTo(HaveOccurred())
+		authHeaders := map[string]string{
+			"Authorization": "Bearer " + token,
+			"Origin":        origin,
+		}
+		sessionID, err := mcpInitialize(ctx, authGatewayURL, authHeaders)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, authGatewayURL, sessionID, authHeaders)).To(Succeed())
+
+		By("Calling a tool from the browser session without authentication")
+		status, _, responseHeaders, err := mcpCallToolRaw(
+			authGatewayURL,
+			sessionID,
+			"test1_greet",
+			map[string]any{"name": "e2e"},
+			map[string]string{"Origin": origin},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusUnauthorized))
+		Expect(responseHeaders.Get("WWW-Authenticate")).To(ContainSubstring("Bearer"))
+		Expect(responseHeaders.Get("Access-Control-Allow-Origin")).To(Equal("*"))
+		Expect(responseHeaders.Get("Access-Control-Allow-Credentials")).To(BeEmpty())
+	})
+
 	It("[Auth] should allow initialize and tools/list with valid JWT, filtered by user roles", func() {
 		By("Obtaining a token from Keycloak")
 		token, err := GetKeycloakUserToken(ctx, "mcp", "mcp")

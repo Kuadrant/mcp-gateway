@@ -113,6 +113,27 @@ The client's Authorization header is always forwarded to upstream servers, allow
 
 AuthPolicy can enforce per-tool access control using the `x-mcp-toolname` and `x-mcp-servername` headers set by the router. JWT claims (e.g., `resource_access`) are matched against the requested tool to produce an `x-mcp-authorized` JWT signed header via Authorino. The broker verifies this signature and filters tool lists accordingly.
 
+### Browser access and Origin validation
+
+The router permits cross-origin browser access from any `Origin`. It returns
+unauthenticated CORS preflight requests directly, before AuthPolicy evaluates
+them. All subsequent MCP requests continue through the normal Envoy filter
+chain, so AuthPolicy still enforces authentication and authorization on browser
+tool calls. The gateway does not enable credentialed CORS; browser-managed
+credentials such as cookies are stripped, while an explicit `Authorization`
+header is preserved.
+
+The [MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning)
+requires servers to validate `Origin` to prevent DNS rebinding. The router
+strips `Origin` before forwarding a browser request upstream, so the gateway
+assumes responsibility for this validation. Its current allow-all policy does
+not provide a restrictive origin allowlist. Deployments must therefore use
+AuthPolicy and must not treat VPN or private-network reachability as the only
+access control: otherwise, a malicious website visited by a network-connected
+user could invoke tools and read their responses. Deployments requiring a
+restrictive origin policy would need a configurable origin allowlist or explicit
+browser-access opt-in, neither of which is currently supported.
+
 ### Security properties
 
 - Client identity validation (JWT/OIDC) and token exchange (RFC 8693) are delegated to Authorino via AuthPolicy — the gateway contains no custom logic for these flows. URL token elicitation (`internal/broker/`, `internal/elicitation/`) is a separate path where the gateway stores and injects per-user tokens for upstream requests (see [URL Token Elicitation](#url-token-elicitation))
