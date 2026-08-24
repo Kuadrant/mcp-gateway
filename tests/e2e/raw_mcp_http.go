@@ -386,7 +386,7 @@ func mcpInitializeWithElicitation(mcpURL string, headers map[string]string) (str
 
 // mcpCallToolRaw calls a tool and returns the raw SSE body without parsing the result.
 // This is needed for tests that expect -32042 errors which readJSONRPCResult treats as failures.
-func mcpCallToolRaw(mcpURL, sessionID, toolName string, args map[string]any, headers map[string]string) (int, string, http.Header, error) { //nolint:unparam
+func mcpCallToolRaw(mcpURL, sessionID, toolName string, args map[string]any, headers map[string]string) (int, string, http.Header, error) {
 	params := map[string]any{"name": toolName}
 	if len(args) > 0 {
 		params["arguments"] = args
