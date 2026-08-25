@@ -100,6 +100,83 @@ func newTestRouter(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[
 	return router, validToken
 }
 
+func newTestRouterWithOpts(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, promptMap map[string]string, opts map[string]*testRouteOpts) (*Router202511, string) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	builder := NewTableBuilder()
+	for tool, svrName := range toolMap {
+		for _, svr := range serverConfigs {
+			if svr.Name == svrName {
+				path, _ := svr.Path()
+				route := &ServerRoute{
+					Name:             svr.Name,
+					Host:             svr.Hostname,
+					Prefix:           svr.Prefix,
+					Path:             path,
+					URL:              svr.URL,
+					UserSpecificList: svr.UserSpecificList,
+					Stateful:         true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateful = o.stateful
+				}
+				if svr.TokenURLElicitation != nil {
+					route.TokenURLElicitation = &TokenURLElicitationRoute{
+						URL: svr.TokenURLElicitation.URL,
+					}
+				}
+				builder.AddTool(tool, route)
+			}
+		}
+	}
+	for prompt, svrName := range promptMap {
+		for _, svr := range serverConfigs {
+			if svr.Name == svrName {
+				path, _ := svr.Path()
+				route := &ServerRoute{
+					Name:     svr.Name,
+					Host:     svr.Hostname,
+					Prefix:   svr.Prefix,
+					Path:     path,
+					URL:      svr.URL,
+					Stateful: true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateful = o.stateful
+				}
+				builder.AddPrompt(prompt, route)
+			}
+		}
+	}
+	table := builder.Build()
+
+	routingConfig := atomic.Pointer[config.MCPServersConfig]{}
+	routingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
+
+	tokenElicitationMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	router := &Router202511{
+		RoutingConfig:       &routingConfig,
+		Table:               func() RoutingTable { return table },
+		SessionCache:        cache,
+		JWTManager:          jwtManager,
+		ElicitationMap:      mustNewIDMap(t),
+		TokenElicitationMap: tokenElicitationMap,
+		Logger:              logger,
+	}
+
+	return router, validToken
+}
+
 // newTestRouterWithSession creates a Router202511 with a pre-populated session cache entry.
 // Useful for tests that need a valid session without triggering real initialization.
 func newTestRouterWithSession(t *testing.T, serverConfigs []*config.MCPServer, serverName string) (*Router202511, string) {
@@ -2349,4 +2426,66 @@ func TestAnnotationHintsHeader(t *testing.T) {
 			require.Equal(t, tc.want, renderHints(tc.hints))
 		})
 	}
+}
+
+func TestRouter202511_StatelessOnlyToolRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateless-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router, validToken := newTestRouterWithOpts(t, serverConfigs,
+		map[string]string{"mytool": "stateless-backend"},
+		map[string]string{},
+		map[string]*testRouteOpts{"stateless-backend": {stateful: false}},
+	)
+
+	data := &MCPRequest{
+		ID:      ptr.To(1),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params:  map[string]any{"name": "mytool"},
+		Headers: map[string]string{"mcp-session-id": validToken},
+	}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
+}
+
+func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateless-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router, validToken := newTestRouterWithOpts(t, serverConfigs,
+		map[string]string{},
+		map[string]string{"myprompt": "stateless-backend"},
+		map[string]*testRouteOpts{"stateless-backend": {stateful: false}},
+	)
+
+	data := &MCPRequest{
+		ID:      ptr.To(2),
+		JSONRPC: "2.0",
+		Method:  "prompts/get",
+		Params:  map[string]any{"name": "myprompt"},
+		Headers: map[string]string{"mcp-session-id": validToken},
+	}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
 }

@@ -14,6 +14,7 @@ import (
 
 type testRouteOpts struct {
 	stateless bool
+	stateful  bool
 }
 
 func newTestRouter202607(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, promptMap map[string]string) *Router202607 {

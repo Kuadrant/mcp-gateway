@@ -447,6 +447,12 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}
 	go func() {
 		if err := session.Wait(); err != nil {
+			// only fire for the currently tracked session; a planned
+			// Disconnect replaces up.session before the old Wait returns
+			if up.currentSession() != session {
+				up.logger.Debug("ignoring connection loss from superseded session", "upstream", up.ID())
+				return
+			}
 			handler(err)
 		}
 	}()
