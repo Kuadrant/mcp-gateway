@@ -51,6 +51,9 @@ func EnsureNeMoConfigData(secretType corev1.SecretType, data map[string][]byte) 
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("%s: url %q is not a valid absolute URL", configDataKey, cfg.URL)
 	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("%s: url scheme must be http or https, got %q", configDataKey, parsed.Scheme)
+	}
 
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("%s: model is required", configDataKey)

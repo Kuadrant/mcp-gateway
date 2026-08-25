@@ -67,6 +67,28 @@ model: meta/llama-3.1-8b-instruct
 		require.Error(t, err)
 	})
 
+	t.Run("errors when url scheme is not http or https", func(t *testing.T) {
+		_, err := EnsureNeMoConfigData(SecretTypeNeMo, map[string][]byte{
+			configDataKey: []byte(`
+url: ftp://nemo-guardrails.internal:8080
+model: meta/llama-3.1-8b-instruct
+`),
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "http or https")
+	})
+
+	t.Run("accepts an http url", func(t *testing.T) {
+		cfg, err := EnsureNeMoConfigData(SecretTypeNeMo, map[string][]byte{
+			configDataKey: []byte(`
+url: http://nemo-guardrails.internal:8080
+model: meta/llama-3.1-8b-instruct
+`),
+		})
+		require.NoError(t, err)
+		require.Equal(t, "http://nemo-guardrails.internal:8080", cfg.URL)
+	})
+
 	t.Run("errors when model is missing", func(t *testing.T) {
 		_, err := EnsureNeMoConfigData(SecretTypeNeMo, map[string][]byte{
 			configDataKey: []byte(`url: https://nemo-guardrails.internal:8080`),

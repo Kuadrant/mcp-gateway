@@ -117,6 +117,7 @@ spec:
                   maxBodyBytes caps the size of any body the router buffers, in bytes.
                   Applies to request/response prefix stripping and guardrails checks.
                 format: int32
+                minimum: 1
                 type: integer
               oauthProtectedResource:
                 description: |-
