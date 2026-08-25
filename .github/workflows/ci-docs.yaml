@@ -78,6 +78,14 @@ jobs:
             echo "paths=" >> "$GITHUB_OUTPUT"
             echo "No markdown files changed"
           else
+            # linkinator miscomputes its local server root when given a
+            # single path, breaking resolution of any "../" relative link.
+            # Pad to at least two paths so multi-file root computation
+            # kicks in. See https://github.com/JustinBeckwith/linkinator/issues
+            if [ "$(echo "$files" | wc -l)" -eq 1 ] && [ "$files" != "README.md" ]; then
+              files="$files
+README.md"
+            fi
             paths=$(echo "$files" | tr '\n' ' ')
             echo "paths=$paths" >> "$GITHUB_OUTPUT"
             echo "Scanning: $paths"
