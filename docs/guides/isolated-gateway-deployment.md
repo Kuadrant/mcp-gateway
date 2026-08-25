@@ -311,7 +311,7 @@ conditions:
   - type: Ready
     status: "False"
     reason: ReferenceGrantRequired
-    message: "ReferenceGrant required in namespace gateway-system to allow cross-namespace reference"
+    message: "invalid: ReferenceGrant required in gateway-system to allow cross-namespace reference from team-a"
 ```
 
 The Helm chart should create the ReferenceGrant automatically. If not, create it manually as shown in the [Manual Resource Creation](#manual-resource-creation) section.
