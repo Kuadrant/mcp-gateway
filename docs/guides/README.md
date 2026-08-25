@@ -18,6 +18,7 @@
     - [Custom CA Certificates](./custom-ca-certificates.md)
 - [Authentication](./authentication.md)
 - [Authorization](./authorization.md)
+- [Rate Limiting](./rate-limiting.md)
 - [Auditing](./auditing.md)
 - [URL Elicitation](./url-elicitation.md)
 - [Scaling](./scaling.md)

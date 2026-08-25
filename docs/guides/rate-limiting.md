@@ -10,6 +10,12 @@ According to the **NSA MCP Security Guidance**, operators must place protective 
 
 Below are three common scenarios for applying rate limits to your MCP Gateway.
 
+## Prerequisites
+
+- A running MCP Gateway deployment (see [Installation Guide](./how-to-install-and-configure.md))
+- [Kuadrant operator](https://docs.kuadrant.io/) installed on the cluster with Limitador configured
+- At least one `MCPServerRegistration` and its backing `HTTPRoute` configured (see [Register MCP Servers](./register-mcp-servers.md))
+
 ---
 
 ## 2. Scenario A: Whole Gateway Scope
@@ -22,8 +28,9 @@ In this scenario, the `RateLimitPolicy` targets the `Gateway` resource directly.
 
 The following example restricts all traffic through the `mcp-gateway` to a maximum of 1000 requests per minute.
 
-```yaml
-apiVersion: kuadrant.io/v1beta2
+```bash
+kubectl apply -f - <<EOF
+apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
 metadata:
   name: global-mcp-rate-limit
@@ -37,7 +44,8 @@ spec:
     "global-limit":
       rates:
         - limit: 1000
-          duration: 1m
+          window: 1m
+EOF
 ```
 
 *Note: All requests matching any route bound to `mcp-gateway` will increment this counter. If the limit is exceeded, Kuadrant will return an HTTP 429 Too Many Requests.*
@@ -54,8 +62,9 @@ In this scenario, we target an `HTTPRoute` rather than the whole Gateway. This i
 
 The following example targets the `weather-mcp-route` (which exposes a specific weather MCP server) and restricts it to 50 requests per second.
 
-```yaml
-apiVersion: kuadrant.io/v1beta2
+```bash
+kubectl apply -f - <<EOF
+apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
 metadata:
   name: weather-backend-rate-limit
@@ -69,7 +78,8 @@ spec:
     "weather-limit":
       rates:
         - limit: 50
-          duration: 1s
+          window: 1s
+EOF
 ```
 
 ---
@@ -84,8 +94,9 @@ In this scenario, we define a limit that groups requests based on the value of t
 
 The following example targets the `database-mcp-route` but applies a limit of 10 requests per minute *per tool*. 
 
-```yaml
-apiVersion: kuadrant.io/v1beta2
+```bash
+kubectl apply -f - <<EOF
+apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
 metadata:
   name: tool-specific-rate-limit
@@ -99,9 +110,10 @@ spec:
     "per-tool-limit":
       rates:
         - limit: 10
-          duration: 1m
+          window: 1m
       counters:
-        - "request.headers.x-mcp-toolname"
+        - expression: "request.headers['x-mcp-toolname']"
+EOF
 ```
 
 In this setup:
