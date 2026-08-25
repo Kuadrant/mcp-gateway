@@ -573,7 +573,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 						man.toolsListBytes.Record(ctx, rawBytes, metric.WithAttributes(serverAttr))
 					}
 
-					man.logger.DebugContext(ctx, "updating gateway tools", "upstream mcp server", man.mcp.ID(), "adding", len(toAdd), "removing", len(toRemove))
+					man.logToolChanges(ctx, current, fetched)
 					if len(toRemove) > 0 {
 						man.gatewayServer.DeleteTools(toRemove...)
 					}
@@ -956,6 +956,42 @@ func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]GatewayTool, 
 	}
 
 	return addedTools, removedTools
+}
+
+// logToolChanges logs an info line per tool added, removed, or changed for auditing.
+func (man *MCPManager) logToolChanges(ctx context.Context, oldTools, newTools []mcp.Tool) {
+	oldByName := make(map[string]*mcp.Tool, len(oldTools))
+	for i := range oldTools {
+		oldByName[oldTools[i].Name] = &oldTools[i]
+	}
+	newByName := make(map[string]*mcp.Tool, len(newTools))
+	for i := range newTools {
+		newByName[newTools[i].Name] = &newTools[i]
+	}
+
+	serverID := man.mcp.ID()
+	for i := range newTools {
+		newTool := &newTools[i]
+		prev, existed := oldByName[newTool.Name]
+		switch {
+		case !existed:
+			man.logger.InfoContext(ctx, "upstream tool added", "upstream mcp server", serverID, "tool", newTool.Name)
+		case toolSpecChanged(prev, newTool):
+			man.logger.InfoContext(ctx, "upstream tool changed", "upstream mcp server", serverID, "tool", newTool.Name)
+		}
+	}
+	for i := range oldTools {
+		if _, ok := newByName[oldTools[i].Name]; !ok {
+			man.logger.InfoContext(ctx, "upstream tool removed", "upstream mcp server", serverID, "tool", oldTools[i].Name)
+		}
+	}
+}
+
+// toolSpecChanged reports whether two tools differ in description or schema.
+func toolSpecChanged(a, b *mcp.Tool) bool {
+	return a.Description != b.Description ||
+		!reflect.DeepEqual(a.InputSchema, b.InputSchema) ||
+		!reflect.DeepEqual(a.OutputSchema, b.OutputSchema)
 }
 
 func prefixedName(prefix, tool string) string {
