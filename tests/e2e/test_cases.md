@@ -144,6 +144,10 @@
 
 - When an MCPGatewayExtension has `spec.httpRouteManagement: Disabled`, the controller should NOT create an HTTPRoute. This allows users to manage their own HTTPRoute with custom configuration (e.g. CORS response headers or custom filters). The MCPGatewayExtension should still become Ready and all other resources (Deployment, Service, EnvoyFilter) should be created normally.
 
+### [Happy] Controller creates and owns the mcp-gateway NetworkPolicy
+
+- When an MCPGatewayExtension is reconciled, the controller should create a `networking.k8s.io/v1` NetworkPolicy named `mcp-gateway` in the extension's namespace, owned by the MCPGatewayExtension. The policy's ingress rules should allow ports `8080` and `50051` only from the target Gateway's namespace (matched via the `kubernetes.io/metadata.name` namespace label), and allow port `9090` from any source. Egress should allow all traffic to any destination on any port.
+
 ### [multi-gateway] Each MCPGatewayExtension gets its own HTTPRoute
 
 - When multiple MCPGatewayExtensions target different listeners on a shared Gateway, each should get its own HTTPRoute with the correct hostname derived from its listener. For example, team-a's HTTPRoute should have hostname "team-a.127-0-0-1.sslip.io" and team-b's should have "team-b.127-0-0-1.sslip.io". Each HTTPRoute's parentRef should reference the correct sectionName. Clients should be able to reach each team's gateway independently via the correct hostname.

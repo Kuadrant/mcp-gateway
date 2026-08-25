@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -896,10 +897,7 @@ func (r *MCPGatewayExtensionReconciler) deleteEnvoyFilter(ctx context.Context, m
 
 func envoyFilterNameAndNamespace(mcpExt *mcpv1.MCPGatewayExtension) (name, namespace string) {
 	name = fmt.Sprintf("mcp-ext-proc-%s-gateway", mcpExt.Namespace)
-	namespace = mcpExt.Spec.TargetRef.Namespace
-	if namespace == "" {
-		namespace = mcpExt.Namespace
-	}
+	namespace = targetGatewayNamespace(mcpExt)
 	return name, namespace
 }
 
@@ -981,6 +979,7 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&gatewayv1.HTTPRoute{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForGateway)).
 		Watches(&gatewayv1beta1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForReferenceGrant)).
 		Watches(&istionetv1alpha3.EnvoyFilter{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter)).

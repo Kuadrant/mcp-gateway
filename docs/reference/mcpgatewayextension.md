@@ -8,6 +8,7 @@
 - [SessionStore](#sessionstore)
 - [OAuthProtectedResource](#oauthprotectedresource)
 - [MCPGatewayExtensionStatus](#mcpgatewayextensionstatus)
+- [Managed NetworkPolicy](#managed-networkpolicy)
 
 ## MCPGatewayExtension
 
@@ -99,3 +100,19 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | `DeploymentNotReady` | The broker-router deployment is not ready |
 | `SecretNotFound` | A referenced secret is missing (trusted headers, session store, or CA cert bundle) |
 | `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle) |
+
+## Managed NetworkPolicy
+
+The controller creates and reconciles a `networking.k8s.io/v1` NetworkPolicy named `mcp-gateway` in the MCPGatewayExtension's namespace, owned by the MCPGatewayExtension (garbage-collected on deletion). It targets the broker-router pods via `podSelector` matching `app.kubernetes.io/name: mcp-gateway` and `app.kubernetes.io/managed-by: mcp-gateway-controller`.
+
+Ingress is deny-by-default except for:
+
+| **Port** | **Purpose** | **Allowed from** |
+|----------|-------------|-------------------|
+| `8080` | Broker HTTP/MCP | Only the target Gateway's namespace |
+| `50051` | Router gRPC (ext_proc) | Only the target Gateway's namespace |
+| `9090` | Metrics | Any source |
+
+The gateway namespace is selected via the auto-set `kubernetes.io/metadata.name` namespace label, derived from `spec.targetRef`. If the targeted Gateway changes, the controller updates the policy to match. Egress allows all traffic.
+
+This policy replaces the previous static Helm `networkPolicy` template for the broker-router deployment, which allowed ingress from any source and required manual opt-in.

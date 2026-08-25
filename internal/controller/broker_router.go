@@ -10,6 +10,7 @@ import (
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,9 +32,10 @@ const (
 	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
 
 	// broker-router ports
-	brokerHTTPPort   = 8080
-	brokerGRPCPort   = 50051
-	brokerConfigPort = 8181
+	brokerHTTPPort    = 8080
+	brokerGRPCPort    = 50051
+	brokerConfigPort  = 8181
+	brokerMetricsPort = 9090
 )
 
 // managedCommandFlags are the flags the controller owns and reconciles.
@@ -308,6 +310,88 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterService(mcpExt *mcpv1.M
 	}
 }
 
+// targetGatewayNamespace returns the namespace of the targeted Gateway,
+// falling back to the extension's own namespace when TargetRef.Namespace is empty.
+func targetGatewayNamespace(mcpExt *mcpv1.MCPGatewayExtension) string {
+	namespace := mcpExt.Spec.TargetRef.Namespace
+	if namespace == "" {
+		namespace = mcpExt.Namespace
+	}
+	return namespace
+}
+
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterNetworkPolicy(mcpExt *mcpv1.MCPGatewayExtension) *networkingv1.NetworkPolicy {
+	labels := brokerRouterLabels()
+	gatewayNamespace := targetGatewayNamespace(mcpExt)
+	tcp := corev1.ProtocolTCP
+	httpPort := intstr.FromInt(brokerHTTPPort)
+	grpcPort := intstr.FromInt(brokerGRPCPort)
+	metricsPort := intstr.FromInt(brokerMetricsPort)
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brokerRouterName,
+			Namespace: mcpExt.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					// gateway namespace only: gRPC (ext_proc) and HTTP (MCP)
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": gatewayNamespace,
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcp, Port: &httpPort},
+						{Protocol: &tcp, Port: &grpcPort},
+					},
+				},
+				{
+					// no From = all sources: metrics stay open for monitoring
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcp, Port: &metricsPort},
+					},
+				},
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{}},
+		},
+	}
+}
+
+// networkPolicyNeedsUpdate checks if the network policy needs to be updated
+// returns (needsUpdate, reason) where reason describes what changed
+func networkPolicyNeedsUpdate(desired, existing *networkingv1.NetworkPolicy) (bool, string) {
+	if !equality.Semantic.DeepEqual(desired.Spec.PodSelector, existing.Spec.PodSelector) {
+		return true, "podSelector changed"
+	}
+	if !equality.Semantic.DeepEqual(desired.Spec.PolicyTypes, existing.Spec.PolicyTypes) {
+		return true, fmt.Sprintf("policyTypes changed: %v -> %v", existing.Spec.PolicyTypes, desired.Spec.PolicyTypes)
+	}
+	if !equality.Semantic.DeepEqual(desired.Spec.Ingress, existing.Spec.Ingress) {
+		return true, "ingress rules changed"
+	}
+	if !equality.Semantic.DeepEqual(desired.Spec.Egress, existing.Spec.Egress) {
+		return true, "egress rules changed"
+	}
+	if !equality.Semantic.DeepEqual(desired.Labels, existing.Labels) {
+		return true, fmt.Sprintf("labels changed: %v -> %v", existing.Labels, desired.Labels)
+	}
+	return false, ""
+}
+
 // stripPort removes port suffix from a host string (e.g. "example.com:8001" -> "example.com")
 func stripPort(host string) string {
 	h, _, err := net.SplitHostPort(host)
@@ -393,6 +477,32 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingServiceAccount.AutomountServiceAccountToken = serviceAccount.AutomountServiceAccountToken
 		if err := r.Update(ctx, existingServiceAccount); err != nil {
 			return false, fmt.Errorf("failed to update service account: %w", err)
+		}
+	}
+
+	// reconcile network policy (must exist before deployment so the pod is never
+	// briefly unprotected on first creation)
+	networkPolicy := r.buildBrokerRouterNetworkPolicy(mcpExt)
+	if err := controllerutil.SetControllerReference(mcpExt, networkPolicy, r.Scheme); err != nil {
+		return false, fmt.Errorf("failed to set controller reference on network policy: %w", err)
+	}
+
+	existingNetworkPolicy := &networkingv1.NetworkPolicy{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.log.Info("creating broker-router network policy", "namespace", mcpExt.Namespace)
+			if err := r.Create(ctx, networkPolicy); err != nil {
+				return false, fmt.Errorf("failed to create network policy: %w", err)
+			}
+		} else {
+			return false, fmt.Errorf("failed to get network policy: %w", err)
+		}
+	} else if needsUpdate, reason := networkPolicyNeedsUpdate(networkPolicy, existingNetworkPolicy); needsUpdate {
+		r.log.Info("updating broker-router network policy", "namespace", mcpExt.Namespace, "reason", reason)
+		existingNetworkPolicy.Labels = networkPolicy.Labels
+		existingNetworkPolicy.Spec = networkPolicy.Spec
+		if err := r.Update(ctx, existingNetworkPolicy); err != nil {
+			return false, fmt.Errorf("failed to update network policy: %w", err)
 		}
 	}
 

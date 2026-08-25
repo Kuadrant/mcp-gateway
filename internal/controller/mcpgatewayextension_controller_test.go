@@ -13,6 +13,7 @@ import (
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
@@ -177,6 +178,7 @@ func forceDeleteTestMCPGatewayExtension(ctx context.Context, name, namespace str
 	deleteAndWait(&corev1.Secret{}, types.NamespacedName{Name: sessionSigningKeySecretName, Namespace: namespace})
 	deleteAndWait(&appsv1.Deployment{}, types.NamespacedName{Name: brokerRouterName, Namespace: namespace})
 	deleteAndWait(&corev1.Service{}, types.NamespacedName{Name: brokerRouterName, Namespace: namespace})
+	deleteAndWait(&networkingv1.NetworkPolicy{}, types.NamespacedName{Name: brokerRouterName, Namespace: namespace})
 	deleteAndWait(&gatewayv1.HTTPRoute{}, types.NamespacedName{Name: gatewayHTTPRouteName, Namespace: namespace})
 }
 
@@ -882,6 +884,15 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, service)).To(Succeed())
 			Expect(service.OwnerReferences).To(HaveLen(1))
 			Expect(service.OwnerReferences[0].UID).To(Equal(mcpExt.UID))
+
+			// verify network policy owner reference
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Expect(testK8sClient.Get(ctx, types.NamespacedName{
+				Name:      brokerRouterName,
+				Namespace: "default",
+			}, networkPolicy)).To(Succeed())
+			Expect(networkPolicy.OwnerReferences).To(HaveLen(1))
+			Expect(networkPolicy.OwnerReferences[0].UID).To(Equal(mcpExt.UID))
 		})
 	})
 

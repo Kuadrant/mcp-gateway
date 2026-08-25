@@ -102,6 +102,9 @@ mcpGatewayExtension:
     # The name of the secret containing a pre-existing key pair
     secretName: ""
 
-# Network policies for broker-router and controller pods
+# Network policy for the controller pod only. The broker-router NetworkPolicy is
+# created and owned automatically by the controller at runtime, in the
+# MCPGatewayExtension's own namespace. It allows ingress on ports 8080 and
+# 50051 only from the target Gateway's namespace, so it is not templated here.
 networkPolicy:
   enabled: false
