@@ -12,7 +12,16 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+type testRouteOpts struct {
+	stateless bool
+	stateful  bool
+}
+
 func newTestRouter202607(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, promptMap map[string]string) *Router202607 {
+	return newTestRouter202607WithOpts(t, serverConfigs, toolMap, promptMap, nil)
+}
+
+func newTestRouter202607WithOpts(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, promptMap map[string]string, opts map[string]*testRouteOpts) *Router202607 {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -22,11 +31,15 @@ func newTestRouter202607(t *testing.T, serverConfigs []*config.MCPServer, toolMa
 			if svr.Name == svrName {
 				path, _ := svr.Path()
 				route := &ServerRoute{
-					Name:   svr.Name,
-					Host:   svr.Hostname,
-					Prefix: svr.Prefix,
-					Path:   path,
-					URL:    svr.URL,
+					Name:      svr.Name,
+					Host:      svr.Hostname,
+					Prefix:    svr.Prefix,
+					Path:      path,
+					URL:       svr.URL,
+					Stateless: true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateless = o.stateless
 				}
 				builder.AddTool(tool, route)
 			}
@@ -36,13 +49,18 @@ func newTestRouter202607(t *testing.T, serverConfigs []*config.MCPServer, toolMa
 		for _, svr := range serverConfigs {
 			if svr.Name == svrName {
 				path, _ := svr.Path()
-				builder.AddPrompt(prompt, &ServerRoute{
-					Name:   svr.Name,
-					Host:   svr.Hostname,
-					Prefix: svr.Prefix,
-					Path:   path,
-					URL:    svr.URL,
-				})
+				route := &ServerRoute{
+					Name:      svr.Name,
+					Host:      svr.Hostname,
+					Prefix:    svr.Prefix,
+					Path:      path,
+					URL:       svr.URL,
+					Stateless: true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateless = o.stateless
+				}
+				builder.AddPrompt(prompt, route)
 			}
 		}
 	}
@@ -292,11 +310,12 @@ func TestRouter202607_PrefixFallback(t *testing.T) {
 
 	builder := NewTableBuilder()
 	builder.AddPrefix("gh_", &ServerRoute{
-		Name:   "github",
-		Host:   "github.mcp",
-		Prefix: "gh_",
-		Path:   "/mcp",
-		URL:    "http://github.mcp:8080/mcp",
+		Name:      "github",
+		Host:      "github.mcp",
+		Prefix:    "gh_",
+		Path:      "/mcp",
+		URL:       "http://github.mcp:8080/mcp",
+		Stateless: true,
 	})
 	table := builder.Build()
 	router.Table = func() RoutingTable { return table }
@@ -329,10 +348,11 @@ func TestRouter202607_ToolAnnotations(t *testing.T) {
 
 	builder := NewTableBuilder()
 	route := &ServerRoute{
-		Name: "annotated",
-		Host: "localhost",
-		Path: "/mcp",
-		URL:  "http://localhost:8080/mcp",
+		Name:      "annotated",
+		Host:      "localhost",
+		Path:      "/mcp",
+		URL:       "http://localhost:8080/mcp",
+		Stateless: true,
 	}
 	builder.AddTool("mytool", route)
 	builder.AddAnnotation("annotated::localhost", "mytool", &ToolAnnotation{
@@ -402,6 +422,68 @@ func TestRouter202607_EmptyPromptName(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 400, decision.Error.StatusCode)
 	require.Equal(t, "no prompt name set", decision.Error.Message)
+}
+
+// protocol version is implicit: the ext_proc adapter selects Router202607 for
+// 2026 clients, so no version header appears in the request.
+func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateful-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router := newTestRouter202607WithOpts(t, serverConfigs,
+		map[string]string{"mytool": "stateful-backend"},
+		map[string]string{},
+		map[string]*testRouteOpts{"stateful-backend": {stateless: false}},
+	)
+
+	req := &Request{
+		MCPMethod: MethodToolCall,
+		MCPName:   "mytool",
+		RequestID: "req-1",
+	}
+
+	decision := router.RouteRequest(context.Background(), req)
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
+	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-1"`)
+}
+
+func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateful-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router := newTestRouter202607WithOpts(t, serverConfigs,
+		map[string]string{},
+		map[string]string{"myprompt": "stateful-backend"},
+		map[string]*testRouteOpts{"stateful-backend": {stateless: false}},
+	)
+
+	req := &Request{
+		MCPMethod: MethodPromptGet,
+		MCPName:   "myprompt",
+		RequestID: "req-2",
+	}
+
+	decision := router.RouteRequest(context.Background(), req)
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
+	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-2"`)
 }
 
 func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {

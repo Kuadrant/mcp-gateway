@@ -76,10 +76,11 @@ type MCPServer struct {
 	notifyMu      sync.RWMutex
 	notifyHandler func(method string)
 
+	// dc intercepts the SDK's server/discover response during Connect
+	// to capture the upstream's SupportedVersions.
+	dc *discoverCapture
+
 	// supportedVersions lists protocol versions this upstream supports.
-	// set to the single negotiated version after Connect. future work:
-	// probe 2026 upstreams via server/discover to detect servers that
-	// support both versions.
 	supportedVersions []string
 }
 
@@ -110,7 +111,8 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 // buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
 // server, with header injection via a custom round tripper. the trust pool is
 // built from system roots, plus the gateway-level CA bundle (if set), plus the
-// per-server CACert (if set).
+// per-server CACert (if set). the discoverCapture is stored on up.dc to
+// intercept the SDK's server/discover response during Connect.
 func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
@@ -140,12 +142,13 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		}
 	}
 
-	return &http.Client{
-		Transport: &toolHintsTee{
+	up.dc = &discoverCapture{
+		base: &toolHintsTee{
 			base: &transport.HeaderRoundTripper{Base: base, Headers: up.headers},
 			sink: up.storeToolHints,
 		},
-	}, nil
+	}
+	return &http.Client{Transport: up.dc}, nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
@@ -248,7 +251,6 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
-
 	streamTransport := &mcp.StreamableClientTransport{
 		Endpoint:   up.URL,
 		HTTPClient: httpC,
@@ -312,11 +314,17 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// store the initialize result
 	up.init = session.InitializeResult()
 
-	// record the negotiated version as the only supported version.
-	// future work: probe 2026 upstreams via server/discover to get
-	// the full SupportedVersions list for dual-version servers.
-	up.supportedVersions = []string{up.init.ProtocolVersion}
-	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", up.init.ProtocolVersion, "uses-stateless", up.UsesStatelessProtocol())
+	negotiated := up.init.ProtocolVersion
+	up.dc.SetConnected()
+	if captured, verr := up.dc.Versions(); verr == nil && len(captured) > 0 {
+		up.supportedVersions = captured
+		if !slices.Contains(up.supportedVersions, negotiated) {
+			up.supportedVersions = append(up.supportedVersions, negotiated)
+		}
+	} else {
+		up.supportedVersions = []string{negotiated}
+	}
+	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// 2026 upstreams receive notifications via the SDK's subscriptions/listen
 	// stream (opened automatically because ToolListChangedHandler is set).
@@ -439,6 +447,12 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}
 	go func() {
 		if err := session.Wait(); err != nil {
+			// only fire for the currently tracked session; a planned
+			// Disconnect replaces up.session before the old Wait returns
+			if up.currentSession() != session {
+				up.logger.Debug("ignoring connection loss from superseded session", "upstream", up.ID())
+				return
+			}
 			handler(err)
 		}
 	}()

@@ -157,8 +157,10 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, client, "should always return a client with timeouts set")
 
-	tee, ok := client.Transport.(*toolHintsTee)
-	require.True(t, ok, "transport should be *toolHintsTee")
+	dc, ok := client.Transport.(*discoverCapture)
+	require.True(t, ok, "transport should be *discoverCapture")
+	tee, ok := dc.base.(*toolHintsTee)
+	require.True(t, ok, "discoverCapture base should be *toolHintsTee")
 	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
 	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
 	tr, ok := hrt.Base.(*http.Transport)

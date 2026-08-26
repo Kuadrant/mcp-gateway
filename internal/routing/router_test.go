@@ -53,6 +53,7 @@ func newTestRouter(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[
 					Path:             path,
 					URL:              svr.URL,
 					UserSpecificList: svr.UserSpecificList,
+					Stateful:         true,
 				}
 				if svr.TokenURLElicitation != nil {
 					route.TokenURLElicitation = &TokenURLElicitationRoute{
@@ -68,12 +69,90 @@ func newTestRouter(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[
 			if svr.Name == svrName {
 				path, _ := svr.Path()
 				builder.AddPrompt(prompt, &ServerRoute{
-					Name:   svr.Name,
-					Host:   svr.Hostname,
-					Prefix: svr.Prefix,
-					Path:   path,
-					URL:    svr.URL,
+					Name:     svr.Name,
+					Host:     svr.Hostname,
+					Prefix:   svr.Prefix,
+					Path:     path,
+					URL:      svr.URL,
+					Stateful: true,
 				})
+			}
+		}
+	}
+	table := builder.Build()
+
+	routingConfig := atomic.Pointer[config.MCPServersConfig]{}
+	routingConfig.Store(&config.MCPServersConfig{Servers: serverConfigs})
+
+	tokenElicitationMap, err := elicitation.New()
+	require.NoError(t, err)
+
+	router := &Router202511{
+		RoutingConfig:       &routingConfig,
+		Table:               func() RoutingTable { return table },
+		SessionCache:        cache,
+		JWTManager:          jwtManager,
+		ElicitationMap:      mustNewIDMap(t),
+		TokenElicitationMap: tokenElicitationMap,
+		Logger:              logger,
+	}
+
+	return router, validToken
+}
+
+func newTestRouterWithOpts(t *testing.T, serverConfigs []*config.MCPServer, toolMap map[string]string, promptMap map[string]string, opts map[string]*testRouteOpts) (*Router202511, string) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	jwtManager, err := session.NewJWTManager(testSigningKey, 0, logger, cache)
+	require.NoError(t, err)
+
+	validToken := jwtManager.Generate()
+
+	builder := NewTableBuilder()
+	for tool, svrName := range toolMap {
+		for _, svr := range serverConfigs {
+			if svr.Name == svrName {
+				path, _ := svr.Path()
+				route := &ServerRoute{
+					Name:             svr.Name,
+					Host:             svr.Hostname,
+					Prefix:           svr.Prefix,
+					Path:             path,
+					URL:              svr.URL,
+					UserSpecificList: svr.UserSpecificList,
+					Stateful:         true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateful = o.stateful
+				}
+				if svr.TokenURLElicitation != nil {
+					route.TokenURLElicitation = &TokenURLElicitationRoute{
+						URL: svr.TokenURLElicitation.URL,
+					}
+				}
+				builder.AddTool(tool, route)
+			}
+		}
+	}
+	for prompt, svrName := range promptMap {
+		for _, svr := range serverConfigs {
+			if svr.Name == svrName {
+				path, _ := svr.Path()
+				route := &ServerRoute{
+					Name:     svr.Name,
+					Host:     svr.Hostname,
+					Prefix:   svr.Prefix,
+					Path:     path,
+					URL:      svr.URL,
+					Stateful: true,
+				}
+				if o, ok := opts[svr.Name]; ok {
+					route.Stateful = o.stateful
+				}
+				builder.AddPrompt(prompt, route)
 			}
 		}
 	}
@@ -291,11 +370,12 @@ func TestHandleRequestBody(t *testing.T) {
 
 	table := NewTableBuilder().
 		AddTool("s_mytool", &ServerRoute{
-			Name:   "dummy",
-			Host:   "localhost",
-			Prefix: "s_",
-			Path:   "/mcp",
-			URL:    "http://localhost:8080/mcp",
+			Name:     "dummy",
+			Host:     "localhost",
+			Prefix:   "s_",
+			Path:     "/mcp",
+			URL:      "http://localhost:8080/mcp",
+			Stateful: true,
 		}).
 		Build()
 
@@ -603,6 +683,7 @@ func TestRouteRequest_PrefixFallback(t *testing.T) {
 			Path:             "/mcp",
 			URL:              "http://github.mcp:8080/mcp",
 			UserSpecificList: true,
+			Stateful:         true,
 		}).
 		Build()
 	router.Table = func() RoutingTable { return table }
@@ -1206,11 +1287,12 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	validToken := router.JWTManager.Generate()
 	table := NewTableBuilder().
 		AddTool("s_mytool", &ServerRoute{
-			Name:   "dummy",
-			Host:   "backend.example.com",
-			Prefix: "s_",
-			Path:   "/mcp",
-			URL:    "http://localhost:8080/mcp",
+			Name:     "dummy",
+			Host:     "backend.example.com",
+			Prefix:   "s_",
+			Path:     "/mcp",
+			URL:      "http://localhost:8080/mcp",
+			Stateful: true,
 		}).
 		Build()
 	router.Table = func() RoutingTable { return table }
@@ -1314,11 +1396,12 @@ func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 			validToken := router.JWTManager.Generate()
 			table := NewTableBuilder().
 				AddTool("s_mytool", &ServerRoute{
-					Name:   "dummy",
-					Host:   "backend.example.com",
-					Prefix: "s_",
-					Path:   "/mcp",
-					URL:    "http://localhost:8080/mcp",
+					Name:     "dummy",
+					Host:     "backend.example.com",
+					Prefix:   "s_",
+					Path:     "/mcp",
+					URL:      "http://localhost:8080/mcp",
+					Stateful: true,
 				}).
 				Build()
 			router.Table = func() RoutingTable { return table }
@@ -1551,11 +1634,12 @@ func TestHandleResourceRead(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("s_", &ServerRoute{
-				Name:   "dummy",
-				Host:   "localhost",
-				Prefix: "s_",
-				Path:   "/mcp",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "dummy",
+				Host:     "localhost",
+				Prefix:   "s_",
+				Path:     "/mcp",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1621,11 +1705,12 @@ func TestHandleResourceRead_LiveHairpinInit(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("s_", &ServerRoute{
-				Name:   "dummy",
-				Host:   "dummy.mcp.local",
-				Prefix: "s_",
-				Path:   "/",
-				URL:    ts.URL,
+				Name:     "dummy",
+				Host:     "dummy.mcp.local",
+				Prefix:   "s_",
+				Path:     "/",
+				URL:      ts.URL,
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1778,11 +1863,12 @@ func TestHandleResourceRead_URIWithQueryParams(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("s_", &ServerRoute{
-				Name:   "dummy",
-				Host:   "dummy.mcp.local",
-				Prefix: "s_",
-				Path:   "/",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "dummy",
+				Host:     "dummy.mcp.local",
+				Prefix:   "s_",
+				Path:     "/",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1819,11 +1905,12 @@ func TestHandleResourceRead_EmptyPrefix(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("", &ServerRoute{
-				Name:   "noprefixserver",
-				Host:   "noprefixserver.mcp.local",
-				Prefix: "",
-				Path:   "/",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "noprefixserver",
+				Host:     "noprefixserver.mcp.local",
+				Prefix:   "",
+				Path:     "/",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1869,18 +1956,20 @@ func TestHandleResourceRead_OverlappingPrefixes(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("app_", &ServerRoute{
-				Name:   "app_server",
-				Host:   "app.mcp.local",
-				Prefix: "app_",
-				Path:   "/",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "app_server",
+				Host:     "app.mcp.local",
+				Prefix:   "app_",
+				Path:     "/",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			AddResourcePrefix("app_admin_", &ServerRoute{
-				Name:   "app_admin_server",
-				Host:   "app_admin.mcp.local",
-				Prefix: "app_admin_",
-				Path:   "/",
-				URL:    "http://localhost:8081/mcp",
+				Name:     "app_admin_server",
+				Host:     "app_admin.mcp.local",
+				Prefix:   "app_admin_",
+				Path:     "/",
+				URL:      "http://localhost:8081/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1919,11 +2008,12 @@ func TestHandleResourceRead_SingleCharPrefix(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("a", &ServerRoute{
-				Name:   "dummy",
-				Host:   "dummy.mcp.local",
-				Prefix: "a",
-				Path:   "/",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "dummy",
+				Host:     "dummy.mcp.local",
+				Prefix:   "a",
+				Path:     "/",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -1966,11 +2056,12 @@ func TestHandleResourceRead_MissingSession(t *testing.T) {
 	router.Table = func() RoutingTable {
 		return NewTableBuilder().
 			AddResourcePrefix("s_", &ServerRoute{
-				Name:   "dummy",
-				Host:   "dummy.mcp.local",
-				Prefix: "s_",
-				Path:   "/",
-				URL:    "http://localhost:8080/mcp",
+				Name:     "dummy",
+				Host:     "dummy.mcp.local",
+				Prefix:   "s_",
+				Path:     "/",
+				URL:      "http://localhost:8080/mcp",
+				Stateful: true,
 			}).
 			Build()
 	}
@@ -2335,4 +2426,66 @@ func TestAnnotationHintsHeader(t *testing.T) {
 			require.Equal(t, tc.want, renderHints(tc.hints))
 		})
 	}
+}
+
+func TestRouter202511_StatelessOnlyToolRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateless-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router, validToken := newTestRouterWithOpts(t, serverConfigs,
+		map[string]string{"mytool": "stateless-backend"},
+		map[string]string{},
+		map[string]*testRouteOpts{"stateless-backend": {stateful: false}},
+	)
+
+	data := &MCPRequest{
+		ID:      ptr.To(1),
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params:  map[string]any{"name": "mytool"},
+		Headers: map[string]string{"mcp-session-id": validToken},
+	}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
+}
+
+func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "stateless-backend",
+			URL:      "http://localhost:8080/mcp",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+
+	router, validToken := newTestRouterWithOpts(t, serverConfigs,
+		map[string]string{},
+		map[string]string{"myprompt": "stateless-backend"},
+		map[string]*testRouteOpts{"stateless-backend": {stateful: false}},
+	)
+
+	data := &MCPRequest{
+		ID:      ptr.To(2),
+		JSONRPC: "2.0",
+		Method:  "prompts/get",
+		Params:  map[string]any{"name": "myprompt"},
+		Headers: map[string]string{"mcp-session-id": validToken},
+	}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
+	require.NotNil(t, decision.Error)
+	require.Equal(t, 200, decision.Error.StatusCode)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
 }
