@@ -27,10 +27,15 @@ deploys it on startup. This is the consolidated (umbrella) model described in
 
 ## Step 1: Install the Kuadrant Operator
 
-Create an `OperatorGroup` and a `Subscription` for the Kuadrant Operator.
+Create the `mcp-system` namespace, an `OperatorGroup`, and a `Subscription` for the Kuadrant Operator.
 
 ```bash
 kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-system
+---
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
@@ -134,6 +139,11 @@ kubectl delete mcpgatewayextension --all -n mcp-system
 kubectl delete subscription kuadrant-operator -n mcp-system
 kubectl delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-system
 ```
+
+> **Note:** Removing the Kuadrant `Subscription` and CSV uninstalls the entire Kuadrant control
+> plane, not just MCP Gateway. If other Kuadrant features (such as `AuthPolicy` or
+> `RateLimitPolicy`) are in use on the cluster, leave the operator installed and only remove the
+> `MCPGatewayExtension` resources.
 
 > **Note:** OLM does not delete CRDs when a CSV is removed. Delete the MCP CRDs manually only if
 > you are sure no other operator or workload depends on them.

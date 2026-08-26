@@ -80,6 +80,11 @@ resources are untouched — OLM does not delete CRDs when a CSV is removed.
 > **Do not delete the `MCPGatewayExtension` during this step.** Its finalizer needs a running
 > controller to clear; the Kuadrant Operator's controller (Step 3) handles it once it starts.
 
+> **Note:** No MCP Gateway controller runs until the Kuadrant Operator's controller starts
+> (Step 3/4). During this window, create/update/delete operations, finalizers, and status
+> changes on `MCPGatewayExtension`, `MCPServerRegistration`, and `MCPVirtualServer` resources
+> are not reconciled.
+
 ## Step 3: Move the Kuadrant Operator to the version that bundles MCP Gateway
 
 Upgrade the Kuadrant Operator to the version that includes the MCP Gateway controller. How this
@@ -161,8 +166,10 @@ curl -s -X POST "http://$GATEWAY_HOST:8080/mcp" \
 ```
 
 > **Note:** This bare `curl` assumes an unauthenticated listener. If you have an `AuthPolicy` on
-> the route, verify with your normal authenticated client instead. A `401`/`403` still confirms
-> the routing path is intact — the request reached the router and was rejected on auth.
+> the route, verify with your normal authenticated client instead. A `401`/`403` confirms only
+> that the gateway and authentication layer are reachable — the request was rejected before
+> broker-router. To confirm broker-router is serving traffic, use an authenticated client and
+> check for a successful response.
 
 ## Rollback
 
@@ -187,3 +194,9 @@ EOF
 
 The broker-router is unaffected by rollback — it is owned by your `MCPGatewayExtension`, not by
 either operator's CSV.
+
+## Next Steps
+
+- [Installing MCP Gateway via OLM (Kuadrant Operator)](./olm-install.md)
+- [Register MCP Servers](./register-mcp-servers.md)
+- [Authentication](./authentication.md)
