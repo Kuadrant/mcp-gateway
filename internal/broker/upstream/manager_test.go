@@ -828,6 +828,52 @@ func TestDiffTools(t *testing.T) {
 			expectedAdded:   0,
 			expectedRemoved: 0,
 		},
+		{
+			// same name, changed description: drop stale entry and re-add new spec
+			name:            "description change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "old", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "new", InputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			name:            "input schema change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			name:            "output schema change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			// identical spec must not be churned (no spurious add/remove)
+			name:            "identical spec not churned",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "same", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "same", InputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			// spec change alongside an unrelated add and remove
+			name:            "spec change with add and remove",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "old", InputSchema: map[string]any{"type": "object"}}, validTool("tool2")},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "new", InputSchema: map[string]any{"type": "object"}}, validTool("tool3")},
+			expectedAdded:   2,
+			expectedRemoved: 2,
+			addedNames:      []string{"test_tool1", "test_tool3"},
+			removedNames:    []string{"test_tool1", "test_tool2"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -850,6 +896,22 @@ func TestDiffTools(t *testing.T) {
 				for _, expectedName := range tt.removedNames {
 					assert.Contains(t, removed, expectedName)
 				}
+			}
+
+			// every added tool must carry the new spec, not a stale copy: this is
+			// what makes the gateway serve the updated description/schema after a
+			// same-name change. match each added tool back to its newTools entry
+			// by served (prefixed) name and compare the spec fields.
+			newByServedName := make(map[string]mcp.Tool, len(tt.newTools))
+			for _, nt := range tt.newTools {
+				newByServedName[mock.GetPrefix()+nt.Name] = nt
+			}
+			for _, at := range added {
+				want, ok := newByServedName[at.Tool.Name]
+				require.True(t, ok, "added tool %q has no matching newTools entry", at.Tool.Name)
+				assert.Equal(t, want.Description, at.Tool.Description, "added tool must carry the new description")
+				assert.Equal(t, want.InputSchema, at.Tool.InputSchema, "added tool must carry the new input schema")
+				assert.Equal(t, want.OutputSchema, at.Tool.OutputSchema, "added tool must carry the new output schema")
 			}
 		})
 	}
