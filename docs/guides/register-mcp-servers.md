@@ -212,9 +212,6 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
       }
     }
   }'
-
-# Clean up
-rm -f /tmp/mcp_headers
 ```
 
 You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
