@@ -941,16 +941,20 @@ func (man *MCPManager) diffTools(oldTools, newTools []mcp.Tool) ([]GatewayTool, 
 
 	addedTools := make([]GatewayTool, 0)
 	for _, newTool := range newToolMap {
-		_, ok := oldToolMap[newTool.Name]
-		if !ok {
+		prev, ok := oldToolMap[newTool.Name]
+		// add new tools, and re-add tools whose spec changed under an
+		// unchanged name so the gateway serves the new description/schema
+		if !ok || toolSpecChanged(&prev, &newTool) {
 			addedTools = append(addedTools, man.toolToServerTool(newTool))
 		}
 	}
 
 	removedTools := make([]string, 0)
 	for _, oldTool := range oldToolMap {
-		_, ok := newToolMap[oldTool.Name]
-		if !ok {
+		next, ok := newToolMap[oldTool.Name]
+		// remove dropped tools, and drop the stale entry for a same-name
+		// spec change before its replacement is added
+		if !ok || toolSpecChanged(&oldTool, &next) {
 			removedTools = append(removedTools, prefixedName(man.mcp.GetPrefix(), oldTool.Name))
 		}
 	}
@@ -988,10 +992,10 @@ func (man *MCPManager) logToolChanges(ctx context.Context, oldTools, newTools []
 }
 
 // toolSpecChanged reports whether two tools differ in description or schema.
-func toolSpecChanged(a, b *mcp.Tool) bool {
-	return a.Description != b.Description ||
-		!reflect.DeepEqual(a.InputSchema, b.InputSchema) ||
-		!reflect.DeepEqual(a.OutputSchema, b.OutputSchema)
+func toolSpecChanged(oldTool, newTool *mcp.Tool) bool {
+	return oldTool.Description != newTool.Description ||
+		!reflect.DeepEqual(oldTool.InputSchema, newTool.InputSchema) ||
+		!reflect.DeepEqual(oldTool.OutputSchema, newTool.OutputSchema)
 }
 
 func prefixedName(prefix, tool string) string {
