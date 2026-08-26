@@ -101,10 +101,16 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		return
 	}
 
+	protoVersion := protocol.Version2025
+	if v := headers.Get("Mcp-Protocol-Version"); v != "" {
+		protoVersion = v
+	}
+
 	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-all",
 		trace.WithAttributes(
 			attribute.Int("mcp.user_specific.server_count", len(matching)),
 			attribute.String("mcp.user_specific.client_version", clientVersion),
+			attribute.String("protocol.version", protoVersion),
 		),
 	)
 	defer span.End()

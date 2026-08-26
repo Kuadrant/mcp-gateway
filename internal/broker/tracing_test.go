@@ -99,7 +99,18 @@ func TestTracingMiddleware_SpanPerRequestWithNesting(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, handle.Name, "expected a handle-request span for tools/list")
+	if attr, ok := findAttribute(handle.Attributes, "protocol.version"); ok {
+		require.Equal(t, "2025-11-25", attr.Value.AsString(), "handle-request span should default to 2025-11-25")
+	} else {
+		require.Fail(t, "expected protocol.version attribute on handle-request span")
+	}
+
 	require.NotEmpty(t, filter.Name, "expected the FilterTools span")
+	if attr, ok := findAttribute(filter.Attributes, "protocol.version"); ok {
+		require.Equal(t, "2025-11-25", attr.Value.AsString(), "tools-list span should default to 2025-11-25")
+	} else {
+		require.Fail(t, "expected protocol.version attribute on tools-list span")
+	}
 
 	require.Equal(t, handle.SpanContext.TraceID(), filter.SpanContext.TraceID(),
 		"handler spans must share the request trace")

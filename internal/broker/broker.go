@@ -383,9 +383,17 @@ func (m *mcpBrokerImpl) onGatewaySessionEnd(sessionID string) {
 func (m *mcpBrokerImpl) tracingMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			protoVersion := "2025-11-25"
+			if extra := req.GetExtra(); extra != nil {
+				if v := extra.Header.Get("Mcp-Protocol-Version"); v != "" {
+					protoVersion = v
+				}
+			}
+
 			ctx, span := brokerTracer().Start(ctx, "mcp-broker.handle-request", trace.WithAttributes(
 				brokerComponentAttr,
 				attribute.String("mcp.method", method),
+				attribute.String("protocol.version", protoVersion),
 			))
 			defer span.End()
 			// LogSafeSessionID hashes/decodes per call; only pay for it when

@@ -59,6 +59,7 @@ func (r *Router202511) RouteRequest(ctx context.Context, req *Request) *Decision
 		trace.WithAttributes(
 			componentAttr,
 			attribute.String("mcp.method.name", mcpReq.Method),
+			attribute.String("protocol.version", "2025-11-25"),
 		),
 	)
 	defer span.End()

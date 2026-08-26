@@ -25,7 +25,14 @@ const allowedCapabilitiesClaimKey = "allowed-capabilities"
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
 func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, headers http.Header, sessionID string, mcpRes *mcp.ListToolsResult) {
-	attrs := []attribute.KeyValue{brokerComponentAttr}
+	protoVersion := "2025-11-25"
+	if v := headers.Get("Mcp-Protocol-Version"); v != "" {
+		protoVersion = v
+	}
+	attrs := []attribute.KeyValue{
+		brokerComponentAttr,
+		attribute.String("protocol.version", protoVersion),
+	}
 	ctx, span := brokerTracer().Start(ctx, "mcp-broker.tools-list", trace.WithAttributes(attrs...))
 	defer span.End()
 
