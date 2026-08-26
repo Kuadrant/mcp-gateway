@@ -50,7 +50,7 @@ EOF
 ```
 
 > **Note:** All requests matching any route bound to `mcp-gateway` will increment this counter. If the limit is exceeded, Kuadrant will return an HTTP `429 Too Many Requests` response.
-
+>
 > **Tip:** To enforce a hard limit that overrides any route-level policies, replace `spec.limits` with `spec.overrides.limits` in the YAML above.
 
 ### Step 2: Verify the policy
@@ -75,7 +75,7 @@ In this scenario, we target an `HTTPRoute` rather than the whole Gateway. This i
 
 ### Step 1: Apply the policy
 
-The following example targets the `weather-mcp-route` (which exposes a specific weather MCP server) and restricts it to 50 requests per second.
+The following example targets the `my-mcp-server-route` (which exposes a specific MCP server) and restricts it to 50 requests per second.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -88,7 +88,7 @@ spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
-    name: weather-mcp-route
+    name: my-mcp-server-route
   limits:
     "weather-limit":
       rates:
@@ -107,7 +107,7 @@ kubectl get ratelimitpolicy weather-backend-rate-limit -n mcp-test \
 # expected: True
 ```
 
-Once enforced, requests exceeding 50 per second to the `weather-mcp-route` will receive an HTTP `429 Too Many Requests` response, while other routes remain unaffected.
+Once enforced, requests exceeding 50 per second to the `my-mcp-server-route` will receive an HTTP `429 Too Many Requests` response, while other routes remain unaffected.
 
 ---
 
@@ -119,7 +119,7 @@ In this scenario, we define a limit that groups requests based on the value of t
 
 ### Step 1: Apply the policy
 
-The following example targets the `database-mcp-route` but applies a limit of 10 requests per minute *per tool*.
+The following example targets the `my-mcp-server-route` but applies a limit of 10 requests per minute *per tool*.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -132,7 +132,7 @@ spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
-    name: database-mcp-route
+    name: my-mcp-server-route
   limits:
     "per-tool-limit":
       rates:
