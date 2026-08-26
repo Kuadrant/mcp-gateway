@@ -67,6 +67,8 @@ Once enforced, send more than 1000 requests within one minute to any route on th
 
 ---
 
+> **Important:** Scenarios B and C both target the same `HTTPRoute` (`my-mcp-server-route`). Applying multiple `RateLimitPolicy` resources to the same target requires **Kuadrant v1.0+** with the `merge` strategy (shown below). On older versions, only one policy can target a given route at a time — treat these scenarios as alternatives and apply only one.
+
 ## 3. Scenario B: Per-Backend Scope
 
 Sometimes you want to limit traffic directed to a specific MCP server because it connects to an expensive or fragile underlying resource (like a legacy database).
@@ -89,11 +91,13 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: my-mcp-server-route
-  limits:
-    "weather-limit":
-      rates:
-        - limit: 50
-          window: 1s
+  defaults:
+    strategy: merge
+    limits:
+      "weather-limit":
+        rates:
+          - limit: 50
+            window: 1s
 EOF
 ```
 
@@ -133,22 +137,24 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: my-mcp-server-route
-  limits:
-    "per-tool-limit":
-      rates:
-        - limit: 10
-          window: 1m
-      counters:
-        - expression: "request.?headers[?'x-mcp-toolname'].orValue('__no_tool__')"
+  defaults:
+    strategy: merge
+    limits:
+      "per-tool-limit":
+        rates:
+          - limit: 10
+            window: 1m
+        counters:
+          - expression: "request.?headers[?'x-mcp-toolname'].map(t, 'tool:' + t).orValue('sys:no_tool')"
 EOF
 ```
 
-The counter expression uses CEL's optional syntax (`?.` and `orValue()`) to safely handle cases where the `x-mcp-toolname` header is not present. The MCP Gateway only sets this header for `tools/call` requests — it is absent for other MCP methods such as `initialize`, `tools/list`, or `resources/read`. When the header is missing, the expression evaluates to the fallback value `__no_tool__`, which groups all non-tool requests into a single shared counter.
+The counter expression uses CEL's optional syntax (`?.`, `.map()`, and `orValue()`) to safely handle cases where the `x-mcp-toolname` header is not present. The MCP Gateway only sets this header for `tools/call` requests — it is absent for other MCP methods such as `initialize`, `tools/list`, or `resources/read`. When the header is present, `.map(t, 'tool:' + t)` prefixes the tool name so it can never collide with the system fallback key. When the header is missing, the expression evaluates to `sys:no_tool`, which groups all non-tool requests into a single shared counter.
 
 In this setup:
-- A `tools/call` request with `x-mcp-toolname: query_users` increments the `query_users` counter.
-- A `tools/call` request with `x-mcp-toolname: execute_sql` increments a separate `execute_sql` counter.
-- An `initialize` or `tools/list` request (where the header is absent) increments the shared `__no_tool__` counter.
+- A `tools/call` request with `x-mcp-toolname: query_users` increments the `tool:query_users` counter.
+- A `tools/call` request with `x-mcp-toolname: execute_sql` increments a separate `tool:execute_sql` counter.
+- An `initialize` or `tools/list` request (where the header is absent) increments the shared `sys:no_tool` counter.
 
 ### Step 2: Verify the policy
 
