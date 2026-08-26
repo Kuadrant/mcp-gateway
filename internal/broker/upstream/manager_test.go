@@ -897,6 +897,22 @@ func TestDiffTools(t *testing.T) {
 					assert.Contains(t, removed, expectedName)
 				}
 			}
+
+			// every added tool must carry the new spec, not a stale copy: this is
+			// what makes the gateway serve the updated description/schema after a
+			// same-name change. match each added tool back to its newTools entry
+			// by served (prefixed) name and compare the spec fields.
+			newByServedName := make(map[string]mcp.Tool, len(tt.newTools))
+			for _, nt := range tt.newTools {
+				newByServedName[mock.GetPrefix()+nt.Name] = nt
+			}
+			for _, at := range added {
+				want, ok := newByServedName[at.Tool.Name]
+				require.True(t, ok, "added tool %q has no matching newTools entry", at.Tool.Name)
+				assert.Equal(t, want.Description, at.Tool.Description, "added tool must carry the new description")
+				assert.Equal(t, want.InputSchema, at.Tool.InputSchema, "added tool must carry the new input schema")
+				assert.Equal(t, want.OutputSchema, at.Tool.OutputSchema, "added tool must carry the new output schema")
+			}
 		})
 	}
 }
