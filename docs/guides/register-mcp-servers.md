@@ -123,7 +123,7 @@ spec:
 EOF
 ```
 
-> **Note:** An exact-duplicate `prefix` across two registrations sharing a gateway is rejected at registration time. A prefix that's a substring of another (e.g. `app_` vs. `app_admin_`) is not rejected; resource URI lookups resolve it via longest-prefix match, and the shorter-prefix server's colliding resource becomes unreachable via `resources/read`. Choose prefixes that aren't prefixes of one another.
+> **Note:** An exact-duplicate `prefix` across two registrations sharing a gateway is rejected at registration time. A prefix that's itself a prefix of another (e.g. `app_` and `app_admin_`) is not rejected; resource URI lookups resolve it via longest-prefix match, and the shorter-prefix server's colliding resource becomes unreachable via `resources/read`. Choose prefixes that aren't prefixes of one another.
 
 ## Step 4: Verify Registration
 
@@ -256,7 +256,7 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
 rm -f /tmp/mcp_headers
 ```
 
-You should see the resource's contents (`uri`, `mimeType`, and body) in the response.
+You should see the resource's contents (`uri`, `mimeType`, and `text` or `blob` depending on whether the resource is text or binary) in the response.
 
 ## Disabling a Server
 
