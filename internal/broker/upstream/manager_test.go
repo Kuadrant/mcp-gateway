@@ -828,6 +828,52 @@ func TestDiffTools(t *testing.T) {
 			expectedAdded:   0,
 			expectedRemoved: 0,
 		},
+		{
+			// same name, changed description: drop stale entry and re-add new spec
+			name:            "description change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "old", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "new", InputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			name:            "input schema change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			name:            "output schema change under same name",
+			oldTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_tool1"},
+			removedNames:    []string{"test_tool1"},
+		},
+		{
+			// identical spec must not be churned (no spurious add/remove)
+			name:            "identical spec not churned",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "same", InputSchema: map[string]any{"type": "object"}}},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "same", InputSchema: map[string]any{"type": "object"}}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			// spec change alongside an unrelated add and remove
+			name:            "spec change with add and remove",
+			oldTools:        []mcp.Tool{{Name: "tool1", Description: "old", InputSchema: map[string]any{"type": "object"}}, validTool("tool2")},
+			newTools:        []mcp.Tool{{Name: "tool1", Description: "new", InputSchema: map[string]any{"type": "object"}}, validTool("tool3")},
+			expectedAdded:   2,
+			expectedRemoved: 2,
+			addedNames:      []string{"test_tool1", "test_tool3"},
+			removedNames:    []string{"test_tool1", "test_tool2"},
+		},
 	}
 
 	for _, tt := range tests {
