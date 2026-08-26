@@ -145,11 +145,11 @@ spec:
           - limit: 10
             window: 1m
         counters:
-          - expression: "request.?headers[?'x-mcp-toolname'].map(t, 'tool:' + t).orValue('sys:no_tool')"
+          - expression: "request.?headers[?'x-mcp-toolname'].optMap(t, 'tool:' + t).orValue('sys:no_tool')"
 EOF
 ```
 
-The counter expression uses CEL's optional syntax (`?.`, `.map()`, and `orValue()`) to safely handle cases where the `x-mcp-toolname` header is not present. The MCP Gateway only sets this header for `tools/call` requests — it is absent for other MCP methods such as `initialize`, `tools/list`, or `resources/read`. When the header is present, `.map(t, 'tool:' + t)` prefixes the tool name so it can never collide with the system fallback key. When the header is missing, the expression evaluates to `sys:no_tool`, which groups all non-tool requests into a single shared counter.
+The counter expression uses CEL's optional syntax (`?.`, `[?]`, `.optMap()`, and `orValue()`) to safely handle cases where the `x-mcp-toolname` header is not present. The MCP Gateway only sets this header for `tools/call` requests — it is absent for other MCP methods such as `initialize`, `tools/list`, or `resources/read`. When the header is present, `.optMap(t, 'tool:' + t)` prefixes the tool name so it can never collide with the system fallback key. When the header is missing, the expression evaluates to `sys:no_tool`, which groups all non-tool requests into a single shared counter.
 
 In this setup:
 - A `tools/call` request with `x-mcp-toolname: query_users` increments the `tool:query_users` counter.
