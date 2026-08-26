@@ -1,5 +1,9 @@
 module github.com/Kuadrant/mcp-gateway
 
+// Minimum floor, not a pin. Keep at the minor's .0 release so downstream builds
+// (which use their own toolchain image) are never blocked. CI and builder images
+// float to the latest patch of this minor. Bump only when moving to a new minor,
+// never for patch releases.
 go 1.26.0
 
 require (
