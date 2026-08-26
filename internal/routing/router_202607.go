@@ -16,9 +16,10 @@ import (
 
 // Router202607 implements Router for the 2026-07-28 protocol (stateless, header-based routing).
 type Router202607 struct {
-	Table         RoutingTableFunc
-	RoutingConfig *atomic.Pointer[config.MCPServersConfig]
-	Logger        *slog.Logger
+	Table             RoutingTableFunc
+	RoutingConfig     *atomic.Pointer[config.MCPServersConfig]
+	Logger            *slog.Logger
+	GuardrailsChecker GuardrailsCheckerFunc
 }
 
 var _ Router = &Router202607{}
@@ -142,6 +143,36 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 	if routerErr != nil {
 		return &Decision{Error: routerErr}
 	}
+
+	var requestID any
+	if req.Parsed != nil {
+		requestID = req.Parsed.ID
+	}
+	args, blocked := guardrailsArguments(req.Parsed, requestID, BuildJSONRPCError, "application/json")
+	if blocked != nil {
+		return blocked
+	}
+	modified, blocked := checkGuardrailsRequest(
+		ctx, span, r.Logger, r.GuardrailsChecker, r.RoutingConfig.Load().GetGlobalGuardrails(), serverInfo.GuardrailsConfigIDs,
+		upstreamToolName, args, requestID, BuildJSONRPCError, "application/json",
+	)
+	if blocked != nil {
+		return blocked
+	}
+	if blocked := applyModifiedArguments(req.Parsed, modified, requestID, BuildJSONRPCError, "application/json"); blocked != nil {
+		return blocked
+	}
+	if modified != "" && req.Parsed != nil {
+		rewritten, err := req.Parsed.ToBytes()
+		if err != nil {
+			r.Logger.ErrorContext(ctx, "failed to marshal body to bytes", "error", err)
+			span.SetStatus(codes.Error, "body marshal failed")
+			span.SetAttributes(attribute.String("error.type", "marshal_error"))
+			return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
+		}
+		bodyMutation = rewritten
+	}
+
 	if bodyMutation != nil {
 		headers["content-length"] = fmt.Sprintf("%d", len(bodyMutation))
 	}

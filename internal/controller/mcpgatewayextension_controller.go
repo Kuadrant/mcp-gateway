@@ -104,6 +104,7 @@ type ConfigWriterDeleter interface {
 	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
 	WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error
 	WriteGlobalGuardrails(ctx context.Context, guardrailsConfig *config.GuardrailsConfig, namespaceName types.NamespacedName) error
+	WriteMaxBodyBytes(ctx context.Context, maxBodyBytes int64, namespaceName types.NamespacedName) error
 }
 
 // MCPGatewayExtensionReconciler reconciles a MCPGatewayExtension object
@@ -248,6 +249,10 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
 		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileMaxBodyBytes(ctx, mcpExt); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -922,6 +927,14 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ con
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{Name: extName, Namespace: extNamespace},
 	}}
+}
+
+func (r *MCPGatewayExtensionReconciler) reconcileMaxBodyBytes(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
+	n := config.DefaultMaxBodyBytes
+	if mcpExt.Spec.MaxBodyBytes != nil {
+		n = int64(*mcpExt.Spec.MaxBodyBytes)
+	}
+	return r.ConfigWriterDeleter.WriteMaxBodyBytes(ctx, n, config.NamespaceName(mcpExt.Namespace))
 }
 
 // reconcileGuardrails validates the guardrails Secret referenced by the

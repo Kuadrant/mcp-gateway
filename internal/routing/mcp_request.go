@@ -190,6 +190,94 @@ func (mr *MCPRequest) ToolName() string {
 	return t
 }
 
+// Arguments JSON-encodes params.arguments for a tools/call guardrails check.
+// Missing or nil arguments become {}.
+func (mr *MCPRequest) Arguments() (json.RawMessage, error) {
+	if mr.Params == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	args, ok := mr.Params["arguments"]
+	if !ok || args == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tool arguments: %w", err)
+	}
+	return raw, nil
+}
+
+// SetArgumentsJSON replaces params.arguments from a JSON payload returned by
+// a request-side guardrails modification.
+func (mr *MCPRequest) SetArgumentsJSON(content string) error {
+	var v any
+	if err := json.Unmarshal([]byte(content), &v); err != nil {
+		return fmt.Errorf("unmarshal modified arguments: %w", err)
+	}
+	if mr.Params == nil {
+		mr.Params = map[string]any{}
+	}
+	mr.Params["arguments"] = v
+	return nil
+}
+
+// SetElicitationContentJSON replaces the elicitation result (minus action)
+// from a JSON payload returned by a request-side guardrails modification.
+func (mr *MCPRequest) SetElicitationContentJSON(content string) error {
+	var v any
+	if err := json.Unmarshal([]byte(content), &v); err != nil {
+		return fmt.Errorf("unmarshal modified elicitation content: %w", err)
+	}
+	action := mr.elicitationAction()
+	rest, ok := v.(map[string]any)
+	if !ok {
+		rest = map[string]any{"content": v}
+	}
+	rest[elicitationResultAction] = action
+	mr.Result = rest
+	return nil
+}
+
+// IsElicitationAccept reports whether this is an elicitation response with
+// action accept. decline/cancel bypass guardrails (no user content).
+func (mr *MCPRequest) IsElicitationAccept() bool {
+	return mr.IsElicitationResponse() && mr.elicitationAction() == elicitationActionAccept
+}
+
+func (mr *MCPRequest) elicitationAction() string {
+	if mr.Result == nil {
+		return ""
+	}
+	action, ok := mr.Result[elicitationResultAction].(string)
+	if !ok {
+		return ""
+	}
+	return action
+}
+
+// ElicitationArguments is result minus action, JSON-encoded, for the
+// elicitation-accept guardrails mapping.
+func (mr *MCPRequest) ElicitationArguments() (json.RawMessage, error) {
+	if mr.Result == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	rest := make(map[string]any, len(mr.Result))
+	for k, v := range mr.Result {
+		if k == elicitationResultAction {
+			continue
+		}
+		rest[k] = v
+	}
+	if len(rest) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	raw, err := json.Marshal(rest)
+	if err != nil {
+		return nil, fmt.Errorf("marshal elicitation result: %w", err)
+	}
+	return raw, nil
+}
+
 // ReWriteToolName replaces tool name in params
 func (mr *MCPRequest) ReWriteToolName(actualTool string) {
 	if mr.Params == nil {
@@ -305,6 +393,33 @@ func BuildJSONToolError(requestID any, message string) string {
 	b.WriteString(jsonQuote(message))
 	b.WriteString("}],\"isError\":true}}")
 	return b.String()
+}
+
+// BuildJSONRPCError constructs a JSON-RPC error object for 2026-07-28
+// guardrails rejections (not a tools/call isError result).
+func BuildJSONRPCError(requestID any, message string) string {
+	var b strings.Builder
+	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
+	idBytes, err := json.Marshal(requestID)
+	if err != nil {
+		b.WriteString("null")
+	} else {
+		b.Write(idBytes)
+	}
+	b.WriteString(",\"error\":{\"code\":-32000,\"message\":")
+	b.WriteString(jsonQuote(message))
+	b.WriteString("}}")
+	return b.String()
+}
+
+// BuildSSEJSONRPCError constructs an SSE JSON-RPC error object for 2025-11-25
+// guardrails rejections (not a tools/call isError result).
+func BuildSSEJSONRPCError(requestID any, message string) string {
+	return SseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"error\":{\"code\":-32000,\"message\":")
+		b.WriteString(jsonQuote(message))
+		b.WriteString("}}")
+	})
 }
 
 func jsonQuote(s string) string {

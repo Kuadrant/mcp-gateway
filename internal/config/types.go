@@ -23,6 +23,8 @@ type MCPServersConfig struct {
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
 	GatewayCACertPEM           string
+	GlobalGuardrails           *GuardrailsConfig
+	MaxBodyBytes               int64
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -81,6 +83,45 @@ func (config *MCPServersConfig) GetGatewayCACertPEM() string {
 	config.lock.RLock()
 	defer config.lock.RUnlock()
 	return config.GatewayCACertPEM
+}
+
+// SetGlobalGuardrails stores the resolved gateway-level guardrails config.
+// A nil value clears it (guardrails disabled).
+func (config *MCPServersConfig) SetGlobalGuardrails(cfg *GuardrailsConfig) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.GlobalGuardrails = cfg
+}
+
+// GetGlobalGuardrails returns the resolved gateway-level guardrails config,
+// or nil when guardrails is not configured.
+func (config *MCPServersConfig) GetGlobalGuardrails() *GuardrailsConfig {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	return config.GlobalGuardrails
+}
+
+// DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (1 MiB).
+const DefaultMaxBodyBytes int64 = 1 << 20
+
+// SetMaxBodyBytes sets the router body-buffer cap from the
+// MCPGatewayExtension spec. Non-positive values are treated as the default
+// by GetMaxBodyBytes.
+func (config *MCPServersConfig) SetMaxBodyBytes(n int64) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.MaxBodyBytes = n
+}
+
+// GetMaxBodyBytes returns the router body-buffer cap, defaulting to
+// DefaultMaxBodyBytes when unset.
+func (config *MCPServersConfig) GetMaxBodyBytes() int64 {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	if config.MaxBodyBytes > 0 {
+		return config.MaxBodyBytes
+	}
+	return DefaultMaxBodyBytes
 }
 
 // GetExternalHostname returns the public hostname of the gateway
@@ -235,6 +276,8 @@ type BrokerConfig struct {
 	// parsed from the Secret referenced by the guardrails-ref annotation. Nil
 	// when guardrails isn't configured.
 	GlobalGuardrails *GuardrailsConfig `json:"globalGuardrails,omitempty" yaml:"globalGuardrails,omitempty"`
+	// MaxBodyBytes caps any body the router buffers, from MCPGatewayExtension.spec.maxBodyBytes.
+	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty" yaml:"maxBodyBytes,omitempty"`
 }
 
 // AuthConfig holds auth configuration

@@ -974,6 +974,30 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 	require.Empty(t, found.attrs["session"])
 }
 
+func TestExtProcServer_RebuildGuardrailsChecker(t *testing.T) {
+	server := newTestServer(t)
+
+	t.Run("nil global guardrails stores nil checker", func(t *testing.T) {
+		server.OnConfigChange(context.Background(), &config.MCPServersConfig{})
+		require.Nil(t, server.GuardrailsChecker.Load())
+	})
+
+	t.Run("global guardrails creates a checker", func(t *testing.T) {
+		server.OnConfigChange(context.Background(), &config.MCPServersConfig{
+			GlobalGuardrails: &config.GuardrailsConfig{
+				URL:   "http://127.0.0.1:1",
+				Model: "test-model",
+			},
+		})
+		require.NotNil(t, server.GuardrailsChecker.Load())
+	})
+
+	t.Run("clearing global guardrails destroys the checker", func(t *testing.T) {
+		server.OnConfigChange(context.Background(), &config.MCPServersConfig{})
+		require.Nil(t, server.GuardrailsChecker.Load())
+	})
+}
+
 // TestExtProcServer_OnConfigChange_DataRace exercises a config-reload landing
 // concurrently with a request-handler read of RoutingConfig. The race detector
 // is the assertion; run with go test -race ./internal/mcp-router/...

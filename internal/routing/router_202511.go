@@ -42,6 +42,7 @@ type Router202511 struct {
 	TokenElicitationMap elicitation.Map
 	ElicitationEnabled  bool
 	Logger              *slog.Logger
+	GuardrailsChecker   GuardrailsCheckerFunc
 	initGroup           singleflight.Group
 }
 
@@ -185,6 +186,24 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	headers[ToolHeader] = upstreamToolName
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers[MCPServerNameHeader] = serverInfo.Name
+
+	args, blocked := guardrailsArguments(mcpReq, mcpReq.ID, BuildSSEJSONRPCError, "")
+	if blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
+	}
+	modified, blocked := checkGuardrailsRequest(
+		ctx, span, r.Logger, r.GuardrailsChecker, r.RoutingConfig.Load().GetGlobalGuardrails(), serverInfo.GuardrailsConfigIDs,
+		upstreamToolName, args, mcpReq.ID, BuildSSEJSONRPCError, "",
+	)
+	if blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
+	}
+	if blocked := applyModifiedArguments(mcpReq, modified, mcpReq.ID, BuildSSEJSONRPCError, ""); blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
+	}
 
 	// token resolution for servers with URL elicitation configured
 	if r.ElicitationEnabled && serverInfo.TokenURLElicitation != nil {
@@ -463,6 +482,7 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		return &Decision{Error: &Error{StatusCode: 403, Message: "session mismatch"}}
 	}
 
+	clientID := mcpReq.ID
 	mcpReq.ID = entry.BackendID
 
 	mcpServerConfig, err := r.RoutingConfig.Load().GetServerConfigByName(entry.ServerName)
@@ -477,6 +497,27 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		r.Logger.ErrorContext(ctx, "failed to parse url for backend", "error", err)
 		mcpotel.SpanError(span, err, "path parse failed")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
+	}
+
+	if mcpReq.IsElicitationAccept() {
+		args, argErr := mcpReq.ElicitationArguments()
+		if argErr != nil {
+			blocked := jsonRPCErrorDecision(400, clientID, fmt.Sprintf("guardrails: %s", argErr.Error()), BuildSSEJSONRPCError, "")
+			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+			return blocked
+		}
+		modified, blocked := checkGuardrailsRequest(
+			ctx, span, r.Logger, r.GuardrailsChecker, r.RoutingConfig.Load().GetGlobalGuardrails(), mcpServerConfig.GuardrailsConfigIDs,
+			elicitationActionAccept, args, clientID, BuildSSEJSONRPCError, "",
+		)
+		if blocked != nil {
+			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+			return blocked
+		}
+		if blocked := applyModifiedElicitation(mcpReq, modified, clientID, BuildSSEJSONRPCError, ""); blocked != nil {
+			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+			return blocked
+		}
 	}
 
 	body, err := mcpReq.ToBytes()
@@ -736,11 +777,12 @@ func (r *Router202511) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequ
 // compatibility with code that still needs config.MCPServer (e.g. session init).
 func routeToMCPServer(route *ServerRoute) *config.MCPServer {
 	svr := &config.MCPServer{
-		Name:             route.Name,
-		Hostname:         route.Host,
-		Prefix:           route.Prefix,
-		URL:              route.URL,
-		UserSpecificList: route.UserSpecificList,
+		Name:                route.Name,
+		Hostname:            route.Host,
+		Prefix:              route.Prefix,
+		URL:                 route.URL,
+		UserSpecificList:    route.UserSpecificList,
+		GuardrailsConfigIDs: route.GuardrailsConfigIDs,
 	}
 	if route.TokenURLElicitation != nil {
 		svr.TokenURLElicitation = &config.TokenURLElicitationConfig{

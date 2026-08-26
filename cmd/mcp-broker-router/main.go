@@ -428,8 +428,16 @@ func (a *app) loadConfig(path string) error {
 			return fmt.Errorf("rebuilding hairpin client: %w", err)
 		}
 	}
+	var globalGuardrails *config.GuardrailsConfig
+	if viper.IsSet("globalGuardrails") {
+		if err := viper.UnmarshalKey("globalGuardrails", &globalGuardrails); err != nil {
+			return fmt.Errorf("decoding globalGuardrails config: %w", err)
+		}
+	}
 	a.mcpConfig.SetServers(newServers, newVirtualServers)
 	a.mcpConfig.SetGatewayCACertPEM(gatewayCACertPEM)
+	a.mcpConfig.SetGlobalGuardrails(globalGuardrails)
+	a.mcpConfig.SetMaxBodyBytes(viper.GetInt64("maxBodyBytes"))
 
 	a.logger.Debug("config successfully loaded", "# servers", len(newServers))
 

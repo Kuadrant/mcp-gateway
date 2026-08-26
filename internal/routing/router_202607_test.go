@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
 )
@@ -31,12 +32,13 @@ func newTestRouter202607WithOpts(t *testing.T, serverConfigs []*config.MCPServer
 			if svr.Name == svrName {
 				path, _ := svr.Path()
 				route := &ServerRoute{
-					Name:      svr.Name,
-					Host:      svr.Hostname,
-					Prefix:    svr.Prefix,
-					Path:      path,
-					URL:       svr.URL,
-					Stateless: true,
+					Name:                svr.Name,
+					Host:                svr.Hostname,
+					Prefix:              svr.Prefix,
+					Path:                path,
+					URL:                 svr.URL,
+					GuardrailsConfigIDs: svr.GuardrailsConfigIDs,
+					Stateless:           true,
 				}
 				if o, ok := opts[svr.Name]; ok {
 					route.Stateless = o.stateless
@@ -519,4 +521,66 @@ func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {
 	require.True(t, decision.BrokerPass)
 	require.Equal(t, "signed-jwt", decision.SetHeaders[MCPAuthorizedHeader])
 	require.Equal(t, "test/vs", decision.SetHeaders[MCPVirtualServerHeader])
+}
+
+func TestRouter202607_Guardrails(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:                "dummy",
+			URL:                 "http://localhost:8080/mcp",
+			Prefix:              "s_",
+			State:               "Enabled",
+			Hostname:            "localhost",
+			GuardrailsConfigIDs: []string{"svr-1"},
+		},
+	}
+
+	toolReq := func() *Request {
+		return &Request{
+			MCPMethod: MethodToolCall,
+			MCPName:   "s_mytool",
+			RequestID: "req-1",
+			Parsed: &MCPRequest{
+				ID:      ptr.To(1),
+				JSONRPC: "2.0",
+				Method:  MethodToolCall,
+				Params: map[string]any{
+					"name":      "s_mytool",
+					"arguments": map[string]any{"query": "SELECT 1"},
+				},
+			},
+		}
+	}
+
+	t.Run("allowed proceeds and uses unprefixed tool name", func(t *testing.T) {
+		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+		fc := &fakeChecker{decision: &guardrails.Decision{Status: guardrails.StatusAllowed}}
+		router.GuardrailsChecker = func() guardrails.Checker { return fc }
+		router.RoutingConfig.Store(&config.MCPServersConfig{
+			Servers:          serverConfigs,
+			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
+		})
+		decision := router.RouteRequest(context.Background(), toolReq())
+		require.Nil(t, decision.Error)
+		require.Equal(t, "localhost", decision.Authority)
+		require.Equal(t, 1, fc.calls)
+		require.Equal(t, "mytool", fc.lastToolName)
+		require.Equal(t, []string{"svr-1"}, fc.lastConfigIDs)
+	})
+
+	t.Run("blocked does not reach upstream", func(t *testing.T) {
+		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+		fc := &fakeChecker{decision: &guardrails.Decision{Status: guardrails.StatusBlocked, Reason: "sql-injection"}}
+		router.GuardrailsChecker = func() guardrails.Checker { return fc }
+		router.RoutingConfig.Store(&config.MCPServersConfig{
+			Servers:          serverConfigs,
+			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
+		})
+		decision := router.RouteRequest(context.Background(), toolReq())
+		require.NotNil(t, decision.Error)
+		require.Equal(t, 403, decision.Error.StatusCode)
+		require.Empty(t, decision.Authority)
+		require.Equal(t, "application/json", decision.Error.ContentType)
+		require.Contains(t, decision.Error.JSONRPCErr, "sql-injection")
+	})
 }
