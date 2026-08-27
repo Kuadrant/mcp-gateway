@@ -3,11 +3,43 @@ package broker
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// statefulVersionPrefix matches every revision in the stateful protocol family
+// (2025-03-26, 2025-06-18, 2025-11-25, ...). The broker requests Version2025
+// (2025-11-25) at initialize, but upstreams built on older MCP SDKs downgrade
+// to an earlier 2025 revision. Their tools/list and tools/call payloads are
+// wire-compatible with what the broker serves downstream, so an upstream that
+// advertises any 2025-series revision is served on the stateful route rather
+// than silently dropped from every served set.
+const statefulVersionPrefix = "2025-"
+
+// supportsStatefulRoute reports whether any of the given advertised protocol
+// versions belongs to the stateful (2025) family. Lock-free so it can be
+// called from paths that already hold mcpLock (e.g. buildRoutingTable).
+func supportsStatefulRoute(versions []string) bool {
+	for _, v := range versions {
+		if strings.HasPrefix(v, statefulVersionPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// serverServesOnStatefulRoute reports whether the upstream advertises any
+// revision in the stateful (2025) protocol family. Used in place of an exact
+// Version2025 match so upstreams pinned to an older 2025 revision still
+// federate. See rebuildProtocolCaches. Must NOT be called while holding
+// mcpLock — serverProtocolVersions may take it; use supportsStatefulRoute
+// directly on already-held versions in that case.
+func (m *mcpBrokerImpl) serverServesOnStatefulRoute(id config.UpstreamMCPID) bool {
+	return supportsStatefulRoute(m.serverProtocolVersions(id))
+}
 
 // computeGatewaySupportedVersions returns the union of protocol versions
 // supported by all registered upstream servers. Used to populate the
@@ -74,7 +106,7 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 		}
 		serverID := config.UpstreamMCPID(serverIDStr)
 
-		if m.ServerSupportsVersion(serverID, protocol.Version2025) {
+		if m.serverServesOnStatefulRoute(serverID) {
 			statefulT.items = append(statefulT.items, tool)
 			if !statefulServersSeen[serverID] {
 				statefulServersSeen[serverID] = true
@@ -144,7 +176,7 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 		}
 		serverID := config.UpstreamMCPID(serverIDStr)
 
-		if m.ServerSupportsVersion(serverID, protocol.Version2025) {
+		if m.serverServesOnStatefulRoute(serverID) {
 			statefulP.items = append(statefulP.items, prompt)
 			if !statefulServersSeen[serverID] {
 				statefulServersSeen[serverID] = true

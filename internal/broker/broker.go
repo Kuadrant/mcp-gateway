@@ -988,16 +988,14 @@ func (m *mcpBrokerImpl) IsReady() bool {
 	return false
 }
 
-// ServerSupportsVersion returns true if the given upstream server supports the specified protocol version.
-// Returns false if the server is not found or version info is unavailable. Lazily populates the cache
-// from the manager on first access.
-func (m *mcpBrokerImpl) ServerSupportsVersion(id config.UpstreamMCPID, version string) bool {
+// serverProtocolVersions returns the protocol versions the given upstream
+// supports, lazily populating the cache from the manager on first access.
+// Returns nil if the server is unknown or has not reported versions yet.
+func (m *mcpBrokerImpl) serverProtocolVersions(id config.UpstreamMCPID) []string {
 	// try cached value first
-	val, ok := m.serverVersions.Load(id)
-	if ok {
-		versions, ok := val.([]string)
-		if ok {
-			return slices.Contains(versions, version)
+	if val, ok := m.serverVersions.Load(id); ok {
+		if versions, ok := val.([]string); ok {
+			return versions
 		}
 	}
 
@@ -1006,15 +1004,22 @@ func (m *mcpBrokerImpl) ServerSupportsVersion(id config.UpstreamMCPID, version s
 	mgr, found := m.mcpServers[id]
 	m.mcpLock.RUnlock()
 	if !found {
-		return false
+		return nil
 	}
 
 	versions := mgr.SupportedVersions()
 	if versions == nil {
-		return false
+		return nil
 	}
 
 	// cache for next time
 	m.serverVersions.Store(id, versions)
-	return slices.Contains(versions, version)
+	return versions
+}
+
+// ServerSupportsVersion returns true if the given upstream server supports the specified protocol version.
+// Returns false if the server is not found or version info is unavailable. Lazily populates the cache
+// from the manager on first access.
+func (m *mcpBrokerImpl) ServerSupportsVersion(id config.UpstreamMCPID, version string) bool {
+	return slices.Contains(m.serverProtocolVersions(id), version)
 }

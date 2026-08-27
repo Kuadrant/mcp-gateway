@@ -19,9 +19,12 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 			URL:              cfg.URL,
 			UserSpecificList: cfg.UserSpecificList,
 			// dual-protocol servers have both set to true; each router
-			// checks its own flag independently
+			// checks its own flag independently. Stateful matches the whole
+			// 2025 family (not just Version2025) so upstreams pinned to an
+			// older 2025 revision route on the stateful path, consistent with
+			// rebuildProtocolCaches.
 			Stateless: up.SupportsVersion(protocol.Version2026),
-			Stateful:  up.SupportsVersion(protocol.Version2025),
+			Stateful:  supportsStatefulRoute(up.SupportedVersions()),
 		}
 		if p, err := cfg.Path(); err == nil {
 			route.Path = p

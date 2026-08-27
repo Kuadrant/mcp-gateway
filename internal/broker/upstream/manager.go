@@ -107,6 +107,9 @@ type MCP interface {
 	PromptsCacheMetadata() CacheMetadata
 	// UsesStatelessProtocol returns true if the upstream negotiated 2026-07-28 or later.
 	UsesStatelessProtocol() bool
+	// IsSessionless returns true if the upstream connection has no server-assigned
+	// Mcp-Session-Id (stateless transport), independent of the negotiated version.
+	IsSessionless() bool
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only
@@ -490,11 +493,14 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)
 
-	// 2026 upstreams rely on subscriptions/listen for notifications. the SDK
-	// silently drops the listen stream when the upstream restarts without
-	// closing the session, so the broker never learns notifications stopped.
-	// force a fresh connection on each health tick to re-establish the stream.
-	if event == eventTypeTimer && man.mcp.UsesStatelessProtocol() {
+	// Stateless upstreams are recycled on each health tick: a fresh Connect is
+	// the liveness+recovery signal for them (Ping is a no-op and there is no
+	// session whose loss the SDK reports), so a dead upstream is caught by the
+	// next Connect failure rather than lingering with stale tools. This covers
+	// both 2026 upstreams (which also rely on re-establishing the SDK's
+	// subscriptions/listen stream, silently dropped on restart) and session-less
+	// 2025 upstreams (stateless streamable-HTTP transport, no Mcp-Session-Id).
+	if event == eventTypeTimer && (man.mcp.UsesStatelessProtocol() || man.mcp.IsSessionless()) {
 		man.logger.DebugContext(ctx, "recycling stateless connection", "upstream mcp server", man.mcp.ID())
 		_ = man.mcp.Disconnect()
 	}
