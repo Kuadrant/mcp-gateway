@@ -75,6 +75,11 @@ const (
 	ResourcesFederationListenerName = "resources-federation"
 )
 
+// a2a-passthrough listener on the shared mcp-gateway (isolated A2A passthrough tests)
+const (
+	A2APassthroughListenerName = "a2a-passthrough"
+)
+
 const defaultE2EDomain = "127-0-0-1.sslip.io"
 
 // e2e environment configuration
@@ -169,6 +174,19 @@ func resourcesFederationServerHost(subdomain string) string {
 	return subdomain + ".resources-federation." + e2eDomain
 }
 
+// a2aPassthroughPublicHostDefault returns the default public host for A2A passthrough (MCP surface).
+func a2aPassthroughPublicHostDefault() string {
+	if e2eDomain == defaultE2EDomain {
+		return "mcp.a2a-passthrough.127-0-0-1.sslip.io"
+	}
+	return "mcp.a2a-passthrough." + e2eDomain
+}
+
+// a2aPassthroughServerHost returns a hostname on the a2a-passthrough listener.
+func a2aPassthroughServerHost(subdomain string) string {
+	return subdomain + ".a2a-passthrough." + e2eDomain
+}
+
 // public hosts - derived from E2E_DOMAIN
 var (
 	gatewayPublicHost             = goenv.GetDefault("GATEWAY_PUBLIC_HOST", gatewayPublicHostDefault())
@@ -181,6 +199,7 @@ var (
 	ToolDiscoveryServerHost       = goenv.GetDefault("TOOL_DISCOVERY_SERVER_HOST", toolDiscServerHostDefault())
 	Protocol2026PublicHost        = goenv.GetDefault("PROTOCOL_2026_PUBLIC_HOST", protocol2026PublicHostDefault())
 	ResourcesFederationPublicHost = goenv.GetDefault("RESOURCES_FEDERATION_PUBLIC_HOST", resourcesFederationPublicHostDefault())
+	A2APassthroughPublicHost      = goenv.GetDefault("A2A_PASSTHROUGH_PUBLIC_HOST", a2aPassthroughPublicHostDefault())
 )
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
@@ -194,6 +213,7 @@ var (
 	ToolDiscoveryGatewayURL       = goenv.GetDefault("TOOL_DISCOVERY_GATEWAY_URL", gatewayURLDefault(ToolDiscoveryPublicHost, "http://mcp.tool-discovery.127-0-0-1.sslip.io:8001/mcp"))
 	Protocol2026GatewayURL        = goenv.GetDefault("PROTOCOL_2026_GATEWAY_URL", gatewayURLDefault(Protocol2026PublicHost, "http://mcp.protocol-2026.127-0-0-1.sslip.io:8011/mcp"))
 	ResourcesFederationGatewayURL = goenv.GetDefault("RESOURCES_FEDERATION_GATEWAY_URL", gatewayURLDefault(ResourcesFederationPublicHost, "http://mcp.resources-federation.127-0-0-1.sslip.io:8012/mcp"))
+	A2APassthroughGatewayURL      = goenv.GetDefault("A2A_PASSTHROUGH_GATEWAY_URL", gatewayURLDefault(A2APassthroughPublicHost, "http://mcp.a2a-passthrough.127-0-0-1.sslip.io:8013/mcp"))
 )
 
 // gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,

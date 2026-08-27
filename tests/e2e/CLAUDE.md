@@ -4,16 +4,17 @@
 
 Specs carry bracket tags in their Ginkgo `It` titles. The PR gate (`make test-e2e-ci`) runs the
 whole suite **except** the slow tier 2 suites tagged `[Full]` (e.g. Redis persistence across pod
-restarts) and `[multi-gateway]` (deploys multiple gateways). The full suite runs via
-`make test-e2e-ci-full` from the nightly workflow and the `/test-e2e full` on-demand comment.
+restarts) and `[multi-gateway]` (deploys multiple gateways), and the experimental `[A2A]` suite.
+The full suite runs via `make test-e2e-ci-full` from the nightly workflow and the `/test-e2e full`
+on-demand comment.
 
-Untagged specs run on the PR gate by default; only tag a spec `[Full]` or `[multi-gateway]` to
-defer a genuinely slow or heavy suite to nightly. For a quick local happy-path run use
-`make test-e2e-happy`.
+Untagged specs run on the PR gate by default; tag a spec `[Full]` or `[multi-gateway]` to defer a
+genuinely slow or heavy suite to nightly, or `[A2A]` to keep an experimental feature's specs off
+the PR gate until it graduates. For a quick local happy-path run use `make test-e2e-happy`.
 
 Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[CACertBundle]`,
 `[Elicitation]`, `[Negative]`, `[URLElicitation]`, `[UserSpecificList]`,
-`[Security]`, `[Protocol2026]`, `[DualProtocol]`. Tags can combine, e.g. `[Happy,Protocol2026]`.
+`[Security]`, `[Protocol2026]`, `[DualProtocol]`, `[A2A]`. Tags can combine, e.g. `[Happy,Protocol2026]`.
 
 ## E2E Test Reliability
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)

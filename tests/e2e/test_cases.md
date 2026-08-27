@@ -521,6 +521,22 @@ When an MCPVirtualServer is configured that includes a specific user-specific to
 
 - A 2026 client connects with a notification handler. The test calls `sl_add_tool` through the gateway to dynamically add a tool on the upstream. The broker receives `tools/list_changed` via `subscriptions/listen`, re-lists tools, and updates the gateway server. The client receives a `tools/list_changed` notification and sees the new tool on the next `tools/list` call. Verifies the full chain: upstream → SDK subscriptions/listen → broker manager → gateway server → client notification.
 
+### [A2A] A2A passthrough sets and strips protocol-metadata headers
+
+- With `--enable-a2a` on a dedicated broker-router, a `SendMessage` POST to `/a2a/{agent}` reaches the agent carrying the router-set `x-a2a-agent` (the path segment) and `x-a2a-method: SendMessage`, asserted via the a2a test server's request-info echo artifact. Client-supplied `x-a2a-agent`/`x-a2a-method` values are stripped and replaced with the router's, so a policy or access log keys on the router's value, not the client's.
+
+### [A2A,Negative] A2A passthrough is inert until the flag is enabled
+
+- With `--enable-a2a` off (the default), the router does not set `x-a2a-agent` or `x-a2a-method` on `/a2a` traffic — a client-planted `x-a2a-agent` is not replaced with the path-derived value. The feature is genuinely opt-in.
+
+### [A2A,Negative] A2A passthrough fails closed on unlabelable POSTs
+
+- With the flag on, a POST on an `/a2a` route that carries no usable JSON-RPC method is rejected at the router and never reaches the agent: an unparseable body returns JSON-RPC `-32700`, and a valid JSON body with no method (`{}`) returns `-32600`. An unknown method is normalized to the bounded label `other` rather than passed through verbatim.
+
+### [A2A] A2A passthrough passes GETs through and does not disturb MCP
+
+- A GET on an `/a2a` route is passed through to the agent (the agent's POST-only `/a2a` handler answers 405, proving the request traversed the router rather than being rejected). With the flag on, MCP `tools/list` on the same gateway still returns the registered server's tools — enabling A2A does not affect the MCP path.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.
