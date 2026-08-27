@@ -349,7 +349,11 @@ func TestProcessSpanEnded(t *testing.T) {
 
 func TestProcess_BufferedBodyExceedsMaxSize(t *testing.T) {
 	srv := newTestServer(t)
-	srv.MaxRequestBodySize = 50
+
+	oversized := make([]byte, maxRequestBodySize+1)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
 
 	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
 		requestHeadersStep(),
@@ -357,7 +361,7 @@ func TestProcess_BufferedBodyExceedsMaxSize(t *testing.T) {
 			msg: &extProcV3.ProcessingRequest{
 				Request: &extProcV3.ProcessingRequest_RequestBody{
 					RequestBody: &extProcV3.HttpBody{
-						Body:        []byte(`{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"extra":"data"}}`),
+						Body:        oversized,
 						EndOfStream: true,
 					},
 				},
