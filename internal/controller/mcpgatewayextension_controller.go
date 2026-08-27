@@ -100,10 +100,8 @@ func newValidationError(reason, message string) *validationError {
 // ConfigWriterDeleter writes and deletes config
 type ConfigWriterDeleter interface {
 	DeleteConfig(ctx context.Context, namespaceName types.NamespacedName) error
-	EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error
 	WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error
-	WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error
-	WriteGlobalGuardrails(ctx context.Context, guardrailsConfig *config.GuardrailsConfig, namespaceName types.NamespacedName) error
+	WriteGatewayConfig(ctx context.Context, gwCfg *config.GatewayConfig, namespaceName types.NamespacedName) error
 }
 
 // MCPGatewayExtensionReconciler reconciles a MCPGatewayExtension object
@@ -215,10 +213,6 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ConfigWriterDeleter.EnsureConfigExists(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	if err := r.reconcileTrustedHeaders(ctx, mcpExt); err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
@@ -243,7 +237,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileCACertBundle(ctx, mcpExt); err != nil {
+	caCertPEM, err := r.resolveCACertBundle(ctx, mcpExt)
+	if err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
@@ -251,11 +246,19 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileGuardrails(ctx, mcpExt); err != nil {
+	guardrailsConfig, err := r.resolveGuardrails(ctx, mcpExt)
+	if err != nil {
 		var valErr *validationError
 		if errors.As(err, &valErr) {
 			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
 		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ConfigWriterDeleter.WriteGatewayConfig(ctx, &config.GatewayConfig{
+		CACertPEM:  caCertPEM,
+		Guardrails: guardrailsConfig,
+	}, config.NamespaceName(mcpExt.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -924,41 +927,35 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ con
 	}}
 }
 
-// reconcileGuardrails validates the guardrails Secret referenced by the
-// labelGuardrailsReference annotation and writes the resolved config into the
-// config secret's globalGuardrails field. The annotation is optional: when
-// unset, guardrails is disabled for this gateway and any previously written
-// config is cleared.
-func (r *MCPGatewayExtensionReconciler) reconcileGuardrails(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
-	ns := config.NamespaceName(mcpExt.Namespace)
-
+// resolveGuardrails validates the guardrails Secret referenced by the
+// labelGuardrailsReference annotation and returns the resolved config.
+func (r *MCPGatewayExtensionReconciler) resolveGuardrails(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (*config.GuardrailsConfig, error) {
 	guardrailsSecretRef := mcpExt.Annotations[labelGuardrailsReference]
 	if guardrailsSecretRef == "" {
-		return r.ConfigWriterDeleter.WriteGlobalGuardrails(ctx, nil, ns)
+		return nil, nil //nolint:nilnil
 	}
 
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: guardrailsSecretRef, Namespace: mcpExt.Namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return newValidationError(mcpv1.GuardrailsSecretNotFound,
+			return nil, newValidationError(mcpv1.GuardrailsSecretNotFound,
 				fmt.Sprintf("guardrails secret %s not found", guardrailsSecretRef))
 		}
-		return fmt.Errorf("failed to get guardrails secret: %w", err)
+		return nil, fmt.Errorf("failed to get guardrails secret: %w", err)
 	}
 
-	// Check if the secret has the required label
 	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("guardrails secret %s missing required label %s=%s", guardrailsSecretRef, ManagedSecretLabel, ManagedSecretValue))
 	}
 
 	guardrailsConfig, err := guardrails.EnsureNeMoConfigData(secret.Type, secret.Data)
 	if err != nil {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("guardrails secret %s is invalid: %v", guardrailsSecretRef, err))
 	}
 
-	return r.ConfigWriterDeleter.WriteGlobalGuardrails(ctx, guardrailsConfig, ns)
+	return guardrailsConfig, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
