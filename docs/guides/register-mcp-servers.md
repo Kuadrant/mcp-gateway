@@ -1,14 +1,16 @@
 # MCP Server Registration
 
-You must register your MCP servers to be discovered and routed by the MCP Gateway. When a server is registered, the gateway automatically discovers and federates its capabilities (tools and prompts), applying a prefix to avoid name collisions across multiple servers.
+You must register your MCP servers to be discovered and routed by the MCP Gateway. When a server is registered, the gateway automatically discovers and federates its capabilities (tools, prompts, and resources), applying a prefix to avoid name collisions across multiple servers.
 
 ## Overview
 
-MCP Gateway supports federating both MCP Tools and MCP Prompts.
+MCP Gateway supports federating MCP Tools, MCP Prompts, and MCP Resources.
 
-- **Discovery**: The gateway's broker automatically discovers available tools and prompts from registered upstream servers.
-- **Prefixing**: To prevent collisions between capabilities with the same name on different servers, the gateway applies the `prefix` defined in the `MCPServerRegistration` to each tool and prompt name (e.g., `greet` becomes `myserver_greet`).
-- **Routing**: When a client calls a tool or requests a prompt, the gateway identifies the target upstream server by the prefix, strips the prefix, and routes the request to the correct server.
+- **Discovery**: The gateway's broker automatically discovers available tools, prompts, and resources from registered upstream servers.
+- **Prefixing**: To prevent collisions between capabilities with the same name on different servers, the gateway applies the `prefix` defined in the `MCPServerRegistration` to each tool and prompt name (e.g., `greet` becomes `myserver_greet`), and to the authority of each `ui://` resource URI (e.g., `ui://widget.html` becomes `ui://myserver_widget.html`).
+- **Routing**: When a client calls a tool, requests a prompt, or reads a resource, the gateway identifies the target upstream server by the prefix, strips the prefix, and routes the request to the correct server.
+
+> **Note:** Resource federation only covers `ui://` resources (MCP Apps / SEP-1865). Only servers with a `prefix` set participate; a server registered without one is silently excluded from `resources/list`.
 
 To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that routes to your MCP server and an `MCPServerRegistration` resource that references the `HTTPRoute`.
 
@@ -121,6 +123,8 @@ spec:
 EOF
 ```
 
+> **Note:** An exact-duplicate `prefix` across two registrations sharing a gateway is rejected at registration time. A prefix that's itself a prefix of another (e.g. `app_` and `app_admin_`) is not rejected; resource URI lookups resolve it via longest-prefix match, and the shorter-prefix server's colliding resource becomes unreachable via `resources/read`. Choose prefixes that aren't prefixes of one another.
+
 ## Step 4: Verify Registration
 
 Wait for the MCPServerRegistration to become ready (Ready means the config has been written to the gateway config secret; the broker discovers tools asynchronously after that):
@@ -208,12 +212,48 @@ curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
       }
     }
   }'
+```
+
+You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+
+## Step 8: Test Resource Discovery
+
+If your MCP server exposes `ui://` resources, verify they're also federated:
+
+```bash
+# Use the same SESSION_ID from the previous steps
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "id": 5, "method": "resources/list"}'
+```
+
+You should see your MCP server's resources in the response, with the authority of each `ui://` URI prefixed with your configured `prefix` (e.g., `ui://widget.html` becomes `ui://myserver_widget.html`).
+
+> **Note:** Only the first page of each upstream's resources is fetched. If an upstream server errors or times out during `resources/list`, its resources are skipped rather than failing the whole request; other servers' resources still return.
+
+## Step 9: Getting a Resource
+
+To retrieve a specific resource, use the `resources/read` method with the federated (prefixed) URI:
+
+```bash
+curl -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 6,
+    "method": "resources/read",
+    "params": {
+      "uri": "ui://myserver_widget.html"
+    }
+  }'
 
 # Clean up
 rm -f /tmp/mcp_headers
 ```
 
-You should now see your MCP server tools and prompts in the response, prefixed with your configured `prefix` (e.g., `myserver_`).
+You should see the resource's contents (`uri`, `mimeType`, and `text` or `blob` depending on whether the resource is text or binary) in the response.
 
 ## Disabling a Server
 

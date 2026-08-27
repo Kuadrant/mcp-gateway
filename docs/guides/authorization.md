@@ -4,10 +4,10 @@ This guide covers configuring fine-grained authorization and access control for 
 
 ## Overview
 
-Authorization in MCP Gateway controls which authenticated users can access specific MCP tools and prompts. This guide demonstrates using Kuadrant's AuthPolicy with Common Expression Language (CEL) to implement role-based access control.
+Authorization in MCP Gateway controls which authenticated users can access specific MCP tools, prompts, and resources. This guide demonstrates using Kuadrant's AuthPolicy with Common Expression Language (CEL) to implement role-based access control.
 
 Key concepts:
-- **Tool and Prompt-Level Authorization**: Control access to individual MCP tools and prompts
+- **Tool, Prompt, and Resource-Level Authorization**: Control access to individual MCP tools, prompts, and resources
 - **Role-Based Access**: Use Keycloak client roles and group bindings for permission decisions
 - **Self-contained ACL**: Access control lists stored in the signed JWT tokens
 - **CEL Expressions**: Define complex authorization logic using Common Expression Language
@@ -41,7 +41,7 @@ The issued OAuth token should include claims similar to:
       "roles": ["tool:add", "tool:sum", "tool:multiply", "tool:divide", "prompt:math_tutor"] // roles prefixed with capability type
     },
     "mcp-ns/geometry-mcp-server": {
-      "roles": ["tool:area", "tool:distance", "tool:volume", "prompt:calculate_area"]
+      "roles": ["tool:area", "tool:distance", "tool:volume", "prompt:calculate_area", "resource:ui://widget.html"] // resource roles use the full unprefixed URI (prefix stripped, scheme kept)
     }
   }
 }
@@ -49,9 +49,9 @@ The issued OAuth token should include claims similar to:
 
 > **Note:** The test Keycloak instance deployed in the [authentication guide](./authentication.md) is already configured to include these claims based on user group membership. The `mcp` user is part of the `accounting` group, which maps to specific tool permissions.
 
-## Step 2: Configure Tool and Prompt Authorization
+## Step 2: Configure Tool, Prompt, and Resource Authorization
 
-Apply an AuthPolicy that enforces access control for both tools and prompts:
+Apply an AuthPolicy that enforces access control for tools, prompts, and resources:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -86,6 +86,13 @@ spec:
           patterns:
             - predicate: |
                 ('prompt:' + request.headers['x-mcp-promptname']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
+      'resource-access-check':
+        when:
+          - predicate: "request.headers.exists(h, h == 'x-mcp-resourceuri')"
+        patternMatching:
+          patterns:
+            - predicate: |
+                ('resource:' + request.headers['x-mcp-resourceuri']) in (has(auth.identity.resource_access) && auth.identity.resource_access.exists(p, p == request.headers['x-mcp-servername']) ? auth.identity.resource_access[request.headers['x-mcp-servername']].roles : [])
     response:
       unauthenticated:
         headers:
@@ -110,12 +117,14 @@ EOF
 **Key Configuration Explained:**
 
 - **Authentication**: Validates the JWT token using the configured issuer URL
-- **Authorization Logic**: CEL expressions check if the user's roles allow access to the requested tool or prompt. The appropriate check is triggered based on the presence of the `x-mcp-toolname` or `x-mcp-promptname` header.
+- **Authorization Logic**: CEL expressions check if the user's roles allow access to the requested tool, prompt, or resource. The appropriate check is triggered based on the presence of the `x-mcp-toolname`, `x-mcp-promptname`, or `x-mcp-resourceuri` header.
 - **CEL Breakdown**:
-  - `request.headers['x-mcp-toolname']` / `x-mcp-promptname`: The name of the requested capability
+  - `request.headers['x-mcp-toolname']` / `x-mcp-promptname` / `x-mcp-resourceuri`: The name (or, for resources, the full unprefixed `ui://` URI) of the requested capability
   - `request.headers['x-mcp-servername']`: The namespaced name of the MCP server matching the MCPServerRegistration resource
-  - `auth.identity.resource_access`: The JWT claim containing roles prefixed by capability type (e.g. `tool:greet`, `prompt:math_tutor`), grouped by MCP server
+  - `auth.identity.resource_access`: The JWT claim containing roles prefixed by capability type (e.g. `tool:greet`, `prompt:math_tutor`, `resource:ui://widget.html`), grouped by MCP server
 - **Response Handling**: Custom 401 and 403 responses for unauthenticated and unauthorized access attempts
+
+> **Note:** `resource-access-check` governs whether a specific resource can be fetched via `resources/read`. It does not control whether that resource appears in `resources/list`; that's a separate, list-time filter driven by the `resources` claim inside the `allowed-capabilities` JWT claim (see below), keyed per-server by resource authority rather than by role name. The two checks are independent: a client can be authorized to read a resource that's hidden from its `resources/list` response, or the reverse.
 
 For more advanced policy examples covering token exchange and `tools/list` filtering, see the [Vault Token Exchange guide](./vault-token-exchange.md).
 
@@ -145,6 +154,8 @@ authorization:
         }
       allValues: true
 ```
+
+> **Note:** Resource visibility in `resources/list` is filtered separately from tools/prompts above, and expects a different claim shape: a per-server map of allowed resource authorities (the unprefixed `ui://` host, not a role-prefixed name), e.g. `{"resources": {"mcp-ns/geometry-mcp-server": ["widget.html"]}}`. How you derive that shape from your identity provider's roles depends on your setup; there's no single `role-prefix` convention for it the way `tool:`/`prompt:` works above. If the token has no `resources` claim at all, all resources are visible (unless the broker enforces capability filtering, in which case none are). Once the claim is present, though, a server missing from its map, or listed with an empty array, has all of its resources excluded with no fallback.
 
 ## Step 3: Test Authorization
 
