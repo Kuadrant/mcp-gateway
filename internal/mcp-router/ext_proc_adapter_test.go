@@ -2,8 +2,8 @@
 package mcprouter
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
