@@ -554,7 +554,7 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	}
 	desiredVolumes := filterManagedVolumes(desired.Spec.Template.Spec.Volumes)
 	existingVolumes := filterManagedVolumes(existing.Spec.Template.Spec.Volumes)
-	if !equality.Semantic.DeepEqual(desiredVolumes, existingVolumes) {
+	if !managedVolumesEqual(desiredVolumes, existingVolumes) {
 		return true, fmt.Sprintf("volumes changed: %+v -> %+v", existingVolumes, desiredVolumes)
 	}
 	// only compare env vars the controller manages; user-added env vars are preserved
@@ -631,6 +631,55 @@ func filterManagedVolumes(volumes []corev1.Volume) []corev1.Volume {
 		}
 	}
 	return out
+}
+
+// managedVolumesEqual compares only managed volume fields owned by the controller.
+func managedVolumesEqual(desired, existing []corev1.Volume) bool {
+	if len(desired) != len(existing) {
+		return false
+	}
+
+	existingByName := make(map[string]*corev1.Volume, len(existing))
+	for i := range existing {
+		existingByName[existing[i].Name] = &existing[i]
+	}
+
+	for i := range desired {
+		existingVolume, ok := existingByName[desired[i].Name]
+		if !ok {
+			return false
+		}
+
+		desiredSecret := desired[i].Secret
+		existingSecret := existingVolume.Secret
+		if desiredSecret == nil || existingSecret == nil {
+			return false
+		}
+
+		if desiredSecret.SecretName != existingSecret.SecretName {
+			return false
+		}
+
+		if desiredSecret.DefaultMode != nil &&
+			(existingSecret.DefaultMode == nil ||
+				*desiredSecret.DefaultMode != *existingSecret.DefaultMode) {
+			return false
+		}
+
+		if desiredSecret.Optional != nil &&
+			(existingSecret.Optional == nil ||
+				*desiredSecret.Optional != *existingSecret.Optional) {
+			return false
+		}
+
+		if len(desiredSecret.Items) > 0 &&
+			!equality.Semantic.DeepEqual(desiredSecret.Items,
+				existingSecret.Items) {
+			return false
+		}
+
+	}
+	return true
 }
 
 // mergeVolumes preserves user-added volumes while updating controller-managed ones.
