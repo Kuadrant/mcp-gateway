@@ -1,14 +1,16 @@
 # Rate Limiting MCP Traffic with Kuadrant
 
-This guide explains how to protect your Model Context Protocol (MCP) gateways and backend servers from abuse by configuring rate limits using [Kuadrant](https://kuadrant.io/).
+This guide covers configuring rate limiting for MCP Gateway using Kuadrant RateLimitPolicy.
 
-## 1. Introduction & Context
+- **Whole gateway** — a global ceiling across all routes
+- **Per backend** — limits scoped to a single MCP server's HTTPRoute
+- **Per tool** — granular counters keyed on the `x-mcp-toolname` header
+
+### Why rate limit MCP traffic
 
 Rate limiting is critical for safeguarding MCP traffic. Large language models (LLMs) and other client applications can easily generate "prompt storms" or fall into infinite loops of recursive tool calls. Without proper limits, this traffic can lead to Denial of Service (DoS), backend resource exhaustion, and high operational costs.
 
 According to the **NSA MCP Security Guidance**, operators must place protective boundaries around MCP servers to constrain how many requests a client or a specific capability can make over time. Kuadrant's `RateLimitPolicy` (RLP) integrates seamlessly with the Gateway API, providing a powerful way to enforce these constraints at the ingress layer before requests ever reach your MCP backends.
-
-Below are three common scenarios for applying rate limits to your MCP Gateway.
 
 ## Prerequisites
 
