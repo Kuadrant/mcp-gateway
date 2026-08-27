@@ -358,6 +358,12 @@ type BrokerConfig struct {
 	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty" yaml:"maxBodyBytes,omitempty"`
 }
 
+// GatewayConfig holds gateway-level configuration fields
+type GatewayConfig struct {
+	CACertPEM  string            `json:"caCertPEM,omitempty"  yaml:"caCertPEM,omitempty"`
+	Guardrails *GuardrailsConfig `json:"guardrails,omitempty" yaml:"guardrails,omitempty"`
+}
+
 // AuthConfig holds auth configuration
 type AuthConfig struct {
 	Type     string `json:"type"               yaml:"type"`

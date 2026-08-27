@@ -16,7 +16,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 )
 
-func TestReconcileGuardrails(t *testing.T) {
+func TestResolveGuardrails(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = mcpv1.AddToScheme(scheme)
@@ -29,19 +29,17 @@ model: meta/llama-3.1-8b-instruct
 `
 
 	tests := []struct {
-		name            string
-		annotations     map[string]string
-		secrets         []corev1.Secret
-		wantErr         bool
-		errContains     string
-		wantWriteCalled bool
-		wantConfig      *config.GuardrailsConfig
+		name        string
+		annotations map[string]string
+		secrets     []corev1.Secret
+		wantErr     bool
+		errContains string
+		wantConfig  *config.GuardrailsConfig
 	}{
 		{
-			name:            "no guardrails-ref annotation clears config",
-			annotations:     nil,
-			wantWriteCalled: true,
-			wantConfig:      nil,
+			name:        "no guardrails-ref annotation returns nil",
+			annotations: nil,
+			wantConfig:  nil,
 		},
 		{
 			name:        "secret not found",
@@ -75,7 +73,7 @@ model: meta/llama-3.1-8b-instruct
 			errContains: "is invalid",
 		},
 		{
-			name:        "valid secret writes resolved config",
+			name:        "valid secret returns resolved config",
 			annotations: map[string]string{labelGuardrailsReference: "good-config"},
 			secrets: []corev1.Secret{{
 				ObjectMeta: metav1.ObjectMeta{
@@ -85,7 +83,6 @@ model: meta/llama-3.1-8b-instruct
 				Type: guardrails.SecretTypeNeMo,
 				Data: map[string][]byte{"config.yaml": []byte(validConfigYAML)},
 			}},
-			wantWriteCalled: true,
 			wantConfig: &config.GuardrailsConfig{
 				URL:       "https://nemo-guardrails.internal:8080",
 				ConfigIDs: []string{"tool-safety-v1"},
@@ -113,7 +110,7 @@ model: meta/llama-3.1-8b-instruct
 				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns", Annotations: tt.annotations},
 			}
 
-			err := r.reconcileGuardrails(context.Background(), mcpExt)
+			got, err := r.resolveGuardrails(context.Background(), mcpExt)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -128,25 +125,19 @@ model: meta/llama-3.1-8b-instruct
 						t.Fatalf("error %q does not contain %q", msg, tt.errContains)
 					}
 				}
-				if writer.guardrailsWriteCalled {
-					t.Fatal("WriteGlobalGuardrails should not be called on validation error")
-				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if writer.guardrailsWriteCalled != tt.wantWriteCalled {
-				t.Fatalf("guardrailsWriteCalled = %v, want %v", writer.guardrailsWriteCalled, tt.wantWriteCalled)
-			}
-			got, want := writer.lastGuardrailsConfig, tt.wantConfig
+			want := tt.wantConfig
 			if (got == nil) != (want == nil) {
-				t.Fatalf("lastGuardrailsConfig = %+v, want %+v", got, want)
+				t.Fatalf("got = %+v, want %+v", got, want)
 			}
 			if got != nil {
 				if got.URL != want.URL || got.Model != want.Model || got.FailMode != want.FailMode ||
 					strings.Join(got.ConfigIDs, ",") != strings.Join(want.ConfigIDs, ",") {
-					t.Fatalf("lastGuardrailsConfig = %+v, want %+v", got, want)
+					t.Fatalf("got = %+v, want %+v", got, want)
 				}
 			}
 		})

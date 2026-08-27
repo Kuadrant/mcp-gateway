@@ -26,6 +26,11 @@ import (
 
 var _ config.Observer = &ExtProcServer{}
 
+// maxRequestBodySize caps buffered request bodies (5 MiB).
+// Will be replaced by MCPGatewayExtension.spec.maxBodyBytes once propagated
+// through the config secret.
+const maxRequestBodySize = 5 << 20
+
 // ExtProcServer is the ext_proc adapter that translates between Envoy's
 // external processing protocol and the Router interface.
 type ExtProcServer struct {
@@ -33,7 +38,6 @@ type ExtProcServer struct {
 	Logger              *slog.Logger
 	SessionCache        routing.SessionCache
 	ElicitationMap      idmap.Map
-	MaxRequestBodySize  int
 	Router              routing.Router
 	ResponseHandler     routing.ResponseHandler
 	Router202607        routing.Router
@@ -47,17 +51,6 @@ type ExtProcServer struct {
 // OnConfigChange is used to register the router for config changes
 func (s *ExtProcServer) OnConfigChange(_ context.Context, newConfig *config.MCPServersConfig) {
 	s.RoutingConfig.Store(newConfig)
-}
-
-func (s *ExtProcServer) requestBodyLimit() int {
-	limit := int(config.DefaultMaxBodyBytes)
-	if cfg := s.RoutingConfig.Load(); cfg != nil {
-		limit = int(cfg.GetMaxBodyBytes())
-	}
-	if s.MaxRequestBodySize > 0 && s.MaxRequestBodySize < limit {
-		return s.MaxRequestBodySize
-	}
-	return limit
 }
 
 // HandleRequestHeaders sets the gateway authority and extracts the verified sub claim.
@@ -321,8 +314,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
 			body := r.RequestBody.Body
 
-			if limit := s.requestBodyLimit(); limit > 0 && len(body) > limit {
-				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), limit)
+			if len(body) > maxRequestBodySize {
+				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), maxRequestBodySize)
 				s.Logger.ErrorContext(ctx, err.Error(), "request id", requestID)
 				recordError(span, err, 413)
 				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()
