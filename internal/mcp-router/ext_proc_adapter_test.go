@@ -3,6 +3,7 @@ package mcprouter
 
 import (
 	"context"
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -350,10 +351,7 @@ func TestProcessSpanEnded(t *testing.T) {
 func TestProcess_BufferedBodyExceedsMaxSize(t *testing.T) {
 	srv := newTestServer(t)
 
-	oversized := make([]byte, maxRequestBodySize+1)
-	for i := range oversized {
-		oversized[i] = 'x'
-	}
+	oversized := bytes.Repeat([]byte{'x'}, maxRequestBodySize+1)
 
 	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
 		requestHeadersStep(),
