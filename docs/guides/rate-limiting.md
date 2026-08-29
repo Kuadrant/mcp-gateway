@@ -4,7 +4,6 @@ This guide covers configuring rate limiting for MCP Gateway using Kuadrant RateL
 
 - **Whole gateway** — a global ceiling across all routes
 - **Per backend** — limits scoped to a single MCP server's HTTPRoute
-- **Per tool** — granular counters keyed on the `x-mcp-toolname` header
 
 ## Why rate limit MCP traffic
 
@@ -19,17 +18,19 @@ According to the **NSA MCP Security Guidance**, operators must place protective 
 - At least one `MCPServerRegistration` and its backing `HTTPRoute` configured (see [Register MCP Servers](./register-mcp-servers.md))
 - `kubectl` configured and pointing at the target cluster
 
+> **Note:** The YAML manifests below use placeholder values (`<gateway-namespace>`, `<gateway-name>`, `<route-namespace>`, `<route-name>`). Replace these with your actual cluster resource names before applying.
+
 ---
 
-## 2. Scenario A: Whole Gateway Scope
+## Scenario A: Whole Gateway Scope
 
 A gateway-scoped rate limit applies to all traffic traversing the Gateway. This is useful for defining global ceilings that protect your entire infrastructure from broad volumetric attacks.
 
-In this scenario, the `RateLimitPolicy` targets the `Gateway` resource directly. When you define limits at the top-level `spec.limits`, those limits act as **defaults** — any route-level `RateLimitPolicy` attached to an `HTTPRoute` under this Gateway will replace them for that specific route. If you need to enforce a strict ceiling that cannot be overridden by route-level policies, use `spec.overrides.limits` instead.
+In this scenario, the `RateLimitPolicy` targets the `Gateway` resource directly. When you define limits at the top-level `spec.limits`, those limits act as **defaults** — they apply only to routes that do not have a more-specific `RateLimitPolicy` attached to their `HTTPRoute`. Any route-level policy replaces the gateway defaults for that specific route. If you need to enforce a strict ceiling that cannot be overridden by route-level policies, use `spec.overrides.limits` instead.
 
 ### Step 1: Apply the policy
 
-The following example restricts all traffic through the `mcp-gateway` to a maximum of 1000 requests per minute.
+The following example restricts all traffic through the gateway to a maximum of 1000 requests per minute.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -37,12 +38,12 @@ apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
 metadata:
   name: global-mcp-rate-limit
-  namespace: gateway-system
+  namespace: <gateway-namespace>
 spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
-    name: mcp-gateway
+    name: <gateway-name>
   limits:
     "global-limit":
       rates:
@@ -51,7 +52,7 @@ spec:
 EOF
 ```
 
-> **Note:** All requests matching any route bound to `mcp-gateway` will increment this counter. If the limit is exceeded, Kuadrant will return an HTTP `429 Too Many Requests` response.
+> **Note:** All requests matching any route bound to the gateway will increment this counter. Because `spec.limits` defines a **default**, these limits apply only to routes without their own `RateLimitPolicy`. If the limit is exceeded, Kuadrant will return an HTTP `429 Too Many Requests` response.
 >
 > **Tip:** To enforce a hard limit that overrides any route-level policies, replace `spec.limits` with `spec.overrides.limits` in the YAML above.
 
@@ -60,7 +61,7 @@ EOF
 Confirm the policy is accepted and enforced:
 
 ```bash
-kubectl get ratelimitpolicy global-mcp-rate-limit -n gateway-system \
+kubectl get ratelimitpolicy global-mcp-rate-limit -n <gateway-namespace> \
   -o jsonpath='{.status.conditions[?(@.type=="Enforced")].status}'
 # expected: True
 ```
@@ -69,34 +70,32 @@ Once enforced, send more than 1000 requests within one minute to any route on th
 
 ---
 
-> **Note:** Scenarios B and C both target the same `HTTPRoute` (`my-mcp-server-route`). Applying multiple `RateLimitPolicy` resources to the same target requires **Kuadrant v1.4+** when using `apiVersion: kuadrant.io/v1` with `defaults.strategy: merge`. If using earlier versions where only one policy can target a given route at a time, treat Scenarios B and C as alternatives and apply only one.
-
-## 3. Scenario B: Per-Backend Scope
+## Scenario B: Per-Backend Scope
 
 Sometimes you want to limit traffic directed to a specific MCP server because it connects to an expensive or fragile underlying resource (like a legacy database).
 
-In this scenario, we target an `HTTPRoute` rather than the whole Gateway. This isolates the rate limits to that specific backend server without affecting the rest of the MCP tools and servers on the Gateway. A route-level policy will replace any gateway-level default limits for that route.
+In this scenario, we target an `HTTPRoute` rather than the whole Gateway. This isolates the rate limits to that specific backend server without affecting the rest of the MCP tools and servers on the Gateway. A route-level policy replaces any gateway-level default limits for that route.
 
 ### Step 1: Apply the policy
 
-The following example targets the `my-mcp-server-route` (which exposes a specific MCP server) and restricts it to 50 requests per second.
+The following example targets a specific MCP server's route and restricts it to 50 requests per second.
 
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: kuadrant.io/v1
 kind: RateLimitPolicy
 metadata:
-  name: weather-backend-rate-limit
-  namespace: mcp-test
+  name: backend-rate-limit
+  namespace: <route-namespace>
 spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
-    name: my-mcp-server-route
+    name: <route-name>
   defaults:
     strategy: merge
     limits:
-      "weather-limit":
+      "backend-limit":
         rates:
           - limit: 50
             window: 1s
@@ -108,67 +107,12 @@ EOF
 Confirm the policy is accepted and enforced:
 
 ```bash
-kubectl get ratelimitpolicy weather-backend-rate-limit -n mcp-test \
+kubectl get ratelimitpolicy backend-rate-limit -n <route-namespace> \
   -o jsonpath='{.status.conditions[?(@.type=="Enforced")].status}'
 # expected: True
 ```
 
-Once enforced, requests exceeding 50 per second to the `my-mcp-server-route` will receive an HTTP `429 Too Many Requests` response, while other routes remain unaffected.
-
----
-
-## 4. Scenario C: Per-Tool Scope
-
-Granular, tool-specific rate limiting is the most effective way to prevent abuse of highly sensitive or costly capabilities. The MCP Gateway automatically injects the `x-mcp-toolname` HTTP header into requests directed to specific tools. We can use this header as a counter key in our `RateLimitPolicy` to enforce distinct limits per tool.
-
-In this scenario, we define a limit that groups requests based on the value of the `x-mcp-toolname` header. If an LLM recursively calls a tool like `execute_sql`, only the limit for `execute_sql` will be exhausted; other tools will remain available.
-
-### Step 1: Apply the policy
-
-The following example targets the `my-mcp-server-route` but applies a limit of 10 requests per minute *per tool*.
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: kuadrant.io/v1
-kind: RateLimitPolicy
-metadata:
-  name: tool-specific-rate-limit
-  namespace: mcp-test
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: my-mcp-server-route
-  defaults:
-    strategy: merge
-    limits:
-      "per-tool-limit":
-        rates:
-          - limit: 10
-            window: 1m
-        counters:
-          - expression: "request.?headers[?'x-mcp-toolname'].optMap(t, 'tool:' + t).orValue('sys:no_tool')"
-EOF
-```
-
-The counter expression uses CEL's optional syntax (`?.`, `[?]`, `.optMap()`, and `orValue()`) to safely handle cases where the `x-mcp-toolname` header is not present. The MCP Gateway only sets this header for `tools/call` requests — it is absent for other MCP methods such as `initialize`, `tools/list`, or `resources/read`. When the header is present, `.optMap(t, 'tool:' + t)` prefixes the tool name so it can never collide with the system fallback key. When the header is missing, the expression evaluates to `sys:no_tool`, which groups all non-tool requests into a single shared counter.
-
-In this setup:
-- A `tools/call` request with `x-mcp-toolname: query_users` increments the `tool:query_users` counter.
-- A `tools/call` request with `x-mcp-toolname: execute_sql` increments a separate `tool:execute_sql` counter.
-- An `initialize` or `tools/list` request (where the header is absent) increments the shared `sys:no_tool` counter.
-
-### Step 2: Verify the policy
-
-Confirm the policy is accepted and enforced:
-
-```bash
-kubectl get ratelimitpolicy tool-specific-rate-limit -n mcp-test \
-  -o jsonpath='{.status.conditions[?(@.type=="Enforced")].status}'
-# expected: True
-```
-
-Once enforced, calling a specific tool more than 10 times per minute will return an HTTP `429 Too Many Requests` response for that tool only, while other tools on the same route remain available.
+Once enforced, requests exceeding 50 per second to the targeted route will receive an HTTP `429 Too Many Requests` response, while other routes remain unaffected.
 
 ---
 
