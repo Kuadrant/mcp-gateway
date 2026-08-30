@@ -4,6 +4,7 @@ This guide covers configuring rate limiting for MCP Gateway using Kuadrant RateL
 
 - **Whole gateway** — a global ceiling across all routes
 - **Per backend** — limits scoped to a single MCP server's HTTPRoute
+- **Per tool** — granular counters keyed on the `x-mcp-toolname` header
 
 ## Why rate limit MCP traffic
 
@@ -113,6 +114,12 @@ kubectl get ratelimitpolicy backend-rate-limit -n <route-namespace> \
 ```
 
 Once enforced, requests exceeding 50 per second to the targeted route will receive an HTTP `429 Too Many Requests` response, while other routes remain unaffected.
+
+---
+
+## Scenario C: Per-Tool Scope (Coming Soon)
+
+Granular rate limiting based on the `x-mcp-toolname` header is currently disabled pending an upstream architectural update to the Kuadrant Envoy router's header-mutation phase. This section will be updated with configuration examples once the header can be securely evaluated.
 
 ---
 
