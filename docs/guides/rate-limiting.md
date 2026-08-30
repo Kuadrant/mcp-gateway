@@ -6,7 +6,7 @@ This guide covers configuring rate limiting for MCP Gateway using Kuadrant RateL
 - **Per backend** — limits scoped to a single MCP server's HTTPRoute
 - **Per tool** — granular counters keyed on the `x-mcp-toolname` header
 
-### Why rate limit MCP traffic
+## Why rate limit MCP traffic
 
 Rate limiting is critical for safeguarding MCP traffic. Large language models (LLMs) and other client applications can easily generate "prompt storms" or fall into infinite loops of recursive tool calls. Without proper limits, this traffic can lead to Denial of Service (DoS), backend resource exhaustion, and high operational costs.
 
@@ -69,7 +69,7 @@ Once enforced, send more than 1000 requests within one minute to any route on th
 
 ---
 
-> **Important:** Scenarios B and C both target the same `HTTPRoute` (`my-mcp-server-route`). Applying multiple `RateLimitPolicy` resources to the same target requires **Kuadrant v1.0+** with the `merge` strategy (shown below). On older versions, only one policy can target a given route at a time — treat these scenarios as alternatives and apply only one.
+> **Note:** Scenarios B and C both target the same `HTTPRoute` (`my-mcp-server-route`). Applying multiple `RateLimitPolicy` resources to the same target requires **Kuadrant v1.4+** when using `apiVersion: kuadrant.io/v1` with `defaults.strategy: merge`. If using earlier versions where only one policy can target a given route at a time, treat Scenarios B and C as alternatives and apply only one.
 
 ## 3. Scenario B: Per-Backend Scope
 
