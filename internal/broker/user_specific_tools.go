@@ -93,6 +93,14 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		return
 	}
 
+	// backstop against a rebuildProtocolCaches race: a server whose cacheScope
+	// metadata was not yet populated at the last rebuild can still be scheduled
+	// here. drop private-scope, no-prefix servers whose tools are unroutable.
+	matching = broker.filterUnroutablePrivateScope(matching)
+	if len(matching) == 0 {
+		return
+	}
+
 	ctx, span := brokerTracer().Start(ctx, "broker.user-specific-tools.fetch-all",
 		trace.WithAttributes(
 			attribute.Int("mcp.user_specific.server_count", len(matching)),
@@ -398,6 +406,25 @@ func gatewaySessionTTL(gatewaySessionID string) time.Duration {
 		return 0
 	}
 	return ttl
+}
+
+// filterUnroutablePrivateScope drops private-scope, no-prefix servers from the
+// per-request fetch set, reusing the same predicate as rebuildProtocolCaches so
+// tools excluded from the cached listing cannot reappear on the per-request
+// merge. Skips silently (Debug at most) — the warning is emitted once at
+// rebuild, never per request. Filters in place; the caller owns matching.
+func (broker *mcpBrokerImpl) filterUnroutablePrivateScope(matching []userSpecificServer) []userSpecificServer {
+	broker.mcpLock.RLock()
+	defer broker.mcpLock.RUnlock()
+	filtered := matching[:0]
+	for _, srv := range matching {
+		if mgr, ok := broker.mcpServers[srv.id]; ok && isPrivateScopeWithoutPrefix(mgr) {
+			broker.logger.Debug("excluding private-scope server without prefix from user-specific fetch", "server", srv.name)
+			continue
+		}
+		filtered = append(filtered, srv)
+	}
+	return filtered
 }
 
 // isUserSpecificByCRD checks if the server's CRD config declares userSpecificList.
