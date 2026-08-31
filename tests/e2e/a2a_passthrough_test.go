@@ -59,7 +59,14 @@ var _ = Describe("A2A Passthrough", Ordered, Label("A2A"), func() {
 			}
 			return e2eScheme + "://" + a2aPassthroughServerHost("a2a")
 		}()
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = func() *http.Client {
+			c := e2eHTTPClient(a2aBaseURL)
+			if c == nil {
+				c = &http.Client{}
+			}
+			c.Timeout = 30 * time.Second
+			return c
+		}()
 	)
 
 	// a2aDo sends a raw HTTP request to the gateway and returns the status and body.
