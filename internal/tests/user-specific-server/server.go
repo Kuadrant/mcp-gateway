@@ -152,6 +152,9 @@ func toolFilterMiddleware() mcp.Middleware {
 				headers = extra.Header
 			}
 			filterToolsByAuth(headers, toolsResult)
+			// per-user list: advertise private scope so the broker treats it
+			// as unroutable without a prefix and excludes it from listing (#1385)
+			toolsResult.CacheScope = "private"
 			return result, nil
 		}
 	}
