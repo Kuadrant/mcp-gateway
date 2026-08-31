@@ -130,6 +130,10 @@ In controller mode:
 - Generates aggregated configuration in `ConfigMap`, for use by the broker/router
 - Exposes health endpoints on `:8081` and metrics on `:8082`
 
+## Optional TOA policy gate
+
+Offline [TOA](https://github.com/Carmel-Labs-Inc/toa) verify before attaching or promoting an MCPServer: [docs/guides/toa-optional-policy-gate.md](docs/guides/toa-optional-policy-gate.md).
+
 ## Configuration
 
 ### Standalone Configuration

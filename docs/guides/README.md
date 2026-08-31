@@ -26,3 +26,4 @@
 - [Vault Integration](./vault-integration.md)
 - [Vault Token Exchange](./vault-token-exchange.md)
 - [Troubleshooting](./troubleshooting.md)
+- [Optional TOA policy gate](toa-optional-policy-gate.md)
