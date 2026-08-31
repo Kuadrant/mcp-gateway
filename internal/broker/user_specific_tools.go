@@ -418,6 +418,12 @@ func (broker *mcpBrokerImpl) filterUnroutablePrivateScope(matching []userSpecifi
 	defer broker.mcpLock.RUnlock()
 	filtered := matching[:0]
 	for _, srv := range matching {
+		// prefixed servers are always routable; short-circuit before touching the
+		// manager to avoid the Config() allocation on the common per-request path.
+		if srv.prefix != "" {
+			filtered = append(filtered, srv)
+			continue
+		}
 		if mgr, ok := broker.mcpServers[srv.id]; ok && isPrivateScopeWithoutPrefix(mgr) {
 			broker.logger.Debug("excluding private-scope server without prefix from user-specific fetch", "server", srv.name)
 			continue
