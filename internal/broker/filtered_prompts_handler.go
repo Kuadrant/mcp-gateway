@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -13,7 +14,14 @@ import (
 
 // FilterPrompts reduces the prompt set based on authorization headers.
 func (broker *mcpBrokerImpl) FilterPrompts(ctx context.Context, headers http.Header, mcpRes *mcp.ListPromptsResult) {
-	attrs := []attribute.KeyValue{brokerComponentAttr}
+	protoVersion := protocol.Version2025
+	if v := headers.Get("Mcp-Protocol-Version"); v != "" {
+		protoVersion = v
+	}
+	attrs := []attribute.KeyValue{
+		brokerComponentAttr,
+		attribute.String("protocol.version", protoVersion),
+	}
 	ctx, span := brokerTracer().Start(ctx, "mcp-broker.prompts-list", trace.WithAttributes(attrs...))
 	defer span.End()
 

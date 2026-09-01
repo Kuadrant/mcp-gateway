@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -103,14 +104,14 @@ func TestTracingMiddleware_SpanPerRequestWithNesting(t *testing.T) {
 	}
 	require.NotEmpty(t, handle.Name, "expected a handle-request span for tools/list")
 	if attr, ok := findAttribute(handle.Attributes, "protocol.version"); ok {
-		require.Equal(t, "2025-11-25", attr.Value.AsString(), "handle-request span should default to 2025-11-25")
+		require.Equal(t, protocol.Version2025, attr.Value.AsString(), "handle-request span should default to "+protocol.Version2025)
 	} else {
 		require.Fail(t, "expected protocol.version attribute on handle-request span")
 	}
 
 	require.NotEmpty(t, filter.Name, "expected the FilterTools span")
 	if attr, ok := findAttribute(filter.Attributes, "protocol.version"); ok {
-		require.Equal(t, "2025-11-25", attr.Value.AsString(), "tools-list span should default to 2025-11-25")
+		require.Equal(t, protocol.Version2025, attr.Value.AsString(), "tools-list span should default to "+protocol.Version2025)
 	} else {
 		require.Fail(t, "expected protocol.version attribute on tools-list span")
 	}
@@ -121,13 +122,7 @@ func TestTracingMiddleware_SpanPerRequestWithNesting(t *testing.T) {
 		"FilterTools span must nest under the request span")
 }
 
-// TestTracingMiddleware_ProtocolVersionFromHeader verifies that when the
-// Mcp-Protocol-Version header is explicitly set, the protocol.version span
-// attribute reflects the header value instead of the fallback default.
-//
-// The legacy compatHandler strips the protocol-version header, so we must
-// exercise the full protocolRouter (MCPHandler) which dispatches 2026-07-28
-// requests to the stateless StreamableHTTPHandler that preserves headers.
+// test tracing middleware sets protocol.version span attribute from header.
 func TestTracingMiddleware_ProtocolVersionFromHeader(t *testing.T) {
 	exporter := setupTestTracer(t)
 	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
@@ -140,7 +135,7 @@ func TestTracingMiddleware_ProtocolVersionFromHeader(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Protocol-Version", protocol.Version2026)
 	req.Header.Set("Mcp-Method", "tools/list")
 
 	resp, err := http.DefaultClient.Do(req)

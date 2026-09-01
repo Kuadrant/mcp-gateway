@@ -17,6 +17,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"go.opentelemetry.io/otel/attribute"
@@ -59,7 +60,7 @@ func (r *Router202511) RouteRequest(ctx context.Context, req *Request) *Decision
 		trace.WithAttributes(
 			componentAttr,
 			attribute.String("mcp.method.name", mcpReq.Method),
-			attribute.String("protocol.version", "2025-11-25"),
+			attribute.String("protocol.version", protocol.Version2025),
 		),
 	)
 	defer span.End()

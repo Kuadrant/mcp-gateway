@@ -100,7 +100,6 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 	if len(matching) == 0 {
 		return
 	}
-
 	protoVersion := protocol.Version2025
 	if v := headers.Get("Mcp-Protocol-Version"); v != "" {
 		protoVersion = v
