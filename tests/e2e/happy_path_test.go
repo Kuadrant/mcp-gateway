@@ -1605,7 +1605,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
-	It("[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover", func() {
+	It("[Happy,DualProtocol] 2025-only gateway negotiates 2025 naturally via server/discover", Serial, func() {
 		By("Registering a 2025-only server on the shared gateway")
 		registration := NewMCPServerResourcesWithDefaults("discover-negotiate", k8sClient).
 			WithBackendTarget(sharedMCPTestServer1, 9090).WithPrefix("discneg_").Build()
