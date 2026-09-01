@@ -132,32 +132,14 @@ jobs:
 
       - name: Run MCP conformance tests
         run: |
-          SCENARIOS=(
-            server-initialize
-            tools-list
-            ping
-            tools-call-simple-text
-            tools-call-image
-            tools-call-audio
-            tools-call-embedded-resource
-            tools-call-mixed-content
-            tools-call-error
-            tools-call-with-progress
-            json-schema-2020-12
-            server-sse-polling
-            server-sse-multiple-streams
-            prompts-list
-            prompts-get-simple
-            prompts-get-with-args
-            prompts-get-embedded-resource
-            prompts-get-with-image
-          )
-          for scenario in "${SCENARIOS[@]}"; do
-            echo "=== Running scenario: $scenario ==="
-            npx @modelcontextprotocol/conformance@${CONFORMANCE_VERSION} server \
-              --url ${MCP_URL} \
-              --scenario "$scenario"
-          done
+          # run the full 2025-11-25 server suite; known-unsupported scenarios
+          # are tracked in the baseline so new regressions fail the job
+          # unexpected passes also fail the job
+          npx @modelcontextprotocol/conformance@${CONFORMANCE_VERSION} server \
+            --url ${MCP_URL} \
+            --suite all \
+            --spec-version 2025-11-25 \
+            --expected-failures tests/conformance/baseline-202511.yaml
 
       - name: Collect logs on failure
         if: failure()
