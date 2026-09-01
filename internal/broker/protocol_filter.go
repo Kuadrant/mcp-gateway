@@ -44,11 +44,7 @@ type protocolCacheEntry[T any] struct {
 }
 
 // isPrivateScopeWithoutPrefix reports whether an upstream's tools are
-// unroutable and must be excluded from tools/list. A server whose list is
-// per-user — cacheScope:"private" (2026 upstream) or userSpecificList (CRD) —
-// returns tool names absent from the shared routing table; without a prefix the
-// router's LookupPrefix fallback has nothing to match, so the tools cannot be
-// routed.
+// unroutable and must be excluded from tools/list.
 func isPrivateScopeWithoutPrefix(s upstream.ActiveMCPServer) bool {
 	cfg := s.Config()
 	if cfg.Prefix != "" {
