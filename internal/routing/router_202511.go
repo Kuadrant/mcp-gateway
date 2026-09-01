@@ -42,7 +42,6 @@ type Router202511 struct {
 	TokenElicitationMap elicitation.Map
 	ElicitationEnabled  bool
 	Logger              *slog.Logger
-	GuardrailsChecker   GuardrailsCheckerFunc
 	initGroup           singleflight.Group
 }
 
@@ -192,10 +191,8 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 		return blocked
 	}
-	modified, blocked := checkGuardrailsRequest(
-		ctx, span, r.Logger, r.GuardrailsChecker, r.RoutingConfig.Load().GetGlobalGuardrails(), serverInfo.GuardrailsConfigIDs,
-		upstreamToolName, args, mcpReq.ID, BuildSSEJSONRPCError, "",
-	)
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), r.Logger, BuildSSEJSONRPCError, "")
+	modified, blocked := gc.request(ctx, serverInfo.GuardrailsConfigIDs, upstreamToolName, args, mcpReq.ID)
 	if blocked != nil {
 		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 		return blocked
@@ -499,17 +496,15 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
 
-	if mcpReq.IsElicitationAccept() {
-		args, argErr := mcpReq.ElicitationArguments()
+	if isElicitationAccept(mcpReq) {
+		args, argErr := elicitationArguments(mcpReq.Result)
 		if argErr != nil {
 			blocked := jsonRPCErrorDecision(400, clientID, fmt.Sprintf("guardrails: %s", argErr.Error()), BuildSSEJSONRPCError, "")
 			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 			return blocked
 		}
-		modified, blocked := checkGuardrailsRequest(
-			ctx, span, r.Logger, r.GuardrailsChecker, r.RoutingConfig.Load().GetGlobalGuardrails(), mcpServerConfig.GuardrailsConfigIDs,
-			elicitationActionAccept, args, clientID, BuildSSEJSONRPCError, "",
-		)
+		gc := newGuardrailsCheck(r.RoutingConfig.Load(), r.Logger, BuildSSEJSONRPCError, "")
+		modified, blocked := gc.request(ctx, mcpServerConfig.GuardrailsConfigIDs, elicitationActionAccept, args, clientID)
 		if blocked != nil {
 			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 			return blocked

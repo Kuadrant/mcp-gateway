@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
 )
@@ -554,12 +553,13 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("allowed proceeds and uses unprefixed tool name", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &guardrails.Decision{Status: guardrails.StatusAllowed}}
-		router.GuardrailsChecker = func() guardrails.Checker { return fc }
-		router.RoutingConfig.Store(&config.MCPServersConfig{
+		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusAllowed}}
+		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
-		})
+		}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
 		decision := router.RouteRequest(context.Background(), toolReq())
 		require.Nil(t, decision.Error)
 		require.Equal(t, "localhost", decision.Authority)
@@ -570,17 +570,19 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("blocked does not reach upstream", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &guardrails.Decision{Status: guardrails.StatusBlocked, Reason: "sql-injection"}}
-		router.GuardrailsChecker = func() guardrails.Checker { return fc }
-		router.RoutingConfig.Store(&config.MCPServersConfig{
+		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked, Reason: "sql-injection"}}
+		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
-		})
+		}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
 		decision := router.RouteRequest(context.Background(), toolReq())
 		require.NotNil(t, decision.Error)
 		require.Equal(t, 403, decision.Error.StatusCode)
 		require.Empty(t, decision.Authority)
 		require.Equal(t, "application/json", decision.Error.ContentType)
-		require.Contains(t, decision.Error.JSONRPCErr, "sql-injection")
+		require.Contains(t, decision.Error.JSONRPCErr, guardrailsBlockedMessage)
+		require.NotContains(t, decision.Error.JSONRPCErr, "sql-injection", "the triggering rail must not reach the client")
 	})
 }

@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
@@ -26,22 +31,10 @@ func (a *app) createRouter() {
 	}
 	a.server.RoutingConfig.Store(a.mcpConfig)
 
-	// shared across both routers so a config reload rebuilding the Checker
-	// (see ExtProcServer.OnConfigChange) is visible to whichever router
-	// handles the request, without either router importing mcp-router.
-	guardrailsChecker := func() guardrails.Checker {
-		p := a.server.GuardrailsChecker.Load()
-		if p == nil {
-			return nil
-		}
-		return *p
-	}
-
 	a.server.Router202607 = &routing.Router202607{
-		Table:             a.mcpBroker.RoutingTable,
-		RoutingConfig:     &a.server.RoutingConfig,
-		Logger:            a.logger.With("component", "router-202607"),
-		GuardrailsChecker: guardrailsChecker,
+		Table:         a.mcpBroker.RoutingTable,
+		RoutingConfig: &a.server.RoutingConfig,
+		Logger:        a.logger.With("component", "router-202607"),
 	}
 	a.server.ResponseHandler2026 = &routing.ResponseHandler202607{
 		Logger: a.logger.With("component", "response-handler-202607"),
@@ -58,7 +51,6 @@ func (a *app) createRouter() {
 		TokenElicitationMap: a.tokenElicitMap,
 		ElicitationEnabled:  cfg.enableURLElicitation,
 		Logger:              a.logger.With("component", "router-202511"),
-		GuardrailsChecker:   guardrailsChecker,
 	}
 
 	a.server.ResponseHandler = &routing.ResponseHandler202511{
@@ -70,4 +62,41 @@ func (a *app) createRouter() {
 	}
 
 	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.server)
+}
+
+// rebuildGuardrailsChecker recreates the guardrails Checker from the latest
+// GlobalGuardrails config and gateway CA bundle, storing it on mcpConfig so
+// both routers see it via RoutingConfig. Nil when guardrails is not configured.
+func (a *app) rebuildGuardrailsChecker(ctx context.Context) {
+	if a.mcpConfig == nil || a.mcpConfig.GetGlobalGuardrails() == nil {
+		if a.mcpConfig != nil && a.mcpConfig.GetGuardrailsChecker() != nil {
+			a.mcpConfig.SetGuardrailsChecker(nil)
+			a.logger.InfoContext(ctx, "guardrails checker destroyed")
+		}
+		return
+	}
+
+	tlsConfig, err := tlsConfigFromCACertPEM(a.mcpConfig.GetGatewayCACertPEM())
+	if err != nil {
+		a.logger.ErrorContext(ctx, "failed to build guardrails TLS config", "error", err)
+		a.mcpConfig.SetGuardrailsChecker(nil)
+		return
+	}
+
+	a.mcpConfig.SetGuardrailsChecker(guardrails.NewChecker(a.mcpConfig.GetGlobalGuardrails(), tlsConfig, 0, a.mcpConfig.GetMaxBodyBytes()))
+	a.logger.InfoContext(ctx, "guardrails checker created")
+}
+
+func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {
+	certPool, err := x509.SystemCertPool()
+	if err != nil {
+		certPool = x509.NewCertPool()
+	}
+	if caCertPEM != "" && !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
+		return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    certPool,
+	}, nil
 }

@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
 func newTestChecker(t *testing.T, handler http.HandlerFunc, failMode string) Checker {
@@ -23,7 +21,7 @@ func newTestCheckerWithMaxBodyBytes(t *testing.T, handler http.HandlerFunc, fail
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	return NewChecker(&config.GuardrailsConfig{
+	return NewChecker(&Config{
 		URL:       server.URL,
 		Model:     "meta/llama-3.1-8b-instruct",
 		ConfigIDs: []string{"global-1"},
@@ -123,7 +121,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("unreachable guardrails server applies failMode", func(t *testing.T) {
-		checker := NewChecker(&config.GuardrailsConfig{
+		checker := NewChecker(&Config{
 			URL:      "http://127.0.0.1:1",
 			Model:    "meta/llama-3.1-8b-instruct",
 			FailMode: FailModeAllow,
@@ -145,7 +143,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 			{FailModeDeny, StatusBlocked, "guardrails check failed"},
 		} {
 			t.Run(tc.failMode, func(t *testing.T) {
-				checker := NewChecker(&config.GuardrailsConfig{
+				checker := NewChecker(&Config{
 					URL:      "http://[",
 					Model:    "meta/llama-3.1-8b-instruct",
 					FailMode: tc.failMode,

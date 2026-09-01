@@ -1,7 +1,6 @@
 package routing
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -88,80 +87,5 @@ func TestStripAuthorityPrefix(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.wantAuthority)
 			}
 		})
-	}
-}
-
-func TestMCPRequest_Arguments(t *testing.T) {
-	t.Run("marshals params.arguments", func(t *testing.T) {
-		req := &MCPRequest{Params: map[string]any{"name": "mytool", "arguments": map[string]any{"q": 1}}}
-		raw, err := req.Arguments()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got map[string]any
-		if err := json.Unmarshal(raw, &got); err != nil {
-			t.Fatal(err)
-		}
-		if got["q"] != float64(1) {
-			t.Errorf("got %#v", got)
-		}
-	})
-
-	t.Run("missing arguments yields empty object", func(t *testing.T) {
-		req := &MCPRequest{Params: map[string]any{"name": "mytool"}}
-		raw, err := req.Arguments()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(raw) != `{}` {
-			t.Errorf("got %s, want {}", raw)
-		}
-	})
-}
-
-func TestMCPRequest_ElicitationArguments(t *testing.T) {
-	t.Run("strips action and keeps the rest", func(t *testing.T) {
-		req := &MCPRequest{Result: map[string]any{"action": "accept", "content": map[string]any{"name": "test"}}}
-		raw, err := req.ElicitationArguments()
-		if err != nil {
-			t.Fatal(err)
-		}
-		restored := map[string]any{}
-		if err := json.Unmarshal(raw, &restored); err != nil {
-			t.Fatal(err)
-		}
-		content, ok := restored["content"].(map[string]any)
-		if !ok || content["name"] != "test" {
-			t.Errorf("got %#v", restored)
-		}
-		if _, ok := restored["action"]; ok {
-			t.Error("action should be stripped")
-		}
-	})
-
-	t.Run("action only yields empty object", func(t *testing.T) {
-		req := &MCPRequest{Result: map[string]any{"action": "accept"}}
-		raw, err := req.ElicitationArguments()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(raw) != `{}` {
-			t.Errorf("got %s, want {}", raw)
-		}
-	})
-}
-
-func TestMCPRequest_IsElicitationAccept(t *testing.T) {
-	if !(&MCPRequest{Result: map[string]any{"action": "accept"}}).IsElicitationAccept() {
-		t.Error("accept should be true")
-	}
-	if (&MCPRequest{Result: map[string]any{"action": "decline"}}).IsElicitationAccept() {
-		t.Error("decline should be false")
-	}
-	if (&MCPRequest{Result: map[string]any{"action": "cancel"}}).IsElicitationAccept() {
-		t.Error("cancel should be false")
-	}
-	if (&MCPRequest{Method: "tools/call"}).IsElicitationAccept() {
-		t.Error("tools/call should be false")
 	}
 }

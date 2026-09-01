@@ -268,6 +268,7 @@ func (a *app) loadAndWatchConfig(ctx context.Context) {
 	if err := a.loadConfig(a.brokerCfg.configFile); err != nil {
 		panic("failed to load initial config: " + err.Error())
 	}
+	a.rebuildGuardrailsChecker(ctx)
 	a.configMu.Unlock()
 	a.mcpConfig.Notify(ctx)
 
@@ -281,6 +282,7 @@ func (a *app) loadAndWatchConfig(ctx context.Context) {
 			a.logger.Error("failed to reload config, keeping previous", "error", err)
 			return
 		}
+		a.rebuildGuardrailsChecker(ctx)
 		a.logger.Info("notifying observers of config change")
 		a.mcpConfig.Notify(ctx)
 	})
@@ -428,14 +430,15 @@ func (a *app) loadConfig(path string) error {
 			return fmt.Errorf("rebuilding hairpin client: %w", err)
 		}
 	}
+	a.mcpConfig.SetServers(newServers, newVirtualServers)
+	a.mcpConfig.SetGatewayCACertPEM(gatewayCACertPEM)
+
 	var globalGuardrails *config.GuardrailsConfig
 	if viper.IsSet("globalGuardrails") {
 		if err := viper.UnmarshalKey("globalGuardrails", &globalGuardrails); err != nil {
 			return fmt.Errorf("decoding globalGuardrails config: %w", err)
 		}
 	}
-	a.mcpConfig.SetServers(newServers, newVirtualServers)
-	a.mcpConfig.SetGatewayCACertPEM(gatewayCACertPEM)
 	a.mcpConfig.SetGlobalGuardrails(globalGuardrails)
 	a.mcpConfig.SetMaxBodyBytes(viper.GetInt64("maxBodyBytes"))
 

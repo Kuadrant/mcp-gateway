@@ -3,8 +3,6 @@ package mcprouter
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,7 +12,6 @@ import (
 	"sync/atomic"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/Kuadrant/mcp-gateway/internal/headers"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
@@ -45,40 +42,11 @@ type ExtProcServer struct {
 	// protocol metadata lifted into headers for Telemetry and AuthPolicy. Off by
 	// default; no A2A code path runs unless it is set.
 	EnableA2A bool
-	// GuardrailsChecker is rebuilt on every config change from GlobalGuardrails
-	// + the gateway CA bundle; nil when guardrails is not configured. Shared
-	// by both protocol routers via GuardrailsCheckerFunc.
-	GuardrailsChecker atomic.Pointer[guardrails.Checker]
 }
 
-// OnConfigChange is used to register the router for config changes, and
-// rebuilds the guardrails Checker when guardrails config changes.
-func (s *ExtProcServer) OnConfigChange(ctx context.Context, newConfig *config.MCPServersConfig) {
+// OnConfigChange is used to register the router for config changes
+func (s *ExtProcServer) OnConfigChange(_ context.Context, newConfig *config.MCPServersConfig) {
 	s.RoutingConfig.Store(newConfig)
-	s.rebuildGuardrailsChecker(ctx, newConfig)
-}
-
-// rebuildGuardrailsChecker recreates the guardrails Checker from the latest
-// GlobalGuardrails config and gateway CA bundle, storing nil when guardrails
-// is not configured.
-func (s *ExtProcServer) rebuildGuardrailsChecker(ctx context.Context, newConfig *config.MCPServersConfig) {
-	if newConfig == nil || newConfig.GetGlobalGuardrails() == nil {
-		if s.GuardrailsChecker.Swap(nil) != nil {
-			s.Logger.InfoContext(ctx, "guardrails checker destroyed")
-		}
-		return
-	}
-
-	tlsConfig, err := tlsConfigFromCACertPEM(newConfig.GetGatewayCACertPEM())
-	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to build guardrails TLS config", "error", err)
-		s.GuardrailsChecker.Store(nil)
-		return
-	}
-
-	checker := guardrails.NewChecker(newConfig.GetGlobalGuardrails(), tlsConfig, 0, newConfig.GetMaxBodyBytes())
-	s.GuardrailsChecker.Store(&checker)
-	s.Logger.InfoContext(ctx, "guardrails checker created")
 }
 
 func (s *ExtProcServer) requestBodyLimit() int {
@@ -90,20 +58,6 @@ func (s *ExtProcServer) requestBodyLimit() int {
 		return s.MaxRequestBodySize
 	}
 	return limit
-}
-
-func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {
-	certPool, err := x509.SystemCertPool()
-	if err != nil {
-		certPool = x509.NewCertPool()
-	}
-	if caCertPEM != "" && !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
-		return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
-	}
-	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    certPool,
-	}, nil
 }
 
 // HandleRequestHeaders sets the gateway authority and extracts the verified sub claim.
