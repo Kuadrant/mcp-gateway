@@ -1,0 +1,15 @@
+server:
+  - completion-complete
+  - dns-rebinding-protection
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  - logging-set-level
+  - resources-read-binary
+  - resources-read-text
+  - resources-subscribe
+  - resources-templates-read
+  - resources-unsubscribe
+  - server-sse-polling
+  - tools-call-elicitation
+  - tools-call-sampling
+  - tools-call-with-logging
