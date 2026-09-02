@@ -186,18 +186,8 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers[MCPServerNameHeader] = serverInfo.Name
 
-	args, blocked := guardrailsArguments(mcpReq, mcpReq.ID, BuildSSEJSONRPCError, "")
-	if blocked != nil {
-		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
-		return blocked
-	}
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), r.Logger, BuildSSEJSONRPCError, "")
-	modified, blocked := gc.request(ctx, serverInfo.GuardrailsConfigIDs, upstreamToolName, args, mcpReq.ID)
-	if blocked != nil {
-		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
-		return blocked
-	}
-	if blocked := applyModifiedArguments(mcpReq, modified, mcpReq.ID, BuildSSEJSONRPCError, ""); blocked != nil {
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger, withSSEErrors())
+	if _, blocked := gc.checkToolCall(ctx, mcpReq, upstreamToolName); blocked != nil {
 		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 		return blocked
 	}
@@ -283,8 +273,6 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 
 	if !route.Stateful {
 		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "promptName", promptName, "server", route.Name)
-		mcpotel.SpanError(span, fmt.Errorf("prompt not found: %s", promptName), "prompt not available for stateful protocol")
-		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
@@ -364,8 +352,6 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 
 	if !route.Stateful {
 		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "uri", resourceURI, "server", route.Name)
-		mcpotel.SpanError(span, fmt.Errorf("resource not found: %s", resourceURI), "resource not available for stateful protocol")
-		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
@@ -482,10 +468,11 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 	clientID := mcpReq.ID
 	mcpReq.ID = entry.BackendID
 
-	mcpServerConfig, err := r.RoutingConfig.Load().GetServerConfigByName(entry.ServerName)
-	if err != nil {
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), entry.ServerName, r.Logger, withSSEErrors())
+	mcpServerConfig := gc.server
+	if mcpServerConfig == nil {
 		r.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
-		mcpotel.SpanError(span, err, "server not found")
+		mcpotel.SpanError(span, fmt.Errorf("unknown server"), "server not found")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
 
@@ -496,23 +483,9 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
 
-	if isElicitationAccept(mcpReq) {
-		args, argErr := elicitationArguments(mcpReq.Result)
-		if argErr != nil {
-			blocked := jsonRPCErrorDecision(400, clientID, fmt.Sprintf("guardrails: %s", argErr.Error()), BuildSSEJSONRPCError, "")
-			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
-			return blocked
-		}
-		gc := newGuardrailsCheck(r.RoutingConfig.Load(), r.Logger, BuildSSEJSONRPCError, "")
-		modified, blocked := gc.request(ctx, mcpServerConfig.GuardrailsConfigIDs, elicitationActionAccept, args, clientID)
-		if blocked != nil {
-			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
-			return blocked
-		}
-		if blocked := applyModifiedElicitation(mcpReq, modified, clientID, BuildSSEJSONRPCError, ""); blocked != nil {
-			blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
-			return blocked
-		}
+	if blocked := gc.checkElicitationAccept(ctx, mcpReq, clientID); blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
 	}
 
 	body, err := mcpReq.ToBytes()

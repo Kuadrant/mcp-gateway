@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -62,29 +60,6 @@ func (a *app) createRouter() {
 	}
 
 	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.server)
-}
-
-// rebuildGuardrailsChecker recreates the guardrails Checker from the latest
-// GlobalGuardrails config and gateway CA bundle, storing it on mcpConfig so
-// both routers see it via RoutingConfig. Nil when guardrails is not configured.
-func (a *app) rebuildGuardrailsChecker(ctx context.Context) {
-	if a.mcpConfig == nil || a.mcpConfig.GetGlobalGuardrails() == nil {
-		if a.mcpConfig != nil && a.mcpConfig.GetGuardrailsChecker() != nil {
-			a.mcpConfig.SetGuardrailsChecker(nil)
-			a.logger.InfoContext(ctx, "guardrails checker destroyed")
-		}
-		return
-	}
-
-	tlsConfig, err := tlsConfigFromCACertPEM(a.mcpConfig.GetGatewayCACertPEM())
-	if err != nil {
-		a.logger.ErrorContext(ctx, "failed to build guardrails TLS config", "error", err)
-		a.mcpConfig.SetGuardrailsChecker(nil)
-		return
-	}
-
-	a.mcpConfig.SetGuardrailsChecker(guardrails.NewChecker(a.mcpConfig.GetGlobalGuardrails(), tlsConfig, 0, a.mcpConfig.GetMaxBodyBytes()))
-	a.logger.InfoContext(ctx, "guardrails checker created")
 }
 
 func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {

@@ -2,6 +2,8 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync/atomic"
@@ -584,5 +586,28 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, "application/json", decision.Error.ContentType)
 		require.Contains(t, decision.Error.JSONRPCErr, guardrailsBlockedMessage)
 		require.NotContains(t, decision.Error.JSONRPCErr, "sql-injection", "the triggering rail must not reach the client")
+	})
+
+	t.Run("modified arguments are forwarded in the body mutation", func(t *testing.T) {
+		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusModified, Content: `{"query":"SELECT sanitized"}`}}
+		cfg := &config.MCPServersConfig{
+			Servers:          serverConfigs,
+			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
+		}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
+		decision := router.RouteRequest(context.Background(), toolReq())
+		require.Nil(t, decision.Error)
+		require.Equal(t, "localhost", decision.Authority)
+		require.Equal(t, 1, fc.calls)
+		require.Equal(t, "mytool", fc.lastToolName)
+		require.NotEmpty(t, decision.BodyMutation)
+		require.Equal(t, fmt.Sprintf("%d", len(decision.BodyMutation)), decision.SetHeaders["content-length"])
+
+		var restored MCPRequest
+		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
+		require.Equal(t, "mytool", restored.Params["name"])
+		require.Equal(t, map[string]any{"query": "SELECT sanitized"}, restored.Params["arguments"])
 	})
 }

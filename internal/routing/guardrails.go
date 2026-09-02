@@ -38,41 +38,107 @@ const (
 	guardrailsCheckFailedMessage = "guardrails check failed"
 )
 
-func loadedGuardrails(cfg *config.MCPServersConfig) (Checker, *guardrails.Config) {
-	if cfg == nil {
-		return nil, nil
-	}
-	return cfg.GetGuardrails()
-}
-
-// guardrailsCheck runs guardrails checks for one routing decision: skip,
-// fail-closed, call Checker, map the verdict onto a routing Decision. 
+// guardrailsCheck runs guardrails for one routing decision. Built from a
+// locked config snapshot so checker, global config, and per-server IDs do
+// not tear across reload.
 type guardrailsCheck struct {
 	checker     Checker
 	global      *guardrails.Config
+	serverIDs   []string
+	server      *config.MCPServer
 	logger      *slog.Logger
 	buildError  guardrailsToolErrorBuilder
 	contentType string
 }
 
-// newGuardrailsCheck loads the current Checker and global config from cfg
-// and pairs them with the transport's error builder. logger may be nil.
-func newGuardrailsCheck(cfg *config.MCPServersConfig, logger *slog.Logger, buildError guardrailsToolErrorBuilder, contentType string) guardrailsCheck {
-	checker, global := loadedGuardrails(cfg)
-	return guardrailsCheck{checker: checker, global: global, logger: logger, buildError: buildError, contentType: contentType}
+// guardrailsOption configures optional fields on a new guardrailsCheck.
+type guardrailsOption func(*guardrailsCheck)
+
+// withSSEErrors configures 2025-11-25 SSE JSON-RPC error responses.
+func withSSEErrors() guardrailsOption {
+	return func(gc *guardrailsCheck) {
+		gc.buildError = BuildSSEJSONRPCError
+		gc.contentType = ""
+	}
+}
+
+// newGuardrailsCheck loads a consistent guardrails snapshot for serverName
+// from cfg. Defaults are 2026-07-28 JSON errors; pass withSSEErrors for
+// 2025-11-25.
+func newGuardrailsCheck(cfg *config.MCPServersConfig, serverName string, logger *slog.Logger, opts ...guardrailsOption) *guardrailsCheck {
+	var snap config.GuardrailsSnapshot
+	if cfg != nil {
+		snap = cfg.GuardrailsSnapshotFor(serverName)
+	}
+	gc := &guardrailsCheck{
+		checker:     snap.Checker,
+		global:      snap.Global,
+		serverIDs:   snap.ServerConfigIDs,
+		server:      snap.Server,
+		logger:      logger,
+		buildError:  BuildJSONRPCError,
+		contentType: "application/json",
+	}
+	for _, o := range opts {
+		o(gc)
+	}
+	return gc
+}
+
+// checkToolCall extracts tool arguments, runs the guardrails check, and
+// applies any modification onto mcpReq in place. modified is true when
+// arguments were rewritten (callers that buffer the body must re-marshal).
+func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
+	var requestID any
+	if mcpReq != nil {
+		requestID = mcpReq.ID
+	}
+	args, blocked := g.toolCallArguments(ctx, mcpReq, requestID)
+	if blocked != nil {
+		return false, blocked
+	}
+	content, blocked := g.request(ctx, toolName, args, requestID)
+	if blocked != nil {
+		return false, blocked
+	}
+	if content == "" {
+		return false, nil
+	}
+	if blocked := g.applyModifiedArguments(ctx, mcpReq, content, requestID); blocked != nil {
+		return false, blocked
+	}
+	return true, nil
+}
+
+// checkElicitationAccept runs the guardrails check for an elicitation accept
+// and applies any modification in place. Decline/cancel and non-elicitation
+// requests are skipped. requestID is the client-facing id for error bodies.
+func (g *guardrailsCheck) checkElicitationAccept(ctx context.Context, mcpReq *MCPRequest, requestID any) *Decision {
+	if !isElicitationAccept(mcpReq) {
+		return nil
+	}
+	args, err := elicitationArguments(mcpReq.Result)
+	if err != nil {
+		g.logError(ctx, "guardrails elicitation arguments failed", elicitationActionAccept, err)
+		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+	}
+	content, blocked := g.request(ctx, elicitationActionAccept, args, requestID)
+	if blocked != nil {
+		return blocked
+	}
+	return g.applyModifiedElicitation(ctx, mcpReq, content, requestID)
 }
 
 // request runs the guardrails check for name/arguments. blocked is non-nil
-// when the request must not proceed. modified is the guardrails-rewritten
-// content when the verdict is StatusModified; callers must apply it before
-// forwarding. Empty merged config IDs skip the check entirely. Non-empty
-// IDs with no Checker fail closed (503).
-func (g guardrailsCheck) request(ctx context.Context, serverConfigIDs []string, name string, arguments json.RawMessage, requestID any) (modified string, blocked *Decision) {
+// when the request must not proceed. modified content is returned when the
+// verdict is StatusModified. Empty merged config IDs skip the check.
+// Non-empty IDs with no Checker fail closed (503).
+func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, blocked *Decision) {
 	var globalConfigIDs []string
 	if g.global != nil {
 		globalConfigIDs = g.global.ConfigIDs
 	}
-	if len(globalConfigIDs) == 0 && len(serverConfigIDs) == 0 {
+	if len(globalConfigIDs) == 0 && len(g.serverIDs) == 0 {
 		return "", nil
 	}
 
@@ -80,12 +146,17 @@ func (g guardrailsCheck) request(ctx context.Context, serverConfigIDs []string, 
 		return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
 	}
 
-	decision, checkErr := g.checker.CheckRequest(ctx, name, arguments, serverConfigIDs)
+	decision, checkErr := g.checker.CheckRequest(ctx, name, arguments, g.serverIDs)
 	if checkErr != nil {
 		// translation failure only; always a hard deny, failMode does not
 		// apply. checkErr can carry internal transport/provider detail, so
 		// it's logged rather than returned to the client.
 		g.logError(ctx, "guardrails request translation failed", name, checkErr)
+		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+	}
+
+	if decision == nil {
+		g.logError(ctx, "guardrails returned nil decision", name, fmt.Errorf("nil decision"))
 		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 
@@ -100,6 +171,9 @@ func (g guardrailsCheck) request(ctx context.Context, serverConfigIDs []string, 
 		}
 		return "", g.errorDecision(403, requestID, guardrailsBlockedMessage)
 	case StatusAllowed:
+		if decision.Err != nil && g.logger != nil {
+			g.logger.ErrorContext(ctx, "guardrails check failed open", "tool", name, "error", decision.Err)
+		}
 		return "", nil
 	case StatusModified:
 		return decision.Content, nil
@@ -109,11 +183,11 @@ func (g guardrailsCheck) request(ctx context.Context, serverConfigIDs []string, 
 	}
 }
 
-func (g guardrailsCheck) errorDecision(status int, requestID any, message string) *Decision {
+func (g *guardrailsCheck) errorDecision(status int, requestID any, message string) *Decision {
 	return jsonRPCErrorDecision(status, requestID, message, g.buildError, g.contentType)
 }
 
-func (g guardrailsCheck) logError(ctx context.Context, msg, toolName string, err error) {
+func (g *guardrailsCheck) logError(ctx context.Context, msg, toolName string, err error) {
 	if g.logger == nil {
 		return
 	}
@@ -130,36 +204,39 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 	}
 }
 
-func guardrailsArguments(mcpReq *MCPRequest, requestID any, buildToolError guardrailsToolErrorBuilder, contentType string) (json.RawMessage, *Decision) {
+func (g *guardrailsCheck) toolCallArguments(ctx context.Context, mcpReq *MCPRequest, requestID any) (json.RawMessage, *Decision) {
 	if mcpReq == nil {
 		return nil, nil
 	}
 	args, err := toolCallArguments(mcpReq.Params)
 	if err != nil {
-		return nil, jsonRPCErrorDecision(400, requestID, fmt.Sprintf("guardrails: %s", err.Error()), buildToolError, contentType)
+		g.logError(ctx, "guardrails tool arguments failed", "", err)
+		return nil, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 	return args, nil
 }
 
-func applyModifiedArguments(mcpReq *MCPRequest, modified string, requestID any, buildToolError guardrailsToolErrorBuilder, contentType string) *Decision {
+func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil || modified == "" {
 		return nil
 	}
 	params, err := replaceMapJSON(mcpReq.Params, "arguments", modified)
 	if err != nil {
-		return jsonRPCErrorDecision(400, requestID, fmt.Sprintf("guardrails: %s", err.Error()), buildToolError, contentType)
+		g.logError(ctx, "guardrails apply modified arguments failed", "", err)
+		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 	mcpReq.Params = params
 	return nil
 }
 
-func applyModifiedElicitation(mcpReq *MCPRequest, modified string, requestID any, buildToolError guardrailsToolErrorBuilder, contentType string) *Decision {
+func (g *guardrailsCheck) applyModifiedElicitation(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil || modified == "" {
 		return nil
 	}
 	result, err := replaceElicitationContent(mcpReq.Result, modified)
 	if err != nil {
-		return jsonRPCErrorDecision(400, requestID, fmt.Sprintf("guardrails: %s", err.Error()), buildToolError, contentType)
+		g.logError(ctx, "guardrails apply modified elicitation failed", "", err)
+		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 	mcpReq.Result = result
 	return nil

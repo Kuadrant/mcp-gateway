@@ -143,23 +143,12 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		return &Decision{Error: routerErr}
 	}
 
-	var requestID any
-	if req.Parsed != nil {
-		requestID = req.Parsed.ID
-	}
-	args, blocked := guardrailsArguments(req.Parsed, requestID, BuildJSONRPCError, "application/json")
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger)
+	modified, blocked := gc.checkToolCall(ctx, req.Parsed, upstreamToolName)
 	if blocked != nil {
 		return blocked
 	}
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), r.Logger, BuildJSONRPCError, "application/json")
-	modified, blocked := gc.request(ctx, serverInfo.GuardrailsConfigIDs, upstreamToolName, args, requestID)
-	if blocked != nil {
-		return blocked
-	}
-	if blocked := applyModifiedArguments(req.Parsed, modified, requestID, BuildJSONRPCError, "application/json"); blocked != nil {
-		return blocked
-	}
-	if modified != "" && req.Parsed != nil {
+	if modified && req.Parsed != nil {
 		rewritten, err := req.Parsed.ToBytes()
 		if err != nil {
 			r.Logger.ErrorContext(ctx, "failed to marshal body to bytes", "error", err)

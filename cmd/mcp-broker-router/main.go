@@ -19,6 +19,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	config "github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
@@ -265,10 +266,9 @@ func (a *app) registerObservers() {
 
 func (a *app) loadAndWatchConfig(ctx context.Context) {
 	a.configMu.Lock()
-	if err := a.loadConfig(a.brokerCfg.configFile); err != nil {
+	if err := a.reloadConfig(ctx); err != nil {
 		panic("failed to load initial config: " + err.Error())
 	}
-	a.rebuildGuardrailsChecker(ctx)
 	a.configMu.Unlock()
 	a.mcpConfig.Notify(ctx)
 
@@ -278,11 +278,10 @@ func (a *app) loadAndWatchConfig(ctx context.Context) {
 		a.logger.Info("config file changed", "config file", in.Name)
 		a.configMu.Lock()
 		defer a.configMu.Unlock()
-		if err := a.loadConfig(a.brokerCfg.configFile); err != nil {
+		if err := a.reloadConfig(ctx); err != nil {
 			a.logger.Error("failed to reload config, keeping previous", "error", err)
 			return
 		}
-		a.rebuildGuardrailsChecker(ctx)
 		a.logger.Info("notifying observers of config change")
 		a.mcpConfig.Notify(ctx)
 	})
@@ -406,44 +405,50 @@ func (a *app) run(ctx context.Context) {
 	}
 }
 
-func (a *app) loadConfig(path string) error {
+func (a *app) reloadConfig(ctx context.Context) error {
+	parsed, err := a.parseConfigFile(a.brokerCfg.configFile)
+	if err != nil {
+		return err
+	}
+	return a.applyConfigSnapshot(ctx, parsed)
+}
+
+// configSnapshot is the parsed broker config file, not yet applied to live state.
+type configSnapshot struct {
+	servers          []*config.MCPServer
+	virtualServers   []*config.VirtualServer
+	gatewayCACertPEM string
+	maxBodyBytes     int64
+	globalGuardrails *config.GuardrailsConfig
+}
+
+// parseConfigFile reads and unmarshals the broker config file without mutating live state.
+func (a *app) parseConfigFile(path string) (*configSnapshot, error) {
 	viper.SetConfigFile(path)
 	a.logger.Debug("loading config", "path", viper.ConfigFileUsed())
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("reading config file: %w", err)
+		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 	var newServers []*config.MCPServer
 	if err := viper.UnmarshalKey("servers", &newServers); err != nil {
-		return fmt.Errorf("decoding server config: %w", err)
+		return nil, fmt.Errorf("decoding server config: %w", err)
 	}
 	var newVirtualServers []*config.VirtualServer
 	if viper.IsSet("virtualServers") {
 		if err := viper.UnmarshalKey("virtualServers", &newVirtualServers); err != nil {
-			return fmt.Errorf("decoding virtualServers config: %w", err)
+			return nil, fmt.Errorf("decoding virtualServers config: %w", err)
 		}
 	} else {
 		a.logger.Debug("No virtualServers section found in configuration")
 	}
-	gatewayCACertPEM := viper.GetString("gatewayCACertPEM")
-	if a.hairpinPool != nil {
-		if err := a.hairpinPool.Rebuild(a.brokerCfg.privateHost, a.brokerCfg.publicHost, gatewayCACertPEM); err != nil {
-			return fmt.Errorf("rebuilding hairpin client: %w", err)
-		}
-	}
-	a.mcpConfig.SetServers(newServers, newVirtualServers)
-	a.mcpConfig.SetGatewayCACertPEM(gatewayCACertPEM)
-
 	var globalGuardrails *config.GuardrailsConfig
 	if viper.IsSet("globalGuardrails") {
 		if err := viper.UnmarshalKey("globalGuardrails", &globalGuardrails); err != nil {
-			return fmt.Errorf("decoding globalGuardrails config: %w", err)
+			return nil, fmt.Errorf("decoding globalGuardrails config: %w", err)
 		}
 	}
-	a.mcpConfig.SetGlobalGuardrails(globalGuardrails)
-	a.mcpConfig.SetMaxBodyBytes(viper.GetInt64("maxBodyBytes"))
 
 	a.logger.Debug("config successfully loaded", "# servers", len(newServers))
-
 	for _, s := range newServers {
 		a.logger.Debug(
 			"server config",
@@ -459,5 +464,48 @@ func (a *app) loadConfig(path string) error {
 			s.Hostname,
 		)
 	}
+	return &configSnapshot{
+		servers:          newServers,
+		virtualServers:   newVirtualServers,
+		gatewayCACertPEM: viper.GetString("gatewayCACertPEM"),
+		maxBodyBytes:     viper.GetInt64("maxBodyBytes"),
+		globalGuardrails: globalGuardrails,
+	}, nil
+}
+
+// applyConfigSnapshot builds the guardrails checker, rebuilds hairpin, then
+// swaps live mcpConfig via ApplyReload. Hairpin rebuild failure or TLS
+// failure aborts before ApplyReload so servers/checker stay on the previous
+// snapshot.
+func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) error {
+	var checker guardrails.Checker
+	switch snap.globalGuardrails {
+	case nil:
+		if a.mcpConfig.GetGuardrailsChecker() != nil {
+			a.logger.InfoContext(ctx, "guardrails checker destroyed")
+		}
+	default:
+		tlsConfig, err := tlsConfigFromCACertPEM(snap.gatewayCACertPEM)
+		if err != nil {
+			return fmt.Errorf("building guardrails TLS config: %w", err)
+		}
+		checker = guardrails.NewChecker(snap.globalGuardrails, tlsConfig, 0, snap.maxBodyBytes)
+		a.logger.InfoContext(ctx, "guardrails checker created")
+	}
+
+	if a.hairpinPool != nil {
+		if err := a.hairpinPool.Rebuild(a.brokerCfg.privateHost, a.brokerCfg.publicHost, snap.gatewayCACertPEM); err != nil {
+			return fmt.Errorf("rebuilding hairpin client: %w", err)
+		}
+	}
+
+	a.mcpConfig.ApplyReload(
+		snap.servers,
+		snap.virtualServers,
+		snap.gatewayCACertPEM,
+		snap.maxBodyBytes,
+		snap.globalGuardrails,
+		checker,
+	)
 	return nil
 }

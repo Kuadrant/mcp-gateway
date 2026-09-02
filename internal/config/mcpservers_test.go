@@ -2,9 +2,12 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/stretchr/testify/require"
 )
 
@@ -621,6 +624,73 @@ func TestMCPServersConfig_GetServerConfigByName_NilServers(t *testing.T) {
 	result, err := config.GetServerConfigByName("any")
 	require.Nil(t, result)
 	require.Error(t, err)
+}
+
+type snapChecker struct {
+	version string
+}
+
+func (c *snapChecker) CheckRequest(context.Context, string, json.RawMessage, []string) (*guardrails.Decision, error) {
+	return &guardrails.Decision{Status: guardrails.StatusAllowed}, nil
+}
+
+func (c *snapChecker) CheckResponse(context.Context, string, []byte, []string) (*guardrails.Decision, error) {
+	return &guardrails.Decision{Status: guardrails.StatusAllowed}, nil
+}
+
+func TestMCPServersConfig_GuardrailsSnapshotFor_ConsistentUnderReload(t *testing.T) {
+	versioned := func(version string) ([]*MCPServer, *snapChecker, *guardrails.Config) {
+		servers := []*MCPServer{{
+			Name:                "weather",
+			GuardrailsConfigIDs: []string{version},
+		}}
+		checker := &snapChecker{version: version}
+		global := &guardrails.Config{ConfigIDs: []string{"global-" + version}}
+		return servers, checker, global
+	}
+
+	cfg := &MCPServersConfig{}
+	servers, checker, global := versioned("v1")
+	cfg.ApplyReload(servers, nil, "", 0, global, checker)
+
+	const iterations = 300
+	var wg sync.WaitGroup
+	var mismatches atomic.Int64
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range iterations {
+			v := "v1"
+			if i%2 == 1 {
+				v = "v2"
+			}
+			s, c, g := versioned(v)
+			cfg.ApplyReload(s, nil, "", 0, g, c)
+		}
+	}()
+
+	for range iterations {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			snap := cfg.GuardrailsSnapshotFor("weather")
+			if snap.Server == nil || snap.Checker == nil || snap.Global == nil {
+				mismatches.Add(1)
+				return
+			}
+			c, ok := snap.Checker.(*snapChecker)
+			if !ok || len(snap.ServerConfigIDs) != 1 || snap.ServerConfigIDs[0] != c.version {
+				mismatches.Add(1)
+				return
+			}
+			if len(snap.Global.ConfigIDs) != 1 || snap.Global.ConfigIDs[0] != "global-"+c.version {
+				mismatches.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	require.Zero(t, mismatches.Load())
 }
 
 // mockObserver implements Observer for testing

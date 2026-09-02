@@ -94,7 +94,8 @@ func (config *MCPServersConfig) GetGatewayCACertPEM() string {
 }
 
 // SetGlobalGuardrails stores the resolved gateway-level guardrails config.
-// A nil value clears it (guardrails disabled).
+// A nil value clears it (guardrails disabled). Prefer SetGuardrails when
+// updating the checker in the same step so readers cannot observe a tear.
 func (config *MCPServersConfig) SetGlobalGuardrails(cfg *guardrails.Config) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
@@ -110,10 +111,19 @@ func (config *MCPServersConfig) GetGlobalGuardrails() *guardrails.Config {
 }
 
 // SetGuardrailsChecker stores the checker, or nil when guardrails is disabled.
+// Prefer SetGuardrails when updating GlobalGuardrails in the same step.
 func (config *MCPServersConfig) SetGuardrailsChecker(c guardrails.Checker) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.guardrailsChecker = c
+}
+
+// SetGuardrails stores global config and checker under one lock.
+func (config *MCPServersConfig) SetGuardrails(global *guardrails.Config, checker guardrails.Checker) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.GlobalGuardrails = global
+	config.guardrailsChecker = checker
 }
 
 // GetGuardrailsChecker returns the checker, or nil when guardrails is not configured.
@@ -127,6 +137,61 @@ func (config *MCPServersConfig) GetGuardrails() (guardrails.Checker, *guardrails
 	config.lock.RLock()
 	defer config.lock.RUnlock()
 	return config.guardrailsChecker, config.GlobalGuardrails
+}
+
+// GuardrailsSnapshot is a consistent view of guardrails state for one server.
+// Taken under a single lock so checker, global config, and per-server IDs
+// cannot tear across an in-place reload.
+type GuardrailsSnapshot struct {
+	Checker         guardrails.Checker
+	Global          *guardrails.Config
+	ServerConfigIDs []string
+	Server          *MCPServer
+}
+
+// GuardrailsSnapshotFor returns a consistent snapshot for serverName.
+// Server is nil and ServerConfigIDs empty when the server is unknown; Checker
+// and Global are still returned from the same lock acquisition.
+func (config *MCPServersConfig) GuardrailsSnapshotFor(serverName string) GuardrailsSnapshot {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+
+	snap := GuardrailsSnapshot{
+		Checker: config.guardrailsChecker,
+		Global:  config.GlobalGuardrails,
+	}
+	for _, server := range config.Servers {
+		if server.Name != serverName {
+			continue
+		}
+		snap.Server = server
+		if n := len(server.GuardrailsConfigIDs); n > 0 {
+			snap.ServerConfigIDs = make([]string, n)
+			copy(snap.ServerConfigIDs, server.GuardrailsConfigIDs)
+		}
+		break
+	}
+	return snap
+}
+
+// ApplyReload replaces servers and guardrails runtime state under one write
+// lock so readers using GuardrailsSnapshotFor cannot observe a partial update.
+func (config *MCPServersConfig) ApplyReload(
+	servers []*MCPServer,
+	virtualServers []*VirtualServer,
+	gatewayCACertPEM string,
+	maxBodyBytes int64,
+	global *guardrails.Config,
+	checker guardrails.Checker,
+) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.Servers = servers
+	config.VirtualServers = virtualServers
+	config.GatewayCACertPEM = gatewayCACertPEM
+	config.MaxBodyBytes = maxBodyBytes
+	config.GlobalGuardrails = global
+	config.guardrailsChecker = checker
 }
 
 // DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (1 MiB).
