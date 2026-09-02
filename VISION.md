@@ -33,7 +33,7 @@ It exists to de-risk early adoption.
 
 We actively engage and/or integrate with:
 
-- **[Gateway API](https://gateway-api.sigs.k8s.io/)** - declarative routing and infrastructure
+- **[Gateway API](https://gateway-api.sigs.k8s.io/docs/)** - declarative routing and infrastructure
 - **[AI Gateway Working Group](https://github.com/kubernetes-sigs/wg-ai-gateway)** - payload processing, Backend resources
 - **[Kube Agentic Networking](https://github.com/kubernetes-sigs/kube-agentic-networking)** - AccessPolicy, agent-to-tool communication standards
 - **[Kuadrant](https://kuadrant.io/)** - auth and rate limiting policies; we explore agentic-specific policy patterns here first
