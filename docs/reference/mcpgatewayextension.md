@@ -113,6 +113,6 @@ Ingress is deny-by-default except for:
 | `50051` | Router gRPC (ext_proc) | Only the target Gateway's namespace |
 | `9090` | Metrics | Any source |
 
-The gateway namespace is selected via the auto-set `kubernetes.io/metadata.name` namespace label, derived from `spec.targetRef`. If the targeted Gateway changes, the controller updates the policy to match. Egress allows all traffic.
+The allowed Gateway namespace is taken from `spec.targetRef.namespace`, which defaults to the MCPGatewayExtension's namespace when omitted, and selected using the auto-set `kubernetes.io/metadata.name` namespace label. If the targeted Gateway changes, the controller updates the policy to match. Egress allows all traffic.
 
 This policy replaces the previous static Helm `networkPolicy` template for the broker-router deployment, which allowed ingress from any source and required manual opt-in.
