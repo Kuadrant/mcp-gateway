@@ -2,7 +2,7 @@
 
 The MCP Protocol is stateful. Providing an MCP Gateway, requires us to think about how to manage long lived sessions between clients and backend MCP Severs. This document covers how the MCP Gateway manages sessions.
 
-
+> **Note:** The session management described in this document applies to the **2025-11-25** MCP protocol. The 2026-07-28 protocol is fully stateless — it does not use server-side sessions or require session mapping. Gateways fronting exclusively 2026 upstreams do not need shared state for horizontal scaling. See the [Scaling Guide](../guides/scaling.md) for details.
 ## Types of session
 
 There are three types of session managed within the MCP Gateway components to provide its capabilities:

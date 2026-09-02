@@ -1,10 +1,30 @@
 # Scaling the MCP Gateway
 
-This guide covers scaling the MCP Gateway horizontally by running multiple replicas with shared session state.
+This guide covers scaling the MCP Gateway horizontally. The scaling strategy depends on which MCP protocol versions your gateway serves.
 
-## Overview
+## Scaling 2026-Only Gateways (No Redis Required)
 
-By default, the MCP Gateway runs as a single replica with session mappings stored in memory. To handle increased traffic or improve availability, you can scale the gateway to multiple replicas. However, because the gateway router maintains stateful session mappings between clients and backend MCP servers, scaling requires an external session store so that any replica can serve any client request.
+The 2026-07-28 MCP protocol is fully stateless — it eliminates server-side sessions and session mapping entirely. If your gateway fronts **exclusively** 2026-protocol MCP servers, you can scale horizontally using standard round-robin load balancing without deploying Redis or any external session store.
+
+Simply scale the deployment:
+
+```bash
+kubectl scale deployment/mcp-gateway -n mcp-system --replicas=3
+```
+
+Verify all replicas are ready:
+
+```bash
+kubectl rollout status deployment/mcp-gateway -n mcp-system
+```
+
+No `sessionStore` configuration is needed. Requests can land on any replica because there is no session state to share.
+
+For more details on protocol versions, see [Multi-Protocol Support](./multi-protocol-support.md).
+
+## Scaling 2025 and Mixed-Protocol Gateways (Redis Required)
+
+When fronting 2025-11-25 protocol servers — or a mix of 2025 and 2026 servers — the gateway maintains stateful session mappings between clients and backend MCP servers. To scale beyond a single replica, these mappings must be shared via an external Redis-based datastore so that any replica can serve any client request.
 
 Key concepts:
 - **Session Mapping**: Each gateway session ID maps to one or more backend MCP server session IDs
