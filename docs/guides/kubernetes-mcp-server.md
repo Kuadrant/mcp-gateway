@@ -85,6 +85,7 @@ spec:
     kind: Gateway
     name: mcp-gateway
     namespace: gateway-system
+  sectionName: kubernetes-mcp
   hostnames:
   - $EXTERNAL_HOSTNAME
   rules:

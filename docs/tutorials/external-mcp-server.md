@@ -87,6 +87,7 @@ spec:
     kind: Gateway
     name: mcp-gateway
     namespace: gateway-system
+  sectionName: mcps
   hostnames:
   - github.mcp.local
   rules:
