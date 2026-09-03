@@ -32,6 +32,8 @@ jobs:
       - name: Install tools
         run: make tools
 
+      - name: Run Helm image rendering test
+        run: make test-helm-render
       - name: Run helm install test
         run: make test-helm-install
 
