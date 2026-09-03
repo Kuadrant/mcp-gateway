@@ -650,6 +650,97 @@ func TestFetchUserSpecificTools_StatelessFetch(t *testing.T) {
 	assert.Equal(t, 0, poolSize(b), "stateless fetch should not cache sessions")
 }
 
+// registerActiveServer wires an upstream into b.mcpServers with the given
+// prefix, URL and tools cache metadata (so the exclusion predicate can read
+// them) and returns the userSpecificServer used to seed the fresh-fetch set.
+func registerActiveServer(t *testing.T, b *mcpBrokerImpl, id config.UpstreamMCPID, prefix, url string, meta upstream.CacheMetadata) userSpecificServer {
+	t.Helper()
+	b.serverVersions.Store(id, []string{"2026-07-28"})
+	mcpServer := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:             string(id),
+		Prefix:           prefix,
+		URL:              url,
+		UserSpecificList: meta.UserSpecificList,
+	}, "", nil)
+	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, upstream.InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+	manager.SetCacheMetadataForTesting(meta, upstream.CacheMetadata{})
+	b.mcpServers[id] = upstream.NewActiveForTesting(manager)
+	return userSpecificServer{id: id, name: string(id), url: url, prefix: prefix}
+}
+
+// backstops rebuildProtocolCaches: a server whose cacheScope metadata was not
+// yet populated at the last rebuild can still be scheduled for per-request
+// fetch. The per-request path must drop private-scope, no-prefix servers whose
+// tools would be unroutable, without leaking them onto the merged list.
+func TestFetchUserSpecificTools_ExcludesPrivateScopeWithoutPrefix(t *testing.T) {
+	ts := newStatelessTestMCPServer(t) // serves a tool named "tool"
+	defer ts.Close()
+
+	tests := []struct {
+		name     string
+		prefix   string
+		meta     upstream.CacheMetadata
+		wantTool string // merged tool name; "" means the server must be excluded
+	}{
+		{
+			name:   "private scope, no prefix -> excluded",
+			prefix: "",
+			meta:   upstream.CacheMetadata{CacheScope: upstream.CacheScopePrivate},
+		},
+		{
+			name:     "private scope, with prefix -> included",
+			prefix:   "p_",
+			meta:     upstream.CacheMetadata{CacheScope: upstream.CacheScopePrivate},
+			wantTool: "p_tool",
+		},
+		{
+			name:     "public scope, no prefix (ttlMs:0) -> included",
+			prefix:   "",
+			meta:     upstream.CacheMetadata{TTLMs: 0, CacheScope: upstream.CacheScopePublic},
+			wantTool: "tool",
+		},
+		{
+			name:   "userSpecificList, no prefix -> excluded",
+			prefix: "",
+			meta:   upstream.CacheMetadata{CacheScope: upstream.CacheScopePublic, UserSpecificList: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+			id := config.UpstreamMCPID("srv1")
+			srv := registerActiveServer(t, b, id, tt.prefix, ts.URL, tt.meta)
+
+			// simulate a prior rebuild having scheduled this server for per-request fetch
+			b.statelessTools.Store(&protocolCacheEntry[*mcp.Tool]{
+				freshFetchServers: []userSpecificServer{srv},
+			})
+
+			result := &mcp.ListToolsResult{Tools: []*mcp.Tool{{Name: "cached-tool"}}}
+			headers := http.Header{
+				"Mcp-Session-Id":       []string{"gw-session-1"},
+				"Mcp-Protocol-Version": []string{"2026-07-28"},
+				"Authorization":        []string{"Bearer user-token"},
+			}
+
+			b.FetchUserSpecificTools(context.Background(), headers, result)
+
+			names := make([]string, 0, len(result.Tools))
+			for _, tool := range result.Tools {
+				names = append(names, tool.Name)
+			}
+			assert.Contains(t, names, "cached-tool")
+			if tt.wantTool == "" {
+				assert.Len(t, result.Tools, 1, "excluded server must contribute no tools")
+			} else {
+				assert.Contains(t, names, tt.wantTool, "included server's tool must be merged")
+			}
+		})
+	}
+}
+
 func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
 	// stateful (2025) test server
 	var initCount2025 atomic.Int32

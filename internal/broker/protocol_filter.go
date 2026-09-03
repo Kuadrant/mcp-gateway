@@ -4,6 +4,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,11 +43,44 @@ type protocolCacheEntry[T any] struct {
 	freshFetchServers []userSpecificServer
 }
 
+// isPrivateScopeWithoutPrefix reports whether an upstream's tools are
+// unroutable and must be excluded from tools/list.
+func isPrivateScopeWithoutPrefix(s upstream.ActiveMCPServer) bool {
+	cfg := s.Config()
+	if cfg.Prefix != "" {
+		return false
+	}
+	return cfg.UserSpecificList || s.ToolsCacheMetadata().CacheScope == upstream.CacheScopePrivate
+}
+
+// privateScopeServersWithoutPrefix returns the set of connected upstreams whose
+// tools must be excluded from tools/list, logging one warning per server so
+// operators can diagnose the missing tools.
+func (m *mcpBrokerImpl) privateScopeServersWithoutPrefix() map[config.UpstreamMCPID]struct{} {
+	var excluded map[config.UpstreamMCPID]struct{}
+	for id, mgr := range m.mcpServers {
+		if !isPrivateScopeWithoutPrefix(mgr) {
+			continue
+		}
+		if excluded == nil {
+			excluded = make(map[config.UpstreamMCPID]struct{})
+		}
+		excluded[id] = struct{}{}
+		m.logger.Warn("private-scope server has no prefix configured, tools excluded from listing",
+			"server", mgr.MCPName(),
+			"reason", "tools would be unroutable without prefix for LookupPrefix fallback")
+	}
+	return excluded
+}
+
 // rebuildProtocolCaches partitions the current gateway server tools and
 // prompts into stateful (2025) and stateless (2026) sets based on each
 // upstream server's supportedVersions. Broker meta-tools (those without
 // kuadrant/id) are included only in the stateful set.
 func (m *mcpBrokerImpl) rebuildProtocolCaches() {
+	// per-user servers with no prefix serve unroutable tools; exclude them
+	excluded := m.privateScopeServersWithoutPrefix()
+
 	// partition tools
 	allTools := m.gatewayServer.ListTools()
 	var statefulT, statelessT protocolCacheEntry[*mcp.Tool]
@@ -74,6 +108,10 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 		}
 		serverID := config.UpstreamMCPID(serverIDStr)
 
+		if _, isExcluded := excluded[serverID]; isExcluded {
+			continue
+		}
+
 		if m.ServerSupportsVersion(serverID, protocol.Version2025) {
 			statefulT.items = append(statefulT.items, tool)
 			if !statefulServersSeen[serverID] {
@@ -100,6 +138,9 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 	}
 	for id, mgr := range m.mcpServers {
 		if crdUserSpecific[id] {
+			continue
+		}
+		if _, isExcluded := excluded[id]; isExcluded {
 			continue
 		}
 		if !m.ServerSupportsVersion(id, protocol.Version2026) {

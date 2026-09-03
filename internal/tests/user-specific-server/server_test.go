@@ -68,6 +68,36 @@ func TestFilterToolsByAuth(t *testing.T) {
 	}
 }
 
+// the server advertises cacheScope:"private" on tools/list so the broker
+// treats it as per-user: a private-scope server with no prefix has its tools
+// excluded from the aggregated listing (see #1385).
+func TestToolsListEmitsPrivateCacheScope(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "user-specific-test-server", Version: "1.0.0"}, &mcp.ServerOptions{})
+	for _, tt := range allTools {
+		s.AddTool(&tt.tool, tt.handler)
+	}
+	s.AddReceivingMiddleware(toolFilterMiddleware())
+
+	ct, st := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() { _, _ = s.Connect(ctx, st, nil) }()
+
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0.0.1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = cs.Close() }()
+
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	assert.Equal(t, "private", res.CacheScope,
+		"tools/list must advertise cacheScope:private so the broker treats it as per-user")
+}
+
 // regression: requests with no HTTP extra (nil headers) skipped the filter
 // entirely, returning every tool to anonymous callers. in-memory transports
 // produce nil Extra, exercising exactly that path.

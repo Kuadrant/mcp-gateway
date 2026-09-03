@@ -419,6 +419,10 @@ When the broker forwards headers to a user-specific upstream, internal gateway h
 
 When an MCPVirtualServer is configured that includes a specific user-specific tool, only that tool is returned — user-specific tools are subject to the same virtual server filtering as cached tools.
 
+### [Negative,UserSpecificList] Private-scope server with no prefix excludes its tools from tools/list
+
+When a server advertises `cacheScope: "private"` and is registered with no prefix, its per-user tool names are absent from the shared routing table and the router's `LookupPrefix` fallback cannot match them, so the broker excludes them from `tools/list` rather than advertise unroutable tools. A prefixed registration of the same backend is unaffected — its tools still appear.
+
 ### [Full] Large response payload from backend MCP
 
 - When a backend MCP server returns a large response (e.g. a tool that returns a multi-megabyte file or dataset), the gateway should stream the full response back to the client without truncation or corruption. The response body should match byte-for-byte what the upstream sent.

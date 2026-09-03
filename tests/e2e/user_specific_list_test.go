@@ -445,4 +445,55 @@ var _ = Describe("MCP Gateway User-Specific Tool Lists", func() {
 			g.Expect(toolsList.Tools[0].Name).To(Equal(allowedTool))
 		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
 	})
+
+	// Serial: a no-prefix registration briefly risks registering bare tool
+	// names (e.g. headers, which mcp-test-server2 also exposes) into the shared
+	// routing table before its cacheScope metadata is read, which could flake
+	// parallel specs. #1385: a private-scope server (cacheScope:"private") with
+	// no prefix yields per-user tool names absent from the shared routing table
+	// that LookupPrefix cannot match either, so the broker excludes them from
+	// tools/list rather than advertise unroutable tools. A prefixed registration
+	// of the same backend is unaffected.
+	It("[Negative,UserSpecificList] private-scope server with no prefix excludes its tools from tools/list", Serial, func() {
+		By("Registering the user-specific (cacheScope:private) backend WITHOUT a prefix")
+		noPrefixReg := NewMCPServerResourcesWithDefaults("uspec-noprefix", k8sClient).
+			WithBackendTarget(userSpecificMCPTestServer, 9090).Build()
+		testResources = append(testResources, noPrefixReg.GetObjects()...)
+		noPrefixServer := noPrefixReg.Register(ctx)
+
+		By("Registering the same backend WITH a prefix as a control")
+		ctlReg := NewMCPServerResourcesWithDefaults("uspec-ctl", k8sClient).
+			WithBackendTarget(userSpecificMCPTestServer, 9090).
+			WithPrefix("uspecctl_").
+			WithUserSpecificList().Build()
+		testResources = append(testResources, ctlReg.GetObjects()...)
+		ctlServer := ctlReg.Register(ctx)
+
+		By("Waiting for both registrations to have a status condition")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, noPrefixServer.Name, noPrefixServer.Namespace)).To(BeNil())
+			g.Expect(VerifyMCPServerRegistrationHasCondition(ctx, k8sClient, ctlServer.Name, ctlServer.Namespace)).To(BeNil())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Creating a 2026 (stateless) client with user-a auth")
+		statelessClient, err := NewStatelessClientWithHeaders(ctx, gatewayURL, map[string]string{
+			"Authorization": "Bearer user-a-token",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = statelessClient.Close() }()
+
+		By("Verifying the prefixed control server's tools are present but the no-prefix server's tools are excluded")
+		Eventually(func(g Gomega) {
+			toolsList, err := statelessClient.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			// prefixed control server is unaffected: its common tool is present
+			g.Expect(verifyMCPServerRegistrationToolPresent("uspecctl_server_info", toolsList)).To(BeTrueBecause("prefixed control server tools should still be listed"))
+			// no-prefix private-scope server contributes zero tools: per-user names
+			g.Expect(verifyMCPServerRegistrationToolPresent("list_repos", toolsList)).To(BeFalseBecause("no-prefix private-scope per-user tool must be excluded"))
+			g.Expect(verifyMCPServerRegistrationToolPresent("create_issue", toolsList)).To(BeFalseBecause("no-prefix private-scope per-user tool must be excluded"))
+			// ...and its cached common tool
+			g.Expect(verifyMCPServerRegistrationToolPresent("server_info", toolsList)).To(BeFalseBecause("no-prefix private-scope cached common tool must be excluded"))
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+	})
 })

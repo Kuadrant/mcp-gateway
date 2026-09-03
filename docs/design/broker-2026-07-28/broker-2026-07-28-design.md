@@ -60,6 +60,10 @@ Any private-scoped upstream, `ttlMs: 0` upstream, or `userSpecificList` server m
 
 2025 upstreams: `userSpecificList: true` on CRD remains the fresh-fetch signal (no `cacheScope` or `ttlMs` in protocol). 2026 upstreams: `cacheScope: "private"` or `ttlMs: 0` triggers fresh fetching, CRD field ignored. All three signals feed the same internal `ShouldFetchFresh` path.
 
+### Private-scope servers require a prefix
+
+Servers with `cacheScope: "private"` or `userSpecificList: true` must configure a prefix on their MCPServerRegistration. Without a prefix, per-user tools not in the shared routing table cannot be routed by the router's `LookupPrefix` fallback, so the broker excludes them from `tools/list`.
+
 ## Design
 
 ### Prerequisites
