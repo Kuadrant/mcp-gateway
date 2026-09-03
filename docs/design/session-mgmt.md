@@ -1,6 +1,8 @@
 # Session Management
 
-The MCP Protocol is stateful. Providing an MCP Gateway, requires us to think about how to manage long lived sessions between clients and backend MCP Severs. This document covers how the MCP Gateway manages sessions.
+The 2025-11-25 MCP protocol is stateful. Providing an MCP Gateway, requires us to think about how to manage long lived sessions between clients and backend MCP Severs. This document covers how the MCP Gateway manages sessions.
+
+> **Protocol scope:** This document describes the **2025-11-25** stateful session model — gateway session IDs, backend session mapping, lazy initialization, and the shared session store needed to scale it. The **2026-07-28** protocol is stateless: routing is header-based (`Mcp-Method`/`Mcp-Name`), there are no gateway or backend sessions and no session mapping, so a 2026-only gateway holds no cross-replica session state and scales without a shared store. See the [router-2026-07-28 design](./router-2026-07-28/router-2026-07-28-design.md) and the [scaling guide](../guides/scaling.md).
 
 
 ## Types of session
