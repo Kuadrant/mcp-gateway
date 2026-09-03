@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -234,6 +235,30 @@ func (v *Verifier) HTTPRouteNotFound(name, namespace string) error {
 		return err
 	}
 	return fmt.Errorf("HTTPRoute %s/%s exists but should not", namespace, name)
+}
+
+// getNetworkPolicy fetches a NetworkPolicy by name and namespace
+func (v *Verifier) getNetworkPolicy(name, namespace string) (*networkingv1.NetworkPolicy, error) {
+	networkPolicy := &networkingv1.NetworkPolicy{}
+	err := v.k8sClient.Get(v.ctx, types.NamespacedName{Name: name, Namespace: namespace}, networkPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get NetworkPolicy %s/%s: %w", namespace, name, err)
+	}
+	return networkPolicy, nil
+}
+
+// NetworkPolicyHasOwnerReference checks if the NetworkPolicy has an owner reference with the expected name
+func (v *Verifier) NetworkPolicyHasOwnerReference(name, namespace, ownerName string) error {
+	networkPolicy, err := v.getNetworkPolicy(name, namespace)
+	if err != nil {
+		return err
+	}
+	for _, ref := range networkPolicy.OwnerReferences {
+		if ref.Name == ownerName {
+			return nil
+		}
+	}
+	return fmt.Errorf("NetworkPolicy %s/%s does not have owner reference %q", namespace, name, ownerName)
 }
 
 // Legacy function wrappers for backwards compatibility during migration
