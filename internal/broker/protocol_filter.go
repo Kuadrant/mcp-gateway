@@ -67,7 +67,7 @@ func (m *mcpBrokerImpl) privateScopeServersWithoutPrefix() map[config.UpstreamMC
 		}
 		excluded[id] = struct{}{}
 		m.logger.Warn("private-scope server has no prefix configured, tools excluded from listing",
-			"server", mgr.Config().Name,
+			"server", mgr.MCPName(),
 			"reason", "tools would be unroutable without prefix for LookupPrefix fallback")
 	}
 	return excluded

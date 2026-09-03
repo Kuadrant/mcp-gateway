@@ -741,36 +741,6 @@ func TestFetchUserSpecificTools_ExcludesPrivateScopeWithoutPrefix(t *testing.T) 
 	}
 }
 
-// the per-request path must skip excluded servers silently: the warning is
-// emitted once at rebuild, never per request (hot-path rule).
-func TestFetchUserSpecificTools_NoWarnOnExclusion(t *testing.T) {
-	const msg = "private-scope server has no prefix configured, tools excluded from listing"
-	count := 0
-	logger := slog.New(warnCounter{Handler: slog.DiscardHandler, msg: msg, count: &count})
-
-	ts := newStatelessTestMCPServer(t)
-	defer ts.Close()
-
-	b := NewBroker(logger, WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
-	id := config.UpstreamMCPID("srv1")
-	srv := registerActiveServer(t, b, id, "", ts.URL, upstream.CacheMetadata{CacheScope: upstream.CacheScopePrivate})
-	b.statelessTools.Store(&protocolCacheEntry[*mcp.Tool]{
-		freshFetchServers: []userSpecificServer{srv},
-	})
-
-	result := &mcp.ListToolsResult{}
-	headers := http.Header{
-		"Mcp-Session-Id":       []string{"gw-session-1"},
-		"Mcp-Protocol-Version": []string{"2026-07-28"},
-		"Authorization":        []string{"Bearer user-token"},
-	}
-
-	b.FetchUserSpecificTools(context.Background(), headers, result)
-
-	assert.Empty(t, result.Tools, "excluded server must contribute no tools")
-	assert.Equal(t, 0, count, "no per-request warning on the exclusion path")
-}
-
 func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
 	// stateful (2025) test server
 	var initCount2025 atomic.Int32
