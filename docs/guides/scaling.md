@@ -42,7 +42,21 @@ The gateway connects using the Redis protocol and is compatible with any Redis-b
 
 ## Scaling a 2026-07-28-only gateway (no Redis)
 
-If all your clients and backends use the 2026-07-28 protocol, you do not need a session store. Confirm the MCPGatewayExtension has no `sessionStore` field, then scale the deployment directly:
+If all your clients and backends use the 2026-07-28 protocol, you do not need a session store. The 2026-07-28 router keeps no server-side sessions and no session mappings — each request carries its own routing intent in the `Mcp-Method` and `Mcp-Name` headers, so any replica can serve any request.
+
+### Step 1: Verify No Session Store Configured
+
+Confirm the MCPGatewayExtension has no `sessionStore` field:
+
+```bash
+kubectl get mcpgatewayextension mcp-gateway-extension -n mcp-system -o jsonpath='{.spec.sessionStore}'
+```
+
+The output should be empty. If it returns a value, the gateway is configured for stateful 2025-11-25 traffic and requires Redis before scaling — follow [Scaling a 2025-11-25 or mixed gateway](#scaling-a-2025-11-25-or-mixed-gateway-redis-required) instead.
+
+### Step 2: Scale the Deployment
+
+Scale the gateway to the desired number of replicas:
 
 ```bash
 kubectl scale deployment/mcp-gateway -n mcp-system --replicas=3
@@ -54,7 +68,7 @@ Verify all replicas are ready:
 kubectl rollout status deployment/mcp-gateway -n mcp-system
 ```
 
-Envoy load-balances requests across the replicas. The 2026-07-28 router keeps no server-side sessions and no session mappings — each request carries its own routing intent in the `Mcp-Method` and `Mcp-Name` headers, so any replica can serve any request. There is no cross-replica state to share, so no shared session store and no `CACHE_CONNECTION_STRING` are required.
+Envoy load-balances requests across the replicas. There is no cross-replica state to share, so no shared session store and no `CACHE_CONNECTION_STRING` are required.
 
 ## Scaling a 2025-11-25 or mixed gateway (Redis required)
 
