@@ -20,6 +20,7 @@ described in
 - A cluster with OLM. OpenShift includes OLM by default; on other Kubernetes distributions,
   install OLM first.
 - Gateway API CRDs and an Istio-based Gateway API provider installed.
+- A `Gateway` named `<your-gateway>` in `mcp-system` with a listener named `<listener-name>`.
 - A catalog source providing a Kuadrant Operator version that bundles MCP Gateway.
 
 > **Note:** Throughout this guide, `mcp-system` is the namespace where the operator and its
@@ -99,6 +100,20 @@ This example keeps the `MCPGatewayExtension` and target `Gateway` in `mcp-system
 require a `ReferenceGrant`. If the target Gateway is in another namespace, set
 `targetRef.namespace` and create a `ReferenceGrant` in the target namespace.
 
+Verify that the target Gateway and named listener exist:
+
+```bash
+GATEWAY_NAME="<your-gateway>"
+GATEWAY_NAMESPACE="mcp-system"
+LISTENER_NAME="<listener-name>"
+
+kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE"
+kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NAMESPACE" \
+  -o jsonpath='{range .spec.listeners[*]}{.name}{"\n"}{end}' \
+  | grep -Fx "$LISTENER_NAME"
+# <listener-name>
+```
+
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: mcp.kuadrant.io/v1
@@ -148,7 +163,6 @@ kubectl delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-s
 > plane, not just MCP Gateway. If other Kuadrant features (such as `AuthPolicy` or
 > `RateLimitPolicy`) are in use on the cluster, leave the Kuadrant Operator installed and only
 > remove the `MCPGatewayExtension` resources.
-
 > **Warning:** Deleting an MCP CRD irreversibly deletes every resource of that kind in every
 > namespace. Before deleting CRDs, back up the resources and verify that no other operator or
 > workload depends on them.

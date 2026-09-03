@@ -7,8 +7,8 @@ plane keeps serving while ownership transfers.
 
 ## Who this is for
 
-You installed MCP Gateway (version `<1.0`) via a `Subscription` named `mcp-gateway` (or
-equivalent) and now want the Kuadrant Operator to manage it instead. This is the model described
+You installed MCP Gateway (version `<1.0>`) via a standalone OLM `Subscription` and now want the
+Kuadrant Operator to manage it instead. This is the model described
 in [RFC 0019](https://github.com/Kuadrant/architecture/blob/main/rfcs/0019-olmv1-operator-consolidation.md).
 The Kuadrant Operator runs the MCP Gateway controller; no `Kuadrant` CR is required for it to
 start.
@@ -49,23 +49,37 @@ kubectl get deployment mcp-gateway -n mcp-system
 # Your extension(s) — must stay Ready
 kubectl get mcpgatewayextension -A
 
+# The standalone Subscription name, namespace, package, and installed CSV
+kubectl get subscriptions -A \
+  -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,PACKAGE:.spec.name,CSV:.status.installedCSV'
+
 # Which CSV currently owns the MCP CRDs
 kubectl get crd mcpgatewayextensions.mcp.kuadrant.io \
   -o jsonpath='{.metadata.labels}{"\n"}'
 ```
 
-The CRD labels include an `operators.coreos.com/<csv>.<namespace>` entry naming the owning CSV.
-Before migration this is the standalone `mcp-gateway` CSV.
+Record the exact standalone `Subscription` name and namespace, and its `status.installedCSV` value,
+before moving to Step 2. The latter is the CSV name that the cleanup commands must remove.
 
 ## Step 2: Remove the standalone MCP Gateway subscription
 
 OLM does not allow two operators to own the same CRDs. Removing the standalone subscription and
 its CSV relinquishes ownership of the MCP CRDs so the Kuadrant Operator can take them over.
 
+Set these variables to the exact values recorded in Step 1:
+
 ```bash
-kubectl delete subscription mcp-gateway -n mcp-system
-kubectl delete csv -n mcp-system -l operators.coreos.com/mcp-gateway.mcp-system
+STANDALONE_SUBSCRIPTION_NAME="<standalone-subscription-name>"
+STANDALONE_NAMESPACE="<standalone-subscription-namespace>"
+STANDALONE_CSV_NAME="<standalone-csv-name>"
+
+kubectl delete subscription "$STANDALONE_SUBSCRIPTION_NAME" \
+  -n "$STANDALONE_NAMESPACE" --wait=true
+kubectl delete csv "$STANDALONE_CSV_NAME" \
+  -n "$STANDALONE_NAMESPACE" --wait=true
 ```
+
+The CSV deletion waits for the named CSV to be fully removed before ownership transfer continues.
 
 Deleting the CSV removes the `mcp-gateway-controller` Deployment but not the broker-router. Confirm the data plane and
 your resources survived:
@@ -80,7 +94,6 @@ resources are untouched — OLM does not delete CRDs when a CSV is removed.
 
 > **Do not delete the `MCPGatewayExtension` during this step.** Its finalizer needs a running
 > controller to clear; the Kuadrant Operator's controller (Step 3) handles it once it starts.
-
 > **Note:** No MCP Gateway controller runs until the Kuadrant Operator's controller starts
 > (Step 3/4). During this window, create/update/delete operations, finalizers, and status
 > changes on `MCPGatewayExtension`, `MCPServerRegistration`, and `MCPVirtualServer` resources
@@ -94,6 +107,19 @@ happens depends on how your catalog ships it:
 - **Same channel, newer version (typical production upgrade):** if your subscription's channel
   already offers the newer version, OLM upgrades automatically (for `installPlanApproval:
   Automatic`) or presents an InstallPlan to approve.
+
+If `installPlanApproval` is `Manual`, list the InstallPlans and approve the pending plan for the
+Kuadrant Operator:
+
+```bash
+INSTALLPLAN_NAME="<installplan-name>"
+kubectl get installplan -n mcp-system
+kubectl patch installplan "$INSTALLPLAN_NAME" -n mcp-system \
+  -p '{"spec":{"approved":true}}' --type merge
+```
+
+Replace `<installplan-name>` with the InstallPlan created for this upgrade. When approval is
+`Automatic`, OLM approves the plan without this step.
 
 - **Explicit version target:** delete the existing Kuadrant subscription and CSV, then recreate
   the subscription with `startingCSV` set to the target version:
@@ -137,10 +163,12 @@ kubectl get crd mcpgatewayextensions.mcp.kuadrant.io \
   -o jsonpath='{.status.conditions[?(@.type=="Established")].status}{"\n"}'
 # True
 
-# The MCP CRDs are managed by the Kuadrant Operator at runtime
-kubectl get crd mcpgatewayextensions.mcp.kuadrant.io \
-  -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}{"\n"}'
-# kuadrant-operator
+# The active Kuadrant CSV owns the MCP CRD
+KUADRANT_CSV=$(kubectl get subscription kuadrant-operator -n mcp-system \
+  -o jsonpath='{.status.installedCSV}')
+kubectl get csv "$KUADRANT_CSV" -n mcp-system \
+  -o jsonpath='{range .spec.customresourcedefinitions.owned[?(@.name=="mcpgatewayextensions.mcp.kuadrant.io")]}{.name}{"\n"}{end}'
+# mcpgatewayextensions.mcp.kuadrant.io
 
 # The controller is running again, now deployed by the Kuadrant Operator
 kubectl get deployment mcp-gateway-controller -n mcp-system
