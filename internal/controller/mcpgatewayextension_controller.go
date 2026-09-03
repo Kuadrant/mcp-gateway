@@ -17,11 +17,14 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -117,7 +120,9 @@ type MCPGatewayExtensionReconciler struct {
 	BrokerRouterImage     string
 	// BrokerRouterLogLevel, when non-empty, is passed to the broker-router
 	// as --log-level (sourced from the BROKER_ROUTER_LOG_LEVEL env var)
-	BrokerRouterLogLevel string
+	BrokerRouterLogLevel   string
+	envoyFilterUnavailable bool
+	envoyFilterDiscovery   apiResourceDiscovery
 }
 
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch;update
@@ -167,8 +172,10 @@ func (r *MCPGatewayExtensionReconciler) handleDeletion(ctx context.Context, mcpE
 		// don't fail deletion for status cleanup errors
 	}
 
-	if err := r.deleteEnvoyFilter(ctx, mcpExt); err != nil {
-		return ctrl.Result{}, err
+	if !r.envoyFilterUnavailable {
+		if err := r.deleteEnvoyFilter(ctx, mcpExt); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if err := r.ConfigWriterDeleter.WriteEmptyConfig(ctx, config.NamespaceName(mcpExt.Namespace)); err != nil {
@@ -274,6 +281,16 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		}
 		// requeue to check deployment status again since Owns watch doesn't trigger on status-only changes
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	if r.envoyFilterUnavailable {
+		result, err := r.reconcileUnavailableEnvoyFilter(ctx, mcpExt)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if result.RequeueAfter > 0 {
+			return result, nil
+		}
 	}
 
 	if err := r.reconcileEnvoyFilter(ctx, mcpExt, targetGateway, listenerConfig); err != nil {
@@ -961,7 +978,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileGuardrails(ctx context.Context,
 	return r.ConfigWriterDeleter.WriteGlobalGuardrails(ctx, guardrailsConfig, ns)
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// SetupWithManager sets up the controller.
 func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
 	if err := setupIndexExtensionToGateway(ctx, mgr.GetFieldIndexer()); err != nil {
@@ -972,18 +989,47 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		return fmt.Errorf("failed to setup manager %w", err)
 	}
 
+	istioDiscovery, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes discovery client: %w", err)
+	}
+	r.envoyFilterDiscovery = istioDiscovery
+	available, err := envoyFilterAvailable(istioDiscovery)
+	if err != nil {
+		return err
+	}
+	r.envoyFilterUnavailable = !available
+	if r.envoyFilterUnavailable {
+		r.log.Warn("Istio EnvoyFilter CRD not found; skipping EnvoyFilter watch and reconciliation")
+	}
+
 	// enqueue mcpgateway extensions when the gateway changes
 	// enqueue when reference grants change
-	// enqueue when envoy filter changes (cross-namespace, so we use Watches instead of Owns)
-	return ctrl.NewControllerManagedBy(mgr).
+	controller := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1.MCPGatewayExtension{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForGateway)).
-		Watches(&gatewayv1beta1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForReferenceGrant)).
-		Watches(&istionetv1alpha3.EnvoyFilter{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter)).
+		Watches(&gatewayv1beta1.ReferenceGrant{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForReferenceGrant))
+	if r.envoyFilterUnavailable {
+		events := make(chan event.TypedGenericEvent[client.Object], 100)
+		controller = controller.WatchesRawSource(source.Channel[client.Object](
+			events, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter)))
+		if err := mgr.Add(&envoyFilterPoller{
+			discovery: r.envoyFilterDiscovery,
+			reader:    mgr.GetAPIReader(),
+			events:    events,
+			log:       r.log,
+		}); err != nil {
+			return fmt.Errorf("failed to add EnvoyFilter recovery poller: %w", err)
+		}
+	} else {
+		// enqueue when envoy filter changes (cross-namespace, so we use Watches instead of Owns)
+		controller = controller.Watches(&istionetv1alpha3.EnvoyFilter{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter))
+	}
+	return controller.
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForSecret)).
 		Named("mcpgatewayextension").
 		Complete(r)
