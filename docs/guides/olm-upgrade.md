@@ -9,8 +9,9 @@ plane keeps serving while ownership transfers.
 
 You installed MCP Gateway (version `<1.0`) via a `Subscription` named `mcp-gateway` (or
 equivalent) and now want the Kuadrant Operator to manage it instead. This is the model described
-in [RFC 0019](https://github.com/Kuadrant/architecture/pull/189): the Kuadrant Operator runs the
-MCP Gateway controller; no `Kuadrant` CR is required for it to start.
+in [RFC 0019](https://github.com/Kuadrant/architecture/blob/main/rfcs/0019-olmv1-operator-consolidation.md).
+The Kuadrant Operator runs the MCP Gateway controller; no `Kuadrant` CR is required for it to
+start.
 
 If you installed MCP Gateway with Helm rather than OLM, this guide does not apply — see
 [Installing and Configuring MCP Gateway](./how-to-install-and-configure.md).
@@ -30,7 +31,7 @@ If you installed MCP Gateway with Helm rather than OLM, this guide does not appl
 ## Why this works without downtime
 
 The MCP Gateway data plane (the broker-router `Deployment`, its `Service`, the `HTTPRoute`, and
-the `EnvoyFilter`) is owned by your `MCPGatewayExtension`, not by any operator's
+the `EnvoyFilter`) is managed by your `MCPGatewayExtension`, not by any operator's
 ClusterServiceVersion (CSV). Removing or replacing an operator CSV never touches it, so the Envoy
 routing path stays up throughout the migration.
 
@@ -124,16 +125,22 @@ kubectl wait csv/kuadrant-operator.<target-version> -n mcp-system \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=5m
 ```
 
-## Step 4: Verify the Kuadrant Operator has taken over
+## Step 4: Verify the Kuadrant Operator manages MCP Gateway
 
-The Kuadrant Operator now owns the MCP CRDs and runs the controller; no `Kuadrant` CR is required
-for it to start. (A `Kuadrant` CR is only needed later for `AuthPolicy` or `RateLimitPolicy`.)
+The Kuadrant Operator now manages the MCP CRDs at runtime and runs the controller; no `Kuadrant`
+CR is required for it to start. (A `Kuadrant` CR is only needed later for `AuthPolicy` or
+`RateLimitPolicy`.)
 
 ```bash
-# CRD ownership has transferred to the Kuadrant Operator CSV
+# The MCP CRDs remain established
 kubectl get crd mcpgatewayextensions.mcp.kuadrant.io \
-  -o jsonpath='{.metadata.labels}{"\n"}'
-# The operators.coreos.com/... label now names the kuadrant-operator CSV
+  -o jsonpath='{.status.conditions[?(@.type=="Established")].status}{"\n"}'
+# True
+
+# The MCP CRDs are managed by the Kuadrant Operator at runtime
+kubectl get crd mcpgatewayextensions.mcp.kuadrant.io \
+  -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}{"\n"}'
+# kuadrant-operator
 
 # The controller is running again, now deployed by the Kuadrant Operator
 kubectl get deployment mcp-gateway-controller -n mcp-system
@@ -151,16 +158,20 @@ kubectl get mcpgatewayextension -A
 
 ## Step 5: Confirm traffic is being served
 
-Send a request through the gateway and confirm it succeeds.
+Set the endpoint values to match the Gateway listener. Use `https` with port `443` for a standard
+HTTPS listener; use `http` with the configured listener port for an HTTP listener.
 
 ```bash
-GATEWAY_HOST=<your-gateway-hostname>
+GATEWAY_SCHEME="https" # change to "http" for an HTTP listener
+GATEWAY_HOST="your-gateway-hostname"
+GATEWAY_PORT="443" # change to the Gateway listener port
+MCP_ENDPOINT="${GATEWAY_SCHEME}://${GATEWAY_HOST}:${GATEWAY_PORT}/mcp"
 
-curl -s -X POST "http://$GATEWAY_HOST:8080/mcp" \
+curl -s -X POST "$MCP_ENDPOINT" \
   -H "Content-Type: application/json" -D /tmp/hdr.txt -o /dev/null \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"post-upgrade","version":"1.0"}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"post-upgrade","version":"1.0"}}}'
 SID=$(grep -i mcp-session-id /tmp/hdr.txt | awk '{print $2}' | tr -d '\r\n')
-curl -s -X POST "http://$GATEWAY_HOST:8080/mcp" \
+curl -s -X POST "$MCP_ENDPOINT" \
   -H "Content-Type: application/json" -H "mcp-session-id: $SID" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<your-tool>","arguments":{}}}'
 ```

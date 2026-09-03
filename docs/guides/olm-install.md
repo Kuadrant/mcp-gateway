@@ -3,10 +3,10 @@
 This guide covers installing MCP Gateway on a cluster that uses
 [Operator Lifecycle Manager (OLM)](https://olm.operatorframework.io/).
 
-MCP Gateway does not ship a standalone OLM operator. On OLM-based clusters, MCP Gateway is
-installed and managed by the **Kuadrant Operator**, which embeds the MCP Gateway controller and
-deploys it on startup. This is the consolidated (umbrella) model described in
-[RFC 0019](https://github.com/Kuadrant/architecture/pull/189).
+On OLM-based clusters, install MCP Gateway through the **Kuadrant Operator**, which embeds the
+MCP Gateway controller and deploys it on startup. This is the consolidated (umbrella) model
+described in
+[RFC 0019](https://github.com/Kuadrant/architecture/blob/main/rfcs/0019-olmv1-operator-consolidation.md).
 
 > **Note:** If you are not using OLM, install MCP Gateway standalone with Helm — see
 > [Installing and Configuring MCP Gateway](./how-to-install-and-configure.md).
@@ -77,7 +77,7 @@ The Kuadrant Operator deploys the MCP Gateway controller on startup, without req
 `RateLimitPolicy`.)
 
 ```bash
-# The MCP CRDs are installed and owned by the Kuadrant Operator CSV
+# The MCP CRDs are installed by the Kuadrant Operator at runtime
 kubectl get crd | grep mcp.kuadrant.io
 # mcpgatewayextensions.mcp.kuadrant.io
 # mcpserverregistrations.mcp.kuadrant.io
@@ -95,9 +95,13 @@ Installing the operator deploys the controller only. To deploy the MCP Gateway d
 reconciles it and creates the broker-router `Deployment`, `Service`, `HTTPRoute`, and the
 `EnvoyFilter` on the Gateway.
 
+This example keeps the `MCPGatewayExtension` and target `Gateway` in `mcp-system`, so it does not
+require a `ReferenceGrant`. If the target Gateway is in another namespace, set
+`targetRef.namespace` and create a `ReferenceGrant` in the target namespace.
+
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: mcp.kuadrant.io/v1alpha1
+apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 metadata:
   name: mcp-gateway-extension
@@ -105,7 +109,7 @@ metadata:
 spec:
   targetRef:
     name: <your-gateway>
-    namespace: <your-gateway-namespace>
+    namespace: mcp-system
     sectionName: <listener-name>
 EOF
 ```
@@ -127,9 +131,9 @@ kubectl get deployment mcp-gateway -n mcp-system
 
 ## Uninstall
 
-Removing MCP Gateway means removing your `MCPGatewayExtension` resources (which the controller
-uses to clean up the broker-router data plane), then removing the operator if you no longer need
-it.
+Removing MCP Gateway means removing your `MCPGatewayExtension` resources (which the Kuadrant
+Operator uses to clean up the broker-router data plane), then removing the Kuadrant Operator if
+you no longer need it.
 
 ```bash
 # Remove the data plane (controller must still be running to clear finalizers)
@@ -142,11 +146,30 @@ kubectl delete csv -n mcp-system -l operators.coreos.com/kuadrant-operator.mcp-s
 
 > **Note:** Removing the Kuadrant `Subscription` and CSV uninstalls the entire Kuadrant control
 > plane, not just MCP Gateway. If other Kuadrant features (such as `AuthPolicy` or
-> `RateLimitPolicy`) are in use on the cluster, leave the operator installed and only remove the
-> `MCPGatewayExtension` resources.
+> `RateLimitPolicy`) are in use on the cluster, leave the Kuadrant Operator installed and only
+> remove the `MCPGatewayExtension` resources.
 
-> **Note:** OLM does not delete CRDs when a CSV is removed. Delete the MCP CRDs manually only if
-> you are sure no other operator or workload depends on them.
+> **Warning:** Deleting an MCP CRD irreversibly deletes every resource of that kind in every
+> namespace. Before deleting CRDs, back up the resources and verify that no other operator or
+> workload depends on them.
+
+Back up the MCP resources before deleting their CRDs:
+
+```bash
+kubectl get mcpgatewayextensions,mcpserverregistrations,mcpvirtualservers -A -o yaml > mcp-resources-backup.yaml
+```
+
+Delete the MCP CRDs only when you have confirmed that they are no longer needed. This command
+deletes the three MCP CRDs installed by MCP Gateway:
+
+```bash
+kubectl delete crd \
+  mcpgatewayextensions.mcp.kuadrant.io \
+  mcpserverregistrations.mcp.kuadrant.io \
+  mcpvirtualservers.mcp.kuadrant.io \
+  --wait=true \
+  --ignore-not-found=true
+```
 
 ## Next Steps
 
