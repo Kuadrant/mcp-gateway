@@ -129,6 +129,7 @@ type MCPGatewayExtensionReconciler struct {
 	envoyFilterUnavailable        atomic.Bool
 	envoyFilterDiscovery          apiResourceDiscovery
 	restartOnEnvoyFilterAvailable bool
+	supportsRuleNames             bool
 }
 
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch;update
@@ -145,6 +146,7 @@ type MCPGatewayExtensionReconciler struct {
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=networking.istio.io,resources=envoyfilters,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;delete;get;list;patch;update;watch
 
 // Reconcile reconciles an MCPGatewayExtension resource. Deploying and configuring a MCP Gateway instance configured to integrate and provide MCP functionality with the targeted gateway
@@ -978,6 +980,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileGuardrails(ctx context.Context,
 // SetupWithManager sets up the controller.
 func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	r.log = slog.New(logr.ToSlogHandler(mgr.GetLogger()))
+	r.supportsRuleNames = supportsHTTPRouteRuleNames(ctx, mgr.GetAPIReader(), r.log)
 	if err := setupIndexExtensionToGateway(ctx, mgr.GetFieldIndexer()); err != nil {
 		return fmt.Errorf("failed to setup manager %w", err)
 	}

@@ -1926,7 +1926,7 @@ func TestDeploymentNeedsUpdate_UserEnvVarsIgnored(t *testing.T) {
 // caller-controlled values for these headers can never reach a backend MCP
 // server (GHSA-g53w-w6mj-hrpp).
 func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
-	reconciler := &MCPGatewayExtensionReconciler{}
+	reconciler := &MCPGatewayExtensionReconciler{supportsRuleNames: true}
 	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",
@@ -1991,7 +1991,7 @@ func TestBuildGatewayHTTPRoute_StripsRouterHeaders(t *testing.T) {
 }
 
 func TestHTTPRouteNeedsUpdate(t *testing.T) {
-	reconciler := &MCPGatewayExtensionReconciler{}
+	reconciler := &MCPGatewayExtensionReconciler{supportsRuleNames: true}
 	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",
@@ -2054,7 +2054,7 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 }
 
 func TestBuildTokensHTTPRoute(t *testing.T) {
-	reconciler := &MCPGatewayExtensionReconciler{}
+	reconciler := &MCPGatewayExtensionReconciler{supportsRuleNames: true}
 	mcpExt := &mcpv1.MCPGatewayExtension{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test",

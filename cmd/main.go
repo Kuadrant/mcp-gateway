@@ -55,6 +55,7 @@ func init() {
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
 	runtime.Must(gatewayv1beta1.Install(scheme.Scheme))
 	runtime.Must(istionetv1alpha3.AddToScheme(scheme.Scheme))
+	runtime.Must(apiextensionsv1.AddToScheme(scheme.Scheme))
 }
 
 func main() {
