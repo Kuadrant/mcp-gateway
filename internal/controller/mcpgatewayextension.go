@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -102,7 +101,7 @@ func (r *MCPGatewayExtensionValidator) FindValidMCPGatewayExtsForGateway(ctx con
 			// we have to exit here
 			return validExtensions, fmt.Errorf("failed to check if mcpgatewayextension is valid %w", err)
 		}
-		if has && meta.IsStatusConditionTrue(mg.Status.Conditions, mcpv1.ConditionTypeReady) {
+		if has {
 			validExtensions = append(validExtensions, &mg)
 		}
 	}
