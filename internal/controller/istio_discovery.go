@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -60,12 +62,41 @@ func (r *MCPGatewayExtensionReconciler) reconcileUnavailableEnvoyFilter(ctx cont
 	return ctrl.Result{RequeueAfter: envoyFilterAvailabilityRequeue}, nil
 }
 
+type envoyFilterSnapshot struct {
+	resourceVersion string
+	labels          map[string]string
+}
+
+func snapshotEnvoyFilter(object *unstructured.Unstructured) envoyFilterSnapshot {
+	return envoyFilterSnapshot{
+		resourceVersion: object.GetResourceVersion(),
+		labels:          object.GetLabels(),
+	}
+}
+
+func deletedEnvoyFilter(key types.NamespacedName, snapshot envoyFilterSnapshot) *unstructured.Unstructured {
+	labels := make(map[string]interface{}, len(snapshot.labels))
+	for name, value := range snapshot.labels {
+		labels[name] = value
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": envoyFilterGroupVersion,
+		"kind":       "EnvoyFilter",
+		"metadata": map[string]interface{}{
+			"name":      key.Name,
+			"namespace": key.Namespace,
+			"labels":    labels,
+		},
+	}}
+}
+
 type envoyFilterWatcher struct {
 	discovery     apiResourceDiscovery
 	resource      dynamic.ResourceInterface
 	events        chan<- event.TypedGenericEvent[client.Object]
 	log           *slog.Logger
 	retryInterval time.Duration
+	known         map[types.NamespacedName]envoyFilterSnapshot
 }
 
 func (w *envoyFilterWatcher) Start(ctx context.Context) error {
@@ -109,11 +140,28 @@ func (w *envoyFilterWatcher) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to list Istio EnvoyFilters: %w", err)
 	}
+	current := make(map[types.NamespacedName]envoyFilterSnapshot, len(list.Items))
 	for i := range list.Items {
-		if !w.emit(ctx, &list.Items[i]) {
+		object := &list.Items[i]
+		key := client.ObjectKeyFromObject(object)
+		snapshot := snapshotEnvoyFilter(object)
+		current[key] = snapshot
+		previous, ok := w.known[key]
+		if !ok || previous.resourceVersion != snapshot.resourceVersion || !maps.Equal(previous.labels, snapshot.labels) {
+			if !w.emit(ctx, object) {
+				return nil
+			}
+		}
+	}
+	for key, snapshot := range w.known {
+		if _, ok := current[key]; ok {
+			continue
+		}
+		if !w.emit(ctx, deletedEnvoyFilter(key, snapshot)) {
 			return nil
 		}
 	}
+	w.known = current
 
 	stream, err := w.resource.Watch(ctx, metav1.ListOptions{
 		ResourceVersion: list.GetResourceVersion(),
@@ -139,6 +187,15 @@ func (w *envoyFilterWatcher) run(ctx context.Context) error {
 				}
 				if !w.emit(ctx, object) {
 					return nil
+				}
+				if w.known == nil {
+					w.known = make(map[types.NamespacedName]envoyFilterSnapshot)
+				}
+				key := client.ObjectKeyFromObject(object)
+				if watchEvent.Type == watch.Deleted {
+					delete(w.known, key)
+				} else {
+					w.known[key] = snapshotEnvoyFilter(object)
 				}
 			case watch.Error:
 				if err := apierrors.FromObject(watchEvent.Object); err != nil {

@@ -222,3 +222,96 @@ func TestEnvoyFilterWatcherSwitchesFromDiscoveryToWatch(t *testing.T) {
 		t.Fatal("watcher did not stop")
 	}
 }
+
+func TestEnvoyFilterWatcherEmitsDeletionAfterWatchReconnect(t *testing.T) {
+	gvr := schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1alpha3",
+		Resource: "envoyfilters",
+	}
+	initial := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "networking.istio.io/v1alpha3",
+		"kind":       "EnvoyFilter",
+		"metadata": map[string]interface{}{
+			"name":      "initial",
+			"namespace": "gateway",
+			"labels": map[string]interface{}{
+				labelManagedBy:          labelManagedByValue,
+				labelExtensionName:      "extension",
+				labelExtensionNamespace: "default",
+			},
+		},
+	}}
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), initial)
+	firstWatch := watch.NewRaceFreeFake()
+	secondWatch := watch.NewRaceFreeFake()
+	watchCalls := 0
+	dynamicClient.PrependWatchReactor("envoyfilters", func(clienttesting.Action) (bool, watch.Interface, error) {
+		watchCalls++
+		if watchCalls == 1 {
+			return true, firstWatch, nil
+		}
+		return true, secondWatch, nil
+	})
+	hideInitial := false
+	dynamicClient.PrependReactor("list", "envoyfilters", func(clienttesting.Action) (bool, runtime.Object, error) {
+		if !hideInitial {
+			return false, nil, nil
+		}
+		return true, &unstructured.UnstructuredList{}, nil
+	})
+	discovery := &mutableAPIResourceDiscovery{
+		resources: &metav1.APIResourceList{
+			APIResources: []metav1.APIResource{{Name: "envoyfilters", Kind: "EnvoyFilter"}},
+		},
+	}
+	events := make(chan event.TypedGenericEvent[client.Object], 4)
+	watcher := &envoyFilterWatcher{
+		discovery: discovery,
+		resource:  dynamicClient.Resource(gvr),
+		events:    events,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstRun := make(chan error, 1)
+	go func() {
+		firstRun <- watcher.run(ctx)
+	}()
+
+	select {
+	case event := <-events:
+		require.Equal(t, "initial", event.Object.GetName())
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial EnvoyFilter event")
+	}
+
+	firstWatch.Stop()
+	select {
+	case err := <-firstRun:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not report the closed watch")
+	}
+
+	hideInitial = true
+
+	secondRun := make(chan error, 1)
+	go func() {
+		secondRun <- watcher.run(ctx)
+	}()
+	select {
+	case event := <-events:
+		require.Equal(t, "initial", event.Object.GetName())
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for synthetic deleted EnvoyFilter event")
+	}
+
+	cancel()
+	select {
+	case err := <-secondRun:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not stop after reconnect")
+	}
+}
