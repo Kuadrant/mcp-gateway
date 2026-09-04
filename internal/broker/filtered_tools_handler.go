@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,7 +26,7 @@ const allowedCapabilitiesClaimKey = "allowed-capabilities"
 // FilterTools reduces the tool set based on authorization headers.
 // Priority: x-mcp-authorized JWT filtering, then x-mcp-virtualserver filtering.
 func (broker *mcpBrokerImpl) FilterTools(ctx context.Context, headers http.Header, sessionID string, mcpRes *mcp.ListToolsResult) {
-	protoVersion := "2025-11-25"
+	protoVersion := protocol.Version2025
 	if v := headers.Get("Mcp-Protocol-Version"); v != "" {
 		protoVersion = v
 	}
