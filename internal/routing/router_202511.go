@@ -131,7 +131,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Tool not found"),
+				JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, "MCP error -32602: Tool not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -146,7 +146,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Tool not found"),
+				JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, "MCP error -32602: Tool not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -206,7 +206,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 				return &Decision{
 					Error: &Error{
 						StatusCode: 200,
-						JSONRPCErr: BuildSSEToolError(mcpReq.ID, tokenErr.Error()),
+						JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, tokenErr.Error()),
 					},
 					SetHeaders: map[string]string{
 						SessionHeader: mcpReq.GetSessionID(),
@@ -266,7 +266,7 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: "\nevent: message\ndata: {\"error\":{\"code\":-32602,\"message\":\"Prompt not found\"},\"jsonrpc\":\"2.0\"}\n\n",
+				JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32602, "Prompt not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -279,7 +279,7 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Prompt not found"),
+				JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, "MCP error -32602: Prompt not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -345,7 +345,7 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Resource not found"),
+				JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, "MCP error -32602: Resource not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -358,7 +358,7 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEToolError(mcpReq.ID, "MCP error -32602: Resource not found"),
+				JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, "MCP error -32602: Resource not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),

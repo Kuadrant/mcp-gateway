@@ -268,29 +268,6 @@ type ElicitationInfo struct {
 	ElicitationID string
 }
 
-// SseJSONRPC constructs sse json-rpc event with custom body
-func SseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
-	var b strings.Builder
-	b.WriteString("\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":")
-	idBytes, err := json.Marshal(requestID)
-	if err != nil {
-		b.WriteString("null")
-	} else {
-		b.Write(idBytes)
-	}
-	writeBody(&b)
-	b.WriteString("\n\n")
-	return b.String()
-}
-
-// BuildSSEToolError constructs sse error response for tool call
-func BuildSSEToolError(requestID any, message string) string {
-	return SseJSONRPC(requestID, func(b *strings.Builder) {
-		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-		b.WriteString(jsonQuote(message))
-		b.WriteString("}],\"isError\":true}}")
-	})
-}
 
 // BuildSSEToolResult constructs a successful SSE tool result for 2025-11-25.
 // Used when guardrails modifies response content: the redacted text is a
@@ -301,24 +278,6 @@ func BuildSSEToolResult(requestID any, text string) string {
 		b.WriteString(jsonQuote(text))
 		b.WriteString("}]}}")
 	})
-}
-
-// BuildJSONToolError constructs a plain JSON-RPC error response for a tool
-// call. Used for 2026-07-28 responses, and for 2025-11-25 responses whose
-// Content-Type is application/json rather than text/event-stream.
-func BuildJSONToolError(requestID any, message string) string {
-	var b strings.Builder
-	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
-	idBytes, err := json.Marshal(requestID)
-	if err != nil {
-		b.WriteString("null")
-	} else {
-		b.Write(idBytes)
-	}
-	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-	b.WriteString(jsonQuote(message))
-	b.WriteString("}],\"isError\":true}}")
-	return b.String()
 }
 
 // BuildJSONToolResult constructs a successful plain JSON-RPC tool result.
@@ -340,10 +299,6 @@ func BuildJSONToolResult(requestID any, text string) string {
 	return b.String()
 }
 
-func jsonQuote(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
 
 // ResourceAuthority extracts the authority segment (host) from a resource URI.
 // For malformed URIs, returns the URI unchanged.
