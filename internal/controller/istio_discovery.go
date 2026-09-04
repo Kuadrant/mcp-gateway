@@ -3,33 +3,21 @@ package controller
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"maps"
-	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 const envoyFilterGroupVersion = "networking.istio.io/v1alpha3"
 
-const envoyFilterAvailabilityRequeue = time.Minute
-
-var envoyFilterGVR = schema.GroupVersionResource{
-	Group:    "networking.istio.io",
-	Version:  "v1alpha3",
-	Resource: "envoyfilters",
-}
+const envoyFilterCRDName = "envoyfilters.networking.istio.io"
 
 type apiResourceDiscovery interface {
 	ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error)
@@ -43,15 +31,12 @@ func (r *MCPGatewayExtensionReconciler) refreshEnvoyFilterAvailability() error {
 	if err != nil {
 		return err
 	}
-	r.envoyFilterUnavailable = !available
+	r.envoyFilterUnavailable.Store(!available)
 	return nil
 }
 
 func (r *MCPGatewayExtensionReconciler) reconcileUnavailableEnvoyFilter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (ctrl.Result, error) {
-	if err := r.refreshEnvoyFilterAvailability(); err != nil {
-		return ctrl.Result{}, err
-	}
-	if !r.envoyFilterUnavailable {
+	if !r.envoyFilterUnavailable.Load() {
 		return ctrl.Result{}, nil
 	}
 
@@ -59,162 +44,58 @@ func (r *MCPGatewayExtensionReconciler) reconcileUnavailableEnvoyFilter(ctx cont
 		"waiting for the Istio EnvoyFilter CRD to be installed"); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: envoyFilterAvailabilityRequeue}, nil
+	return ctrl.Result{}, nil
 }
 
-type envoyFilterSnapshot struct {
-	resourceVersion string
-	labels          map[string]string
-}
-
-func snapshotEnvoyFilter(object *unstructured.Unstructured) envoyFilterSnapshot {
-	return envoyFilterSnapshot{
-		resourceVersion: object.GetResourceVersion(),
-		labels:          object.GetLabels(),
-	}
-}
-
-func deletedEnvoyFilter(key types.NamespacedName, snapshot envoyFilterSnapshot) *unstructured.Unstructured {
-	labels := make(map[string]interface{}, len(snapshot.labels))
-	for name, value := range snapshot.labels {
-		labels[name] = value
-	}
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": envoyFilterGroupVersion,
-		"kind":       "EnvoyFilter",
-		"metadata": map[string]interface{}{
-			"name":      key.Name,
-			"namespace": key.Namespace,
-			"labels":    labels,
-		},
-	}}
-}
-
-type envoyFilterWatcher struct {
-	discovery     apiResourceDiscovery
-	resource      dynamic.ResourceInterface
-	events        chan<- event.TypedGenericEvent[client.Object]
-	log           *slog.Logger
-	retryInterval time.Duration
-	known         map[types.NamespacedName]envoyFilterSnapshot
-}
-
-func (w *envoyFilterWatcher) Start(ctx context.Context) error {
-	retryInterval := w.retryInterval
-	if retryInterval <= 0 {
-		retryInterval = envoyFilterAvailabilityRequeue
+func (r *MCPGatewayExtensionReconciler) handleEnvoyFilterCRDAvailable() {
+	r.envoyFilterUnavailable.Store(false)
+	if !r.restartOnEnvoyFilterAvailable {
+		return
 	}
 
-	for {
-		if err := w.run(ctx); err != nil && ctx.Err() == nil {
-			if w.log != nil {
-				w.log.Warn("failed to watch Istio EnvoyFilters", "error", err)
-			}
-		}
-
-		timer := time.NewTimer(retryInterval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return nil
-		case <-timer.C:
-		}
+	r.restartOnEnvoyFilterAvailable = false
+	if r.log != nil {
+		r.log.Info("Istio EnvoyFilter CRD available; restarting controller to register typed watch")
+	}
+	if r.Shutdown != nil {
+		r.Shutdown()
 	}
 }
 
-func (w *envoyFilterWatcher) run(ctx context.Context) error {
-	available, err := envoyFilterAvailable(w.discovery)
-	if err != nil {
-		return err
-	}
-	if !available {
-		return nil
-	}
-
-	list, err := w.resource.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list Istio EnvoyFilters: %w", err)
-	}
-	current := make(map[types.NamespacedName]envoyFilterSnapshot, len(list.Items))
-	for i := range list.Items {
-		object := &list.Items[i]
-		key := client.ObjectKeyFromObject(object)
-		snapshot := snapshotEnvoyFilter(object)
-		current[key] = snapshot
-		previous, ok := w.known[key]
-		if !ok || previous.resourceVersion != snapshot.resourceVersion || !maps.Equal(previous.labels, snapshot.labels) {
-			if !w.emit(ctx, object) {
-				return nil
-			}
-		}
-	}
-	for key, snapshot := range w.known {
-		if _, ok := current[key]; ok {
-			continue
-		}
-		if !w.emit(ctx, deletedEnvoyFilter(key, snapshot)) {
-			return nil
-		}
-	}
-	w.known = current
-
-	stream, err := w.resource.Watch(ctx, metav1.ListOptions{
-		ResourceVersion: list.GetResourceVersion(),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to watch Istio EnvoyFilters: %w", err)
-	}
-	defer stream.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case watchEvent, ok := <-stream.ResultChan():
-			if !ok {
-				return fmt.Errorf("istio EnvoyFilter watch closed")
-			}
-			switch watchEvent.Type {
-			case watch.Added, watch.Modified, watch.Deleted:
-				object, ok := watchEvent.Object.(*unstructured.Unstructured)
-				if !ok {
-					return fmt.Errorf("unexpected Istio EnvoyFilter watch object type %T", watchEvent.Object)
-				}
-				if !w.emit(ctx, object) {
-					return nil
-				}
-				if w.known == nil {
-					w.known = make(map[types.NamespacedName]envoyFilterSnapshot)
-				}
-				key := client.ObjectKeyFromObject(object)
-				if watchEvent.Type == watch.Deleted {
-					delete(w.known, key)
-				} else {
-					w.known[key] = snapshotEnvoyFilter(object)
-				}
-			case watch.Error:
-				if err := apierrors.FromObject(watchEvent.Object); err != nil {
-					return err
-				}
-				return fmt.Errorf("istio EnvoyFilter watch returned an error event")
-			case watch.Bookmark:
-				continue
-			}
-		}
-	}
+func (r *MCPGatewayExtensionReconciler) handleEnvoyFilterCRDDeleted() {
+	r.envoyFilterUnavailable.Store(true)
 }
 
-func (w *envoyFilterWatcher) emit(ctx context.Context, object client.Object) bool {
-	select {
-	case w.events <- event.TypedGenericEvent[client.Object]{Object: object}:
-		return true
-	case <-ctx.Done():
+func (r *MCPGatewayExtensionReconciler) shouldRestartForEnvoyFilterCRD() bool {
+	return r.restartOnEnvoyFilterAvailable && r.envoyFilterUnavailable.Load()
+}
+
+func envoyFilterCRDEstablished(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	if crd == nil || crd.Name != envoyFilterCRDName {
 		return false
+	}
+	for i := range crd.Status.Conditions {
+		condition := &crd.Status.Conditions[i]
+		if condition.Type == apiextensionsv1.Established && condition.Status == apiextensionsv1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *MCPGatewayExtensionReconciler) enqueueRequestsForEnvoyFilterCRD(
+	ctx context.Context,
+	queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+) {
+	extensions := &mcpv1.MCPGatewayExtensionList{}
+	if err := r.List(ctx, extensions); err != nil {
+		if r.log != nil {
+			r.log.Error("failed to list mcpgatewayextensions after EnvoyFilter CRD change", "error", err)
+		}
+		return
+	}
+	for i := range extensions.Items {
+		queue.Add(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&extensions.Items[i])})
 	}
 }
 

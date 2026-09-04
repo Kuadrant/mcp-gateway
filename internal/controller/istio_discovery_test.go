@@ -5,21 +5,16 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/watch"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
-	clienttesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
@@ -47,19 +42,19 @@ func TestRefreshEnvoyFilterAvailability(t *testing.T) {
 		err: apierrors.NewNotFound(schema.GroupResource{Group: "networking.istio.io", Resource: "envoyfilters"}, ""),
 	}
 	reconciler := &MCPGatewayExtensionReconciler{
-		envoyFilterUnavailable: true,
-		envoyFilterDiscovery:   discovery,
+		envoyFilterDiscovery: discovery,
 	}
+	reconciler.envoyFilterUnavailable.Store(true)
 
 	require.NoError(t, reconciler.refreshEnvoyFilterAvailability())
-	require.True(t, reconciler.envoyFilterUnavailable)
+	require.True(t, reconciler.envoyFilterUnavailable.Load())
 
 	discovery.err = nil
 	discovery.resources = &metav1.APIResourceList{
 		APIResources: []metav1.APIResource{{Name: "envoyfilters", Kind: "EnvoyFilter"}},
 	}
 	require.NoError(t, reconciler.refreshEnvoyFilterAvailability())
-	require.False(t, reconciler.envoyFilterUnavailable)
+	require.False(t, reconciler.envoyFilterUnavailable.Load())
 }
 
 func TestReconcileUnavailableEnvoyFilter(t *testing.T) {
@@ -74,15 +69,42 @@ func TestReconcileUnavailableEnvoyFilter(t *testing.T) {
 		WithObjects(extension).
 		Build()
 	reconciler := &MCPGatewayExtensionReconciler{
-		Client:                 k8sClient,
-		envoyFilterUnavailable: true,
-		log:                    slog.Default(),
+		Client: k8sClient,
+		log:    slog.Default(),
 	}
+	reconciler.envoyFilterUnavailable.Store(true)
 
 	result, err := reconciler.reconcileUnavailableEnvoyFilter(context.Background(), extension)
 
 	require.NoError(t, err)
-	require.Equal(t, envoyFilterAvailabilityRequeue, result.RequeueAfter)
+	require.Zero(t, result.RequeueAfter)
+	current := &mcpv1.MCPGatewayExtension{}
+	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(extension), current))
+	condition := meta.FindStatusCondition(current.Status.Conditions, mcpv1.ConditionTypeReady)
+	require.Equal(t, metav1.ConditionFalse, condition.Status)
+	require.Equal(t, mcpv1.ConditionReasonIstioUnavailable, condition.Reason)
+}
+
+func TestReconcileActiveStopsBeforeValidationWhenEnvoyFilterUnavailable(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, mcpv1.AddToScheme(scheme))
+	extension := &mcpv1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{Name: "extension", Namespace: "default"},
+	}
+	k8sClient := fakeclient.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(extension).
+		WithObjects(extension).
+		Build()
+	reconciler := &MCPGatewayExtensionReconciler{
+		Client: k8sClient,
+		log:    slog.Default(),
+	}
+	reconciler.envoyFilterUnavailable.Store(true)
+
+	_, err := reconciler.reconcileActive(context.Background(), extension)
+
+	require.NoError(t, err)
 	current := &mcpv1.MCPGatewayExtension{}
 	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(extension), current))
 	condition := meta.FindStatusCondition(current.Status.Conditions, mcpv1.ConditionTypeReady)
@@ -136,182 +158,54 @@ func TestEnvoyFilterAvailable(t *testing.T) {
 		})
 	}
 }
-func TestEnvoyFilterWatcherSwitchesFromDiscoveryToWatch(t *testing.T) {
-	gvr := schema.GroupVersionResource{
-		Group:    "networking.istio.io",
-		Version:  "v1alpha3",
-		Resource: "envoyfilters",
-	}
-	initial := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "networking.istio.io/v1alpha3",
-		"kind":       "EnvoyFilter",
-		"metadata": map[string]interface{}{
-			"name":      "initial",
-			"namespace": "gateway",
-			"labels": map[string]interface{}{
-				labelManagedBy:          labelManagedByValue,
-				labelExtensionName:      "extension",
-				labelExtensionNamespace: "default",
-			},
-		},
-	}}
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), initial)
-	watchStream := watch.NewRaceFreeFake()
-	dynamicClient.PrependWatchReactor("envoyfilters", func(clienttesting.Action) (bool, watch.Interface, error) {
-		return true, watchStream, nil
-	})
-	discovery := &mutableAPIResourceDiscovery{
-		resources: &metav1.APIResourceList{
-			APIResources: []metav1.APIResource{{Name: "envoyfilters", Kind: "EnvoyFilter"}},
+func TestHandleEnvoyFilterCRDAvailableRestartsController(t *testing.T) {
+	restarted := false
+	reconciler := &MCPGatewayExtensionReconciler{
+		restartOnEnvoyFilterAvailable: true,
+		Shutdown: func() {
+			restarted = true
 		},
 	}
-	events := make(chan event.TypedGenericEvent[client.Object], 4)
-	watcher := &envoyFilterWatcher{
-		discovery:     discovery,
-		resource:      dynamicClient.Resource(gvr),
-		events:        events,
-		retryInterval: 10 * time.Millisecond,
-	}
+	reconciler.envoyFilterUnavailable.Store(true)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- watcher.Start(ctx)
-	}()
+	reconciler.handleEnvoyFilterCRDAvailable()
 
-	select {
-	case event := <-events:
-		require.Equal(t, "initial", event.Object.GetName())
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for initial EnvoyFilter event")
-	}
-
-	updated := initial.DeepCopy()
-	updated.SetResourceVersion("2")
-	watchStream.Modify(updated)
-	select {
-	case event := <-events:
-		require.Equal(t, "initial", event.Object.GetName())
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for modified EnvoyFilter event")
-	}
-
-	watchStream.Delete(updated)
-	select {
-	case event := <-events:
-		require.Equal(t, "initial", event.Object.GetName())
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for deleted EnvoyFilter event")
-	}
-
-	listActions := 0
-
-	for _, action := range dynamicClient.Actions() {
-		if action.GetVerb() == "list" {
-			listActions++
-		}
-	}
-	require.Equal(t, 1, listActions)
-
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("watcher did not stop")
-	}
+	require.True(t, restarted)
+	require.False(t, reconciler.envoyFilterUnavailable.Load())
 }
 
-func TestEnvoyFilterWatcherEmitsDeletionAfterWatchReconnect(t *testing.T) {
-	gvr := schema.GroupVersionResource{
-		Group:    "networking.istio.io",
-		Version:  "v1alpha3",
-		Resource: "envoyfilters",
-	}
-	initial := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "networking.istio.io/v1alpha3",
-		"kind":       "EnvoyFilter",
-		"metadata": map[string]interface{}{
-			"name":      "initial",
-			"namespace": "gateway",
-			"labels": map[string]interface{}{
-				labelManagedBy:          labelManagedByValue,
-				labelExtensionName:      "extension",
-				labelExtensionNamespace: "default",
-			},
+func TestHandleEnvoyFilterCRDAvailableDoesNotRestartAfterStartup(t *testing.T) {
+	restarted := false
+	reconciler := &MCPGatewayExtensionReconciler{
+		Shutdown: func() {
+			restarted = true
 		},
+	}
+	reconciler.envoyFilterUnavailable.Store(true)
+
+	reconciler.handleEnvoyFilterCRDAvailable()
+
+	require.False(t, restarted)
+	require.False(t, reconciler.envoyFilterUnavailable.Load())
+}
+
+func TestHandleEnvoyFilterCRDDeletedMarksUnavailable(t *testing.T) {
+	reconciler := &MCPGatewayExtensionReconciler{}
+
+	reconciler.handleEnvoyFilterCRDDeleted()
+
+	require.True(t, reconciler.envoyFilterUnavailable.Load())
+}
+
+func TestEnvoyFilterCRDEstablished(t *testing.T) {
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: envoyFilterCRDName},
+	}
+	require.False(t, envoyFilterCRDEstablished(crd))
+
+	crd.Status.Conditions = []apiextensionsv1.CustomResourceDefinitionCondition{{
+		Type:   apiextensionsv1.Established,
+		Status: apiextensionsv1.ConditionTrue,
 	}}
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), initial)
-	firstWatch := watch.NewRaceFreeFake()
-	secondWatch := watch.NewRaceFreeFake()
-	watchCalls := 0
-	dynamicClient.PrependWatchReactor("envoyfilters", func(clienttesting.Action) (bool, watch.Interface, error) {
-		watchCalls++
-		if watchCalls == 1 {
-			return true, firstWatch, nil
-		}
-		return true, secondWatch, nil
-	})
-	hideInitial := false
-	dynamicClient.PrependReactor("list", "envoyfilters", func(clienttesting.Action) (bool, runtime.Object, error) {
-		if !hideInitial {
-			return false, nil, nil
-		}
-		return true, &unstructured.UnstructuredList{}, nil
-	})
-	discovery := &mutableAPIResourceDiscovery{
-		resources: &metav1.APIResourceList{
-			APIResources: []metav1.APIResource{{Name: "envoyfilters", Kind: "EnvoyFilter"}},
-		},
-	}
-	events := make(chan event.TypedGenericEvent[client.Object], 4)
-	watcher := &envoyFilterWatcher{
-		discovery: discovery,
-		resource:  dynamicClient.Resource(gvr),
-		events:    events,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	firstRun := make(chan error, 1)
-	go func() {
-		firstRun <- watcher.run(ctx)
-	}()
-
-	select {
-	case event := <-events:
-		require.Equal(t, "initial", event.Object.GetName())
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for initial EnvoyFilter event")
-	}
-
-	firstWatch.Stop()
-	select {
-	case err := <-firstRun:
-		require.Error(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("watcher did not report the closed watch")
-	}
-
-	hideInitial = true
-
-	secondRun := make(chan error, 1)
-	go func() {
-		secondRun <- watcher.run(ctx)
-	}()
-	select {
-	case event := <-events:
-		require.Equal(t, "initial", event.Object.GetName())
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for synthetic deleted EnvoyFilter event")
-	}
-
-	cancel()
-	select {
-	case err := <-secondRun:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("watcher did not stop after reconnect")
-	}
+	require.True(t, envoyFilterCRDEstablished(crd))
 }
