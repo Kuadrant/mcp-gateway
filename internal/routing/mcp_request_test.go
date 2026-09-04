@@ -1,6 +1,8 @@
 package routing
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestInjectResourcePrefix(t *testing.T) {
 	tests := []struct {

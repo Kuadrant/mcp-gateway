@@ -49,6 +49,17 @@ func (s *ExtProcServer) OnConfigChange(_ context.Context, newConfig *config.MCPS
 	s.RoutingConfig.Store(newConfig)
 }
 
+func (s *ExtProcServer) requestBodyLimit() int {
+	limit := int(config.DefaultMaxBodyBytes)
+	if cfg := s.RoutingConfig.Load(); cfg != nil {
+		limit = int(cfg.GetMaxBodyBytes())
+	}
+	if s.MaxRequestBodySize > 0 && s.MaxRequestBodySize < limit {
+		return s.MaxRequestBodySize
+	}
+	return limit
+}
+
 // HandleRequestHeaders sets the gateway authority and extracts the verified sub claim.
 func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *extProcV3.HttpHeaders) ([]*extProcV3.ProcessingResponse, error) {
 	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
@@ -310,8 +321,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
 			body := r.RequestBody.Body
 
-			if s.MaxRequestBodySize > 0 && len(body) > s.MaxRequestBodySize {
-				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), s.MaxRequestBodySize)
+			if limit := s.requestBodyLimit(); limit > 0 && len(body) > limit {
+				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), limit)
 				s.Logger.ErrorContext(ctx, err.Error(), "request id", requestID)
 				recordError(span, err, 413)
 				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()

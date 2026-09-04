@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/external/nemo"
 )
 
@@ -114,10 +113,12 @@ type nemoChecker struct {
 	provider        provider
 }
 
+var _ Checker = (*nemoChecker)(nil)
+
 // NewChecker constructs a Checker for the given resolved guardrails config.
 // maxBodyBytes bounds the guardrails server's check response; non-positive
 // values fall back to defaultMaxBodyBytes.
-func NewChecker(cfg *config.GuardrailsConfig, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
+func NewChecker(cfg *Config, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
 	if maxIdleConnsPerHost <= 0 {
 		maxIdleConnsPerHost = defaultMaxIdleConnsPerHost
 	}

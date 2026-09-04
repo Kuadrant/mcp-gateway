@@ -186,6 +186,12 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers[MCPServerNameHeader] = serverInfo.Name
 
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger, withSSEErrors())
+	if _, blocked := gc.checkToolCall(ctx, mcpReq, upstreamToolName); blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
+	}
+
 	// token resolution for servers with URL elicitation configured
 	if r.ElicitationEnabled && serverInfo.TokenURLElicitation != nil {
 		elicitInfo, tokenErr := r.resolveUpstreamToken(ctx, mcpReq, serverInfo, headers)
@@ -267,8 +273,6 @@ func (r *Router202511) routePromptGet(ctx context.Context, table RoutingTable, m
 
 	if !route.Stateful {
 		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "promptName", promptName, "server", route.Name)
-		mcpotel.SpanError(span, fmt.Errorf("prompt not found: %s", promptName), "prompt not available for stateful protocol")
-		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
@@ -348,8 +352,6 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 
 	if !route.Stateful {
 		r.Logger.DebugContext(ctx, "stateless-only backend, rejecting from 2025 router", "uri", resourceURI, "server", route.Name)
-		mcpotel.SpanError(span, fmt.Errorf("resource not found: %s", resourceURI), "resource not available for stateful protocol")
-		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
@@ -463,12 +465,14 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		return &Decision{Error: &Error{StatusCode: 403, Message: "session mismatch"}}
 	}
 
+	clientID := mcpReq.ID
 	mcpReq.ID = entry.BackendID
 
-	mcpServerConfig, err := r.RoutingConfig.Load().GetServerConfigByName(entry.ServerName)
-	if err != nil {
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), entry.ServerName, r.Logger, withSSEErrors())
+	mcpServerConfig := gc.server
+	if mcpServerConfig == nil {
 		r.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
-		mcpotel.SpanError(span, err, "server not found")
+		mcpotel.SpanError(span, fmt.Errorf("unknown server"), "server not found")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
 
@@ -477,6 +481,11 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 		r.Logger.ErrorContext(ctx, "failed to parse url for backend", "error", err)
 		mcpotel.SpanError(span, err, "path parse failed")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
+	}
+
+	if blocked := gc.checkElicitationAccept(ctx, mcpReq, clientID); blocked != nil {
+		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
+		return blocked
 	}
 
 	body, err := mcpReq.ToBytes()
@@ -736,11 +745,12 @@ func (r *Router202511) resolveUpstreamToken(ctx context.Context, mcpReq *MCPRequ
 // compatibility with code that still needs config.MCPServer (e.g. session init).
 func routeToMCPServer(route *ServerRoute) *config.MCPServer {
 	svr := &config.MCPServer{
-		Name:             route.Name,
-		Hostname:         route.Host,
-		Prefix:           route.Prefix,
-		URL:              route.URL,
-		UserSpecificList: route.UserSpecificList,
+		Name:                route.Name,
+		Hostname:            route.Host,
+		Prefix:              route.Prefix,
+		URL:                 route.URL,
+		UserSpecificList:    route.UserSpecificList,
+		GuardrailsConfigIDs: route.GuardrailsConfigIDs,
 	}
 	if route.TokenURLElicitation != nil {
 		svr.TokenURLElicitation = &config.TokenURLElicitationConfig{

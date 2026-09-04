@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 )
 
 // UpstreamMCPID is used as type for identifying individual upstreams
@@ -23,7 +25,15 @@ type MCPServersConfig struct {
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
 	GatewayCACertPEM           string
+	GlobalGuardrails           *guardrails.Config
+	MaxBodyBytes               int64
+	// guardrailsChecker is the live HTTP checker built from GlobalGuardrails.
+	guardrailsChecker guardrails.Checker
 }
+
+// GuardrailsConfig is the serializable guardrails server config stored on
+// MCPServersConfig and BrokerConfig.
+type GuardrailsConfig = guardrails.Config
 
 // RegisterObserver registers an observer to be notified of changes to the config
 func (config *MCPServersConfig) RegisterObserver(obs Observer) {
@@ -83,6 +93,130 @@ func (config *MCPServersConfig) GetGatewayCACertPEM() string {
 	return config.GatewayCACertPEM
 }
 
+// SetGlobalGuardrails stores the resolved gateway-level guardrails config.
+// A nil value clears it (guardrails disabled). Prefer SetGuardrails when
+// updating the checker in the same step so readers cannot observe a tear.
+func (config *MCPServersConfig) SetGlobalGuardrails(cfg *guardrails.Config) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.GlobalGuardrails = cfg
+}
+
+// GetGlobalGuardrails returns the resolved gateway-level guardrails config,
+// or nil when guardrails is not configured.
+func (config *MCPServersConfig) GetGlobalGuardrails() *guardrails.Config {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	return config.GlobalGuardrails
+}
+
+// SetGuardrailsChecker stores the checker, or nil when guardrails is disabled.
+// Prefer SetGuardrails when updating GlobalGuardrails in the same step.
+func (config *MCPServersConfig) SetGuardrailsChecker(c guardrails.Checker) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.guardrailsChecker = c
+}
+
+// SetGuardrails stores global config and checker under one lock.
+func (config *MCPServersConfig) SetGuardrails(global *guardrails.Config, checker guardrails.Checker) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.GlobalGuardrails = global
+	config.guardrailsChecker = checker
+}
+
+// GetGuardrailsChecker returns the checker, or nil when guardrails is not configured.
+func (config *MCPServersConfig) GetGuardrailsChecker() guardrails.Checker {
+	c, _ := config.GetGuardrails()
+	return c
+}
+
+// GetGuardrails returns the checker and resolved global config under one lock.
+func (config *MCPServersConfig) GetGuardrails() (guardrails.Checker, *guardrails.Config) {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	return config.guardrailsChecker, config.GlobalGuardrails
+}
+
+// GuardrailsSnapshot is a consistent view of guardrails state for one server.
+// Taken under a single lock so checker, global config, and per-server IDs
+// cannot tear across an in-place reload.
+type GuardrailsSnapshot struct {
+	Checker         guardrails.Checker
+	Global          *guardrails.Config
+	ServerConfigIDs []string
+	Server          *MCPServer
+}
+
+// GuardrailsSnapshotFor returns a consistent snapshot for serverName.
+// Server is nil and ServerConfigIDs empty when the server is unknown; Checker
+// and Global are still returned from the same lock acquisition.
+func (config *MCPServersConfig) GuardrailsSnapshotFor(serverName string) GuardrailsSnapshot {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+
+	snap := GuardrailsSnapshot{
+		Checker: config.guardrailsChecker,
+		Global:  config.GlobalGuardrails,
+	}
+	for _, server := range config.Servers {
+		if server.Name != serverName {
+			continue
+		}
+		snap.Server = server
+		if n := len(server.GuardrailsConfigIDs); n > 0 {
+			snap.ServerConfigIDs = make([]string, n)
+			copy(snap.ServerConfigIDs, server.GuardrailsConfigIDs)
+		}
+		break
+	}
+	return snap
+}
+
+// ApplyReload replaces servers and guardrails runtime state under one write
+// lock so readers using GuardrailsSnapshotFor cannot observe a partial update.
+func (config *MCPServersConfig) ApplyReload(
+	servers []*MCPServer,
+	virtualServers []*VirtualServer,
+	gatewayCACertPEM string,
+	maxBodyBytes int64,
+	global *guardrails.Config,
+	checker guardrails.Checker,
+) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.Servers = servers
+	config.VirtualServers = virtualServers
+	config.GatewayCACertPEM = gatewayCACertPEM
+	config.MaxBodyBytes = maxBodyBytes
+	config.GlobalGuardrails = global
+	config.guardrailsChecker = checker
+}
+
+// DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (1 MiB).
+const DefaultMaxBodyBytes int64 = 1 << 20
+
+// SetMaxBodyBytes sets the router body-buffer cap from the
+// MCPGatewayExtension spec. Non-positive values are treated as the default
+// by GetMaxBodyBytes.
+func (config *MCPServersConfig) SetMaxBodyBytes(n int64) {
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.MaxBodyBytes = n
+}
+
+// GetMaxBodyBytes returns the router body-buffer cap, defaulting to
+// DefaultMaxBodyBytes when unset.
+func (config *MCPServersConfig) GetMaxBodyBytes() int64 {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	if config.MaxBodyBytes > 0 {
+		return config.MaxBodyBytes
+	}
+	return DefaultMaxBodyBytes
+}
+
 // GetExternalHostname returns the public hostname of the gateway
 func (config *MCPServersConfig) GetExternalHostname() string {
 	return config.MCPGatewayExternalHostname
@@ -117,15 +251,6 @@ type MCPServer struct {
 	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`
 	GuardrailsConfigIDs []string                   `json:"guardrailsConfigIDs,omitempty" yaml:"guardrailsConfigIDs,omitempty"`
-}
-
-// GuardrailsConfig holds the resolved guardrails server config parsed from
-// the guardrails Secret referenced by the MCPGatewayExtension.
-type GuardrailsConfig struct {
-	URL       string   `json:"url"                 yaml:"url"`
-	ConfigIDs []string `json:"configIDs,omitempty" yaml:"configIDs,omitempty"`
-	Model     string   `json:"model"               yaml:"model"`
-	FailMode  string   `json:"failMode,omitempty"  yaml:"failMode,omitempty"` // "deny" | "allow"
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -234,7 +359,9 @@ type BrokerConfig struct {
 	// GlobalGuardrails is the resolved guardrails config for this gateway,
 	// parsed from the Secret referenced by the guardrails-ref annotation. Nil
 	// when guardrails isn't configured.
-	GlobalGuardrails *GuardrailsConfig `json:"globalGuardrails,omitempty" yaml:"globalGuardrails,omitempty"`
+	GlobalGuardrails *guardrails.Config `json:"globalGuardrails,omitempty" yaml:"globalGuardrails,omitempty"`
+	// MaxBodyBytes caps any body the router buffers, from MCPGatewayExtension.spec.maxBodyBytes.
+	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty" yaml:"maxBodyBytes,omitempty"`
 }
 
 // AuthConfig holds auth configuration

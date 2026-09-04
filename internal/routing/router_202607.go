@@ -142,6 +142,23 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 	if routerErr != nil {
 		return &Decision{Error: routerErr}
 	}
+
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger)
+	modified, blocked := gc.checkToolCall(ctx, req.Parsed, upstreamToolName)
+	if blocked != nil {
+		return blocked
+	}
+	if modified && req.Parsed != nil {
+		rewritten, err := req.Parsed.ToBytes()
+		if err != nil {
+			r.Logger.ErrorContext(ctx, "failed to marshal body to bytes", "error", err)
+			span.SetStatus(codes.Error, "body marshal failed")
+			span.SetAttributes(attribute.String("error.type", "marshal_error"))
+			return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
+		}
+		bodyMutation = rewritten
+	}
+
 	if bodyMutation != nil {
 		headers["content-length"] = fmt.Sprintf("%d", len(bodyMutation))
 	}
