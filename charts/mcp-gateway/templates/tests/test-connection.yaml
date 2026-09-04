@@ -14,6 +14,13 @@ spec:
   containers:
   - name: test-connection
     image: curlimages/curl:8.5.0
+    securityContext:
+      runAsNonRoot: true
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
     command: ['sh', '-c']
     args:
       - |
