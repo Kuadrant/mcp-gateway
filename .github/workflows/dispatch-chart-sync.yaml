@@ -1,0 +1,59 @@
+# Notifies the kuadrant-operator repo when this component's Helm chart changes.
+# Sends a repository_dispatch event containing the component name, source branch,
+# PR author/approver, and commit URL. The kuadrant-operator's sync-component-chart
+# workflow receives this event, syncs the updated chart, and creates a PR.
+
+name: Dispatch chart sync
+
+on:
+  push:
+    branches:
+      - main
+      - 'release-*'
+    paths:
+      - 'charts/mcp-gateway/**'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR details
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.KUADRANT_DEV_PAT }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          PR_JSON=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0] // empty')
+          if [ -n "$PR_JSON" ]; then
+            AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login')
+            PR_URL=$(echo "$PR_JSON" | jq -r '.html_url')
+            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
+            APPROVER=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate --slurp \
+              | jq -r 'flatten | [.[] | select(.state == "APPROVED")] | sort_by(.submitted_at) | last | .user.login // empty')
+          else
+            AUTHOR="$ACTOR"
+            PR_URL=""
+            APPROVER=""
+          fi
+          {
+            echo "author=$AUTHOR"
+            echo "pr-url=$PR_URL"
+            echo "approver=${APPROVER:-}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ secrets.KUADRANT_DEV_PAT }}
+          repository: Kuadrant/kuadrant-operator
+          event-type: component-chart-sync
+          client-payload: >-
+            {
+              "component": "mcp-gateway",
+              "ref": "${{ github.ref_name }}",
+              "actor": "${{ steps.pr.outputs.author }}",
+              "commit-url": "https://github.com/${{ github.repository }}/commit/${{ github.sha }}",
+              "pr-url": "${{ steps.pr.outputs.pr-url }}",
+              "pr-approver": "${{ steps.pr.outputs.approver }}"
+            }
