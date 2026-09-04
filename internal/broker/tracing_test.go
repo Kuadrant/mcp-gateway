@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -99,12 +103,68 @@ func TestTracingMiddleware_SpanPerRequestWithNesting(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, handle.Name, "expected a handle-request span for tools/list")
+	if attr, ok := findAttribute(handle.Attributes, "protocol.version"); ok {
+		require.Equal(t, protocol.Version2025, attr.Value.AsString(), "handle-request span should default to "+protocol.Version2025)
+	} else {
+		require.Fail(t, "expected protocol.version attribute on handle-request span")
+	}
+
 	require.NotEmpty(t, filter.Name, "expected the FilterTools span")
+	if attr, ok := findAttribute(filter.Attributes, "protocol.version"); ok {
+		require.Equal(t, protocol.Version2025, attr.Value.AsString(), "tools-list span should default to "+protocol.Version2025)
+	} else {
+		require.Fail(t, "expected protocol.version attribute on tools-list span")
+	}
 
 	require.Equal(t, handle.SpanContext.TraceID(), filter.SpanContext.TraceID(),
 		"handler spans must share the request trace")
 	require.Equal(t, handle.SpanContext.SpanID(), filter.Parent.SpanID(),
 		"FilterTools span must nest under the request span")
+}
+
+// test tracing middleware sets protocol.version span attribute from header.
+func TestTracingMiddleware_ProtocolVersionFromHeader(t *testing.T) {
+	exporter := setupTestTracer(t)
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	ts := httptest.NewServer(b.MCPHandler())
+	t.Cleanup(ts.Close)
+
+	// The stateless handler (2026-07-28) requires _meta in params.
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"0.0.1"},"io.modelcontextprotocol/clientCapabilities":{}}}}`
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", protocol.Version2026)
+	req.Header.Set("Mcp-Method", "tools/list")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	spans := exporter.GetSpans()
+	var handle, filter tracetest.SpanStub
+	for _, s := range spans {
+		switch s.Name {
+		case "mcp-broker.handle-request":
+			if attr, ok := findAttribute(s.Attributes, "mcp.method"); ok && attr.Value.AsString() == "tools/list" {
+				handle = s
+			}
+		case "mcp-broker.tools-list":
+			filter = s
+		}
+	}
+
+	require.NotEmpty(t, handle.Name, "expected a handle-request span for tools/list")
+	attr, ok := findAttribute(handle.Attributes, "protocol.version")
+	require.True(t, ok, "expected protocol.version attribute on handle-request span")
+	require.Equal(t, "2026-07-28", attr.Value.AsString(), "handle-request span should use the header value")
+
+	require.NotEmpty(t, filter.Name, "expected the tools-list span")
+	attr, ok = findAttribute(filter.Attributes, "protocol.version")
+	require.True(t, ok, "expected protocol.version attribute on tools-list span")
+	require.Equal(t, "2026-07-28", attr.Value.AsString(), "tools-list span should use the header value")
 }
 
 func TestTracingMiddleware_ErrorRecordedOnSpan(t *testing.T) {
