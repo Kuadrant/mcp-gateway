@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -921,17 +922,17 @@ func envoyFilterNameAndNamespace(mcpExt *mcpv1.MCPGatewayExtension) (name, names
 }
 
 func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ context.Context, obj client.Object) []reconcile.Request {
-	envoyFilter, ok := obj.(*istionetv1alpha3.EnvoyFilter)
-	if !ok || envoyFilter.Labels == nil {
+	if obj == nil || obj.GetLabels() == nil {
 		return nil
 	}
 
-	if envoyFilter.Labels[labelManagedBy] != labelManagedByValue {
+	labels := obj.GetLabels()
+	if labels[labelManagedBy] != labelManagedByValue {
 		return nil
 	}
 
-	extName := envoyFilter.Labels[labelExtensionName]
-	extNamespace := envoyFilter.Labels[labelExtensionNamespace]
+	extName := labels[labelExtensionName]
+	extNamespace := labels[labelExtensionNamespace]
 	if extName == "" || extNamespace == "" {
 		return nil
 	}
@@ -1017,13 +1018,18 @@ func (r *MCPGatewayExtensionReconciler) SetupWithManager(ctx context.Context, mg
 		events := make(chan event.TypedGenericEvent[client.Object], 100)
 		controller = controller.WatchesRawSource(source.Channel[client.Object](
 			events, handler.EnqueueRequestsFromMapFunc(r.enqueueMCPGatewayExtForEnvoyFilter)))
-		if err := mgr.Add(&envoyFilterPoller{
-			discovery: r.envoyFilterDiscovery,
-			reader:    mgr.GetAPIReader(),
-			events:    events,
-			log:       r.log,
+		dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			return fmt.Errorf("failed to create dynamic Kubernetes client: %w", err)
+		}
+		if err := mgr.Add(&envoyFilterWatcher{
+			discovery:     r.envoyFilterDiscovery,
+			resource:      dynamicClient.Resource(envoyFilterGVR),
+			events:        events,
+			log:           r.log,
+			retryInterval: envoyFilterAvailabilityRequeue,
 		}); err != nil {
-			return fmt.Errorf("failed to add EnvoyFilter recovery poller: %w", err)
+			return fmt.Errorf("failed to add EnvoyFilter recovery watcher: %w", err)
 		}
 	} else {
 		// enqueue when envoy filter changes (cross-namespace, so we use Watches instead of Owns)
