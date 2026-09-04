@@ -117,8 +117,8 @@ const (
 const mainDefaultProtocolVersion = "2025-03-26"
 
 // maxRequestBodyBytes bounds POST body reads. in production the router's
-// ext_proc bounds bodies before they reach the broker (--max-request-body-size,
-// 5MB default); this guards direct broker access against unbounded allocation.
+// ext_proc bounds bodies before they reach the broker (5 MiB default);
+// this guards direct broker access against unbounded allocation.
 const maxRequestBodyBytes = 10 << 20
 
 // unsupportedDomain maps methods mark3labs knew but the gateway never

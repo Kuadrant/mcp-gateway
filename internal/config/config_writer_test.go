@@ -151,30 +151,6 @@ func TestRemoveMCPServer_RemovesFromConfig(t *testing.T) {
 	}
 }
 
-func TestEnsureConfigExists_CreatesSecretIfNotExists(t *testing.T) {
-	srw := newTestSecretReaderWriter(t)
-	ctx := context.Background()
-	namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
-
-	if err := srw.EnsureConfigExists(ctx, namespaceName); err != nil {
-		t.Fatalf("EnsureConfigExists failed: %v", err)
-	}
-
-	// verify secret was created
-	secret := &corev1.Secret{}
-	if err := srw.Client.Get(ctx, namespaceName, secret); err != nil {
-		t.Fatalf("failed to get created secret: %v", err)
-	}
-
-	// verify it has the correct labels
-	if secret.Labels["mcp.kuadrant.io/aggregated"] != "true" {
-		t.Fatal("secret missing aggregated label")
-	}
-	if secret.Labels["mcp.kuadrant.io/secret"] != "true" {
-		t.Fatal("secret missing managed secret label")
-	}
-}
-
 func TestDeleteConfig(t *testing.T) {
 	testCases := []struct {
 		name         string
@@ -203,8 +179,9 @@ func TestDeleteConfig(t *testing.T) {
 			namespaceName := types.NamespacedName{Namespace: "test-ns", Name: tc.secretName}
 
 			if tc.createFirst {
-				if err := srw.EnsureConfigExists(ctx, namespaceName); err != nil {
-					t.Fatalf("EnsureConfigExists failed: %v", err)
+				server := MCPServer{Name: "test", URL: "http://test.local/mcp", State: string(mcpv1.ServerStateEnabled)}
+				if err := srw.UpsertMCPServer(ctx, server, namespaceName); err != nil {
+					t.Fatalf("UpsertMCPServer failed: %v", err)
 				}
 			}
 
@@ -223,14 +200,26 @@ func TestDeleteConfig(t *testing.T) {
 	}
 }
 
-func TestWriteGlobalGuardrails(t *testing.T) {
+func TestWriteGatewayConfig(t *testing.T) {
 	testCases := []struct {
-		name       string
-		guardrails *GuardrailsConfig
+		name           string
+		gwCfg          *GatewayConfig
+		wantCA         string
+		wantGuardrails *GuardrailsConfig
 	}{
 		{
-			name: "writes resolved guardrails config",
-			guardrails: &GuardrailsConfig{
+			name: "writes both CA and guardrails",
+			gwCfg: &GatewayConfig{
+				CACertPEM: "-----BEGIN CERTIFICATE-----\ntest-ca-cert\n-----END CERTIFICATE-----",
+				Guardrails: &GuardrailsConfig{
+					URL:       "https://nemo-guardrails.internal:8080",
+					ConfigIDs: []string{"tool-safety-v1"},
+					Model:     "meta/llama-3.1-8b-instruct",
+					FailMode:  "deny",
+				},
+			},
+			wantCA: "-----BEGIN CERTIFICATE-----\ntest-ca-cert\n-----END CERTIFICATE-----",
+			wantGuardrails: &GuardrailsConfig{
 				URL:       "https://nemo-guardrails.internal:8080",
 				ConfigIDs: []string{"tool-safety-v1"},
 				Model:     "meta/llama-3.1-8b-instruct",
@@ -238,8 +227,10 @@ func TestWriteGlobalGuardrails(t *testing.T) {
 			},
 		},
 		{
-			name:       "nil clears guardrails config",
-			guardrails: nil,
+			name:           "nil clears both fields",
+			gwCfg:          nil,
+			wantCA:         "",
+			wantGuardrails: nil,
 		},
 	}
 
@@ -249,13 +240,14 @@ func TestWriteGlobalGuardrails(t *testing.T) {
 			ctx := context.Background()
 			namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
 
-			// seed with a non-nil value so the "clears" case exercises an actual change.
-			if err := srw.WriteGlobalGuardrails(ctx, &GuardrailsConfig{URL: "https://seed.internal", Model: "seed-model"}, namespaceName); err != nil {
-				t.Fatalf("seed WriteGlobalGuardrails failed: %v", err)
+			seedCA := "seed-ca"
+			seedGuardrails := &GuardrailsConfig{URL: "https://seed.internal", Model: "seed-model"}
+			if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{CACertPEM: seedCA, Guardrails: seedGuardrails}, namespaceName); err != nil {
+				t.Fatalf("seed WriteGatewayConfig failed: %v", err)
 			}
 
-			if err := srw.WriteGlobalGuardrails(ctx, tc.guardrails, namespaceName); err != nil {
-				t.Fatalf("WriteGlobalGuardrails failed: %v", err)
+			if err := srw.WriteGatewayConfig(ctx, tc.gwCfg, namespaceName); err != nil {
+				t.Fatalf("WriteGatewayConfig failed: %v", err)
 			}
 
 			secret := &corev1.Secret{}
@@ -272,12 +264,15 @@ func TestWriteGlobalGuardrails(t *testing.T) {
 				t.Fatalf("failed to unmarshal config: %v", err)
 			}
 
-			if (cfg.GlobalGuardrails == nil) != (tc.guardrails == nil) {
-				t.Fatalf("GlobalGuardrails = %+v, want %+v", cfg.GlobalGuardrails, tc.guardrails)
+			if cfg.GatewayCACertPEM != tc.wantCA {
+				t.Fatalf("GatewayCACertPEM = %q, want %q", cfg.GatewayCACertPEM, tc.wantCA)
 			}
-			if tc.guardrails != nil {
-				if cfg.GlobalGuardrails.URL != tc.guardrails.URL || cfg.GlobalGuardrails.Model != tc.guardrails.Model {
-					t.Fatalf("GlobalGuardrails = %+v, want %+v", cfg.GlobalGuardrails, tc.guardrails)
+			if (cfg.GlobalGuardrails == nil) != (tc.wantGuardrails == nil) {
+				t.Fatalf("GlobalGuardrails = %+v, want %+v", cfg.GlobalGuardrails, tc.wantGuardrails)
+			}
+			if tc.wantGuardrails != nil {
+				if cfg.GlobalGuardrails.URL != tc.wantGuardrails.URL || cfg.GlobalGuardrails.Model != tc.wantGuardrails.Model {
+					t.Fatalf("GlobalGuardrails = %+v, want %+v", cfg.GlobalGuardrails, tc.wantGuardrails)
 				}
 			}
 		})
