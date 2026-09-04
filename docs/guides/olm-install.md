@@ -93,8 +93,20 @@ kubectl get deployment mcp-gateway-controller -n mcp-system
 
 Installing the operator deploys the controller only. To deploy the MCP Gateway data plane
 (broker-router), create an `MCPGatewayExtension` that targets your Gateway. The controller
-reconciles it and creates the broker-router `Deployment`, `Service`, `HTTPRoute`, and the
-`EnvoyFilter` on the Gateway.
+reconciles it and creates the broker-router `Deployment`, `Service`, `HTTPRoute`, an
+`EnvoyFilter` on the Gateway, and a `NetworkPolicy` named `mcp-gateway`.
+
+The controller automatically creates and manages this `NetworkPolicy` in the
+`MCPGatewayExtension` namespace, which can differ from the target Gateway namespace. The policy
+allows ingress on ports `8080` (broker HTTP/MCP) and `50051` (router gRPC ext_proc) only from the
+target Gateway namespace.
+It allows metrics on port `9090` from any source, denies other broker-router ingress by default,
+and allows all egress. The controller selects the target Gateway namespace by matching the
+`kubernetes.io/metadata.name` namespace label to `spec.targetRef.namespace`; when that field is
+omitted, it uses the `MCPGatewayExtension` namespace.
+
+For details about `MCPGatewayExtension` fields, see the
+[MCPGatewayExtension API Reference](../reference/mcpgatewayextension.md).
 
 This example keeps the `MCPGatewayExtension` and target `Gateway` in `mcp-system`, so it does not
 require a `ReferenceGrant`. If the target Gateway is in another namespace, set
