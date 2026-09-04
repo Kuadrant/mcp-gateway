@@ -778,9 +778,9 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 			trustedHeaderKey: nil,
 			wantTrustedEnv:   false,
 		},
-		{
+		{ //nolint:gosec // G101: test fixture, not credentials
 			name: "trusted header env var set when TrustedHeadersKey has SecretName",
-			trustedHeaderKey: &mcpv1.TrustedHeadersKey{
+			trustedHeaderKey: &mcpv1.TrustedHeadersKey{ //nolint:gosec // G101: test fixture
 				SecretName: "my-trusted-key-secret",
 			},
 			wantTrustedEnv: true,
@@ -824,6 +824,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 
 			if jwtEnv == nil {
 				t.Fatal("expected GATEWAY_SIGNING_KEY env var to always be present")
+				return // unreachable but satisfies staticcheck SA5011
 			}
 			if jwtEnv.ValueFrom == nil || jwtEnv.ValueFrom.SecretKeyRef == nil {
 				t.Fatal("expected GATEWAY_SIGNING_KEY to have secretKeyRef")
@@ -844,6 +845,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 
 			if trustedEnv == nil {
 				t.Fatal("expected TRUSTED_HEADER_PUBLIC_KEY env var to be present")
+				return // unreachable but satisfies staticcheck SA5011
 			}
 			if trustedEnv.ValueFrom == nil || trustedEnv.ValueFrom.SecretKeyRef == nil {
 				t.Fatal("expected TRUSTED_HEADER_PUBLIC_KEY to have secretKeyRef")
@@ -1496,6 +1498,7 @@ func TestBuildGatewayHTTPRoute(t *testing.T) {
 			route := reconciler.buildGatewayHTTPRoute(tt.mcpExt, tt.publicHost)
 			if route == nil {
 				t.Fatal("expected non-nil HTTPRoute")
+				return // unreachable but satisfies staticcheck SA5011
 			}
 			if route.Name != gatewayHTTPRouteName {
 				t.Errorf("name = %q, want %q", route.Name, gatewayHTTPRouteName)
@@ -2167,9 +2170,11 @@ func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
 
 	if probe == nil {
 		t.Fatal("expected ReadinessProbe to be set on broker container, got nil")
+		return // unreachable but satisfies staticcheck SA5011
 	}
 	if probe.HTTPGet == nil {
 		t.Fatal("expected HTTPGet probe handler, got nil")
+		return // unreachable but satisfies staticcheck SA5011
 	}
 	if probe.HTTPGet.Path != "/readyz" {
 		t.Errorf("expected probe Path /readyz, got %q", probe.HTTPGet.Path)

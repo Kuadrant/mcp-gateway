@@ -182,7 +182,7 @@ func TestDeleteConfig(t *testing.T) {
 		secretName   string
 		expectExists bool
 	}{
-		{
+		{ //nolint:gosec // G101: not a credential
 			name:         "deletes existing secret",
 			createFirst:  true,
 			secretName:   "mcp-gateway-config",

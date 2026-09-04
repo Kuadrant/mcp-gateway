@@ -42,6 +42,7 @@ func TestNewJWTManager(t *testing.T) {
 		}
 		if manager == nil {
 			t.Fatal("expected manager to be created")
+			return
 		}
 		if string(manager.signingKey) != key {
 			t.Errorf("expected signing key %s, got %s", key, string(manager.signingKey))

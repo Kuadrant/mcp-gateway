@@ -18,6 +18,7 @@ func TestGenerateECDSAKeyPair(t *testing.T) {
 	pubBlock, _ := pem.Decode(pubPEM)
 	if pubBlock == nil {
 		t.Fatal("failed to decode public key PEM")
+		return
 	}
 	if pubBlock.Type != "PUBLIC KEY" {
 		t.Errorf("public key PEM type = %q, want %q", pubBlock.Type, "PUBLIC KEY")
@@ -38,6 +39,7 @@ func TestGenerateECDSAKeyPair(t *testing.T) {
 	privBlock, _ := pem.Decode(privPEM)
 	if privBlock == nil {
 		t.Fatal("failed to decode private key PEM")
+		return
 	}
 	if privBlock.Type != "EC PRIVATE KEY" {
 		t.Errorf("private key PEM type = %q, want %q", privBlock.Type, "EC PRIVATE KEY")

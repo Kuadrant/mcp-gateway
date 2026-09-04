@@ -206,7 +206,7 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 		},
 		{
 			name: "credential changed",
-			current: &MCPServer{
+			current: &MCPServer{ //nolint:gosec // G101: test fixture
 				Name:       "server1",
 				Prefix:     "s1_",
 				Hostname:   "server1.local",
