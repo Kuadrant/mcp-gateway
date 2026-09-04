@@ -15,14 +15,11 @@ import (
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
-// The 2026-07-28 router is stateless and header-based: every request carries
-// its own routing intent, so any replica serves any request without shared
-// session state. This spec proves a 2026-only gateway scales horizontally with
-// no Redis (sessionStore) by scaling the shared deployment to two replicas and
-// driving repeated stateless tools/call through Envoy, asserting every call
-// succeeds and no CACHE_CONNECTION_STRING is configured.
+// 2026-07-28 is stateless/header-based: any replica serves any request with no
+// shared session state. Proves horizontal scaling without Redis by driving repeated
+// tools/call across 2 replicas with no CACHE_CONNECTION_STRING configured.
 var _ = Describe("2026 horizontal scaling", func() {
-	It("[Full,Protocol2026] 2026-only traffic served across replicas without Redis", Serial, func() {
+	It("[Full,Protocol2026] 2026-07-28 traffic served across replicas without Redis", Serial, func() {
 		const iterations = 20
 		deploymentName := GatewayName
 
@@ -87,13 +84,8 @@ var _ = Describe("2026 horizontal scaling", func() {
 		})
 		Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, deploymentName, 2, gen)).To(Succeed())
 
-		// A replica passing its readiness probe does not mean it already serves
-		// scale2026_ tools: IsReady() reports ready when any upstream is ready
-		// (or while config is still syncing), and Envoy adds the pod to its LB
-		// pool the moment it is ready. A single successful poll could hit the
-		// warm replica while the other is still cold. Require several consecutive
-		// fresh-client successes (> 2x replicas) so round-robin exercises both
-		// replicas warm before the strict loop, which has no per-call retry.
+		// readiness doesn't guarantee tools are available; require consecutive fresh-client
+		// successes (> 2x replicas) so both replicas are warm before the strict loop
 		By("warming up: requiring consecutive fresh clients to see scale2026_ tools across replicas")
 		const warmStreak = 6
 		Eventually(func(g Gomega) {
@@ -110,22 +102,24 @@ var _ = Describe("2026 horizontal scaling", func() {
 
 		By(fmt.Sprintf("driving %d stateless tools/call across replicas — every call must succeed", iterations))
 		for i := range iterations {
-			name := fmt.Sprintf("scale-%d", i)
+			// closure so the client is closed even when an assertion fails mid-iteration
+			func() {
+				name := fmt.Sprintf("scale-%d", i)
 
-			c, err := NewStatelessClient(ctx, gatewayURL)
-			Expect(err).NotTo(HaveOccurred(), "iteration %d: connect", i)
+				c, err := NewStatelessClient(ctx, gatewayURL)
+				Expect(err).NotTo(HaveOccurred(), "iteration %d: connect", i)
+				defer func() { _ = c.Close() }()
 
-			result, err := c.CallTool(ctx, &mcp.CallToolParams{
-				Name:      "scale2026_hello_world",
-				Arguments: map[string]any{"name": name},
-			})
-			Expect(err).NotTo(HaveOccurred(), "iteration %d: tools/call", i)
-			Expect(result.Content).NotTo(BeEmpty(), "iteration %d: empty content", i)
-			text, ok := result.Content[0].(*mcp.TextContent)
-			Expect(ok).To(BeTrue(), "iteration %d: expected text content", i)
-			Expect(text.Text).To(ContainSubstring(fmt.Sprintf("Hello, %s!", name)), "iteration %d", i)
-
-			Expect(c.Close()).To(Succeed())
+				result, err := c.CallTool(ctx, &mcp.CallToolParams{
+					Name:      "scale2026_hello_world",
+					Arguments: map[string]any{"name": name},
+				})
+				Expect(err).NotTo(HaveOccurred(), "iteration %d: tools/call", i)
+				Expect(result.Content).NotTo(BeEmpty(), "iteration %d: empty content", i)
+				text, ok := result.Content[0].(*mcp.TextContent)
+				Expect(ok).To(BeTrue(), "iteration %d: expected text content", i)
+				Expect(text.Text).To(ContainSubstring(fmt.Sprintf("Hello, %s!", name)), "iteration %d", i)
+			}()
 		}
 	})
 })

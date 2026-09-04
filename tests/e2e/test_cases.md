@@ -481,9 +481,9 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 - A 2026 client lists prompts (prefixed with `sl_`), then calls `prompts/get` on `sl_greeting`. The prompt response contains the expected greeting.
 
-### [Full,Protocol2026] 2026-only traffic served across replicas without Redis
+### [Full,Protocol2026] 2026-07-28 traffic served across replicas without Redis
 
-- The shared gateway has no `sessionStore` configured and its broker-router deployment has no `CACHE_CONNECTION_STRING` env var. A 2026-capable backend is registered (prefix `scale2026_`) and a stateless client confirms the gateway negotiates `2026-07-28`. The deployment is scaled to 2 replicas; once both are ready, 20 fresh stateless clients each call `scale2026_hello_world` through Envoy, which load-balances across the replicas. Every call succeeds with the expected content, proving the stateless 2026 router serves any request from any replica with no shared session state. On cleanup the deployment is scaled back to 1 replica and the registration removed. Serial, `[Full]` (nightly) tier.
+- The shared gateway has no `sessionStore` configured and its broker-router deployment has no `CACHE_CONNECTION_STRING` env var. A 2026-capable backend is registered (prefix `scale2026_`) and a stateless client confirms the gateway negotiates `2026-07-28`. The deployment is scaled to 2 replicas; once both are ready, 20 fresh stateless clients each call `scale2026_hello_world` through Envoy, which load-balances across the replicas. Every call succeeds with the expected content, proving the stateless 2026 router serves any request from any replica with no shared session state. The backend fixture is dual-protocol, but every client negotiates 2026-07-28, so no stateful session is created — this validates that 2026-07-28 traffic scales without Redis, not that the backend refuses 2025. On cleanup the deployment is scaled back to 1 replica and the registration removed. Serial, `[Full]` (nightly) tier.
 
 ## Version-aware server/discover
 
