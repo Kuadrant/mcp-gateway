@@ -102,7 +102,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONToolError(req.RequestID, "MCP error -32602: Tool not found"),
+				JSONRPCErr:  BuildJSONToolExecutionError(req.RequestID, "MCP error -32602: Tool not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -207,7 +207,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONToolError(req.RequestID, "MCP error -32602: Prompt not found"),
+				JSONRPCErr:  BuildJSONToolExecutionError(req.RequestID, "MCP error -32602: Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -220,7 +220,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONToolError(req.RequestID, "MCP error -32602: Prompt not found"),
+				JSONRPCErr:  BuildJSONToolExecutionError(req.RequestID, "MCP error -32602: Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -312,7 +312,7 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 		span.SetAttributes(attribute.String("error.type", "header_mismatch"))
 		return nil, &Error{
 			StatusCode:  200,
-			JSONRPCErr:  BuildJSONToolError(req.Parsed.ID, "MCP error -32602: HeaderMismatch: Mcp-Name header does not match body"),
+			JSONRPCErr:  BuildJSONToolExecutionError(req.Parsed.ID, "MCP error -32602: HeaderMismatch: Mcp-Name header does not match body"),
 			ContentType: "application/json",
 		}
 	}
