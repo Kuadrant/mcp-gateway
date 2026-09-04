@@ -2334,8 +2334,8 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	require.Equal(t, validToken, entry.SessionID)
 }
 
-func TestBuildSSEToolError(t *testing.T) {
-	result := BuildSSEToolError("req-1", "something went wrong")
+func TestBuildSSEToolExecutionError(t *testing.T) {
+	result := BuildSSEToolExecutionError("req-1", "something went wrong")
 	var envelope struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      string `json:"id"`
