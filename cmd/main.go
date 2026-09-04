@@ -29,6 +29,7 @@ import (
 	goenv "github.com/caitlinelfring/go-env-default"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -52,6 +53,7 @@ func init() {
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
 	runtime.Must(gatewayv1beta1.Install(scheme.Scheme))
 	runtime.Must(istionetv1alpha3.AddToScheme(scheme.Scheme))
+	runtime.Must(apiextensionsv1.AddToScheme(scheme.Scheme))
 }
 
 func main() {

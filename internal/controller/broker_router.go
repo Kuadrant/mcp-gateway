@@ -702,9 +702,16 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1.MCPG
 		},
 	}
 
+	var mcpRuleName, wellKnownRuleName, statusRuleName *gatewayv1.SectionName
+	if r.supportsRuleNames {
+		mcpRuleName = ptr.To(gatewayv1.SectionName("mcp"))
+		wellKnownRuleName = ptr.To(gatewayv1.SectionName("well-known"))
+		statusRuleName = ptr.To(gatewayv1.SectionName("status"))
+	}
+
 	rules := []gatewayv1.HTTPRouteRule{
 		{
-			Name: ptr.To(gatewayv1.SectionName("mcp")),
+			Name: mcpRuleName,
 			Matches: []gatewayv1.HTTPRouteMatch{
 				{
 					Path: &gatewayv1.HTTPPathMatch{
@@ -717,7 +724,7 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1.MCPG
 			BackendRefs: backendRefs,
 		},
 		{
-			Name: ptr.To(gatewayv1.SectionName("well-known")),
+			Name: wellKnownRuleName,
 			Matches: []gatewayv1.HTTPRouteMatch{
 				{
 					Path: &gatewayv1.HTTPPathMatch{
@@ -729,7 +736,7 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1.MCPG
 			BackendRefs: backendRefs,
 		},
 		{
-			Name: ptr.To(gatewayv1.SectionName("status")),
+			Name: statusRuleName,
 			Matches: []gatewayv1.HTTPRouteMatch{
 				{
 					Path: &gatewayv1.HTTPPathMatch{
@@ -790,6 +797,11 @@ func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1.MCPGa
 	gatewayNamespace := gatewayv1.Namespace(mcpExt.Spec.TargetRef.Namespace)
 	sectionName := gatewayv1.SectionName(mcpExt.Spec.TargetRef.SectionName)
 
+	var tokensRuleName *gatewayv1.SectionName
+	if r.supportsRuleNames {
+		tokensRuleName = ptr.To(gatewayv1.SectionName("tokens"))
+	}
+
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tokensHTTPRouteName,
@@ -813,7 +825,7 @@ func (r *MCPGatewayExtensionReconciler) buildTokensHTTPRoute(mcpExt *mcpv1.MCPGa
 			},
 			Rules: []gatewayv1.HTTPRouteRule{
 				{
-					Name: ptr.To(gatewayv1.SectionName("tokens")),
+					Name: tokensRuleName,
 					Matches: []gatewayv1.HTTPRouteMatch{
 						{
 							Path: &gatewayv1.HTTPPathMatch{
