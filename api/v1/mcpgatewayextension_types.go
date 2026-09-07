@@ -35,6 +35,8 @@ const (
 	ConditionReasonRefGrantRequired = "ReferenceGrantRequired"
 	// ConditionReasonDeploymentNotReady is the reason when the broker-router deployment is not ready
 	ConditionReasonDeploymentNotReady = "DeploymentNotReady"
+	// ConditionReasonIstioUnavailable is the reason when the Istio EnvoyFilter CRD is unavailable
+	ConditionReasonIstioUnavailable = "IstioEnvoyFilterUnavailable"
 
 	// ConditionReasonSecretNotFound is the reason when the trusted headers secret is missing
 	ConditionReasonSecretNotFound = "SecretNotFound"

@@ -19,6 +19,7 @@ This package contains the main of the mcp controller
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"os"
@@ -29,6 +30,7 @@ import (
 	goenv "github.com/caitlinelfring/go-env-default"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -47,6 +49,7 @@ import (
 )
 
 func init() {
+	runtime.Must(apiextensionsv1.AddToScheme(scheme.Scheme))
 	runtime.Must(mcpv1.AddToScheme(scheme.Scheme))
 	runtime.Must(mcpv1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(gatewayv1.Install(scheme.Scheme))
@@ -73,7 +76,8 @@ func main() {
 
 	ctrl.SetLogger(logr.FromSlogHandler(slogger.Handler()))
 	slogger.Info("Controller starting (health: :8081, metrics: :8082)...")
-	ctx := ctrl.SetupSignalHandler()
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+	defer cancel()
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme.Scheme,
 		Metrics:                metricsserver.Options{BindAddress: ":8082"},
@@ -133,6 +137,7 @@ func main() {
 		MCPExtFinderValidator: mcpExtFinderValidator,
 		BrokerRouterImage:     brokerRouterImage,
 		BrokerRouterLogLevel:  brokerRouterLogLevel,
+		Shutdown:              cancel,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
 	}
