@@ -794,4 +794,3 @@ func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {
 	require.Equal(t, 10000, pmeta.TTLMs)
 	require.Equal(t, "private", pmeta.CacheScope)
 }
-

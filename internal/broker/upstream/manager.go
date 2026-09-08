@@ -463,7 +463,7 @@ func (man *MCPManager) registerCallbacks() func() {
 }
 
 // manage should be the only entry point that triggers changes to tools
-// TODO this has become overly complex handling both prompts and tools independentantly and duplicating logic. Look to simplify and unify
+// TODO this has become overly complex handling both prompts and tools independently and duplicating logic. Look to simplify and unify
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.DebugContext(ctx, "managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 
@@ -783,7 +783,7 @@ func (man *MCPManager) adjustTickerFromTTL() {
 	if ttlInterval != man.tickerInterval {
 		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", meta.TTLMs, "interval", ttlInterval)
 		man.tickerInterval = ttlInterval
-		man.ticker.Reset(ttlInterval)
+		man.resetTicker(ttlInterval)
 	}
 }
 

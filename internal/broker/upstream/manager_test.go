@@ -1864,11 +1864,11 @@ func findGaugeValue(t *testing.T, rm metricdata.ResourceMetrics, name string, la
 
 func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
 	tests := []struct {
-		name             string
-		protocolVersion  string
-		ttlMs            int
-		wantInterval     time.Duration
-		wantAdjusted     bool
+		name            string
+		protocolVersion string
+		ttlMs           int
+		wantInterval    time.Duration
+		wantAdjusted    bool
 	}{
 		{
 			name:            "2026 upstream with TTL above default",
@@ -1902,6 +1902,13 @@ func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
 			name:            "2026 upstream with TTL equal to default",
 			protocolVersion: "2026-07-28",
 			ttlMs:           int(DefaultTickerInterval / time.Millisecond),
+			wantInterval:    DefaultTickerInterval,
+			wantAdjusted:    false,
+		},
+		{
+			name:            "2025 upstream TTL is ignored",
+			protocolVersion: "2025-11-25",
+			ttlMs:           300000,
 			wantInterval:    DefaultTickerInterval,
 			wantAdjusted:    false,
 		},
