@@ -480,9 +480,7 @@ func (broker *mcpBrokerImpl) fetchStatefulUserTools(ctx context.Context, servers
 	}
 	_ = g.Wait()
 
-	for i := range allTools {
-		result.Tools = append(result.Tools, &allTools[i])
-	}
+	appendUniqueTools(result, allTools)
 }
 
 // fetchStatelessUserTools fetches tools from the given servers using stateless
@@ -510,8 +508,34 @@ func (broker *mcpBrokerImpl) fetchStatelessUserTools(ctx context.Context, server
 	}
 	_ = g.Wait()
 
-	for i := range allTools {
-		result.Tools = append(result.Tools, &allTools[i])
+	appendUniqueTools(result, allTools)
+}
+
+type toolIdentity struct {
+	serverID string
+	name     string
+}
+
+func identityForTool(tool *mcp.Tool) toolIdentity {
+	if tool == nil {
+		return toolIdentity{}
+	}
+	serverID, _ := tool.Meta["kuadrant/id"].(string)
+	return toolIdentity{serverID: serverID, name: tool.Name}
+}
+
+func appendUniqueTools(result *mcp.ListToolsResult, tools []mcp.Tool) {
+	seen := make(map[toolIdentity]struct{}, len(result.Tools)+len(tools))
+	for _, tool := range result.Tools {
+		seen[identityForTool(tool)] = struct{}{}
+	}
+	for i := range tools {
+		tool := &tools[i]
+		if _, exists := seen[identityForTool(tool)]; exists {
+			continue
+		}
+		seen[identityForTool(tool)] = struct{}{}
+		result.Tools = append(result.Tools, tool)
 	}
 }
 
