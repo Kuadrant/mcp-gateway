@@ -49,8 +49,8 @@ type MCPServerRegistration struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec defines the desired state of MCPServerRegistration.
-	// +optional
-	Spec MCPServerRegistrationSpec `json:"spec,omitempty"`
+	// +required
+	Spec MCPServerRegistrationSpec `json:"spec,omitzero"`
 
 	// status defines the observed state of MCPServerRegistration.
 	// +optional
@@ -249,8 +249,8 @@ type MCPVirtualServer struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec defines the desired state of MCPVirtualServer.
-	// +optional
-	Spec MCPVirtualServerSpec `json:"spec,omitempty"`
+	// +required
+	Spec MCPVirtualServerSpec `json:"spec,omitzero"`
 
 	// status defines the observed state of MCPVirtualServer.
 	// +optional

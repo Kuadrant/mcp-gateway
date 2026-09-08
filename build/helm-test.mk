@@ -5,5 +5,6 @@ test-helm-install: kind helm kustomize yq ## Run helm install test against a cle
 	bash tests/helm/test-helm-install.sh
 
 .PHONY: test-helm-render
-test-helm-render: helm ## Validate Helm image reference rendering
+test-helm-render: helm yq ## Validate Helm chart and CRD rendering
 	bash tests/helm/test-image-rendering.sh
+	bash tests/helm/test-chart-rendering.sh
