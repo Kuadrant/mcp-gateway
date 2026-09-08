@@ -275,12 +275,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 			RootsV2:     &mcp.RootCapabilities{ListChanged: true}, //nolint:staticcheck // deliberate parity with mark3labs
 			Elicitation: &mcp.ElicitationCapabilities{},
 		},
-		// setting these handlers causes the SDK to open a subscriptions/listen
-		// stream for 2026 upstreams during Connect. the actual notification
-		// dispatch is handled by the receiving middleware below; these
-		// handlers exist only to enable the stream.
-		ToolListChangedHandler:   func(_ context.Context, _ *mcp.ToolListChangedRequest) {},
-		PromptListChangedHandler: func(_ context.Context, _ *mcp.PromptListChangedRequest) {},
+		// go-sdk <= v1.7.0 opens subscriptions/listen during Connect when these
+		// handlers are set. servers that return 404 for subscriptions/listen
+		// (e.g. GitHub MCP, FastMCP 4.x) cause Connect to fail fatally.
+		// re-add once go-sdk >= v1.8.0 is adopted (PR #1193 wraps the failure).
+		// without handlers the broker relies on TTL-based polling for freshness.
 	})
 	// wire the notification handler before the session exists so nothing
 	// arriving during or right after the handshake is missed
@@ -326,14 +325,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	}
 	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
-	// 2026 upstreams receive notifications via the SDK's subscriptions/listen
-	// stream (opened automatically because ToolListChangedHandler is set).
-	// 2025 upstreams use the custom GET SSE notificationWatcher.
+	// 2025 upstreams use the custom GET SSE notificationWatcher for push
+	// notifications. 2026 upstreams rely on TTL-based polling; notification
+	// handlers are disabled until go-sdk >= v1.8.0 (see client options above).
 	if !up.UsesStatelessProtocol() {
 		up.logger.Debug("starting GET SSE notification watcher (2025 upstream)", "upstream", up.ID())
 		up.startNotificationWatcher(ctx, httpC, session)
-	} else {
-		up.logger.Debug("using subscriptions/listen for notifications (2026 upstream)", "upstream", up.ID())
 	}
 
 	// register notification and connection-lost handlers after session is

@@ -49,6 +49,7 @@ type MockMCP struct {
 	hasResourcesCap     bool
 	connected           atomic.Bool
 	notificationHandler func(method string)
+	toolsCacheMeta      CacheMetadata
 }
 
 func (m *MockMCP) GetName() string {
@@ -188,7 +189,7 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 	return false
 }
 
-func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return CacheMetadata{} }
+func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return m.toolsCacheMeta }
 func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
 func (m *MockMCP) UsesStatelessProtocol() bool         { return m.protocolVersion >= "2026-07-28" }
 
@@ -1859,6 +1860,73 @@ func findGaugeValue(t *testing.T, rm metricdata.ResourceMetrics, name string, la
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
 	return 0
+}
+
+func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
+	tests := []struct {
+		name             string
+		protocolVersion  string
+		ttlMs            int
+		wantInterval     time.Duration
+		wantAdjusted     bool
+	}{
+		{
+			name:            "2026 upstream with TTL above default",
+			protocolVersion: "2026-07-28",
+			ttlMs:           300000,
+			wantInterval:    5 * time.Minute,
+			wantAdjusted:    true,
+		},
+		{
+			name:            "2026 upstream with TTL below default is clamped",
+			protocolVersion: "2026-07-28",
+			ttlMs:           10000,
+			wantInterval:    DefaultTickerInterval,
+			wantAdjusted:    false,
+		},
+		{
+			name:            "2026 upstream with TTL zero is ignored",
+			protocolVersion: "2026-07-28",
+			ttlMs:           0,
+			wantInterval:    DefaultTickerInterval,
+			wantAdjusted:    false,
+		},
+		{
+			name:            "2026 upstream with negative TTL is ignored",
+			protocolVersion: "2026-07-28",
+			ttlMs:           -1,
+			wantInterval:    DefaultTickerInterval,
+			wantAdjusted:    false,
+		},
+		{
+			name:            "2026 upstream with TTL equal to default",
+			protocolVersion: "2026-07-28",
+			ttlMs:           int(DefaultTickerInterval / time.Millisecond),
+			wantInterval:    DefaultTickerInterval,
+			wantAdjusted:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+			mock := newMockMCP("test-server", "test_")
+			mock.protocolVersion = tt.protocolVersion
+			mock.toolsCacheMeta = CacheMetadata{TTLMs: tt.ttlMs}
+			mock.tools = []mcp.Tool{validTool("tool1")}
+			mock.hasToolsCap = false
+			gateway := newMockToolsAdderDeleter()
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.manage(context.Background(), eventTypeTimer)
+
+			assert.Equal(t, tt.wantInterval, manager.tickerInterval, "ticker interval")
+			if tt.wantAdjusted {
+				assert.NotEqual(t, DefaultTickerInterval, manager.tickerInterval, "should have adjusted from default")
+			}
+		})
+	}
 }
 
 func labelsMatch(attrs attribute.Set, want map[string]string) bool {
