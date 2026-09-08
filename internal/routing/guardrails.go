@@ -8,23 +8,7 @@ import (
 	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
-)
-
-// Checker runs guardrails checks against tools/call requests and responses.
-type Checker = guardrails.Checker
-
-// Status is the outcome of a guardrails check.
-type Status = guardrails.Status
-
-// GuardrailsDecision is the outcome of a single guardrails check.
-type GuardrailsDecision = guardrails.Decision
-
-// Status values a GuardrailsDecision can carry.
-const (
-	StatusAllowed  = guardrails.StatusAllowed
-	StatusBlocked  = guardrails.StatusBlocked
-	StatusModified = guardrails.StatusModified
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 )
 
 // guardrailsToolErrorBuilder builds the transport-specific JSON-RPC error
@@ -42,8 +26,8 @@ const (
 // locked config snapshot so checker, global config, and per-server IDs do
 // not tear across reload.
 type guardrailsCheck struct {
-	checker     Checker
-	global      *guardrails.Config
+	checker     api.Checker
+	global      *api.Config
 	serverIDs   []string
 	server      *config.MCPServer
 	logger      *slog.Logger
@@ -161,7 +145,7 @@ func (g *guardrailsCheck) request(ctx context.Context, name string, arguments js
 	}
 
 	switch decision.Status {
-	case StatusBlocked:
+	case api.StatusBlocked:
 		if decision.Err != nil {
 			g.logError(ctx, "guardrails check unavailable, failing closed", name, decision.Err)
 			return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
@@ -170,12 +154,12 @@ func (g *guardrailsCheck) request(ctx context.Context, name string, arguments js
 			g.logger.InfoContext(ctx, "guardrails blocked request", "tool", name, "reason", decision.Reason)
 		}
 		return "", g.errorDecision(403, requestID, guardrailsBlockedMessage)
-	case StatusAllowed:
+	case api.StatusAllowed:
 		if decision.Err != nil && g.logger != nil {
 			g.logger.ErrorContext(ctx, "guardrails check failed open", "tool", name, "error", decision.Err)
 		}
 		return "", nil
-	case StatusModified:
+	case api.StatusModified:
 		return decision.Content, nil
 	default:
 		g.logError(ctx, "guardrails returned unrecognized status", name, fmt.Errorf("status %q", decision.Status))

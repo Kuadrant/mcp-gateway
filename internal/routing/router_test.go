@@ -21,6 +21,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/elicitation"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
@@ -1139,7 +1140,7 @@ func TestHandleElicitationResponse_Guardrails(t *testing.T) {
 	}
 
 	t.Run("accept is checked; blocked does not reach upstream", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked, Reason: "unsafe"}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Reason: "unsafe"}}
 		router, validToken := newGuardedElicitation(t, fc, []string{"svr-1"}, nil)
 		gatewayID := mustStoreIDMap(t, router.ElicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: &MCPRequest{
@@ -1160,7 +1161,7 @@ func TestHandleElicitationResponse_Guardrails(t *testing.T) {
 	})
 
 	t.Run("accept applies modified payload from guardrails", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusModified, Content: `{"content":{"name":"sanitized"}}`}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"content":{"name":"sanitized"}}`}}
 		router, validToken := newGuardedElicitation(t, fc, []string{"svr-1"}, nil)
 		gatewayID := mustStoreIDMap(t, router.ElicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: &MCPRequest{
@@ -1184,7 +1185,7 @@ func TestHandleElicitationResponse_Guardrails(t *testing.T) {
 	})
 
 	t.Run("decline bypasses the check", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked}}
 		router, validToken := newGuardedElicitation(t, fc, []string{"svr-1"}, nil)
 		gatewayID := mustStoreIDMap(t, router.ElicitationMap, float64(42), "weather-server", "backend-session-abc", validToken)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: &MCPRequest{
@@ -1210,16 +1211,16 @@ type versionedGuardrailsChecker struct {
 	mismatches atomic.Int64
 }
 
-func (c *versionedGuardrailsChecker) CheckRequest(_ context.Context, _ string, _ json.RawMessage, configIDs []string) (*GuardrailsDecision, error) {
+func (c *versionedGuardrailsChecker) CheckRequest(_ context.Context, _ string, _ json.RawMessage, configIDs []string) (*api.Decision, error) {
 	c.calls.Add(1)
 	if len(configIDs) != 1 || configIDs[0] != c.version {
 		c.mismatches.Add(1)
 	}
-	return &GuardrailsDecision{Status: StatusAllowed}, nil
+	return &api.Decision{Status: api.StatusAllowed}, nil
 }
 
-func (c *versionedGuardrailsChecker) CheckResponse(context.Context, string, []byte, []string) (*GuardrailsDecision, error) {
-	return &GuardrailsDecision{Status: StatusAllowed}, nil
+func (c *versionedGuardrailsChecker) CheckResponse(context.Context, string, []byte, []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
 }
 
 // TestHandleElicitationResponse_Guardrails_ConcurrentReload guards against
@@ -1330,7 +1331,7 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 	}
 
 	t.Run("allowed proceeds and uses unprefixed tool name", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusAllowed}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
 		router, validToken := newGuardedRouter(t, fc, &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}}, serverConfigs)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: toolCall(validToken)})
 		require.Nil(t, decision.Error)
@@ -1342,7 +1343,7 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 	})
 
 	t.Run("blocked does not reach upstream", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked, Reason: "sql-injection"}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Reason: "sql-injection"}}
 		router, validToken := newGuardedRouter(t, fc, &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}}, serverConfigs)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: toolCall(validToken)})
 		require.NotNil(t, decision.Error)
@@ -1355,7 +1356,7 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 	})
 
 	t.Run("modified arguments are forwarded to the backend", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusModified, Content: `{"query":"SELECT [redacted]"}`}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"query":"SELECT [redacted]"}`}}
 		router, validToken := newGuardedRouter(t, fc, &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}}, serverConfigs)
 		decision := router.RouteRequest(context.Background(), &Request{Parsed: toolCall(validToken)})
 		require.Nil(t, decision.Error)
@@ -1367,7 +1368,7 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 	})
 
 	t.Run("empty merged config IDs skip the check", func(t *testing.T) {
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked}}
 		configs := []*config.MCPServer{
 			{
 				Name:     "dummy",

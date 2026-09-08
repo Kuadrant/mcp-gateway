@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
 )
@@ -555,7 +556,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("allowed proceeds and uses unprefixed tool name", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusAllowed}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
 		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
@@ -572,7 +573,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("blocked does not reach upstream", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusBlocked, Reason: "sql-injection"}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Reason: "sql-injection"}}
 		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
@@ -590,7 +591,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("modified arguments are forwarded in the body mutation", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &GuardrailsDecision{Status: StatusModified, Content: `{"query":"SELECT sanitized"}`}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"query":"SELECT sanitized"}`}}
 		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},

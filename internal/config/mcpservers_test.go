@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -630,22 +630,22 @@ type snapChecker struct {
 	version string
 }
 
-func (c *snapChecker) CheckRequest(context.Context, string, json.RawMessage, []string) (*guardrails.Decision, error) {
-	return &guardrails.Decision{Status: guardrails.StatusAllowed}, nil
+func (c *snapChecker) CheckRequest(context.Context, string, json.RawMessage, []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
 }
 
-func (c *snapChecker) CheckResponse(context.Context, string, []byte, []string) (*guardrails.Decision, error) {
-	return &guardrails.Decision{Status: guardrails.StatusAllowed}, nil
+func (c *snapChecker) CheckResponse(context.Context, string, []byte, []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
 }
 
 func TestMCPServersConfig_GuardrailsSnapshotFor_ConsistentUnderReload(t *testing.T) {
-	versioned := func(version string) ([]*MCPServer, *snapChecker, *guardrails.Config) {
+	versioned := func(version string) ([]*MCPServer, *snapChecker, *api.Config) {
 		servers := []*MCPServer{{
 			Name:                "weather",
 			GuardrailsConfigIDs: []string{version},
 		}}
 		checker := &snapChecker{version: version}
-		global := &guardrails.Config{ConfigIDs: []string{"global-" + version}}
+		global := &api.Config{ConfigIDs: []string{"global-" + version}}
 		return servers, checker, global
 	}
 

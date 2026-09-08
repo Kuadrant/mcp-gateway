@@ -8,7 +8,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 )
 
 // UpstreamMCPID is used as type for identifying individual upstreams
@@ -25,15 +25,15 @@ type MCPServersConfig struct {
 	MCPGatewayExternalHostname string
 	MCPGatewayInternalHostname string
 	GatewayCACertPEM           string
-	GlobalGuardrails           *guardrails.Config
+	GlobalGuardrails           *api.Config
 	MaxBodyBytes               int64
 	// guardrailsChecker is the live HTTP checker built from GlobalGuardrails.
-	guardrailsChecker guardrails.Checker
+	guardrailsChecker api.Checker
 }
 
 // GuardrailsConfig is the serializable guardrails server config stored on
 // MCPServersConfig and BrokerConfig.
-type GuardrailsConfig = guardrails.Config
+type GuardrailsConfig = api.Config
 
 // RegisterObserver registers an observer to be notified of changes to the config
 func (config *MCPServersConfig) RegisterObserver(obs Observer) {
@@ -96,7 +96,7 @@ func (config *MCPServersConfig) GetGatewayCACertPEM() string {
 // SetGlobalGuardrails stores the resolved gateway-level guardrails config.
 // A nil value clears it (guardrails disabled). Prefer SetGuardrails when
 // updating the checker in the same step so readers cannot observe a tear.
-func (config *MCPServersConfig) SetGlobalGuardrails(cfg *guardrails.Config) {
+func (config *MCPServersConfig) SetGlobalGuardrails(cfg *api.Config) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.GlobalGuardrails = cfg
@@ -104,7 +104,7 @@ func (config *MCPServersConfig) SetGlobalGuardrails(cfg *guardrails.Config) {
 
 // GetGlobalGuardrails returns the resolved gateway-level guardrails config,
 // or nil when guardrails is not configured.
-func (config *MCPServersConfig) GetGlobalGuardrails() *guardrails.Config {
+func (config *MCPServersConfig) GetGlobalGuardrails() *api.Config {
 	config.lock.RLock()
 	defer config.lock.RUnlock()
 	return config.GlobalGuardrails
@@ -112,14 +112,14 @@ func (config *MCPServersConfig) GetGlobalGuardrails() *guardrails.Config {
 
 // SetGuardrailsChecker stores the checker, or nil when guardrails is disabled.
 // Prefer SetGuardrails when updating GlobalGuardrails in the same step.
-func (config *MCPServersConfig) SetGuardrailsChecker(c guardrails.Checker) {
+func (config *MCPServersConfig) SetGuardrailsChecker(c api.Checker) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.guardrailsChecker = c
 }
 
 // SetGuardrails stores global config and checker under one lock.
-func (config *MCPServersConfig) SetGuardrails(global *guardrails.Config, checker guardrails.Checker) {
+func (config *MCPServersConfig) SetGuardrails(global *api.Config, checker api.Checker) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
 	config.GlobalGuardrails = global
@@ -127,13 +127,13 @@ func (config *MCPServersConfig) SetGuardrails(global *guardrails.Config, checker
 }
 
 // GetGuardrailsChecker returns the checker, or nil when guardrails is not configured.
-func (config *MCPServersConfig) GetGuardrailsChecker() guardrails.Checker {
+func (config *MCPServersConfig) GetGuardrailsChecker() api.Checker {
 	c, _ := config.GetGuardrails()
 	return c
 }
 
 // GetGuardrails returns the checker and resolved global config under one lock.
-func (config *MCPServersConfig) GetGuardrails() (guardrails.Checker, *guardrails.Config) {
+func (config *MCPServersConfig) GetGuardrails() (api.Checker, *api.Config) {
 	config.lock.RLock()
 	defer config.lock.RUnlock()
 	return config.guardrailsChecker, config.GlobalGuardrails
@@ -143,8 +143,8 @@ func (config *MCPServersConfig) GetGuardrails() (guardrails.Checker, *guardrails
 // Taken under a single lock so checker, global config, and per-server IDs
 // cannot tear across an in-place reload.
 type GuardrailsSnapshot struct {
-	Checker         guardrails.Checker
-	Global          *guardrails.Config
+	Checker         api.Checker
+	Global          *api.Config
 	ServerConfigIDs []string
 	Server          *MCPServer
 }
@@ -181,8 +181,8 @@ func (config *MCPServersConfig) ApplyReload(
 	virtualServers []*VirtualServer,
 	gatewayCACertPEM string,
 	maxBodyBytes int64,
-	global *guardrails.Config,
-	checker guardrails.Checker,
+	global *api.Config,
+	checker api.Checker,
 ) {
 	config.lock.Lock()
 	defer config.lock.Unlock()
@@ -359,7 +359,7 @@ type BrokerConfig struct {
 	// GlobalGuardrails is the resolved guardrails config for this gateway,
 	// parsed from the Secret referenced by the guardrails-ref annotation. Nil
 	// when guardrails isn't configured.
-	GlobalGuardrails *guardrails.Config `json:"globalGuardrails,omitempty" yaml:"globalGuardrails,omitempty"`
+	GlobalGuardrails *api.Config `json:"globalGuardrails,omitempty" yaml:"globalGuardrails,omitempty"`
 	// MaxBodyBytes caps any body the router buffers, from MCPGatewayExtension.spec.maxBodyBytes.
 	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty" yaml:"maxBodyBytes,omitempty"`
 }

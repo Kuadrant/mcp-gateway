@@ -13,12 +13,6 @@ import (
 //nolint:gosec // not a credential, just a Secret type identifier
 const SecretTypeNeMo corev1.SecretType = "guardrails/external/nemo"
 
-// Fail modes applied when the guardrails server is unreachable or errors.
-const (
-	FailModeDeny  = "deny"
-	FailModeAllow = "allow"
-)
-
 // configDataKey is the Secret data key holding the provider config YAML.
 const configDataKey = "config.yaml"
 
