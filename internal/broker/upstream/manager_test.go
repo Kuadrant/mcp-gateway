@@ -1936,6 +1936,25 @@ func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
 	}
 }
 
+func TestMCPManager_adjustTickerFromTTL_ResetOnZero(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 300000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasToolsCap = false
+	gateway := newMockToolsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, 5*time.Minute, manager.tickerInterval, "should adopt upstream TTL")
+
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 0}
+	manager.manage(context.Background(), eventTypeTimer)
+	assert.Equal(t, DefaultTickerInterval, manager.tickerInterval, "should fall back to default when TTL disappears")
+}
+
 func labelsMatch(attrs attribute.Set, want map[string]string) bool {
 	for k, v := range want {
 		val, ok := attrs.Value(attribute.Key(k))

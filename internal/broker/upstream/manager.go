@@ -776,10 +776,12 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 // clamped to DefaultTickerInterval minimum to avoid hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {
 	meta := man.mcp.ToolsCacheMetadata()
+	var ttlInterval time.Duration
 	if meta.TTLMs <= 0 {
-		return
+		ttlInterval = DefaultTickerInterval
+	} else {
+		ttlInterval = max(time.Duration(meta.TTLMs)*time.Millisecond, DefaultTickerInterval)
 	}
-	ttlInterval := max(time.Duration(meta.TTLMs)*time.Millisecond, DefaultTickerInterval)
 	if ttlInterval != man.tickerInterval {
 		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", meta.TTLMs, "interval", ttlInterval)
 		man.tickerInterval = ttlInterval
