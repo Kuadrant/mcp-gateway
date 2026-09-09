@@ -50,22 +50,22 @@ const (
 
 // ServerValidationStatus contains the validation results for an upstream MCP server
 type ServerValidationStatus struct {
-	ID                   string              `json:"id"`
-	Name                 string              `json:"name"`
-	LastValidated        time.Time           `json:"lastValidated"`
-	Message              string              `json:"message"`
-	Ready                bool                `json:"ready"`
-	TotalTools           int                 `json:"totalTools"`
-	TotalPrompts         int                 `json:"totalPrompts"`
-	InvalidTools         int                 `json:"invalidTools"`
-	InvalidToolList      []InvalidToolInfo   `json:"invalidToolList,omitempty"`
-	InvalidPrompts       int                 `json:"invalidPrompts"`
-	InvalidPromptList    []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
-	ProtocolValidation   ProtocolValidation  `json:"protocolValidation"`
-	SupportedVersions    []string            `json:"supportedVersions,omitempty"`
-	UsesStatelessProtocol bool               `json:"usesStatelessProtocol"`
-	TickerInterval       string              `json:"tickerInterval"`
-	ConsecutiveFailures  int                 `json:"consecutiveFailures"`
+	ID                    string              `json:"id"`
+	Name                  string              `json:"name"`
+	LastValidated         time.Time           `json:"lastValidated"`
+	Message               string              `json:"message"`
+	Ready                 bool                `json:"ready"`
+	TotalTools            int                 `json:"totalTools"`
+	TotalPrompts          int                 `json:"totalPrompts"`
+	InvalidTools          int                 `json:"invalidTools"`
+	InvalidToolList       []InvalidToolInfo   `json:"invalidToolList,omitempty"`
+	InvalidPrompts        int                 `json:"invalidPrompts"`
+	InvalidPromptList     []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
+	ProtocolValidation    ProtocolValidation  `json:"protocolValidation"`
+	SupportedVersions     []string            `json:"supportedVersions,omitempty"`
+	UsesStatelessProtocol bool                `json:"usesStatelessProtocol"`
+	TickerInterval        string              `json:"tickerInterval"`
+	ConsecutiveFailures   int                 `json:"consecutiveFailures"`
 }
 
 // ProtocolValidation reports the MCP protocol version negotiated with the upstream.
