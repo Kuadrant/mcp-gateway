@@ -44,3 +44,18 @@ func TestSlowTool(t *testing.T) {
 	require.NotNil(t, res)
 	require.Len(t, res.Content, 0)
 }
+
+func TestChecksumTool(t *testing.T) {
+	testPayload := `{"key": "value", "unicode": "🚀", "nested": {"a": [1, 2, 3]}}`
+	res, _, err := checksumTool(context.Background(), &mcp.CallToolRequest{}, checksumArgs{Payload: testPayload})
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+	require.NotNil(t, res)
+	require.Len(t, res.Content, 1)
+	require.IsType(t, &mcp.TextContent{}, res.Content[0])
+
+	// sha256 of testPayload
+	// calculated expected sha256 hash
+	expectedHash := "8e72a3f8233be49e5422c9b03e92491fd67b371a121c9a7a04303fccac02e73e"
+	require.Equal(t, expectedHash, res.Content[0].(*mcp.TextContent).Text)
+}

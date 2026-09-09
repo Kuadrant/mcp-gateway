@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
@@ -138,6 +139,72 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).NotTo(BeNil())
 		Expect(res.Content).NotTo(BeEmpty())
+	})
+
+	It("[Happy] Payload integrity verification", func() {
+		testResources := []client.Object{}
+		deferCleanupResources(&testResources)
+		mcpGatewayClient := newTestGatewayClient()
+
+		By("Registering test server1")
+		registration := NewTestResources("payload-integrity", k8sClient).
+			ForInternalService(sharedMCPTestServer1, 9090).
+			WithPrefix("integrity_").
+			Build()
+		testResources = append(testResources, registration.GetObjects()...)
+		registeredServer := registration.Register(ctx)
+
+		By("Verifying MCPServerRegistration becomes ready")
+		Eventually(func(g Gomega) {
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
+
+		By("Verifying tools are accessible")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpGatewayClient.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("integrity_", toolsList)).To(BeTrue())
+		}, TestTimeoutConfigSync, TestRetryInterval).To(Succeed())
+
+		testCases := []struct {
+			name    string
+			payload string
+		}{
+			{
+				name:    "standard JSON",
+				payload: `{"key":"value","number":12345,"boolean":true,"null_val":null}`,
+			},
+			{
+				name:    "deeply nested JSON",
+				payload: `{"level1":{"level2":{"level3":{"level4":{"level5":{"data":[1,2,3,{"nested_array":["a","b","c"]}]}}}}}}`,
+			},
+			{
+				name:    "unicode content",
+				payload: `{"multilingual":"Hello 世界 🌍 🚀 🔥 💖 🎉","special_chars":"\u00e9\u00e0\u00e7\u00f1"}`,
+			},
+			{
+				name:    "binary-safe content and special characters",
+				payload: "{\x00\x01\x02\x03 line1\nline2\ttab \"quotes\" \\backslash /slash \b\f\r}",
+			},
+		}
+
+		for _, tc := range testCases {
+			By(fmt.Sprintf("Testing payload integrity for %s", tc.name))
+			expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tc.payload)))
+
+			res, err := mcpGatewayClient.CallTool(ctx, &mcp.CallToolParams{
+				Name: "integrity_checksum",
+				Arguments: map[string]string{
+					"payload": tc.payload,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).NotTo(BeNil())
+			Expect(res.Content).To(HaveLen(1))
+			textContent, ok := res.Content[0].(*mcp.TextContent)
+			Expect(ok).To(BeTrue())
+			Expect(textContent.Text).To(Equal(expectedHash), "Payload checksum mismatch for case: %s", tc.name)
+		}
 	})
 
 	It("[Happy] should register mcp server with non-default spec.path", func() {
