@@ -34,36 +34,48 @@ func registerServer(t *testing.T, b *mcpBrokerImpl, id config.UpstreamMCPID, pre
 	})
 }
 
-func TestRebuildProtocolCaches_ExcludesPrivateScopeWithoutPrefix(t *testing.T) {
+func TestRebuildProtocolCaches_ExcludesNonCacheableTools(t *testing.T) {
 	tests := []struct {
-		name         string
-		prefix       string
-		meta         upstream.CacheMetadata
-		wantExcluded bool
+		name       string
+		prefix     string
+		meta       upstream.CacheMetadata
+		wantCached bool
+		wantFresh  bool
 	}{
 		{
-			name:         "private scope, no prefix -> excluded",
-			prefix:       "",
-			meta:         upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
-			wantExcluded: true,
+			name:       "private scope, no prefix -> excluded as unroutable",
+			prefix:     "",
+			meta:       upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
+			wantCached: false,
+			wantFresh:  false,
 		},
 		{
-			name:         "private scope, with prefix -> included",
-			prefix:       "s1_",
-			meta:         upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
-			wantExcluded: false,
+			name:       "private scope, with prefix -> fresh only",
+			prefix:     "s1_",
+			meta:       upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePrivate},
+			wantCached: false,
+			wantFresh:  true,
 		},
 		{
-			name:         "public scope, no prefix -> included",
-			prefix:       "",
-			meta:         upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic},
-			wantExcluded: false,
+			name:       "zero TTL, with prefix -> fresh only",
+			prefix:     "s1_",
+			meta:       upstream.CacheMetadata{TTLMs: 0, CacheScope: upstream.CacheScopePublic},
+			wantCached: false,
+			wantFresh:  true,
 		},
 		{
-			name:         "userSpecificList, no prefix -> excluded",
-			prefix:       "",
-			meta:         upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic, UserSpecificList: true},
-			wantExcluded: true,
+			name:       "public scope, positive TTL -> cached",
+			prefix:     "",
+			meta:       upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic},
+			wantCached: true,
+			wantFresh:  false,
+		},
+		{
+			name:       "userSpecificList, no prefix -> excluded as unroutable",
+			prefix:     "",
+			meta:       upstream.CacheMetadata{TTLMs: 60000, CacheScope: upstream.CacheScopePublic, UserSpecificList: true},
+			wantCached: false,
+			wantFresh:  false,
 		},
 	}
 
@@ -79,19 +91,21 @@ func TestRebuildProtocolCaches_ExcludesPrivateScopeWithoutPrefix(t *testing.T) {
 			if cached == nil {
 				t.Fatal("statelessTools is nil")
 			}
-			got := len(cached.items)
-			if tt.wantExcluded && got != 0 {
-				t.Errorf("expected tools excluded from listing, got %d", got)
+			if got := len(cached.items); got != btoi(tt.wantCached) {
+				t.Errorf("cached tool count: got %d, want %d", got, btoi(tt.wantCached))
 			}
-			if !tt.wantExcluded && got != 1 {
-				t.Errorf("expected 1 tool included in listing, got %d", got)
-			}
-			// an excluded server must not be scheduled for per-request fetching
-			if tt.wantExcluded && len(cached.freshFetchServers) != 0 {
-				t.Errorf("expected excluded server absent from freshFetchServers, got %d", len(cached.freshFetchServers))
+			if got := len(cached.freshFetchServers); got != btoi(tt.wantFresh) {
+				t.Errorf("fresh-fetch server count: got %d, want %d", got, btoi(tt.wantFresh))
 			}
 		})
 	}
+}
+
+func btoi(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // warnCounter counts warn records matching a specific message.

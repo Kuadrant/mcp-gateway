@@ -53,9 +53,18 @@ type cachedUserSession struct {
 // FetchUserSpecificTools fetches tools from servers that need per-request
 // fetching and merges them into the result before FilterTools runs.
 // Sources: CRD-declared userSpecificList (precomputed in startManagers) and
-// 2026 upstreams whose cache metadata indicates fresh fetching (evaluated here
-// at request time so newly-connected managers are picked up without a config change).
+// 2026 upstreams whose cache metadata indicates fresh fetching.
 func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult) {
+	var freshFetchServers []userSpecificServer
+	if isStatelessProtocol(headers) {
+		if cached := broker.statelessTools.Load(); cached != nil {
+			freshFetchServers = cached.freshFetchServers
+		}
+	}
+	broker.fetchUserSpecificTools(ctx, headers, result, freshFetchServers)
+}
+
+func (broker *mcpBrokerImpl) fetchUserSpecificTools(ctx context.Context, headers http.Header, result *mcp.ListToolsResult, freshFetchServers []userSpecificServer) {
 	clientVersion := protocol.Version2025
 	handler := broker.handler2025
 	if isStatelessProtocol(headers) {
@@ -77,14 +86,12 @@ func (broker *mcpBrokerImpl) FetchUserSpecificTools(ctx context.Context, headers
 		seen[srv.id] = true
 	}
 
-	// for 2026 clients, also include upstreams whose cache metadata indicates
-	// per-request fetching (precomputed in rebuildProtocolCaches)
+	// for 2026 clients, include the fresh-fetch servers from the same
+	// protocol-cache snapshot that supplied the initial tool list.
 	if clientVersion == protocol.Version2026 {
-		if cached := broker.statelessTools.Load(); cached != nil {
-			for _, srv := range cached.freshFetchServers {
-				if !seen[srv.id] {
-					matching = append(matching, srv)
-				}
+		for _, srv := range freshFetchServers {
+			if !seen[srv.id] {
+				matching = append(matching, srv)
 			}
 		}
 	}
@@ -480,7 +487,7 @@ func (broker *mcpBrokerImpl) fetchStatefulUserTools(ctx context.Context, servers
 	}
 	_ = g.Wait()
 
-	appendUniqueTools(result, allTools)
+	appendTools(result, allTools)
 }
 
 // fetchStatelessUserTools fetches tools from the given servers using stateless
@@ -508,34 +515,11 @@ func (broker *mcpBrokerImpl) fetchStatelessUserTools(ctx context.Context, server
 	}
 	_ = g.Wait()
 
-	appendUniqueTools(result, allTools)
+	appendTools(result, allTools)
 }
-
-type toolIdentity struct {
-	serverID string
-	name     string
-}
-
-func identityForTool(tool *mcp.Tool) toolIdentity {
-	if tool == nil {
-		return toolIdentity{}
-	}
-	serverID, _ := tool.Meta["kuadrant/id"].(string)
-	return toolIdentity{serverID: serverID, name: tool.Name}
-}
-
-func appendUniqueTools(result *mcp.ListToolsResult, tools []mcp.Tool) {
-	seen := make(map[toolIdentity]struct{}, len(result.Tools)+len(tools))
-	for _, tool := range result.Tools {
-		seen[identityForTool(tool)] = struct{}{}
-	}
+func appendTools(result *mcp.ListToolsResult, tools []mcp.Tool) {
 	for i := range tools {
-		tool := &tools[i]
-		if _, exists := seen[identityForTool(tool)]; exists {
-			continue
-		}
-		seen[identityForTool(tool)] = struct{}{}
-		result.Tools = append(result.Tools, tool)
+		result.Tools = append(result.Tools, &tools[i])
 	}
 }
 

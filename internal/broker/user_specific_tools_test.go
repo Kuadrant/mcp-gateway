@@ -649,42 +649,6 @@ func TestFetchUserSpecificTools_StatelessFetch(t *testing.T) {
 	// no session should be cached (stateless path)
 	assert.Equal(t, 0, poolSize(b), "stateless fetch should not cache sessions")
 }
-func TestFetchUserSpecificTools_DeduplicatesCachedAndFreshTools(t *testing.T) {
-	ts := newStatelessTestMCPServer(t)
-	defer ts.Close()
-
-	cache, _ := session.NewCache()
-	srv := userSpecificServer{
-		id: "ns/stateless-server", name: "stateless-server",
-		url: ts.URL, prefix: "sl_",
-	}
-	b := &mcpBrokerImpl{
-		userSpecificServers:      []userSpecificServer{srv},
-		logger:                   slog.Default(),
-		sessionCache:             cache,
-		userSpecificFetchTimeout: 10 * time.Second,
-	}
-	b.serverVersions.Store(srv.id, []string{"2026-07-28"})
-	withProtocolHandlers(b)
-
-	result := &mcp.ListToolsResult{
-		Tools: []*mcp.Tool{
-			{Name: "sl_tool", Meta: mcp.Meta{"kuadrant/id": string(srv.id)}},
-			{Name: "other_tool", Meta: mcp.Meta{"kuadrant/id": "other-server"}},
-		},
-	}
-	headers := http.Header{
-		"Mcp-Session-Id":       []string{"gw-session-1"},
-		"Mcp-Protocol-Version": []string{"2026-07-28"},
-		"Authorization":        []string{"Bearer user-token"},
-	}
-
-	b.FetchUserSpecificTools(context.Background(), headers, result)
-
-	require.Len(t, result.Tools, 2)
-	names := []string{result.Tools[0].Name, result.Tools[1].Name}
-	assert.ElementsMatch(t, []string{"other_tool", "sl_tool"}, names)
-}
 
 // registerActiveServer wires an upstream into b.mcpServers with the given
 // prefix, URL and tools cache metadata (so the exclusion predicate can read

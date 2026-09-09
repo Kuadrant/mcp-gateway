@@ -81,9 +81,44 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 	// per-user servers with no prefix serve unroutable tools; exclude them
 	excluded := m.privateScopeServersWithoutPrefix()
 
+	// precompute 2026 servers needing per-request fetching (cacheScope:"private"
+	// or ttlMs:0). Their tools remain out of the shared cache and are merged
+	// into each request after a fresh upstream fetch.
+	userSpecific := make(map[config.UpstreamMCPID]bool, len(m.userSpecificServers))
+	for _, s := range m.userSpecificServers {
+		userSpecific[s.id] = true
+	}
+	freshToolServers := make(map[config.UpstreamMCPID]struct{})
+	var freshFetchServers []userSpecificServer
+	for id, mgr := range m.mcpServers {
+		if userSpecific[id] {
+			continue
+		}
+		if _, isExcluded := excluded[id]; isExcluded {
+			continue
+		}
+		if !m.ServerSupportsVersion(id, protocol.Version2026) {
+			continue
+		}
+		meta := mgr.ToolsCacheMetadata()
+		cfg := mgr.Config()
+		srv := userSpecificServer{
+			id:     id,
+			name:   cfg.Name,
+			url:    cfg.URL,
+			prefix: cfg.Prefix,
+			caCert: cfg.CACert,
+		}
+		if m.handler2026.ShouldFetchFresh(srv, &meta) {
+			freshToolServers[id] = struct{}{}
+			freshFetchServers = append(freshFetchServers, srv)
+		}
+	}
+
 	// partition tools
 	allTools := m.gatewayServer.ListTools()
 	var statefulT, statelessT protocolCacheEntry[*mcp.Tool]
+	statelessT.freshFetchServers = freshFetchServers
 	statefulServersSeen := make(map[config.UpstreamMCPID]bool)
 	statelessServersSeen := make(map[config.UpstreamMCPID]bool)
 
@@ -120,43 +155,13 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 			}
 		}
 		if m.ServerSupportsVersion(serverID, protocol.Version2026) {
-			statelessT.items = append(statelessT.items, tool)
+			if _, fresh := freshToolServers[serverID]; !fresh {
+				statelessT.items = append(statelessT.items, tool)
+			}
 			if !statelessServersSeen[serverID] {
 				statelessServersSeen[serverID] = true
 				statelessT.serverIDs = append(statelessT.serverIDs, serverID)
 			}
-		}
-	}
-	// precompute 2026 servers needing per-request fetching (cacheScope:"private"
-	// or ttlMs:0) so FetchUserSpecificTools avoids iterating all servers per request.
-	// iterates all connected 2026 upstreams, not just those with cached tools —
-	// a fully-private upstream may contribute zero shared tools.
-	// CRD-declared userSpecificList servers are excluded (handled in startManagers).
-	crdUserSpecific := make(map[config.UpstreamMCPID]bool, len(m.userSpecificServers))
-	for _, s := range m.userSpecificServers {
-		crdUserSpecific[s.id] = true
-	}
-	for id, mgr := range m.mcpServers {
-		if crdUserSpecific[id] {
-			continue
-		}
-		if _, isExcluded := excluded[id]; isExcluded {
-			continue
-		}
-		if !m.ServerSupportsVersion(id, protocol.Version2026) {
-			continue
-		}
-		meta := mgr.ToolsCacheMetadata()
-		cfg := mgr.Config()
-		srv := userSpecificServer{
-			id:     id,
-			name:   cfg.Name,
-			url:    cfg.URL,
-			prefix: cfg.Prefix,
-			caCert: cfg.CACert,
-		}
-		if m.handler2026.ShouldFetchFresh(srv, &meta) {
-			statelessT.freshFetchServers = append(statelessT.freshFetchServers, srv)
 		}
 	}
 
@@ -202,7 +207,6 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 	}
 	m.statefulPrompts.Store(&statefulP)
 	m.statelessPrompts.Store(&statelessP)
-
 	m.logger.Debug("rebuilt protocol caches",
 		"statefulTools", len(statefulT.items), "statelessTools", len(statelessT.items),
 		"statefulPrompts", len(statefulP.items), "statelessPrompts", len(statelessP.items))
@@ -227,21 +231,28 @@ func (m *mcpBrokerImpl) promptsForProtocol(isStateless bool) []*mcp.Prompt {
 	return nil
 }
 
+// toolsAndFreshFetchServersForProtocol loads one cache entry so the returned
+// tools and fresh-fetch servers describe the same routing-table snapshot.
+func (m *mcpBrokerImpl) toolsAndFreshFetchServersForProtocol(isStateless bool) ([]*mcp.Tool, []userSpecificServer) {
+	var cached *protocolCacheEntry[*mcp.Tool]
+	if isStateless {
+		cached = m.statelessTools.Load()
+	}
+	if cached == nil {
+		cached = m.statefulTools.Load()
+	}
+	if cached == nil {
+		return nil, nil
+	}
+
+	tools := make([]*mcp.Tool, len(cached.items))
+	copy(tools, cached.items)
+	return tools, cached.freshFetchServers
+}
+
 // toolsForProtocol returns the pre-cached tool set for the client's protocol version.
 // Returns a shallow copy to avoid mutation by downstream filters.
 func (m *mcpBrokerImpl) toolsForProtocol(isStateless bool) []*mcp.Tool {
-	if isStateless {
-		if cached := m.statelessTools.Load(); cached != nil {
-			tools := make([]*mcp.Tool, len(cached.items))
-			copy(tools, cached.items)
-			return tools
-		}
-	}
-
-	if cached := m.statefulTools.Load(); cached != nil {
-		tools := make([]*mcp.Tool, len(cached.items))
-		copy(tools, cached.items)
-		return tools
-	}
-	return nil
+	tools, _ := m.toolsAndFreshFetchServersForProtocol(isStateless)
+	return tools
 }
