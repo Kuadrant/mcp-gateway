@@ -62,6 +62,12 @@ assert_eq "$private_host" "" "privateHost is omitted by default"
 
 deployment_security=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsNonRoot' -)
 assert_eq "$deployment_security" "true" "controller runs as non-root"
+run_as_user=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsUser' -)
+assert_eq "$run_as_user" "65532" "controller runs as the image user"
+
+run_as_group=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsGroup' -)
+assert_eq "$run_as_group" "65532" "controller runs as the image group"
+
 
 seccomp_profile=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.seccompProfile.type' -)
 assert_eq "$seccomp_profile" "RuntimeDefault" "controller uses the runtime seccomp profile"
