@@ -83,6 +83,8 @@ mcpGatewayExtension:
     namespace: gateway-system
     # Name of the listener on the Gateway to target (required)
     sectionName: mcp
+  # Optional override for the controller-discovered internal Gateway host
+  privateHost: ""
   
   # advanced configuration fields
   

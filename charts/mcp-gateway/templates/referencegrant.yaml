@@ -1,9 +1,11 @@
 {{- if and .Values.mcpGatewayExtension.create .Values.mcpGatewayExtension.gatewayRef.namespace }}
 {{- if ne .Values.mcpGatewayExtension.gatewayRef.namespace .Release.Namespace }}
+{{- $grantKey := printf "%s/%s/%s" .Release.Name .Release.Namespace .Values.mcpGatewayExtension.gatewayRef.name }}
+{{- $grantHash := $grantKey | sha256sum | trunc 16 }}
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
-  name: allow-{{ .Values.mcpGatewayExtension.gatewayRef.name }}
+  name: {{ printf "allow-%s-%s" .Release.Namespace $grantHash }}
   namespace: {{ .Values.mcpGatewayExtension.gatewayRef.namespace }}
   labels:
     {{- include "mcp-gateway.labels" . | nindent 4 }}
@@ -15,5 +17,6 @@ spec:
   to:
     - group: gateway.networking.k8s.io
       kind: Gateway
+      name: {{ .Values.mcpGatewayExtension.gatewayRef.name }}
 {{- end }}
 {{- end }}

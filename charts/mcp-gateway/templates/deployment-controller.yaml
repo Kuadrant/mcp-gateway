@@ -18,8 +18,20 @@ spec:
         {{- include "mcp-gateway.controllerSelectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "mcp-gateway.controllerServiceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mcp-controller
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           image: {{ include "mcp-controller.image" . }}
           imagePullPolicy: {{ .Values.imageController.pullPolicy }}
           command:
