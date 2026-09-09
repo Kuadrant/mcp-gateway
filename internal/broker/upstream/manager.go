@@ -50,18 +50,22 @@ const (
 
 // ServerValidationStatus contains the validation results for an upstream MCP server
 type ServerValidationStatus struct {
-	ID                 string              `json:"id"`
-	Name               string              `json:"name"`
-	LastValidated      time.Time           `json:"lastValidated"`
-	Message            string              `json:"message"`
-	Ready              bool                `json:"ready"`
-	TotalTools         int                 `json:"totalTools"`
-	TotalPrompts       int                 `json:"totalPrompts"`
-	InvalidTools       int                 `json:"invalidTools"`
-	InvalidToolList    []InvalidToolInfo   `json:"invalidToolList,omitempty"`
-	InvalidPrompts     int                 `json:"invalidPrompts"`
-	InvalidPromptList  []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
-	ProtocolValidation ProtocolValidation  `json:"protocolValidation"`
+	ID                    string              `json:"id"`
+	Name                  string              `json:"name"`
+	LastValidated         time.Time           `json:"lastValidated"`
+	Message               string              `json:"message"`
+	Ready                 bool                `json:"ready"`
+	TotalTools            int                 `json:"totalTools"`
+	TotalPrompts          int                 `json:"totalPrompts"`
+	InvalidTools          int                 `json:"invalidTools"`
+	InvalidToolList       []InvalidToolInfo   `json:"invalidToolList,omitempty"`
+	InvalidPrompts        int                 `json:"invalidPrompts"`
+	InvalidPromptList     []InvalidPromptInfo `json:"invalidPromptList,omitempty"`
+	ProtocolValidation    ProtocolValidation  `json:"protocolValidation"`
+	SupportedVersions     []string            `json:"supportedVersions,omitempty"`
+	UsesStatelessProtocol bool                `json:"usesStatelessProtocol"`
+	TickerInterval        string              `json:"tickerInterval"`
+	ConsecutiveFailures   int                 `json:"consecutiveFailures"`
 }
 
 // ProtocolValidation reports the MCP protocol version negotiated with the upstream.
@@ -463,6 +467,7 @@ func (man *MCPManager) registerCallbacks() func() {
 }
 
 // manage should be the only entry point that triggers changes to tools
+// TODO this has become overly complex handling both prompts and tools independently and duplicating logic. Look to simplify and unify
 func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	man.logger.DebugContext(ctx, "managing connection", "upstream mcp server", man.mcp.ID(), "event type", event)
 
@@ -490,15 +495,6 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	numberOfTools := len(man.tools)
 	numberOfPrompts := len(man.prompts)
 
-	// 2026 upstreams rely on subscriptions/listen for notifications. the SDK
-	// silently drops the listen stream when the upstream restarts without
-	// closing the session, so the broker never learns notifications stopped.
-	// force a fresh connection on each health tick to re-establish the stream.
-	if event == eventTypeTimer && man.mcp.UsesStatelessProtocol() {
-		man.logger.DebugContext(ctx, "recycling stateless connection", "upstream mcp server", man.mcp.ID())
-		_ = man.mcp.Disconnect()
-	}
-
 	man.logger.DebugContext(ctx, "attempting to connect", "upstream mcp server", man.mcp.ID())
 	if err := man.mcp.Connect(ctx, man.registerCallbacks()); err != nil {
 		man.handleConnectionFailure(ctx, span, fmt.Errorf("failed to connect to upstream mcp %s : %w", man.mcp.ID(), err), numberOfTools, numberOfPrompts)
@@ -510,7 +506,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		return
 	}
 	man.consecutiveFailures = 0
-	man.logger.Info("upstream negotiated", "upstream", man.mcp.ID(), "supported-versions", man.mcp.SupportedVersions())
+	man.logger.Info("upstream negotiated", "name", man.mcp.GetName(), "upstream", man.mcp.ID(), "supported-versions", man.mcp.SupportedVersions())
 	if man.onConnect != nil {
 		versions := slices.Sorted(slices.Values(man.mcp.SupportedVersions()))
 		if !slices.Equal(versions, man.lastVersions) {
@@ -611,6 +607,12 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 						}
 					}
 					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
+
+					// adjust tick interval for 2026 upstreams based on upstream TTL hint.
+					// without notification handlers, polling is the only freshness mechanism.
+					if man.mcp.UsesStatelessProtocol() {
+						man.adjustTickerFromTTL()
+					}
 				}
 			}
 		}
@@ -710,6 +712,10 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.InvalidToolList = invalidTools
 	man.status.InvalidPrompts = len(invalidPrompts)
 	man.status.InvalidPromptList = invalidPrompts
+	man.status.SupportedVersions = man.mcp.SupportedVersions()
+	man.status.UsesStatelessProtocol = man.mcp.UsesStatelessProtocol()
+	man.status.TickerInterval = man.tickerInterval.String()
+	man.status.ConsecutiveFailures = man.consecutiveFailures
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
@@ -719,7 +725,6 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.TotalPrompts = promptCount
 	man.status.Ready = true
 	man.status.Message = fmt.Sprintf("server added successfully. Total tools added %d. Total prompts added %d", toolCount, promptCount)
-	// always report the version we expect; fill in the negotiated version once it is known
 	man.status.ProtocolValidation = ProtocolValidation{ExpectedVersion: expectedProtocolVersion}
 	if info := man.mcp.ProtocolInfo(); info != nil {
 		man.status.ProtocolValidation.IsValid = true
@@ -770,6 +775,24 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 	select {
 	case <-man.ticker.C:
 	default:
+	}
+}
+
+// adjustTickerFromTTL resets the ticker to match the upstream's tools/list TTLMs
+// hint. only applied for 2026 upstreams where polling replaces push notifications.
+// clamped to DefaultTickerInterval minimum to avoid hot-looping on low TTLs.
+func (man *MCPManager) adjustTickerFromTTL() {
+	meta := man.mcp.ToolsCacheMetadata()
+	var ttlInterval time.Duration
+	if meta.TTLMs <= 0 {
+		ttlInterval = DefaultTickerInterval
+	} else {
+		ttlInterval = max(time.Duration(meta.TTLMs)*time.Millisecond, DefaultTickerInterval)
+	}
+	if ttlInterval != man.tickerInterval {
+		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", meta.TTLMs, "interval", ttlInterval)
+		man.tickerInterval = ttlInterval
+		man.resetTicker(ttlInterval)
 	}
 }
 

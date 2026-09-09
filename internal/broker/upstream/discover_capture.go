@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 )
@@ -15,19 +16,36 @@ import (
 // discoverCapture wraps an http.RoundTripper and intercepts the SDK's
 // server/discover response to capture the upstream's SupportedVersions.
 // the captured versions are read after Connect via Versions().
+//
+// harvest runs on EOF or Close of the response body. for SSE responses
+// the SDK may return from Connect before the body is closed, so
+// Versions blocks briefly on a ready channel to let harvest complete.
 type discoverCapture struct {
 	base      http.RoundTripper
 	mu        sync.Mutex
 	versions  []string
 	connected bool
+	// ready is closed by store() once versions have been harvested.
+	// allocated per-intercept in RoundTrip; nil when no discover
+	// request has been seen yet.
+	ready chan struct{}
 }
+
+const versionsWaitTimeout = 5 * time.Second
 
 func (d *discoverCapture) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodPost || !isDiscoverRequest(req) {
 		return d.base.RoundTrip(req)
 	}
+	d.mu.Lock()
+	d.ready = make(chan struct{})
+	d.mu.Unlock()
+
 	resp, err := d.base.RoundTrip(req)
 	if err != nil || resp == nil || resp.Body == nil {
+		d.mu.Lock()
+		close(d.ready)
+		d.mu.Unlock()
 		return resp, err
 	}
 	resp.Body = &discoverTeeBody{
@@ -46,21 +64,58 @@ func (d *discoverCapture) SetConnected() {
 	d.mu.Unlock()
 }
 
-// Versions returns the captured SupportedVersions. returns an error if
-// called before Connect has completed.
+// Versions returns the captured SupportedVersions. blocks up to
+// versionsWaitTimeout for harvest to complete if a discover request
+// was intercepted. returns an error if called before Connect.
 func (d *discoverCapture) Versions() ([]string, error) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if !d.connected {
+		d.mu.Unlock()
 		return nil, fmt.Errorf("versions called before connect")
 	}
+	ch := d.ready
+	d.mu.Unlock()
+
+	if ch != nil {
+		select {
+		case <-ch:
+		case <-time.After(versionsWaitTimeout):
+		}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.versions, nil
 }
 
 func (d *discoverCapture) store(versions []string) {
 	d.mu.Lock()
 	d.versions = versions
+	ch := d.ready
 	d.mu.Unlock()
+	if ch != nil {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
+}
+
+// signalReady closes the ready channel without storing versions.
+// called when harvest completes but finds no versions (e.g. error
+// response from server/discover).
+func (d *discoverCapture) signalReady() {
+	d.mu.Lock()
+	ch := d.ready
+	d.mu.Unlock()
+	if ch != nil {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
 }
 
 // isDiscoverRequest is only used for the broker client. gateway client requests don't go through this client.
@@ -117,10 +172,13 @@ func (b *discoverTeeBody) harvest() {
 				return
 			}
 		}
+		b.capture.signalReady()
 		return
 	}
 	if versions := parseDiscoverVersions(b.buf.Bytes()); len(versions) > 0 {
 		b.capture.store(versions)
+	} else {
+		b.capture.signalReady()
 	}
 }
 
