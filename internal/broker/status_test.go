@@ -165,3 +165,50 @@ func TestValidateAllServers(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSingleServer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	t.Run("server not found when empty", func(t *testing.T) {
+		b := NewBroker(logger).(*mcpBrokerImpl)
+		status, ok := b.ValidateSingleServer("nonexistent")
+		require.False(t, ok)
+		require.Empty(t, status.Name)
+	})
+
+	t.Run("server found", func(t *testing.T) {
+		b := NewBroker(logger).(*mcpBrokerImpl)
+		mgr := createTestManagerForStatus(t, "test-server", nil)
+		mgr.SetStatusForTesting(upstream.ServerValidationStatus{Name: "test-server", Ready: true})
+		b.mcpServers["test-server"] = upstream.NewActiveForTesting(mgr)
+
+		status, ok := b.ValidateSingleServer("test-server")
+		require.True(t, ok)
+		require.Equal(t, "test-server", status.Name)
+		require.True(t, status.Ready)
+
+		_, ok = b.ValidateSingleServer("other-server")
+		require.False(t, ok)
+	})
+
+	t.Run("multiple servers returns matching one", func(t *testing.T) {
+		b := NewBroker(logger).(*mcpBrokerImpl)
+		m1 := createTestManagerForStatus(t, "s1", nil)
+		m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: true})
+		b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
+
+		m2 := createTestManagerForStatus(t, "s2", nil)
+		m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
+		b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
+
+		s1Status, ok := b.ValidateSingleServer("s1")
+		require.True(t, ok)
+		require.Equal(t, "s1", s1Status.Name)
+		require.True(t, s1Status.Ready)
+
+		s2Status, ok := b.ValidateSingleServer("s2")
+		require.True(t, ok)
+		require.Equal(t, "s2", s2Status.Name)
+		require.False(t, s2Status.Ready)
+	})
+}
