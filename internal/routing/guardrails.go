@@ -55,6 +55,14 @@ func newGuardrailsCheck(cfg *config.MCPServersConfig, configIDs []string, logger
 	if cfg != nil {
 		checker, global = cfg.GetGuardrails()
 	}
+	return newGuardrailsCheckFromCheckerAndIDs(checker, global, configIDs, logger, opts...)
+}
+
+// newGuardrailsCheckFromCheckerAndIDs builds a guardrails check from an
+// already-loaded checker and global config. Used when the caller has obtained
+// checker, global, and per-server config IDs under one atomic read (e.g.
+// GuardrailsForServer), ensuring consistency across a concurrent reload.
+func newGuardrailsCheckFromCheckerAndIDs(checker api.Checker, global *api.Config, configIDs []string, logger *slog.Logger, opts ...guardrailsOption) *guardrailsCheck {
 	gc := &guardrailsCheck{
 		checker:     checker,
 		global:      global,

@@ -473,17 +473,37 @@ func (a *app) parseConfigFile(path string) (*configSnapshot, error) {
 	}, nil
 }
 
-// applyConfigSnapshot builds the guardrails checker, rebuilds hairpin, then
-// swaps live mcpConfig via ApplyReload. Hairpin rebuild failure or TLS
-// failure aborts before ApplyReload so servers/checker stay on the previous
-// snapshot.
+// applyConfigSnapshot builds the guardrails checker (when needed), rebuilds
+// hairpin, then swaps live mcpConfig via ApplyReload. Hairpin rebuild failure
+// or TLS failure aborts before ApplyReload so servers/checker stay on the
+// previous snapshot.
 func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) error {
+	prevChecker, prevGlobal := a.mcpConfig.GetGuardrails()
+	prevCACert := a.mcpConfig.GetGatewayCACertPEM()
+	prevMaxBodyBytes := a.mcpConfig.GetMaxBodyBytes()
+
+	guardrailsUnchanged := snap.globalGuardrails.Equal(prevGlobal)
+	caUnchanged := snap.gatewayCACertPEM == prevCACert
+
+	snapBodyBytes := snap.maxBodyBytes
+	if snapBodyBytes <= 0 {
+		snapBodyBytes = config.DefaultMaxBodyBytes
+	}
+	bodyBytesUnchanged := snapBodyBytes == prevMaxBodyBytes
+
+	// checker is the new checker to install; nil clears guardrails.
 	var checker guardrails.Checker
-	switch snap.globalGuardrails {
-	case nil:
-		if a.mcpConfig.GetGuardrailsChecker() != nil {
+	switch {
+	case snap.globalGuardrails == nil:
+		// guardrails disabled; prevChecker (if any) will be closed below.
+		if prevChecker != nil {
 			a.logger.InfoContext(ctx, "guardrails checker destroyed")
 		}
+	case guardrailsUnchanged && caUnchanged && bodyBytesUnchanged:
+		// config unchanged — reuse the existing checker and skip rebuilding
+		// the HTTP client and its transport.
+		checker = prevChecker
+		a.logger.Debug("guardrails checker reused, config unchanged")
 	default:
 		tlsConfig, err := tlsConfigFromCACertPEM(snap.gatewayCACertPEM)
 		if err != nil {
@@ -507,5 +527,13 @@ func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) err
 		snap.globalGuardrails,
 		checker,
 	)
+
+	// close idle connections on the old checker after ApplyReload so no
+	// in-flight request sees a closed transport.
+	if prevChecker != nil && checker != prevChecker {
+		if err := prevChecker.Close(); err != nil {
+			a.logger.Debug("guardrails checker close error", "error", err)
+		}
+	}
 	return nil
 }

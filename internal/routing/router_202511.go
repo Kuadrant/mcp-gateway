@@ -468,14 +468,15 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 	clientID := mcpReq.ID
 	mcpReq.ID = entry.BackendID
 
-	cfg := r.RoutingConfig.Load()
-	mcpServerConfig := cfg.ServerByName(entry.ServerName)
+	// GuardrailsForServer reads checker, global, and server atomically so the
+	// checker never sees config IDs from a different config generation.
+	checker, global, mcpServerConfig := r.RoutingConfig.Load().GuardrailsForServer(entry.ServerName)
 	if mcpServerConfig == nil {
 		r.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
 		mcpotel.SpanError(span, fmt.Errorf("unknown server"), "server not found")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
-	gc := newGuardrailsCheck(cfg, mcpServerConfig.GuardrailsConfigIDs, r.Logger, withSSEErrors())
+	gc := newGuardrailsCheckFromCheckerAndIDs(checker, global, mcpServerConfig.GuardrailsConfigIDs, r.Logger, withSSEErrors())
 
 	path, err := mcpServerConfig.Path()
 	if err != nil {

@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"slices"
 )
 
 // Config holds the resolved guardrails server config parsed from
@@ -21,6 +22,27 @@ const (
 	FailModeDeny  = "deny"
 	FailModeAllow = "allow"
 )
+
+// Equal reports whether c and other represent the same guardrails config.
+// nil equals nil; empty FailMode is treated as FailModeDeny.
+func (c *Config) Equal(other *Config) bool {
+	if c == nil && other == nil {
+		return true
+	}
+	if c == nil || other == nil {
+		return false
+	}
+	normalizeFailMode := func(fm string) string {
+		if fm == "" {
+			return FailModeDeny
+		}
+		return fm
+	}
+	return c.URL == other.URL &&
+		c.Model == other.Model &&
+		normalizeFailMode(c.FailMode) == normalizeFailMode(other.FailMode) &&
+		slices.Equal(c.ConfigIDs, other.ConfigIDs)
+}
 
 // Status is the outcome of a guardrails check.
 type Status string
@@ -50,4 +72,7 @@ type Decision struct {
 type Checker interface {
 	CheckRequest(ctx context.Context, toolName string, arguments json.RawMessage, configIDs []string) (*Decision, error)
 	CheckResponse(ctx context.Context, toolName string, content []byte, configIDs []string) (*Decision, error)
+	// Close releases idle HTTP connections held by the checker. Should be
+	// called when the checker is replaced after a config reload.
+	Close() error
 }

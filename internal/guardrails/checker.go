@@ -112,6 +112,12 @@ type nemoChecker struct {
 
 var _ Checker = (*nemoChecker)(nil)
 
+// Close releases idle connections held by the checker's HTTP transport.
+func (c *nemoChecker) Close() error {
+	c.httpClient.CloseIdleConnections()
+	return nil
+}
+
 // NewChecker constructs a Checker for the given resolved guardrails config.
 // maxBodyBytes bounds the guardrails server's check response; non-positive
 // values fall back to defaultMaxBodyBytes.

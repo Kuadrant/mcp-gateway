@@ -1223,10 +1223,12 @@ func (c *versionedGuardrailsChecker) CheckResponse(context.Context, string, []by
 	return &api.Decision{Status: api.StatusAllowed}, nil
 }
 
+func (c *versionedGuardrailsChecker) Close() error { return nil }
+
 // TestHandleElicitationResponse_Guardrails_ConcurrentReload guards against
 // tearing server GuardrailsConfigIDs from the checker/global across an
-// in-place config reload. Production mutates one MCPServersConfig under
-// ApplyReload; GuardrailsSnapshotFor must observe one consistent version.
+// in-place config reload. GuardrailsForServer reads both atomically so the
+// checker never sees config IDs from a different config generation.
 func TestHandleElicitationResponse_Guardrails_ConcurrentReload(t *testing.T) {
 	versionedServer := func(version string) []*config.MCPServer {
 		return []*config.MCPServer{

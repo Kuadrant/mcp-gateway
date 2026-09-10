@@ -151,6 +151,23 @@ func (config *MCPServersConfig) ServerByName(name string) *MCPServer {
 	return nil
 }
 
+// GuardrailsForServer returns the checker, global config, and the named server
+// atomically under one read lock. Used by elicitation response handling, which
+// cannot rely on a pre-snapshotted routing table entry. Server is nil when
+// unknown; checker and global are still returned from the same acquisition.
+func (config *MCPServersConfig) GuardrailsForServer(serverName string) (api.Checker, *api.Config, *MCPServer) {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	var server *MCPServer
+	for _, s := range config.Servers {
+		if s.Name == serverName {
+			server = s
+			break
+		}
+	}
+	return config.guardrailsChecker, config.GlobalGuardrails, server
+}
+
 // ApplyReload replaces servers and guardrails runtime state atomically under
 // one write lock so readers see a consistent snapshot.
 func (config *MCPServersConfig) ApplyReload(

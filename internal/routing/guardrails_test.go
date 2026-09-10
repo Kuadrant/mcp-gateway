@@ -37,6 +37,8 @@ func (f *fakeChecker) CheckResponse(context.Context, string, []byte, []string) (
 	return f.decision, f.err
 }
 
+func (f *fakeChecker) Close() error { return nil }
+
 var errTranslation = errors.New("guardrails: request translation failed")
 
 func TestCheckGuardrailsRequest(t *testing.T) {
