@@ -114,7 +114,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		attribute.String("mcp.server.hostname", serverInfo.Hostname),
 	)
 
-	if annotations, ok := table.ToolAnnotations(string(serverInfo.ID()), toolName); ok {
+	if annotations, ok := table.ToolAnnotations(route.ID, toolName); ok {
 		var parts []string
 		push := func(key string, val *bool) {
 			if val == nil {
@@ -143,7 +143,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		return &Decision{Error: routerErr}
 	}
 
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger)
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), route.GuardrailsConfigIDs, r.Logger)
 	modified, blocked := gc.checkToolCall(ctx, req.Parsed, upstreamToolName)
 	if blocked != nil {
 		return blocked

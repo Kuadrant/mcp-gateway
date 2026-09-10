@@ -282,14 +282,13 @@ func TestNewGuardrailsCheck_Options(t *testing.T) {
 	}}, nil, "", 0, nil, fc)
 
 	t.Run("defaults to JSON errors", func(t *testing.T) {
-		gc := newGuardrailsCheck(cfg, "dummy", nil)
+		gc := newGuardrailsCheck(cfg, []string{"svr-1"}, nil)
 		require.Equal(t, "application/json", gc.contentType)
 		require.Equal(t, []string{"svr-1"}, gc.serverIDs)
-		require.NotNil(t, gc.server)
 	})
 
 	t.Run("withSSEErrors overrides defaults", func(t *testing.T) {
-		gc := newGuardrailsCheck(cfg, "dummy", nil, withSSEErrors())
+		gc := newGuardrailsCheck(cfg, []string{"svr-1"}, nil, withSSEErrors())
 		require.Empty(t, gc.contentType)
 		require.Equal(t, []string{"svr-1"}, gc.serverIDs)
 	})

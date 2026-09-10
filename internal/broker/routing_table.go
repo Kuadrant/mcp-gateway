@@ -17,6 +17,7 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 			Host:                cfg.Hostname,
 			Prefix:              cfg.Prefix,
 			URL:                 cfg.URL,
+			ID:                  string(id),
 			UserSpecificList:    cfg.UserSpecificList,
 			GuardrailsConfigIDs: cfg.GuardrailsConfigIDs,
 			// dual-protocol servers have both set to true; each router

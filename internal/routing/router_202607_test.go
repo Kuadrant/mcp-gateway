@@ -356,6 +356,7 @@ func TestRouter202607_ToolAnnotations(t *testing.T) {
 		Host:      "localhost",
 		Path:      "/mcp",
 		URL:       "http://localhost:8080/mcp",
+		ID:        "annotated::localhost",
 		Stateless: true,
 	}
 	builder.AddTool("mytool", route)

@@ -29,7 +29,6 @@ type guardrailsCheck struct {
 	checker     api.Checker
 	global      *api.Config
 	serverIDs   []string
-	server      *config.MCPServer
 	logger      *slog.Logger
 	buildError  guardrailsToolErrorBuilder
 	contentType string
@@ -46,19 +45,20 @@ func withSSEErrors() guardrailsOption {
 	}
 }
 
-// newGuardrailsCheck loads a consistent guardrails snapshot for serverName
-// from cfg. Defaults are 2026-07-28 JSON errors; pass withSSEErrors for
-// 2025-11-25.
-func newGuardrailsCheck(cfg *config.MCPServersConfig, serverName string, logger *slog.Logger, opts ...guardrailsOption) *guardrailsCheck {
-	var snap config.GuardrailsSnapshot
+// newGuardrailsCheck builds a guardrails check for the given config IDs.
+// cfg.GetGuardrails() is called once under a single read lock; no server
+// scan is performed. Defaults are 2026-07-28 JSON errors; pass withSSEErrors
+// for 2025-11-25.
+func newGuardrailsCheck(cfg *config.MCPServersConfig, configIDs []string, logger *slog.Logger, opts ...guardrailsOption) *guardrailsCheck {
+	var checker api.Checker
+	var global *api.Config
 	if cfg != nil {
-		snap = cfg.GuardrailsSnapshotFor(serverName)
+		checker, global = cfg.GetGuardrails()
 	}
 	gc := &guardrailsCheck{
-		checker:     snap.Checker,
-		global:      snap.Global,
-		serverIDs:   snap.ServerConfigIDs,
-		server:      snap.Server,
+		checker:     checker,
+		global:      global,
+		serverIDs:   configIDs,
 		logger:      logger,
 		buildError:  BuildJSONRPCError,
 		contentType: "application/json",

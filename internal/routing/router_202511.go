@@ -160,7 +160,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	)
 
 	// tool annotations
-	if annotations, ok := table.ToolAnnotations(string(serverInfo.ID()), toolName); ok {
+	if annotations, ok := table.ToolAnnotations(route.ID, toolName); ok {
 		var parts []string
 		push := func(key string, val *bool) {
 			if val == nil {
@@ -186,7 +186,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	mcpReq.ReWriteToolName(upstreamToolName)
 	headers[MCPServerNameHeader] = serverInfo.Name
 
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), serverInfo.Name, r.Logger, withSSEErrors())
+	gc := newGuardrailsCheck(r.RoutingConfig.Load(), route.GuardrailsConfigIDs, r.Logger, withSSEErrors())
 	if _, blocked := gc.checkToolCall(ctx, mcpReq, upstreamToolName); blocked != nil {
 		blocked.SetHeaders = map[string]string{SessionHeader: mcpReq.GetSessionID()}
 		return blocked
@@ -468,13 +468,14 @@ func (r *Router202511) routeElicitationResponse(ctx context.Context, mcpReq *MCP
 	clientID := mcpReq.ID
 	mcpReq.ID = entry.BackendID
 
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), entry.ServerName, r.Logger, withSSEErrors())
-	mcpServerConfig := gc.server
+	cfg := r.RoutingConfig.Load()
+	mcpServerConfig := cfg.ServerByName(entry.ServerName)
 	if mcpServerConfig == nil {
 		r.Logger.ErrorContext(ctx, "server not found for elicitation response", "server", entry.ServerName)
 		mcpotel.SpanError(span, fmt.Errorf("unknown server"), "server not found")
 		return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
 	}
+	gc := newGuardrailsCheck(cfg, mcpServerConfig.GuardrailsConfigIDs, r.Logger, withSSEErrors())
 
 	path, err := mcpServerConfig.Path()
 	if err != nil {

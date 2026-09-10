@@ -139,43 +139,20 @@ func (config *MCPServersConfig) GetGuardrails() (api.Checker, *api.Config) {
 	return config.guardrailsChecker, config.GlobalGuardrails
 }
 
-// GuardrailsSnapshot is a consistent view of guardrails state for one server.
-// Taken under a single lock so checker, global config, and per-server IDs
-// cannot tear across an in-place reload.
-type GuardrailsSnapshot struct {
-	Checker         api.Checker
-	Global          *api.Config
-	ServerConfigIDs []string
-	Server          *MCPServer
-}
-
-// GuardrailsSnapshotFor returns a consistent snapshot for serverName.
-// Server is nil and ServerConfigIDs empty when the server is unknown; Checker
-// and Global are still returned from the same lock acquisition.
-func (config *MCPServersConfig) GuardrailsSnapshotFor(serverName string) GuardrailsSnapshot {
+// ServerByName returns the MCPServer with the given name, or nil if not found.
+func (config *MCPServersConfig) ServerByName(name string) *MCPServer {
 	config.lock.RLock()
 	defer config.lock.RUnlock()
-
-	snap := GuardrailsSnapshot{
-		Checker: config.guardrailsChecker,
-		Global:  config.GlobalGuardrails,
-	}
-	for _, server := range config.Servers {
-		if server.Name != serverName {
-			continue
+	for _, s := range config.Servers {
+		if s.Name == name {
+			return s
 		}
-		snap.Server = server
-		if n := len(server.GuardrailsConfigIDs); n > 0 {
-			snap.ServerConfigIDs = make([]string, n)
-			copy(snap.ServerConfigIDs, server.GuardrailsConfigIDs)
-		}
-		break
 	}
-	return snap
+	return nil
 }
 
-// ApplyReload replaces servers and guardrails runtime state under one write
-// lock so readers using GuardrailsSnapshotFor cannot observe a partial update.
+// ApplyReload replaces servers and guardrails runtime state atomically under
+// one write lock so readers see a consistent snapshot.
 func (config *MCPServersConfig) ApplyReload(
 	servers []*MCPServer,
 	virtualServers []*VirtualServer,
