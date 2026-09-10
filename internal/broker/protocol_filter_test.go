@@ -259,6 +259,22 @@ func TestToolsForProtocol(t *testing.T) {
 		[]string{"tool1", "tool2"}, []string{"tool3"},
 	)
 }
+func TestToolsAndFreshFetchServersForProtocol_UsesOneSnapshot(t *testing.T) {
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+	fresh := userSpecificServer{id: "fresh-server"}
+	b.statelessTools.Store(&protocolCacheEntry[*mcp.Tool]{
+		items:             []*mcp.Tool{{Name: "cached-tool"}},
+		freshFetchServers: []userSpecificServer{fresh},
+	})
+
+	tools, freshServers := b.toolsAndFreshFetchServersForProtocol(true)
+	if len(tools) != 1 || tools[0].Name != "cached-tool" {
+		t.Fatalf("got tools %#v, want cached-tool", tools)
+	}
+	if len(freshServers) != 1 || freshServers[0].id != fresh.id {
+		t.Fatalf("got fresh servers %#v, want %s", freshServers, fresh.id)
+	}
+}
 
 func TestRebuildProtocolCaches_Prompts(t *testing.T) {
 	t.Run("mixed servers with edge cases", func(t *testing.T) {

@@ -451,14 +451,15 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 				}
 				isStateless := isStatelessProtocol(headers)
 
-				// filter by protocol version before user-specific fetches
-				toolsResult.Tools = m.toolsForProtocol(isStateless)
+				// load tools and fresh-fetch servers from one protocol-cache snapshot
+				var freshFetchServers []userSpecificServer
+				toolsResult.Tools, freshFetchServers = m.toolsAndFreshFetchServersForProtocol(isStateless)
 
 				var sessionID string
 				if s := req.GetSession(); s != nil {
 					sessionID = s.ID()
 				}
-				m.FetchUserSpecificTools(ctx, headers, toolsResult)
+				m.fetchUserSpecificTools(ctx, headers, toolsResult, freshFetchServers)
 
 				// collect cache metadata before FilterTools strips kuadrant/id
 				if isStateless {
