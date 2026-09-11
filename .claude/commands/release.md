@@ -89,13 +89,17 @@ Do NOT create the release branch yourself. Wait for the user to confirm before c
 
 Show the diff with `git diff` and ask the user to confirm the version references look correct before proceeding.
 
-### 4. Regenerate OLM bundle
+### 4. Validate generated manifests and Helm chart
 
-If CRD or API type changes are included, run `make generate-all` first.
-
-Then regenerate the bundle:
+If CRD or API type changes are included, run:
 ```bash
-make bundle VERSION={VERSION}
+make generate-all
+```
+
+Validate the chart:
+```bash
+helm lint charts/mcp-gateway
+helm template mcp-gateway charts/mcp-gateway --debug >/dev/null
 ```
 
 ### 5. Review and commit
@@ -104,7 +108,7 @@ Show the full diff of all changes with `git diff`. Present a summary of what cha
 
 Only after confirmation, stage and commit:
 ```bash
-git add -u config/ charts/ docs/ bundle/ scripts/
+git add -u config/ charts/ docs/ scripts/
 git commit -s -m "Update version to {VERSION}"
 ```
 
@@ -146,9 +150,7 @@ Give the user this to run after workflows complete:
 VERSION={VERSION}
 for image in \
   ghcr.io/kuadrant/mcp-gateway:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller-bundle:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller-catalog:v${VERSION}; do
+  ghcr.io/kuadrant/mcp-controller:v${VERSION}; do
   docker manifest inspect "$image" > /dev/null 2>&1 \
     && echo "OK $image" || echo "MISSING $image"
 done
@@ -167,10 +169,9 @@ Docs on main are published to docs.kuadrant.io, so version references must point
 git checkout main && git pull upstream main
 git checkout -b bump-version-{VERSION}
 ./scripts/set-release-version.sh {VERSION}
-make bundle VERSION={VERSION}
+helm lint charts/mcp-gateway
+helm template mcp-gateway charts/mcp-gateway --debug >/dev/null
 ```
-
-Note: main tracks the last **released** version, not `latest`/dev placeholders. Run `make bundle` with `VERSION={VERSION}` set (matching the release branch step), otherwise the CSV (`config/manifests/bases/mcp-gateway.clusterserviceversion.yaml`) and `config/mcp-gateway/components/controller/deployment-controller.yaml` get stamped with `latest`/`0.0.0` placeholders instead of `v{VERSION}` — this breaks the OLM upgrade graph.
 
 `set-release-version.sh` does not update `charts/mcp-gateway/Chart.yaml`. Bump it manually:
 ```bash
@@ -186,7 +187,7 @@ grep -rn "{PREVIOUS_VERSION}" --include="*.yaml" --include="*.yml" --include="*.
 
 Show the diff and ask the user to confirm, then commit:
 ```bash
-git add -u config/ charts/ docs/ bundle/ scripts/
+git add -u config/ charts/ docs/ scripts/
 git commit -s -m "Bump version to {VERSION}"
 ```
 

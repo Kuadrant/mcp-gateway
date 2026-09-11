@@ -62,7 +62,7 @@ GATEWAY_API_VERSION ?= v1.4.1
 KIND_CLUSTER_NAME ?= mcp-gateway
 MCP_GATEWAY_NAMESPACE ?= mcp-system
 
-# Detect the namespace where Kuadrant is installed (kuadrant-system for Helm, mcp-system for OLM).
+# Detect the namespace where Kuadrant is installed (kuadrant-system for the Kuadrant Operator, mcp-system for standalone Helm).
 # Usage in recipes: $(call detect-kuadrant-ns) sets $$KUADRANT_NS
 detect-kuadrant-ns = if kubectl get namespace kuadrant-system >/dev/null 2>&1; then KUADRANT_NS=kuadrant-system; else KUADRANT_NS=mcp-system; fi
 
