@@ -111,6 +111,9 @@ type MCP interface {
 	PromptsCacheMetadata() CacheMetadata
 	// UsesStatelessProtocol returns true if the upstream negotiated 2026-07-28 or later.
 	UsesStatelessProtocol() bool
+	// IsSessionless returns true if the upstream connection has no server-assigned
+	// Mcp-Session-Id (stateless transport), independent of the negotiated version.
+	IsSessionless() bool
 }
 
 // ActiveMCPServer is the handle returned by Start. It exposes read-only

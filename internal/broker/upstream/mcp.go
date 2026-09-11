@@ -461,6 +461,16 @@ func (up *MCPServer) UsesStatelessProtocol() bool {
 	return up.init != nil && up.init.ProtocolVersion >= protocol.Version2026
 }
 
+// IsSessionless reports whether the current upstream connection has no
+// server-assigned Mcp-Session-Id. This is distinct from UsesStatelessProtocol:
+// a 2025 upstream running the streamable-HTTP transport in stateless mode
+// (sessionIdGenerator disabled) issues no session ID. Returns false when not
+// connected — there is no session to classify yet.
+func (up *MCPServer) IsSessionless() bool {
+	session := up.currentSession()
+	return session != nil && session.ID() == ""
+}
+
 // SupportedVersions returns the list of protocol versions this upstream supports.
 // Returns nil if not yet connected (init is nil).
 func (up *MCPServer) SupportedVersions() []string {
@@ -489,6 +499,13 @@ func (up *MCPServer) Ping(ctx context.Context) error {
 	session := up.currentSession()
 	if session == nil {
 		return fmt.Errorf("client not connected")
+	}
+	// A session-less upstream (stateless streamable-HTTP transport, no
+	// Mcp-Session-Id) has no session to ping; the SDK's session ping is
+	// rejected by strict stateless servers. A successful Connect is proof of
+	// connectivity, matching the stateless (2026) path above.
+	if session.ID() == "" {
+		return nil
 	}
 	return session.Ping(ctx, nil)
 }

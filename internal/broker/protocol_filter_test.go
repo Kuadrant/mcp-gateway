@@ -155,6 +155,29 @@ func TestRebuildProtocolCaches(t *testing.T) {
 			wantStatelessCount: 1,
 		},
 		{
+			name: "older 2025 revision (e.g. SDK 1.11 upstream) served on stateful route",
+			tools: []upstream.GatewayTool{
+				{Tool: mcp.Tool{Name: "tool1", InputSchema: objectSchema, Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopToolHandler},
+				{Tool: mcp.Tool{Name: "tool2", InputSchema: objectSchema, Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopToolHandler},
+			},
+			serverVersions: map[config.UpstreamMCPID][]string{
+				"server1": {"2025-03-26"},
+			},
+			wantStatefulCount:  2,
+			wantStatelessCount: 0,
+		},
+		{
+			name: "pre-2025 upstream stays dropped from both sets",
+			tools: []upstream.GatewayTool{
+				{Tool: mcp.Tool{Name: "tool1", InputSchema: objectSchema, Meta: map[string]any{"kuadrant/id": "server1"}}, Handler: upstream.NoopToolHandler},
+			},
+			serverVersions: map[config.UpstreamMCPID][]string{
+				"server1": {"2024-11-05"},
+			},
+			wantStatefulCount:  0,
+			wantStatelessCount: 0,
+		},
+		{
 			name: "tool without kuadrant/id excluded from all sets",
 			tools: []upstream.GatewayTool{
 				{Tool: mcp.Tool{Name: "tool1", InputSchema: objectSchema, Meta: map[string]any{"other": "value"}}, Handler: upstream.NoopToolHandler},
