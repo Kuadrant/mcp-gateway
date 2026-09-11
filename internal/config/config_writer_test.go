@@ -283,3 +283,53 @@ func TestWriteGlobalGuardrails(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteMaxBodyBytes(t *testing.T) {
+	testCases := []struct {
+		name         string
+		maxBodyBytes int64
+	}{
+		{
+			name:         "writes explicit max body bytes",
+			maxBodyBytes: 2 << 20,
+		},
+		{
+			name:         "writes default max body bytes",
+			maxBodyBytes: DefaultMaxBodyBytes,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			srw := newTestSecretReaderWriter(t)
+			ctx := context.Background()
+			namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
+
+			// seed with a different value so updates are exercised.
+			if err := srw.WriteMaxBodyBytes(ctx, tc.maxBodyBytes+1, namespaceName); err != nil {
+				t.Fatalf("seed WriteMaxBodyBytes failed: %v", err)
+			}
+
+			if err := srw.WriteMaxBodyBytes(ctx, tc.maxBodyBytes, namespaceName); err != nil {
+				t.Fatalf("WriteMaxBodyBytes failed: %v", err)
+			}
+
+			secret := &corev1.Secret{}
+			if err := srw.Client.Get(ctx, namespaceName, secret); err != nil {
+				t.Fatalf("failed to get secret: %v", err)
+			}
+
+			configData := secret.StringData[configFileName]
+			if configData == "" {
+				configData = string(secret.Data[configFileName])
+			}
+			var cfg BrokerConfig
+			if err := yaml.Unmarshal([]byte(configData), &cfg); err != nil {
+				t.Fatalf("failed to unmarshal config: %v", err)
+			}
+			if cfg.MaxBodyBytes != tc.maxBodyBytes {
+				t.Fatalf("MaxBodyBytes = %d, want %d", cfg.MaxBodyBytes, tc.maxBodyBytes)
+			}
+		})
+	}
+}

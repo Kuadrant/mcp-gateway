@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
@@ -56,4 +60,18 @@ func (a *app) createRouter() {
 	}
 
 	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.server)
+}
+
+func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {
+	certPool, err := x509.SystemCertPool()
+	if err != nil {
+		certPool = x509.NewCertPool()
+	}
+	if caCertPEM != "" && !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
+		return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    certPool,
+	}, nil
 }

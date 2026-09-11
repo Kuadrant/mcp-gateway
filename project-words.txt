@@ -276,6 +276,7 @@ nicolaka
 nilerr
 nilnil
 nindent
+nemo
 Nlcjpw
 nodeport
 nolint
@@ -371,6 +372,7 @@ spiffe
 SQAY
 Srbu
 SSEJSON
+SSEJSONRPC
 sslip
 startswith
 statefulness

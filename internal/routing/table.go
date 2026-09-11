@@ -23,8 +23,10 @@ type ServerRoute struct {
 	Prefix              string
 	Path                string
 	URL                 string
+	ID                  string // pre-computed server ID (name:prefix:hostname)
 	TokenURLElicitation *TokenURLElicitationRoute
 	UserSpecificList    bool
+	GuardrailsConfigIDs []string
 	Stateless           bool // true when the upstream supports the 2026-07-28 stateless protocol
 	Stateful            bool // true when the upstream supports the 2025-11-25 stateful protocol
 }

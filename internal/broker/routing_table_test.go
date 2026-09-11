@@ -18,6 +18,7 @@ import (
 type resourceCapableMockServer struct {
 	cfg               config.MCPServer
 	supportsResources bool
+	tools             []mcp.Tool
 }
 
 func (m *resourceCapableMockServer) Stop()           {}
@@ -25,7 +26,9 @@ func (m *resourceCapableMockServer) MCPName() string { return m.cfg.Name }
 func (m *resourceCapableMockServer) GetStatus() upstream.ServerValidationStatus {
 	return upstream.ServerValidationStatus{}
 }
-func (m *resourceCapableMockServer) GetManagedTools() []mcp.Tool           { return nil }
+func (m *resourceCapableMockServer) GetManagedTools() []mcp.Tool {
+	return m.tools
+}
 func (m *resourceCapableMockServer) GetServedManagedTool(string) *mcp.Tool { return nil }
 func (m *resourceCapableMockServer) GetToolHints(string) (upstream.ToolHints, bool) {
 	return upstream.ToolHints{}, false
@@ -81,4 +84,27 @@ func TestBuildRoutingTable_ResourcePrefixSkipConditions(t *testing.T) {
 
 	_, ok = table.LookupResourcePrefix("unsup_template.html")
 	assert.False(t, ok, "server that doesn't support resources must not be resource-routable")
+}
+
+func TestBuildRoutingTable_CopiesGuardrailsConfigIDs(t *testing.T) {
+	b := &mcpBrokerImpl{
+		logger: slog.Default(),
+		mcpServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+			"s": &resourceCapableMockServer{
+				cfg: config.MCPServer{
+					Name:                "s",
+					Prefix:              "s_",
+					Hostname:            "s.mcp.local",
+					URL:                 "http://s.mcp.local/mcp",
+					GuardrailsConfigIDs: []string{"pii"},
+				},
+				tools: []mcp.Tool{{Name: "mytool"}},
+			},
+		},
+	}
+
+	table := b.buildRoutingTable()
+	route, ok := table.LookupTool("s_mytool")
+	assert.True(t, ok)
+	assert.Equal(t, []string{"pii"}, route.GuardrailsConfigIDs)
 }

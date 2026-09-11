@@ -13,11 +13,13 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 	for id, up := range m.mcpServers {
 		cfg := up.Config()
 		route := &routing.ServerRoute{
-			Name:             cfg.Name,
-			Host:             cfg.Hostname,
-			Prefix:           cfg.Prefix,
-			URL:              cfg.URL,
-			UserSpecificList: cfg.UserSpecificList,
+			Name:                cfg.Name,
+			Host:                cfg.Hostname,
+			Prefix:              cfg.Prefix,
+			URL:                 cfg.URL,
+			ID:                  string(id),
+			UserSpecificList:    cfg.UserSpecificList,
+			GuardrailsConfigIDs: cfg.GuardrailsConfigIDs,
 			// dual-protocol servers have both set to true; each router
 			// checks its own flag independently
 			Stateless: up.SupportsVersion(protocol.Version2026),

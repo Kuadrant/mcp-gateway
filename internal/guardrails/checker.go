@@ -1,6 +1,6 @@
 // Package guardrails checks tools/call requests and responses against an
-// external guardrails server. Checker owns HTTP transport, timeout, TLS,
-// fail mode, config ID merging, and provider translation.
+// external guardrails server. The NeMo-backed Checker owns HTTP transport,
+// timeout, TLS, fail mode, config ID merging, and provider translation.
 package guardrails
 
 import (
@@ -15,8 +15,34 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/external/nemo"
+)
+
+// Config is the resolved guardrails server config (alias of api.Config).
+type Config = api.Config
+
+// Checker runs guardrails checks against tools/call requests and responses
+// (alias of api.Checker).
+type Checker = api.Checker
+
+// Decision is the outcome of a single guardrails check (alias of api.Decision).
+type Decision = api.Decision
+
+// Status is the outcome kind of a Decision (alias of api.Status).
+type Status = api.Status
+
+// Status values a Decision can carry.
+const (
+	StatusAllowed  = api.StatusAllowed
+	StatusBlocked  = api.StatusBlocked
+	StatusModified = api.StatusModified
+)
+
+// Fail modes applied when the guardrails server is unreachable or errors.
+const (
+	FailModeDeny  = api.FailModeDeny
+	FailModeAllow = api.FailModeAllow
 )
 
 // checksPath is the guardrails server endpoint all checks are sent to.
@@ -38,36 +64,6 @@ const defaultMaxIdleConnsPerHost = 100
 // caller doesn't specify a limit, matching the MCPGatewayExtension
 // maxBodyBytes default (1 MiB).
 const defaultMaxBodyBytes = 1 << 20
-
-// Status is the outcome of a guardrails check.
-type Status string
-
-// Status values a Decision can carry.
-const (
-	StatusAllowed  Status = "allowed"
-	StatusBlocked  Status = "blocked"
-	StatusModified Status = "modified"
-)
-
-// Decision is the outcome of a single guardrails check, translated from the
-// NeMo Guardrails server response into a form the router acts on.
-type Decision struct {
-	Status Status
-	// Content is the text to forward: the original content unless Status
-	// is StatusModified, in which case it's the guardrails modified text.
-	Content string
-	// Reason names the triggering rail. Empty when Status is StatusAllowed.
-	Reason string
-	// Err is set when Status was resolved by failMode after a transport
-	// failure or unparseable response.
-	Err error
-}
-
-// Checker runs guardrails checks against tools/call requests and responses.
-type Checker interface {
-	CheckRequest(ctx context.Context, toolName string, arguments json.RawMessage, configIDs []string) (*Decision, error)
-	CheckResponse(ctx context.Context, toolName string, content []byte, configIDs []string) (*Decision, error)
-}
 
 // provider translates between MCP and a guardrails backend's check
 // request/response schema, and classifies a raw verdict into a Status.
@@ -114,10 +110,18 @@ type nemoChecker struct {
 	provider        provider
 }
 
+var _ Checker = (*nemoChecker)(nil)
+
+// Close releases idle connections held by the checker's HTTP transport.
+func (c *nemoChecker) Close() error {
+	c.httpClient.CloseIdleConnections()
+	return nil
+}
+
 // NewChecker constructs a Checker for the given resolved guardrails config.
 // maxBodyBytes bounds the guardrails server's check response; non-positive
 // values fall back to defaultMaxBodyBytes.
-func NewChecker(cfg *config.GuardrailsConfig, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
+func NewChecker(cfg *Config, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
 	if maxIdleConnsPerHost <= 0 {
 		maxIdleConnsPerHost = defaultMaxIdleConnsPerHost
 	}

@@ -1,6 +1,3 @@
-// Package guardrails validates and parses the guardrails Secret referenced by
-// an MCPGatewayExtension, and checks tools/call requests and responses
-// against an external guardrails server.
 package guardrails
 
 import (
@@ -9,8 +6,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
-
-	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
 // SecretTypeNeMo is the Secret type for NeMo Guardrails configuration.
@@ -18,18 +13,12 @@ import (
 //nolint:gosec // not a credential, just a Secret type identifier
 const SecretTypeNeMo corev1.SecretType = "guardrails/external/nemo"
 
-// Fail modes applied when the guardrails server is unreachable or errors.
-const (
-	FailModeDeny  = "deny"
-	FailModeAllow = "allow"
-)
-
 // configDataKey is the Secret data key holding the provider config YAML.
 const configDataKey = "config.yaml"
 
 // EnsureNeMoConfigData validates a guardrails Secret's type and parses its
-// config.yaml into a GuardrailsConfig, defaulting failMode to deny.
-func EnsureNeMoConfigData(secretType corev1.SecretType, data map[string][]byte) (*config.GuardrailsConfig, error) {
+// config.yaml into a Config, defaulting failMode to deny.
+func EnsureNeMoConfigData(secretType corev1.SecretType, data map[string][]byte) (*Config, error) {
 	if secretType != SecretTypeNeMo {
 		return nil, fmt.Errorf("unsupported guardrails secret type %q, expected %q", secretType, SecretTypeNeMo)
 	}
@@ -39,7 +28,7 @@ func EnsureNeMoConfigData(secretType corev1.SecretType, data map[string][]byte) 
 		return nil, fmt.Errorf("missing required key %q", configDataKey)
 	}
 
-	cfg := &config.GuardrailsConfig{}
+	cfg := &Config{}
 	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", configDataKey, err)
 	}
