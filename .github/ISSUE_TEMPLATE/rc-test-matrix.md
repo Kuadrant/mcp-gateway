@@ -16,12 +16,11 @@ labels: release-testing
 ### Kind (primary)
 
 - [ ] Fresh install via Helm on Kind cluster
-- [ ] Fresh install via OLM on Kind cluster
 
 ### OpenShift (secondary, upstream components only)
 
 - [ ] Fresh install via Helm on OpenShift
-- [ ] Fresh install via OLM on OpenShift
+- [ ] Fresh install via kuadrant-operator (OLM) on OpenShift
 
 ## E2E tests (`make test-e2e`)
 
@@ -44,7 +43,7 @@ Verify key guides work end-to-end with RC version. Report both guide accuracy is
 - [ ] [Authorization](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/authorization.md)
 - [ ] [External MCP Server](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/external-mcp-server.md)
 - [ ] [Virtual MCP Servers](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/virtual-mcp-servers.md)
-- [ ] [OLM Install](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/olm-install.md)
+- [ ] [OLM Install (via kuadrant-operator)](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/olm-install.md)
 - [ ] [OpenTelemetry](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/opentelemetry.md)
 - [ ] [Scaling](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/scaling.md)
 - [ ] [Isolated Gateway Deployment](https://github.com/Kuadrant/mcp-gateway/blob/release-X.Y.Z/docs/guides/isolated-gateway-deployment.md)

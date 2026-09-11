@@ -6,16 +6,9 @@ MCP_GATEWAY_VERSION="${MCP_GATEWAY_VERSION:-0.9.0}"
 MCP_GATEWAY_HOST="${MCP_GATEWAY_HOST:-mcp.apps.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')}"
 MCP_GATEWAY_NAMESPACE="${MCP_GATEWAY_NAMESPACE:-mcp-system}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateway-system}"
-INSTALL_RHCL="${INSTALL_RHCL:-false}"
+INSTALL_RHCL="${INSTALL_RHCL:-true}"
 INSTALL_SERVICE_MESH="${INSTALL_SERVICE_MESH:-true}"
 USE_OCP_INGRESS="${USE_OCP_INGRESS:-true}"
-
-# Note: CATALOG_IMG, INSTALL_PRODUCTIZED_VERSION, and CHANNEL are only
-# applied if MCP Gateway controller is not bundled within RHCL Operator
-# If set to true then MCP Gateway from official Red Hat Catalog is installed
-# CATALOG_IMG env var is ignored, no custom CatalogSource is created
-INSTALL_PRODUCTIZED_VERSION="${INSTALL_PRODUCTIZED_VERSION:-false}"
-CHANNEL="${CHANNEL:-preview}"
 
 # GATEWAY_CLASS_NAME value depends on how Service Mesh was (or is about to be) installed
 if [ "$USE_OCP_INGRESS" = "true" ]; then
@@ -51,7 +44,8 @@ else
   echo "Skipping Service Mesh installation (INSTALL_SERVICE_MESH=$INSTALL_SERVICE_MESH)..."
 fi
 
-# Install Connectivity Link Operator from official Catalog
+# Install Connectivity Link Operator from official Catalog.
+# The operator manages the MCP Gateway controller through its component Helm chart.
 if [ "$INSTALL_RHCL" = "true" ]; then
   echo "Installing Connectivity Link Operator..."
   oc apply -k "$SCRIPT_BASE_DIR/kustomize/connectivity-link/operator/base"
@@ -68,71 +62,6 @@ oc create ns "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | oc apply -f -
 # Create MCP Gateway system namespace
 oc create ns "$MCP_GATEWAY_NAMESPACE" --dry-run=client -o yaml | oc apply -f -
 
-# Check all CSVs/Deployments to see whether RELATED_IMAGE_MCP_GATEWAY is present.
-# If so, MCP Gateway controller is bundled within RHCL Operator, no need to install it separately via OLM
-GATEWAY_IMAGE_ENV='.spec.template.spec.containers[*].env[?(@.name=="RELATED_IMAGE_MCP_GATEWAY")].name'
-DEPLOYMENT_QUERY="{.items[*]${GATEWAY_IMAGE_ENV}}"
-CSV_QUERY="{.items[*].spec.install.spec.deployments[*]${GATEWAY_IMAGE_ENV}}"
-MCP_GATEWAY_MANAGED=$(oc get deployments,csv -A \
-  -o jsonpath="${DEPLOYMENT_QUERY}${CSV_QUERY}")
-if [ -n "$MCP_GATEWAY_MANAGED" ]; then
-  echo "Kuadrant/RHCL Operator manages MCP Gateway, skipping standalone OLM installation..."
-else
-  echo "Installing MCP Gateway Controller via OLM..."
-
-  if [ "$INSTALL_PRODUCTIZED_VERSION" != "true" ]; then
-    if [ -n "${CATALOG_IMG:-}" ]; then
-      sed "s|image: .*|image: ${CATALOG_IMG}|" \
-        "$SCRIPT_BASE_DIR/../deploy/olm/catalogsource.yaml" | oc apply -n openshift-marketplace -f -
-    else
-      oc apply -f "$SCRIPT_BASE_DIR/../deploy/olm/catalogsource.yaml" -n openshift-marketplace
-    fi
-
-    echo "Waiting for CatalogSource to be ready..."
-    retries=0
-    until oc get catalogsource mcp-gateway-catalog -n openshift-marketplace -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null | grep -q "READY"; do
-      retries=$((retries + 1))
-      if [ $retries -ge 60 ]; then
-        echo "Timed out waiting for CatalogSource to be ready"
-        exit 1
-      fi
-      sleep 5
-    done
-  fi
-
-  # Check if OperatorGroup already exists in namespace (only one allowed per namespace)
-  if oc get operatorgroup -n "$MCP_GATEWAY_NAMESPACE" -o name 2>/dev/null | grep -q .; then
-    echo "OperatorGroup already exists in $MCP_GATEWAY_NAMESPACE, skipping creation..."
-  else
-    oc apply -f "$SCRIPT_BASE_DIR/../deploy/olm/operatorgroup.yaml" -n "$MCP_GATEWAY_NAMESPACE"
-  fi
-
-  # patch subscription sourceNamespace for OpenShift
-  sed "s|sourceNamespace: .*|sourceNamespace: openshift-marketplace|" \
-    "$SCRIPT_BASE_DIR/../deploy/olm/subscription.yaml" > /tmp/mcp-subscription.yaml
-
-  # patch subscription channel for OpenShift
-  sed -i "s|channel: .*|channel: $CHANNEL|" /tmp/mcp-subscription.yaml
-
-  # patch subscription source for OpenShift
-  if [ "$INSTALL_PRODUCTIZED_VERSION" = "true" ]; then
-    sed -i "s|source: .*|source: redhat-operators|" /tmp/mcp-subscription.yaml
-  fi
-
-  oc apply -f /tmp/mcp-subscription.yaml -n "$MCP_GATEWAY_NAMESPACE"
-
-  echo "Waiting for controller CSV to succeed..."
-  retries=0
-  until oc get csv -n "$MCP_GATEWAY_NAMESPACE" -l "operators.coreos.com/mcp-gateway.$MCP_GATEWAY_NAMESPACE"="" -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Succeeded"; do
-    retries=$((retries + 1))
-    if [ $retries -ge 60 ]; then
-      echo "Timed out waiting for controller CSV to succeed"
-      exit 1
-    fi
-    sleep 5
-  done
-  echo "MCP Gateway Controller installed via OLM"
-fi
 
 echo "Waiting for Kuadrant CRD to be established..."
 until oc wait crd/kuadrants.kuadrant.io --for condition=established &>/dev/null; do sleep 5; done

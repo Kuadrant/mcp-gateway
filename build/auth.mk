@@ -29,7 +29,7 @@ auth-example-setup-no-vault: cert-manager-install kuadrant-install keycloak-inst
 	@echo ""
 
 .PHONY: auth-example-setup
-auth-example-setup: auth-example-setup-no-vault ## Setup auth example with Vault and token exchange (requires: make local-env-setup or local-env-setup-olm)
+auth-example-setup: auth-example-setup-no-vault ## Setup auth example with Vault and token exchange (requires: make local-env-setup)
 	@echo ""
 	@echo "Installing Vault..."
 	@bin/kustomize build config/vault | bin/yq 'select(.kind == "Deployment").spec.template.spec.containers[0].args += ["-dev-root-token-id=root"] | .' | kubectl apply -f -
