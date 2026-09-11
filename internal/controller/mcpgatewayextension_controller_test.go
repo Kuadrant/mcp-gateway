@@ -199,19 +199,11 @@ func (m *mockConfigWriterDeleter) DeleteConfig(ctx context.Context, namespaceNam
 	return nil
 }
 
-func (m *mockConfigWriterDeleter) EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error {
-	return nil
-}
-
 func (m *mockConfigWriterDeleter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
 	return nil
 }
 
-func (m *mockConfigWriterDeleter) WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
-	return nil
-}
-
-func (m *mockConfigWriterDeleter) WriteGlobalGuardrails(ctx context.Context, guardrailsConfig *config.GuardrailsConfig, namespaceName types.NamespacedName) error {
+func (m *mockConfigWriterDeleter) WriteGatewayConfig(ctx context.Context, gwCfg *config.GatewayConfig, namespaceName types.NamespacedName) error {
 	return nil
 }
 

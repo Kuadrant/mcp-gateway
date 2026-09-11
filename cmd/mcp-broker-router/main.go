@@ -52,8 +52,7 @@ type commonConfig struct {
 type routerConfig struct {
 	// commonConfig is to be considered immutable
 	commonConfig
-	addr               string
-	maxRequestBodySize int
+	addr string
 }
 
 type brokerConfig struct {
@@ -158,7 +157,6 @@ func parseFlags() *app {
 
 	// router-specific flags
 	flag.StringVar(&rc.addr, "mcp-router-address", "0.0.0.0:50051", "The address for MCP router")
-	flag.IntVar(&rc.maxRequestBodySize, "max-request-body-size", 5242880, "max request body size in bytes for the ext_proc router. Default 5MB.")
 
 	flag.Parse()
 

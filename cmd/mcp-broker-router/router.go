@@ -13,11 +13,10 @@ func (a *app) createRouter() {
 
 	a.grpcServer = grpc.NewServer()
 	a.server = &mcpRouter.ExtProcServer{
-		Logger:             a.logger.With("component", "router"),
-		SessionCache:       a.sessionCache,
-		ElicitationMap:     a.elicitMap,
-		MaxRequestBodySize: cfg.maxRequestBodySize,
-		EnableA2A:          cfg.enableA2A,
+		Logger:         a.logger.With("component", "router"),
+		SessionCache:   a.sessionCache,
+		ElicitationMap: a.elicitMap,
+		EnableA2A:      cfg.enableA2A,
 	}
 
 	if a.mcpConfig == nil {
