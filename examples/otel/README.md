@@ -10,6 +10,7 @@ This directory contains Kubernetes manifests for deploying an OpenTelemetry obse
 | **Tempo** | Trace storage and query | 3200 (HTTP), 4317 (OTLP) |
 | **Loki** | Log storage and query (with trace correlation) | 3100 |
 | **Grafana** | Visualization and dashboards | 3000 |
+| **Prometheus** | Optional standalone scraper for gateway and Istio metrics | 9090 |
 
 ## Setup Flow
 
@@ -19,202 +20,111 @@ The observability stack integrates with the MCP Gateway, Istio, and optionally K
 
 ```bash
 make local-env-setup                          # 1. Create Kind cluster
-make otel ISTIO_TRACING=1 AUTH_TRACING=1      # 2. Deploy OTEL + auth stack + enable all tracing
-make otel-status                              # 3. Check status of OTEL stack
-make otel-forward                             # 4. Port-forward Grafana
-make otel-delete                              # 5. Cleanup
+make otel ISTIO_TRACING=1 AUTH_TRACING=1      # 2. Deploy OTEL + auth stack and enable tracing
+kubectl apply -f examples/otel/prometheus.yaml # 3. Optional: deploy standalone Prometheus
+make otel-status                              # 4. Check status of the OTEL stack
+make otel-forward                             # 5. Port-forward Grafana only
+make otel-delete                              # 6. Tear down the OTEL stack
 ```
 
-When `AUTH_TRACING=1` is set, `make otel` will automatically install the auth stack
-(cert-manager, Kuadrant, Keycloak) if not already present via `make auth-example-setup`.
+`make otel` applies exactly these local stack manifests: `namespace.yaml`, `tempo.yaml`,
+`loki.yaml`, `otel-collector.yaml`, and `grafana.yaml`. It waits for the deployments in
+the `observability` namespace, configures the gateway to export OTLP telemetry to the
+collector over HTTP, and then waits for the gateway rollout. It does **not** deploy
+standalone Prometheus.
 
-When `AUTH_TRACING=1` is set, `make otel` will also:
-1. Install Prometheus Operator CRDs (ServiceMonitor and PodMonitor) -- required by the
-   kuadrant-operator `ObservabilityReconciler`
-2. Patch the Kuadrant CR with `spec.observability.tracing.defaultEndpoint` pointing to the
-   OTEL Collector
-3. Restart the kuadrant-operator so it can reconcile cleanly and create:
+Apply the standalone Prometheus deployment separately when you want the provisioned
+Grafana Prometheus datasource and MCP Gateway metrics dashboard:
+
+```bash
+kubectl apply -f examples/otel/prometheus.yaml
+```
+
+That manifest creates a regular Prometheus `Deployment`, `Service`, service account, and
+RBAC. It scrapes MCP Gateway pods on port 9090 and Istio gateway pods on port 15090. It
+is not a Prometheus Operator installation and does not create or require
+`ServiceMonitor` or `PodMonitor` resources. An external Prometheus can be used instead,
+but it must have equivalent scrape targets and the Grafana Prometheus datasource must
+point to that Prometheus instance.
+
+When `ISTIO_TRACING=1` is set, `make otel` applies `istio-telemetry.yaml` and patches the
+Istio default mesh configuration to enable tracing and send spans to the collector.
+
+When `AUTH_TRACING=1` is set, `make otel` will automatically install the auth example
+(cert-manager, Kuadrant, Keycloak) if it is not already present via
+`make auth-example-setup`. It also:
+
+1. Patches Authorino to export tracing to the OTEL collector.
+2. Applies the Prometheus Operator `ServiceMonitor` and `PodMonitor` CRDs required by
+   the Kuadrant `ObservabilityReconciler`. These CRDs are separate from the standalone
+   Prometheus deployment described above.
+3. Patches the Kuadrant CR with `spec.observability.tracing.defaultEndpoint` pointing to
+   the OTEL Collector.
+4. Restarts the kuadrant-operator so it can reconcile cleanly and create:
    - A `tracing-service` entry in the WasmPlugin `pluginConfig.services`
    - An `observability.tracing` section in the WasmPlugin config
    - A `kuadrant-tracing-*` EnvoyFilter for the tracing cluster
 
+### Teardown and cleanup limitations
 
-   
-## MCP Router Spans
-
-The MCP Router (ext_proc) emits the following spans. All spans are children of the root
-`mcp-router.process` span, which covers the full ext_proc stream lifecycle for a single
-request (request headers -> request body -> response headers).
-
-| Span | When | Description |
-|------|------|-------------|
-| `mcp-router.process` | Every ext_proc stream | Root span. Starts when request headers arrive, ends after response headers are processed. |
-| `mcp-router.route-decision` | Request body parsed | Routing decision: tool-call, prompt-get, elicitation-response, or broker. |
-| `mcp-router.broker-passthrough` | Non-routed requests | Pass-through to broker (initialize, tools/list, prompts/list, notifications). |
-| `mcp-router.tool-call` | `tools/call` requests | Full tool call handling including session and server resolution. |
-| `mcp-router.broker.get-server-info` | Inside tool-call | Resolve which backend server owns the tool. |
-| `mcp-router.prompt-get` | `prompts/get` requests | Full prompt get handling including session and server resolution. |
-| `mcp-router.broker.get-server-info-by-prompt` | Inside prompt-get | Resolve which backend server owns the prompt. |
-| `mcp-router.elicitation-response` | Elicitation responses | Routes client elicitation responses to the correct backend server. |
-| `mcp-router.session-cache.get` | Inside tool-call or prompt-get | Look up an existing backend session in the cache. |
-| `mcp-router.session-init` | Cache miss | Hairpin initialize request through the gateway to the backend MCP server. |
-| `mcp-router.session-cache.store` | After session-init | Store the new backend session in the cache. |
-
-### MCP Broker Spans
-
-The MCP Broker emits spans for request handling, capability filtering, and upstream management.
-
-| Span | When | Description |
-|------|------|-------------|
-| `mcp-broker.handle-request` | Every MCP request to the broker | Wraps the full request lifecycle (initialize, tools/list, prompts/list, etc.). |
-| `mcp-broker.tools-list` | `tools/list` response filtering | Filters tools by authorization, virtual server, and removes gateway metadata. |
-| `mcp-broker.prompts-list` | `prompts/list` response filtering | Filters prompts by authorization, virtual server, and removes gateway metadata. |
-| `mcp-broker.upstream-manage` | Periodic health check tick | Backend connection management: connect, ping, tool/prompt discovery. |
-
-### Span Hierarchy
-
-The router and broker run in the same process. Broker spans are correlated to the
-router trace via W3C Trace Context propagation (the `traceContextMiddleware` extracts
-`traceparent` from the forwarded HTTP request), so they appear in the same trace but
-are **not** direct parent-child spans of the router spans.
-
-```text
-mcp-router.process
-├── mcp-router.route-decision
-│   ├── mcp-router.broker-passthrough        (if initialize, tools/list, prompts/list, etc.)
-│   ├── mcp-router.tool-call                 (if tools/call)
-│   │   ├── mcp-router.broker.get-server-info
-│   │   ├── mcp-router.session-cache.get
-│   │   ├── mcp-router.session-init          (if cache miss)
-│   │   └── mcp-router.session-cache.store   (if cache miss)
-│   ├── mcp-router.prompt-get                (if prompts/get)
-│   │   ├── mcp-router.broker.get-server-info-by-prompt
-│   │   ├── mcp-router.session-cache.get
-│   │   ├── mcp-router.session-init          (if cache miss)
-│   │   └── mcp-router.session-cache.store   (if cache miss)
-│   └── mcp-router.elicitation-response      (if elicitation response)
-
-mcp-broker.handle-request                    (correlated via traceparent, not a child of router spans)
-├── mcp-broker.tools-list                    (if tools/list)
-└── mcp-broker.prompts-list                  (if prompts/list)
-
-mcp-broker.upstream-manage                   (periodic, not request-scoped)
-```
-
-### Span Attributes
-
-Attributes follow the [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#server).
-
-#### Root span (`mcp-router.process`)
-
-| Attribute | Source | Description |
-|-----------|--------|-------------|
-| `http.method` | `:method` header | HTTP method (POST) |
-| `http.path` | `:path` header | Request path (/mcp) |
-| `http.request_id` | `x-request-id` header | Envoy request ID |
-| `mcp.method.name` | JSON-RPC `method` field | MCP method (initialize, tools/call, tools/list, etc.) |
-| `gen_ai.tool.name` | JSON-RPC `params.name` | Tool name (only for tools/call) |
-| `jsonrpc.request.id` | JSON-RPC `id` field | JSON-RPC request ID |
-| `jsonrpc.protocol.version` | JSON-RPC `jsonrpc` field | Always "2.0" |
-| `gen_ai.operation.name` | JSON-RPC `method` field | Same as mcp.method.name |
-| `mcp.session.id` | `mcp-session-id` header | Gateway session ID |
-| `client.address` | `x-forwarded-for` header | Client IP address |
-| `http.status_code` | `:status` response header | Response status code |
-
-#### Route decision span (`mcp-router.route-decision`)
-
-| Attribute | Description |
-|-----------|-------------|
-| `mcp.method.name` | MCP method |
-| `mcp.route` | Routing decision: `tool-call`, `prompt-get`, `elicitation-response`, or `broker` |
-
-#### Tool call span (`mcp-router.tool-call`)
-
-| Attribute | Description |
-|-----------|-------------|
-| `gen_ai.tool.name` | Tool name from the request |
-| `mcp.session.id` | Gateway session ID |
-| `mcp.server` | Resolved backend server name |
-| `mcp.server.hostname` | Resolved backend server hostname |
-
-#### Prompt get span (`mcp-router.prompt-get`)
-
-| Attribute | Description |
-|-----------|-------------|
-| `mcp.prompt.name` | Prompt name from the request |
-| `mcp.session.id` | Gateway session ID |
-| `mcp.server` | Resolved backend server name |
-| `mcp.server.hostname` | Resolved backend server hostname |
-
-#### Broker spans
-
-| Attribute | Span | Description |
-|-----------|------|-------------|
-| `mcp.method` | `handle-request` | MCP method being processed |
-| `mcp.session.id` | `handle-request`, `tools-list`, `prompts-list` | Gateway session ID |
-| `mcp.tools.count` | `tools-list` | Number of tools after filtering |
-| `mcp.prompts.count` | `prompts-list` | Number of prompts after filtering |
-| `mcp.server` | `upstream-manage` | Backend server name |
-
-#### Error attributes
-
-On error, spans include:
-
-| Attribute | Description |
-|-----------|-------------|
-| `error.type` | Error classification (e.g. `tool_not_found`, `prompt_not_found`, `invalid_session`, `session_cache_error`) |
-| `error_source` | Component that generated the error (`ext-proc` or `backend`) |
-| `http.status_code` | HTTP status code returned |
-
-## Configuration
-
-### Environment Variables
-
-The MCP Gateway reads these environment variables to configure OpenTelemetry export.
-When no endpoint is configured, OTel is completely disabled (zero overhead).
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint for all signals | (none - disabled) |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Override endpoint for traces | Falls back to base |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Override endpoint for logs | Falls back to base |
-| `OTEL_EXPORTER_OTLP_INSECURE` | Disable TLS | `false` |
-| `OTEL_SERVICE_NAME` | Service name in traces | `mcp-gateway` |
-| `OTEL_SERVICE_VERSION` | Service version | Build version |
-
-### Manual Configuration (without make targets)
+`make otel-delete` deletes the observability namespace resources (Grafana, the collector,
+Loki, and Tempo), deletes the Istio telemetry resource, and resets Istio mesh tracing.
+It does not remove the OTLP environment variables from the gateway deployment. Remove
+them separately, using the namespace for the local gateway:
 
 ```bash
-kubectl set env deployment/mcp-gateway -n mcp-system \
-  OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4318" \
-  OTEL_EXPORTER_OTLP_INSECURE="true"
+kubectl set env deployment/mcp-gateway -n <MCP_GATEWAY_NAMESPACE> \
+  OTEL_EXPORTER_OTLP_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_INSECURE-
 ```
 
-### Trace Context Propagation
+If the optional Prometheus manifest was applied, its namespaced objects are removed when
+the `observability` namespace is deleted, but `make otel-delete` does not explicitly
+delete that manifest's cluster-scoped `prometheus-mcp` role and role binding. Remove
+those separately if a completely clean cluster is required.
 
-The router extracts W3C Trace Context (`traceparent` header) from incoming Envoy
-headers. When Istio tracing is enabled, Envoy injects this header automatically,
-so router spans join the Istio trace. You can also set `traceparent` manually from
-outside the mesh to create end-to-end traces.
+`AUTH_TRACING=1` also changes Authorino and Kuadrant tracing configuration. `make
+otel-delete` does not reverse those patches, remove the auth example installed by
+`auth-example-setup`, or remove the Prometheus Operator CRDs.
+
+## Telemetry reference
+
+The [OpenTelemetry integration guide](../../docs/guides/opentelemetry.md) is the
+canonical reference for gateway configuration, spans, attributes, errors, trace
+propagation, and metrics. This README covers only the local observability stack,
+traffic generation, and Grafana workflows.
 
 ## Architecture
 
 ```text
-┌─────────────────┐     ┌──────────────────────┐     ┌─────────────┐
-│   MCP Gateway   │────▶│   OTEL Collector     │────▶│    Tempo    │
-│                 │     │                      │     │  (traces)   │
-│ OTEL_EXPORTER_  │     │  Receives OTLP       │     └─────────────┘
-│ OTLP_ENDPOINT=  │     │  Routes to backends  │
-│ http://otel-    │     │                      │     ┌─────────────┐
-│ collector:4318  │     │                      │────▶│    Loki     │
-└─────────────────┘     │                      │     │   (logs)    │
-                        └──────────────────────┘     └─────────────┘
-                                                             │
-                                                             ▼
-                                                      ┌─────────────┐
-                                                      │   Grafana   │
-                                                      │  (query UI) │
-                                                      └─────────────┘
+                                      ┌─────────────┐
+                                      │    Tempo    │
+                                      │  (traces)   │
+                                      └─────────────┘
+                                             ▲
+                                             │
+┌─────────────────┐     ┌───────────────────┴──┐     ┌─────────────┐
+│   MCP Gateway   │────▶│   OTEL Collector      │────▶│    Loki     │
+│ OTLP endpoint   │     │   traces and logs     │     │   (logs)    │
+└────────┬────────┘     └──────────────────────┘     └──────┬──────┘
+         │                                                    │
+         │ /metrics:9090                                     ▼
+         │                                             ┌─────────────┐
+         │                                             │   Grafana   │
+         │                                             │   (3000)    │
+         │                                             └──────┬──────┘
+         ▼                                                    ▲
+┌─────────────────┐                                           │
+│   Prometheus    │───────────────────────────────────────────┘
+│ (optional, 9090)│
+└────────┬────────┘
+         ▲
+         │ /stats/prometheus:15090
+┌────────┴────────┐
+│  Istio gateway  │
+└─────────────────┘
 ```
 
 ## Testing
@@ -247,7 +157,11 @@ curl -s -X POST http://localhost:8001/mcp \
 rm -f /tmp/mcp_headers
 ```
 
-### Generate Traffic with Trace Propagation
+### Generate Traffic with Trace Propagation (sslip.io hostname example)
+
+The following commands intentionally use the local sslip.io gateway hostname
+`http://mcp.127-0-0-1.sslip.io:8001/mcp` rather than the local port-forward endpoint.
+Use `http://localhost:8001/mcp` instead when you do not need to exercise the hostname.
 
 Pass a `traceparent` header to create a known trace ID you can search for in Tempo:
 
@@ -277,9 +191,13 @@ curl -s -X POST http://mcp.127-0-0-1.sslip.io:8001/mcp \
 echo "Search for trace: $TRACE_ID"
 ```
 
-### Generate Authenticated Traffic (AUTH_TRACING=1)
+### Generate Authenticated Traffic (AUTH_TRACING=1; sslip.io hostname example)
 
 #### Prerequisites
+
+The Keycloak commands and gateway requests in this section use the local sslip.io
+hostnames from the auth example. The equivalent gateway port-forward endpoint is
+`http://localhost:8001/mcp`.
 
 Enable direct access grants on the Keycloak client:
 
@@ -348,18 +266,38 @@ echo "Search for trace: $TRACE_ID"
 
 ### View Traces in Tempo
 
-1. Open http://localhost:3000
-2. Go to **Explore** (compass icon in left sidebar)
-3. Select **Tempo** as the datasource
-4. Click **Search** tab
-5. Set Service Name to `mcp-gateway`
-6. Click **Run query**
-7. Click on a trace to see the span waterfall
+1. Open http://localhost:3000.
+2. Go to **Explore** (compass icon in the left sidebar).
+3. Select **Tempo** as the datasource.
+4. Click the **Search** tab.
+5. Set **Service Name** to `mcp-gateway`.
+6. Click **Run query**.
+7. Click a trace to see the span waterfall.
 
 ### View Logs with Trace Correlation
 
-1. In Grafana, go to **Explore**
-2. Select **Loki** as the datasource
-3. Enter query: `{job="mcp-gateway"}`
-4. Expand a log line -- look for `trace_id` and `span_id` fields
-5. Click the `trace_id` value to jump directly to that trace in Tempo
+1. In Grafana, go to **Explore**.
+2. Select **Loki** as the datasource.
+3. Enter the query `{job="mcp-gateway"}`.
+4. Expand a log line and look for `trace_id` and `span_id` fields.
+5. Click the `trace_id` value to jump directly to that trace in Tempo.
+
+### View Metrics in Grafana
+
+1. Apply `examples/otel/prometheus.yaml` or configure an external Prometheus with the
+   equivalent gateway and Istio scrape targets.
+2. Run `make otel-forward`. This target forwards **Grafana only** at
+   http://localhost:3000; it does not forward Prometheus or the gateway metrics port.
+3. Open http://localhost:3000 and go to **Dashboards → MCP Gateway Metrics**.
+4. Select the provisioned **Prometheus** datasource and choose a `server_name` when
+   inspecting per-upstream panels.
+5. The **Tools Discovered per Server** panel reads `mcp_broker_tools_discovered`;
+   see the [OpenTelemetry integration guide](../../docs/guides/opentelemetry.md#broker-metrics)
+   for the metric definition and behavior.
+
+To inspect the raw gateway metrics without Grafana, use a separate port-forward:
+
+```bash
+kubectl port-forward -n mcp-system deployment/mcp-gateway 9090:9090
+curl -s http://localhost:9090/metrics | grep mcp_broker_tools_discovered
+```
