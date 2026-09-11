@@ -587,6 +587,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 			}
 		} else if needsUpdate, reason := httpRouteNeedsUpdate(httpRoute, existingHTTPRoute); needsUpdate {
 			r.log.Info("updating gateway httproute", "namespace", mcpExt.Namespace, "reason", reason)
+			existingHTTPRoute.Labels = mergeMetadata(httpRoute.Labels, existingHTTPRoute.Labels)
+			existingHTTPRoute.Annotations = mergeMetadata(httpRoute.Annotations, existingHTTPRoute.Annotations)
 			existingHTTPRoute.Spec.ParentRefs = httpRoute.Spec.ParentRefs
 			existingHTTPRoute.Spec.Hostnames = httpRoute.Spec.Hostnames
 			existingHTTPRoute.Spec.Rules = httpRoute.Spec.Rules
@@ -885,8 +887,39 @@ func (r *MCPGatewayExtensionReconciler) buildGatewayHTTPRoute(mcpExt *mcpv1.MCPG
 	}
 }
 
+// metadataIsSubset returns true when every key in desired exists in existing
+// with the same value. Extra keys in existing (user-applied) are ignored.
+func metadataIsSubset(desired, existing map[string]string) bool {
+	for k, v := range desired {
+		if existing[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeMetadata returns a copy of existing with every key from desired
+// set (overwriting if already present). User-applied keys that are not
+// in desired are preserved.
+func mergeMetadata(desired, existing map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(desired))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range desired {
+		merged[k] = v
+	}
+	return merged
+}
+
 // httpRouteNeedsUpdate checks if the HTTPRoute needs to be updated
 func httpRouteNeedsUpdate(desired, existing *gatewayv1.HTTPRoute) (bool, string) {
+	if !metadataIsSubset(desired.Labels, existing.Labels) {
+		return true, fmt.Sprintf("labels changed: %v -> %v", existing.Labels, desired.Labels)
+	}
+	if !metadataIsSubset(desired.Annotations, existing.Annotations) {
+		return true, fmt.Sprintf("annotations changed: %v -> %v", existing.Annotations, desired.Annotations)
+	}
 	if !equality.Semantic.DeepEqual(desired.Spec.ParentRefs, existing.Spec.ParentRefs) {
 		return true, "parentRefs changed"
 	}
@@ -1001,6 +1034,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileTokensHTTPRoute(ctx context.Con
 
 	if needsUpdate, reason := httpRouteNeedsUpdate(desired, existing); needsUpdate {
 		r.log.Info("updating tokens httproute", "namespace", mcpExt.Namespace, "reason", reason)
+		existing.Labels = mergeMetadata(desired.Labels, existing.Labels)
+		existing.Annotations = mergeMetadata(desired.Annotations, existing.Annotations)
 		existing.Spec.ParentRefs = desired.Spec.ParentRefs
 		existing.Spec.Hostnames = desired.Spec.Hostnames
 		existing.Spec.Rules = desired.Spec.Rules
