@@ -60,6 +60,23 @@ func (s *ExtProcServer) requestBodyLimit() int {
 	return limit
 }
 
+func canSkip2026RequestBody(cfg *config.MCPServersConfig) bool {
+	if cfg == nil {
+		return false
+	}
+
+	_, globalGuardrails := cfg.GetGuardrails()
+	if globalGuardrails != nil && len(globalGuardrails.ConfigIDs) > 0 {
+		return false
+	}
+	for _, server := range cfg.ListServers() {
+		if server.Prefix != "" || len(server.GuardrailsConfigIDs) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // HandleRequestHeaders sets the gateway authority and extracts the verified sub claim.
 func (s *ExtProcServer) HandleRequestHeaders(ctx context.Context, headers *extProcV3.HttpHeaders) ([]*extProcV3.ProcessingResponse, error) {
 	s.Logger.DebugContext(ctx, "Request Handler: HandleRequestHeaders called")
@@ -100,6 +117,47 @@ func decisionToResponse(d *routing.Decision) []*extProcV3.ProcessingResponse {
 		rb.WithRequestBodyHeadersResponse(headers)
 	}
 	return rb.Build()
+}
+
+func headerDecisionToResponse(d *routing.Decision, fallbackAuthority, verifiedSub string) []*extProcV3.ProcessingResponse {
+	if d.Error != nil {
+		return decisionToResponse(d)
+	}
+
+	headers := NewHeaders()
+	if d.Authority == "" {
+		headers.WithAuthority(fallbackAuthority)
+	}
+	if verifiedSub != "" {
+		headers.WithVerifiedSub(verifiedSub)
+	}
+	setHeaders := append(headers.Build(), decisionHeaders(d)...)
+	removeHeaders := append([]string(nil), routing.InternalOnlyHeaders...)
+	reservedHeaders := []string{routing.SessionHeader, "mcp-init-host", routing.RoutingKey}
+	for _, header := range append(reservedHeaders, d.UnsetHeaders...) {
+		found := false
+		for _, existing := range removeHeaders {
+			if header == existing {
+				found = true
+				break
+			}
+		}
+		if !found {
+			removeHeaders = append(removeHeaders, header)
+		}
+	}
+	responses := NewResponse().WithRequestHeadersResponse(setHeaders, removeHeaders...).Build()
+	if len(responses) > 0 {
+		responses[0].ModeOverride = &extprochttp.ProcessingMode{
+			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
+			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
+			RequestBodyMode:     extprochttp.ProcessingMode_NONE,
+			ResponseBodyMode:    extprochttp.ProcessingMode_NONE,
+			RequestTrailerMode:  extprochttp.ProcessingMode_SKIP,
+			ResponseTrailerMode: extprochttp.ProcessingMode_SKIP,
+		}
+	}
+	return responses
 }
 
 // decisionHeaders merges Authority and Path from the decision into the
@@ -271,6 +329,55 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				s.Logger.DebugContext(ctx, "[ext_proc] Process: A2A request headers", "request id", requestID, "path", requestPath, "method", method)
 				resp := responseBuilder.WithRequestHeadersResponse(a2aHeaders.Build(), a2aInternalHeaders...).Build()
 				for _, response := range resp {
+					if err := stream.Send(response); err != nil {
+						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
+						recordError(span, err, 500)
+						return err
+					}
+				}
+				continue
+			}
+
+			effectiveVersion := protocolVersion
+			if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
+				effectiveVersion = protocol.Version2025
+			}
+			var routingConfig *config.MCPServersConfig
+			if method == http.MethodPost && !endOfStream && mcpMethodHeader != "" &&
+				effectiveVersion == protocol.Version2026 && s.Router202607 != nil {
+				routingConfig = s.RoutingConfig.Load().RoutingSnapshot()
+			}
+			if canSkip2026RequestBody(routingConfig) {
+				rawHeaders := headerMapToMap(localRequestHeaders.Headers)
+				verifiedSub, _ := internaljwt.ExtractSubClaim(rawHeaders[routing.AuthorizationHeader])
+				routingReq := &routing.Request{
+					MCPMethod:       mcpMethodHeader,
+					MCPName:         mcpNameHeader,
+					ProtocolVersion: effectiveVersion,
+					Authority:       routingConfig.MCPGatewayExternalHostname,
+					Path:            requestPath,
+					RequestID:       requestID,
+					RawHeaders:      rawHeaders,
+				}
+				var decision *routing.Decision
+				if snapshotRouter, ok := s.Router202607.(interface {
+					RouteRequestWithConfig(context.Context, *routing.Request, *config.MCPServersConfig) *routing.Decision
+				}); ok {
+					decision = snapshotRouter.RouteRequestWithConfig(ctx, routingReq, routingConfig)
+				} else {
+					decision = s.Router202607.RouteRequest(ctx, routingReq)
+				}
+				if decision.Error == nil {
+					mcpRequest = &routing.MCPRequest{
+						Method:     mcpMethodHeader,
+						Params:     map[string]any{"name": mcpNameHeader},
+						Headers:    rawHeaders,
+						ServerName: decision.SetHeaders[routing.MCPServerNameHeader],
+					}
+				}
+				responses := headerDecisionToResponse(decision, routingConfig.MCPGatewayExternalHostname, verifiedSub)
+				for _, response := range responses {
+					s.Logger.DebugContext(ctx, "sending header-only routing instructions to envoy", "response", response)
 					if err := stream.Send(response); err != nil {
 						s.Logger.ErrorContext(ctx, "error sending response", "error", err)
 						recordError(span, err, 500)
