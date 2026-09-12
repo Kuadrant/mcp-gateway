@@ -144,7 +144,20 @@ func TestProcess_HappyPath(t *testing.T) {
 
 func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
 	srv := newTestServer(t)
-	srv.Router202607 = &fixedDecisionRouter{decision: &routing.Decision{
+	initialConfig := &config.MCPServersConfig{
+		MCPGatewayExternalHostname: "gateway.example.test",
+		Servers: []*config.MCPServer{{
+			Name:     "backend",
+			Hostname: "backend.example.test",
+		}},
+	}
+	reloadedConfig := &config.MCPServersConfig{
+		MCPGatewayExternalHostname: "reloaded.example.test",
+		GlobalGuardrails:           &guardrailsapi.Config{ConfigIDs: []string{"rail"}},
+	}
+	srv.RoutingConfig.Store(initialConfig)
+	var routingSnapshot *config.MCPServersConfig
+	srv.Router202607 = &snapshotDecisionRouter{decision: &routing.Decision{
 		Authority: "backend.example.test",
 		Path:      "/mcp",
 		SetHeaders: map[string]string{
@@ -154,15 +167,11 @@ func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
 			"mcp-name":                  "echo",
 		},
 		UnsetHeaders: routing.InternalOnlyHeaders,
+	}, onRoute: func(cfg *config.MCPServersConfig) {
+		routingSnapshot = cfg
+		srv.RoutingConfig.Store(reloadedConfig)
 	}}
 	srv.ResponseHandler2026 = &stubResponseHandler{}
-	srv.RoutingConfig.Store(&config.MCPServersConfig{
-		MCPGatewayExternalHostname: "gateway.example.test",
-		Servers: []*config.MCPServer{{
-			Name:     "backend",
-			Hostname: "backend.example.test",
-		}},
-	})
 
 	mode := &extprochttp.ProcessingMode{
 		RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
@@ -183,6 +192,9 @@ func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
 						{Key: "mcp-protocol-version", RawValue: []byte(protocol.Version2026)},
 						{Key: "mcp-method", RawValue: []byte(routing.MethodToolCall)},
 						{Key: "mcp-name", RawValue: []byte("echo")},
+						{Key: routing.SessionHeader, RawValue: []byte("client-session")},
+						{Key: "mcp-init-host", RawValue: []byte("client.example.test")},
+						{Key: routing.RoutingKey, RawValue: []byte("client-key")},
 					}}},
 				},
 			},
@@ -200,7 +212,8 @@ func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
 								{Header: &corev3.HeaderValue{Key: routing.ToolHeader, RawValue: []byte("echo")}},
 								{Header: &corev3.HeaderValue{Key: "mcp-name", RawValue: []byte("echo")}},
 							},
-							RemoveHeaders: routing.InternalOnlyHeaders,
+							RemoveHeaders: append(append([]string(nil), routing.InternalOnlyHeaders...),
+								routing.SessionHeader, "mcp-init-host", routing.RoutingKey),
 						},
 					}},
 				},
@@ -211,6 +224,11 @@ func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
 
 	require.NoError(t, srv.Process(mock))
 	mock.verifyAllResponsesConsumed()
+	require.NotSame(t, initialConfig, routingSnapshot)
+	require.Equal(t, "gateway.example.test", routingSnapshot.MCPGatewayExternalHostname)
+	_, snapshotGuardrails := routingSnapshot.GetGuardrails()
+	require.Nil(t, snapshotGuardrails)
+	require.Same(t, reloadedConfig, srv.RoutingConfig.Load())
 }
 
 func TestCanSkip2026RequestBody(t *testing.T) {
@@ -229,7 +247,7 @@ func TestCanSkip2026RequestBody(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := &ExtProcServer{}
 			srv.RoutingConfig.Store(tt.config)
-			require.Equal(t, tt.want, srv.canSkip2026RequestBody())
+			require.Equal(t, tt.want, canSkip2026RequestBody(srv.RoutingConfig.Load()))
 		})
 	}
 }
@@ -796,6 +814,20 @@ func (s *stubRouter) RouteRequest(_ context.Context, _ *routing.Request) *routin
 type fixedDecisionRouter struct{ decision *routing.Decision }
 
 func (s *fixedDecisionRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
+	return s.decision
+}
+
+type snapshotDecisionRouter struct {
+	decision *routing.Decision
+	onRoute  func(*config.MCPServersConfig)
+}
+
+func (s *snapshotDecisionRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
+	return &routing.Decision{Error: &routing.Error{StatusCode: 500, Message: "snapshot route not used"}}
+}
+
+func (s *snapshotDecisionRouter) RouteRequestWithConfig(_ context.Context, _ *routing.Request, cfg *config.MCPServersConfig) *routing.Decision {
+	s.onRoute(cfg)
 	return s.decision
 }
 
