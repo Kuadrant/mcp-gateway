@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -13,9 +14,12 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	guardrailsapi "github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/stretchr/testify/require"
@@ -136,6 +140,98 @@ func TestProcess_HappyPath(t *testing.T) {
 	err := srv.Process(mock)
 	require.NoError(t, err)
 	mock.verifyAllResponsesConsumed()
+}
+
+func TestProcess_202607SkipsPrefixFreeRequestBody(t *testing.T) {
+	srv := newTestServer(t)
+	srv.Router202607 = &fixedDecisionRouter{decision: &routing.Decision{
+		Authority: "backend.example.test",
+		Path:      "/mcp",
+		SetHeaders: map[string]string{
+			routing.MethodHeader:        routing.MethodToolCall,
+			routing.MCPServerNameHeader: "backend",
+			routing.ToolHeader:          "echo",
+			"mcp-name":                  "echo",
+		},
+		UnsetHeaders: routing.InternalOnlyHeaders,
+	}}
+	srv.ResponseHandler2026 = &stubResponseHandler{}
+	srv.RoutingConfig.Store(&config.MCPServersConfig{
+		MCPGatewayExternalHostname: "gateway.example.test",
+		Servers: []*config.MCPServer{{
+			Name:     "backend",
+			Hostname: "backend.example.test",
+		}},
+	})
+
+	mode := &extprochttp.ProcessingMode{
+		RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
+		ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
+		RequestBodyMode:     extprochttp.ProcessingMode_NONE,
+		ResponseBodyMode:    extprochttp.ProcessingMode_NONE,
+		RequestTrailerMode:  extprochttp.ProcessingMode_SKIP,
+		ResponseTrailerMode: extprochttp.ProcessingMode_SKIP,
+	}
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestHeaders{
+					RequestHeaders: &extProcV3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+						{Key: ":method", RawValue: []byte(http.MethodPost)},
+						{Key: ":path", RawValue: []byte("/mcp/stateless")},
+						{Key: "content-type", RawValue: []byte("application/json")},
+						{Key: "mcp-protocol-version", RawValue: []byte(protocol.Version2026)},
+						{Key: "mcp-method", RawValue: []byte(routing.MethodToolCall)},
+						{Key: "mcp-name", RawValue: []byte("echo")},
+					}}},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{{
+				ModeOverride: mode,
+				Response: &extProcV3.ProcessingResponse_RequestHeaders{
+					RequestHeaders: &extProcV3.HeadersResponse{Response: &extProcV3.CommonResponse{
+						ClearRouteCache: true,
+						HeaderMutation: &extProcV3.HeaderMutation{
+							SetHeaders: []*corev3.HeaderValueOption{
+								{Header: &corev3.HeaderValue{Key: ":authority", RawValue: []byte("backend.example.test")}},
+								{Header: &corev3.HeaderValue{Key: ":path", RawValue: []byte("/mcp")}},
+								{Header: &corev3.HeaderValue{Key: routing.MethodHeader, RawValue: []byte(routing.MethodToolCall)}},
+								{Header: &corev3.HeaderValue{Key: routing.MCPServerNameHeader, RawValue: []byte("backend")}},
+								{Header: &corev3.HeaderValue{Key: routing.ToolHeader, RawValue: []byte("echo")}},
+								{Header: &corev3.HeaderValue{Key: "mcp-name", RawValue: []byte("echo")}},
+							},
+							RemoveHeaders: routing.InternalOnlyHeaders,
+						},
+					}},
+				},
+			}},
+		},
+		responseHeadersStep(),
+	})
+
+	require.NoError(t, srv.Process(mock))
+	mock.verifyAllResponsesConsumed()
+}
+
+func TestCanSkip2026RequestBody(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *config.MCPServersConfig
+		want   bool
+	}{
+		{name: "prefix-free", config: &config.MCPServersConfig{Servers: []*config.MCPServer{{Name: "one"}}}, want: true},
+		{name: "server prefix", config: &config.MCPServersConfig{Servers: []*config.MCPServer{{Name: "one", Prefix: "one__"}}}},
+		{name: "server guardrails", config: &config.MCPServersConfig{Servers: []*config.MCPServer{{Name: "one", GuardrailsConfigIDs: []string{"rail"}}}}},
+		{name: "global guardrails", config: &config.MCPServersConfig{GlobalGuardrails: &guardrailsapi.Config{ConfigIDs: []string{"rail"}}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &ExtProcServer{}
+			srv.RoutingConfig.Store(tt.config)
+			require.Equal(t, tt.want, srv.canSkip2026RequestBody())
+		})
+	}
 }
 
 func TestProcess_EmptyBody(t *testing.T) {
@@ -538,6 +634,7 @@ func (m *mockProcessServer) Send(actualResp *extProcV3.ProcessingResponse) error
 	require.Less(m.t, m.responseCursor, len(step.resp), "no more expected responses left in the mock stream")
 	expectedResponse := step.resp[m.responseCursor]
 	require.NotNil(m.t, expectedResponse)
+	require.Equal(m.t, expectedResponse.ModeOverride, actualResp.ModeOverride)
 
 	switch v := expectedResponse.Response.(type) {
 	case *extProcV3.ProcessingResponse_RequestHeaders:
@@ -694,6 +791,12 @@ type stubRouter struct{}
 
 func (s *stubRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
 	return &routing.Decision{}
+}
+
+type fixedDecisionRouter struct{ decision *routing.Decision }
+
+func (s *fixedDecisionRouter) RouteRequest(_ context.Context, _ *routing.Request) *routing.Decision {
+	return s.decision
 }
 
 // stubErrorRouter is a Router that always returns an error decision with the given status code.
