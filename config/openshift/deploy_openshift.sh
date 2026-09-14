@@ -46,12 +46,33 @@ fi
 
 # Install Connectivity Link Operator from official Catalog.
 # The operator manages the MCP Gateway controller through its component Helm chart.
+# MCP Gateway component support requires RHCL 1.5.0 or newer.
 if [ "$INSTALL_RHCL" = "true" ]; then
   echo "Installing Connectivity Link Operator..."
   oc apply -k "$SCRIPT_BASE_DIR/kustomize/connectivity-link/operator/base"
 
   echo "Waiting for Connectivity Link Operator to be ready..."
   until oc wait crd/kuadrants.kuadrant.io --for condition=established &>/dev/null; do sleep 5; done
+
+  echo "Waiting for RHCL Operator 1.5.0 or newer..."
+  while :; do
+    RHCL_CSV="$(oc get subscription/rhcl-operator -n kuadrant-system \
+      -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    if [ -n "$RHCL_CSV" ] &&
+      [ "$(oc get csv "$RHCL_CSV" -n kuadrant-system \
+        -o jsonpath='{.status.phase}' 2>/dev/null || true)" = "Succeeded" ]; then
+      break
+    fi
+    sleep 5
+  done
+
+  RHCL_VERSION="$(oc get csv "$RHCL_CSV" -n kuadrant-system \
+    -o jsonpath='{.spec.version}')"
+  IFS=. read -r RHCL_MAJOR RHCL_MINOR _ <<< "$RHCL_VERSION"
+  if [ "$RHCL_MAJOR" -lt 1 ] || { [ "$RHCL_MAJOR" -eq 1 ] && [ "$RHCL_MINOR" -lt 5 ]; }; then
+    echo "RHCL Operator $RHCL_VERSION is too old; MCP Gateway requires 1.5.0 or newer." >&2
+    exit 1
+  fi
 else
   echo "Skipping Connectivity Link Operator installation (INSTALL_RHCL=$INSTALL_RHCL)..."
 fi
