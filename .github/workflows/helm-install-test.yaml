@@ -8,6 +8,8 @@ on:
       - 'config/crd/**'
       - 'api/**'
       - 'Dockerfile*'
+      - 'tests/helm/**'
+      - 'build/helm-test.mk'
       - '.github/workflows/helm-install-test.yaml'
   workflow_dispatch:
 
@@ -36,17 +38,3 @@ jobs:
         run: make test-helm-render
       - name: Run helm install test
         run: make test-helm-install
-
-      - name: Collect debug info on failure
-        if: failure()
-        run: |
-          echo "=== Helm releases ==="
-          bin/helm list -A 2>/dev/null || true
-          echo "=== Pods ==="
-          kubectl get pods -A 2>/dev/null || true
-          echo "=== Events ==="
-          kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || true
-          echo "=== Broker logs ==="
-          kubectl logs -n mcp-system deployment/mcp-gateway --tail=100 2>/dev/null || true
-          echo "=== Controller logs ==="
-          kubectl logs -n mcp-system deployment/mcp-gateway-controller --tail=100 2>/dev/null || true
