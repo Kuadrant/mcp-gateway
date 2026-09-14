@@ -21,8 +21,22 @@ HELM="${ROOT_DIR}/bin/helm"
 cd "$ROOT_DIR"
 
 cleanup() {
+    local status=$?
+    if (( status != 0 )); then
+        echo "=== Helm releases ==="
+        "$HELM" --kube-context "kind-${CLUSTER_NAME}" list -A || true
+        echo "=== Pods ==="
+        kubectl --context "kind-${CLUSTER_NAME}" get pods -A || true
+        echo "=== Events ==="
+        kubectl --context "kind-${CLUSTER_NAME}" get events -A --sort-by='.lastTimestamp' | tail -50 || true
+        echo "=== Broker logs ==="
+        kubectl --context "kind-${CLUSTER_NAME}" logs -n "$NAMESPACE" deployment/mcp-gateway --tail=100 || true
+        echo "=== Controller logs ==="
+        kubectl --context "kind-${CLUSTER_NAME}" logs -n "$NAMESPACE" deployment/mcp-gateway-controller --tail=100 || true
+    fi
     echo "cleaning up kind cluster ${CLUSTER_NAME}..."
     "$KIND" delete cluster --name "$CLUSTER_NAME" 2>/dev/null || true
+    return "$status"
 }
 trap cleanup EXIT
 
@@ -90,6 +104,8 @@ make deploy-namespaces
 info "running helm install"
 "$HELM" install mcp-gateway "$CHART_DIR" \
     --namespace "$NAMESPACE" \
+    --set image.tag=latest \
+    --set imageController.tag=latest \
     --set gateway.create=true \
     --set gateway.name=mcp-gateway \
     --set gateway.namespace=gateway-system \
