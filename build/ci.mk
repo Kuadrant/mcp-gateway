@@ -57,42 +57,6 @@ deploy-test-servers-ci: load-test-servers ## Deploy test servers for CI
 	$(KUBECTL) apply -k config/test-servers/
 	"$(MAKE)" wait-test-servers
 
-# Auth infrastructure for e2e auth tests.
-# Deploys cert-manager, Kuadrant/Authorino, and Keycloak, then applies AuthPolicies.
-# Unlike keycloak-install, this skips the API server OIDC configuration and restart
-# which isn't needed for gateway auth tests and destabilises the CI cluster.
-.PHONY: ci-auth-setup
-ci-auth-setup: cert-manager-install kuadrant-install ## Setup auth infrastructure for CI e2e tests
-	@echo "Setting up auth infrastructure for CI..."
-	# deploy Keycloak
-	$(KUBECTL) create namespace keycloak 2>/dev/null || true
-	$(KUBECTL) apply -f config/keycloak/realm-import.yaml
-	$(KUBECTL) apply -f config/keycloak/deployment.yaml
-	$(KUBECTL) wait --for=condition=ready pod -l app=keycloak -n keycloak --timeout=300s
-	# add Keycloak listener to gateway
-	$(KUBECTL) patch gateway mcp-gateway -n gateway-system --type json -p "$$(cat config/keycloak/patch-gateway.json)"
-	$(KUBECTL) apply -f config/keycloak/httproute.yaml
-	# issue TLS cert via cert-manager
-	$(KUBECTL) apply -f config/keycloak/certificate.yaml
-	@for i in $$(seq 1 30); do $(KUBECTL) get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 && break; echo "Waiting for TLS cert..."; sleep 2; done; \
-		$(KUBECTL) get secret mcp-gateway-keycloak-cert -n gateway-system >/dev/null 2>&1 || { echo "ERROR: TLS cert secret not created after 60s"; exit 1; }
-	# extract CA cert for Authorino
-	@mkdir -p out/certs
-	$(KUBECTL) get secret mcp-gateway-keycloak-cert -n gateway-system -o jsonpath='{.data.ca\.crt}' | base64 -d > out/certs/ca.crt
-	# resolve Keycloak hostname inside Kind node
-	@GATEWAY_IP=$$($(KUBECTL) get gateway/mcp-gateway -n gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null); \
-		if [ -z "$$GATEWAY_IP" ]; then echo "ERROR: gateway has no IP address" && exit 1; fi; \
-		docker exec mcp-gateway-control-plane bash -c "grep -q 'keycloak.127-0-0-1.sslip.io' /etc/hosts || echo '$$GATEWAY_IP keycloak.127-0-0-1.sslip.io' >> /etc/hosts"
-	# apply AuthPolicies: reuse sample secrets, e2e-specific policies target mcp-tls listener
-	$(KUBECTL) apply -f ./config/samples/oauth-token-exchange/trusted-header-public-key.yaml
-	@$(detect-kuadrant-ns); \
-	$(KUBECTL) apply -f ./config/samples/oauth-token-exchange/trusted-headers-private-key.yaml -n $$KUADRANT_NS
-	$(KUBECTL) apply -f ./config/e2e/auth/mcp-auth-policy.yaml
-	$(KUBECTL) apply -f ./config/e2e/auth/mcps-auth-policy.yaml
-	# patch Authorino to reach Keycloak
-	@$(detect-kuadrant-ns); \
-	./utils/patch-authorino-to-keycloak.sh $$KUADRANT_NS
-	@echo "CI auth setup complete"
 
 # Collect debug info on failure
 .PHONY: ci-debug-logs
