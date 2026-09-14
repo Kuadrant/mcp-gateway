@@ -7,11 +7,9 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 )
 
-// TestBroker_serverServesOnStatefulRoute verifies that an upstream advertising
-// any 2025-series protocol revision is routed onto the stateful set, so that
-// upstreams pinned to an older MCP SDK (which downgrade to 2025-03-26 /
-// 2025-06-18 rather than the requested 2025-11-25) are no longer silently
-// dropped from every served set.
+// TestBroker_serverServesOnStatefulRoute verifies the family match: any
+// 2025-series revision routes onto the stateful set; 2024-only and 2026-only
+// do not.
 func TestBroker_serverServesOnStatefulRoute(t *testing.T) {
 	cases := []struct {
 		name     string

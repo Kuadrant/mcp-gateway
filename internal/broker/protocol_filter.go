@@ -12,17 +12,17 @@ import (
 )
 
 // statefulVersionPrefix matches every revision in the stateful protocol family
-// (2025-03-26, 2025-06-18, 2025-11-25, ...). The broker requests Version2025
-// (2025-11-25) at initialize, but upstreams built on older MCP SDKs downgrade
-// to an earlier 2025 revision. Their tools/list and tools/call payloads are
-// wire-compatible with what the broker serves downstream, so an upstream that
-// advertises any 2025-series revision is served on the stateful route rather
-// than silently dropped from every served set.
+// (2025-03-26, 2025-06-18, 2025-11-25, ...).
 const statefulVersionPrefix = "2025-"
 
 // supportsStatefulRoute reports whether any of the given advertised protocol
-// versions belongs to the stateful (2025) family. Lock-free so it can be
-// called from paths that already hold mcpLock (e.g. buildRoutingTable).
+// versions belongs to the stateful (2025) family. The broker requests
+// Version2025 at initialize, but upstreams built on older MCP SDKs downgrade to
+// an earlier 2025 revision; their tools/list and tools/call payloads are
+// wire-compatible with what the broker serves downstream, so any 2025-series
+// revision is served on the stateful route rather than dropped from every
+// served set. Lock-free so it can be called from paths that already hold
+// mcpLock (e.g. buildRoutingTable).
 func supportsStatefulRoute(versions []string) bool {
 	for _, v := range versions {
 		if strings.HasPrefix(v, statefulVersionPrefix) {
@@ -33,11 +33,9 @@ func supportsStatefulRoute(versions []string) bool {
 }
 
 // serverServesOnStatefulRoute reports whether the upstream advertises any
-// revision in the stateful (2025) protocol family. Used in place of an exact
-// Version2025 match so upstreams pinned to an older 2025 revision still
-// federate. See rebuildProtocolCaches. Must NOT be called while holding
-// mcpLock — serverProtocolVersions may take it; use supportsStatefulRoute
-// directly on already-held versions in that case.
+// revision in the stateful (2025) protocol family. Must NOT be called while
+// holding mcpLock — serverProtocolVersions may take it; use
+// supportsStatefulRoute directly on already-held versions in that case.
 func (m *mcpBrokerImpl) serverServesOnStatefulRoute(id config.UpstreamMCPID) bool {
 	return supportsStatefulRoute(m.serverProtocolVersions(id))
 }
