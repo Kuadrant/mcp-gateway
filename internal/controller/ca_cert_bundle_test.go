@@ -205,4 +205,3 @@ func TestResolveCACertBundle(t *testing.T) {
 		})
 	}
 }
-

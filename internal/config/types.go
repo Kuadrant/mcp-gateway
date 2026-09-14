@@ -191,6 +191,9 @@ func (config *MCPServersConfig) ApplyReload(
 // DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (1 MiB).
 const DefaultMaxBodyBytes int64 = 1 << 20
 
+// MaxRequestBodySize caps buffered request bodies (5 MiB).
+const MaxRequestBodySize = 5 << 20
+
 // SetMaxBodyBytes sets the router body-buffer cap from the
 // MCPGatewayExtension spec. Non-positive values are treated as the default
 // by GetMaxBodyBytes.
