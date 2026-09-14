@@ -26,11 +26,6 @@ import (
 
 var _ config.Observer = &ExtProcServer{}
 
-// maxRequestBodySize caps buffered request bodies (5 MiB).
-// Will be replaced by MCPGatewayExtension.spec.maxBodyBytes once propagated
-// through the config secret.
-const maxRequestBodySize = 5 << 20
-
 // ExtProcServer is the ext_proc adapter that translates between Envoy's
 // external processing protocol and the Router interface.
 type ExtProcServer struct {
@@ -314,8 +309,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestBody", "request id:", requestID)
 			body := r.RequestBody.Body
 
-			if len(body) > maxRequestBodySize {
-				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), maxRequestBodySize)
+			if len(body) > config.MaxRequestBodySize {
+				err := fmt.Errorf("request body too large: %d bytes exceeds limit of %d", len(body), config.MaxRequestBodySize)
 				s.Logger.ErrorContext(ctx, err.Error(), "request id", requestID)
 				recordError(span, err, 413)
 				resp := responseBuilder.WithImmediateResponse(413, "request body too large").Build()
