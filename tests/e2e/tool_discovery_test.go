@@ -364,7 +364,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			By("waiting for tools to appear and recording the full tool count")
 			var fullToolCount int
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, err := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				hasPrefix := false
 				for _, t := range tools {
@@ -388,7 +388,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying subsequent tools/list returns only the selected tool (plus meta-tools)")
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, err := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(tool1), "selected tool should be in the list")
 				for _, t := range tools {
@@ -407,7 +407,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying only the re-scoped tool (and meta-tools) is now in tools/list")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(tool2), "re-scoped tool should be in the list")
 				for _, t := range tools {
@@ -426,7 +426,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying full tool set is restored")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				g.Expect(len(tools)).To(Equal(fullToolCount), "full tool set should be restored after reset")
 			}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
@@ -469,7 +469,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(mcpNotifyInitialized(ctx, toolDiscURL, sessionID, nil)).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				hasPrefix := false
 				for _, t := range tools {
@@ -571,7 +571,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying discover_tools and select_tools are not in tools/list")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				g.Expect(tools).NotTo(ContainElement("discover_tools"),
 					"discover_tools should not be listed when discovery is disabled")
@@ -610,7 +610,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying both real tools and meta-tools are visible")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement("discover_tools"))
 				g.Expect(tools).To(ContainElement("select_tools"))
@@ -668,7 +668,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying only meta-tools are shown (above threshold)")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement("discover_tools"))
 				g.Expect(tools).To(ContainElement("select_tools"))
@@ -685,7 +685,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(status).To(Equal(200))
 
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				hasSelected := false
 				for _, t := range tools {
@@ -727,7 +727,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(mcpNotifyInitialized(ctx, toolDiscURL, session2, nil)).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, session1, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, session1)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				hasPrefix := false
 				for _, t := range tools {
@@ -746,7 +746,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying session2 still has all tools")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, session2, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, session2)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				isoTools := 0
 				for _, t := range tools {
@@ -782,7 +782,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			Expect(mcpNotifyInitialized(ctx, toolDiscURL, sessionID, nil)).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 				hasPrefix := false
 				for _, t := range tools {
@@ -818,7 +818,7 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 
 			By("verifying tools/list returns a consistent state (one of the two scopes)")
 			Eventually(func(g Gomega) {
-				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID, nil)
+				_, tools, listErr := mcpListTools(ctx, toolDiscURL, sessionID)
 				g.Expect(listErr).NotTo(HaveOccurred())
 
 				var nonMetaTools []string

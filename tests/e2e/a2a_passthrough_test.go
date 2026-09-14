@@ -1,5 +1,6 @@
 //go:build e2e
 
+// Package e2e contains MCP Gateway end-to-end tests.
 package e2e
 
 import (
