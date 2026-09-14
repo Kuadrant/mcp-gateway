@@ -20,6 +20,7 @@
     - [Custom CA Certificates](./custom-ca-certificates.md)
 - [Authentication](./authentication.md)
 - [Authorization](./authorization.md)
+- [Guardrails](./configure-guardrails.md)
 - [Rate Limiting](./rate-limiting.md)
 - [Auditing](./auditing.md)
 - [URL Elicitation](./url-elicitation.md)
