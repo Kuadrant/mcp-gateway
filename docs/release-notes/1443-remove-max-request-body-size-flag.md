@@ -1,21 +1,21 @@
 # Remove --max-request-body-size CLI Flag
 
 The `--max-request-body-size` CLI flag on `mcp-broker-router` has been removed.
-The body size limit is now a fixed 5 MiB default, matching the previous flag
-default. It will be replaced by `MCPGatewayExtension.spec.maxBodyBytes` for
-runtime configuration.
+The body size limit is now configured via `MCPGatewayExtension.spec.maxBodyBytes`
+(default: 5 MiB).
 
 ## What's Changed
 
 - **`--max-request-body-size` removed**: the flag is no longer accepted by
   `mcp-broker-router`. Passing it will cause a startup error.
-- **`MaxRequestBodySize` field removed** from `ExtProcServer`: the limit is now
-  a package-level constant.
+- **`spec.maxBodyBytes`**: use `MCPGatewayExtension.spec.maxBodyBytes` to
+  configure a custom request body size limit.
 
 ## Migration
 
 If your broker-router deployment passes `--max-request-body-size` in container
-args or command, remove it:
+args or command, remove it and set `spec.maxBodyBytes` on your
+MCPGatewayExtension instead:
 
 ```yaml
 # Before
@@ -23,17 +23,10 @@ containers:
   - name: mcp-broker-router
     args:
       - --max-request-body-size=10485760  # remove this line
-
-# After
-containers:
-  - name: mcp-broker-router
-    args: []
 ```
 
-Once `spec.maxBodyBytes` is available on MCPGatewayExtension, use that to
-configure a custom limit:
-
 ```yaml
+# After
 apiVersion: mcp.kuadrant.io/v1
 kind: MCPGatewayExtension
 spec:

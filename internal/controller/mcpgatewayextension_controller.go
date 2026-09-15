@@ -274,9 +274,15 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
+	maxBodyBytes := config.DefaultMaxBodyBytes
+	if mcpExt.Spec.MaxBodyBytes != nil {
+		maxBodyBytes = int64(*mcpExt.Spec.MaxBodyBytes)
+	}
+
 	if err := r.ConfigWriterDeleter.WriteGatewayConfig(ctx, &config.GatewayConfig{
-		CACertPEM:  caCertPEM,
-		Guardrails: guardrailsConfig,
+		CACertPEM:    caCertPEM,
+		Guardrails:   guardrailsConfig,
+		MaxBodyBytes: maxBodyBytes,
 	}, config.NamespaceName(mcpExt.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}

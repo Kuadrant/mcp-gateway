@@ -466,7 +466,7 @@ func (a *app) parseConfigFile(path string) (*configSnapshot, error) {
 		servers:          newServers,
 		virtualServers:   newVirtualServers,
 		gatewayCACertPEM: viper.GetString("gatewayCACertPEM"),
-		maxBodyBytes:     viper.GetInt64("maxBodyBytes"),
+		maxBodyBytes:     normalizeMaxBodyBytes(viper.GetInt64("maxBodyBytes")),
 		globalGuardrails: globalGuardrails,
 	}, nil
 }
@@ -483,11 +483,7 @@ func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) err
 	guardrailsUnchanged := snap.globalGuardrails.Equal(prevGlobal)
 	caUnchanged := snap.gatewayCACertPEM == prevCACert
 
-	snapBodyBytes := snap.maxBodyBytes
-	if snapBodyBytes <= 0 {
-		snapBodyBytes = config.DefaultMaxBodyBytes
-	}
-	bodyBytesUnchanged := snapBodyBytes == prevMaxBodyBytes
+	bodyBytesUnchanged := snap.maxBodyBytes == prevMaxBodyBytes
 
 	// checker is the new checker to install; nil clears guardrails.
 	var checker guardrails.Checker
@@ -534,4 +530,11 @@ func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) err
 		}
 	}
 	return nil
+}
+
+func normalizeMaxBodyBytes(v int64) int64 {
+	if v <= 0 {
+		return config.DefaultMaxBodyBytes
+	}
+	return v
 }

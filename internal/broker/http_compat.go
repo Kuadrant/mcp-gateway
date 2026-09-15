@@ -13,7 +13,6 @@ import (
 	"unicode"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
-	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -197,7 +196,7 @@ func (h *compatHandler) servePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, config.MaxRequestBodySize))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.broker.maxBodyBytes.Load()))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {

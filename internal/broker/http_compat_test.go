@@ -206,7 +206,7 @@ func TestCompat_OversizedBodyRejected(t *testing.T) {
 	sid := h.initialize(t)
 
 	oversized := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"pad":"` +
-		strings.Repeat("a", config.MaxRequestBodySize+1) + `"}}`
+		strings.Repeat("a", int(config.DefaultMaxBodyBytes)+1) + `"}}`
 	res := h.post(t, sid, oversized)
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.status, res.body)
 	require.Equal(t, "application/json", res.header.Get("Content-Type"))
@@ -603,9 +603,11 @@ func TestProtocolRouter_Dispatch(t *testing.T) {
 			legacyHeader = r.Header.Get("Mcp-Protocol-Version")
 			w.WriteHeader(http.StatusOK)
 		}),
-		broker: &mcpBrokerImpl{
-			logger: logger,
-		},
+		broker: func() *mcpBrokerImpl {
+			b := &mcpBrokerImpl{logger: logger}
+			b.maxBodyBytes.Store(config.DefaultMaxBodyBytes)
+			return b
+		}(),
 	}
 
 	stateless := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

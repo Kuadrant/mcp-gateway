@@ -207,10 +207,6 @@ func (m *mockConfigWriterDeleter) WriteGatewayConfig(ctx context.Context, gwCfg 
 	return nil
 }
 
-func (m *mockConfigWriterDeleter) WriteMaxBodyBytes(ctx context.Context, maxBodyBytes int64, namespaceName types.NamespacedName) error {
-	return nil
-}
-
 // newTestReconciler creates a new MCPGatewayExtensionReconciler for testing
 func newTestReconciler() *MCPGatewayExtensionReconciler {
 	return &MCPGatewayExtensionReconciler{

@@ -279,7 +279,7 @@ func TestWriteGatewayConfig(t *testing.T) {
 	}
 }
 
-func TestWriteMaxBodyBytes(t *testing.T) {
+func TestWriteGatewayConfigMaxBodyBytes(t *testing.T) {
 	testCases := []struct {
 		name         string
 		maxBodyBytes int64
@@ -300,13 +300,13 @@ func TestWriteMaxBodyBytes(t *testing.T) {
 			ctx := context.Background()
 			namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
 
-			// seed with a different value so updates are exercised.
-			if err := srw.WriteMaxBodyBytes(ctx, tc.maxBodyBytes+1, namespaceName); err != nil {
-				t.Fatalf("seed WriteMaxBodyBytes failed: %v", err)
+			// seed with a different value so updates are exercised
+			if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{MaxBodyBytes: tc.maxBodyBytes + 1}, namespaceName); err != nil {
+				t.Fatalf("seed WriteGatewayConfig failed: %v", err)
 			}
 
-			if err := srw.WriteMaxBodyBytes(ctx, tc.maxBodyBytes, namespaceName); err != nil {
-				t.Fatalf("WriteMaxBodyBytes failed: %v", err)
+			if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{MaxBodyBytes: tc.maxBodyBytes}, namespaceName); err != nil {
+				t.Fatalf("WriteGatewayConfig failed: %v", err)
 			}
 
 			secret := &corev1.Secret{}
