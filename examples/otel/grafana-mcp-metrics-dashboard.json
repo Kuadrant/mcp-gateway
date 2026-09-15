@@ -29,7 +29,7 @@
     {
       "id": 1,
       "title": "Tools Discovered per Server",
-      "description": "Current number of tools the broker has fetched from each upstream. Drops to 0 when a server becomes unreachable.",
+      "description": "Current number of tools the broker has fetched from each upstream. Cached values survive transient connection or ping failures and reach zero after three consecutive connection or ping failures.",
       "type": "stat",
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
