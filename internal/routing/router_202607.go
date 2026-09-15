@@ -25,6 +25,11 @@ var _ Router = &Router202607{}
 
 // RouteRequest routes header-based mcp request to backend or broker
 func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision {
+	return r.RouteRequestWithConfig(ctx, req, r.RoutingConfig.Load())
+}
+
+// RouteRequestWithConfig routes a request against one configuration snapshot.
+func (r *Router202607) RouteRequestWithConfig(ctx context.Context, req *Request, routingConfig *config.MCPServersConfig) *Decision {
 	table := r.Table()
 
 	ctx, span := tracer().Start(ctx, "mcp-router.route-decision",
@@ -36,7 +41,7 @@ func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision
 	)
 	defer span.End()
 
-	if expected := r.RoutingConfig.Load().MCPGatewayExternalHostname; expected != "" && req.Authority != "" && req.Authority != expected {
+	if expected := routingConfig.MCPGatewayExternalHostname; expected != "" && req.Authority != "" && req.Authority != expected {
 		r.Logger.ErrorContext(ctx, "authority mismatch", "expected", expected, "got", req.Authority)
 		span.SetStatus(codes.Error, "authority mismatch")
 		span.SetAttributes(attribute.String("error.type", "authority_mismatch"))
@@ -46,7 +51,7 @@ func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision
 	switch req.MCPMethod {
 	case MethodToolCall:
 		span.SetAttributes(attribute.String("mcp.route", "tool-call"))
-		return r.routeToolCall(ctx, table, req)
+		return r.routeToolCall(ctx, table, req, routingConfig)
 	case MethodPromptGet:
 		span.SetAttributes(attribute.String("mcp.route", "prompt-get"))
 		return r.routePromptGet(ctx, table, req)
@@ -56,7 +61,7 @@ func (r *Router202607) RouteRequest(ctx context.Context, req *Request) *Decision
 	}
 }
 
-func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, req *Request) *Decision {
+func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, req *Request, routingConfig *config.MCPServersConfig) *Decision {
 	toolName := req.MCPName
 
 	ctx, span := tracer().Start(ctx, "mcp-router.tool-call",
@@ -143,7 +148,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		return &Decision{Error: routerErr}
 	}
 
-	gc := newGuardrailsCheck(r.RoutingConfig.Load(), route.GuardrailsConfigIDs, r.Logger)
+	gc := newGuardrailsCheck(routingConfig, route.GuardrailsConfigIDs, r.Logger)
 	modified, blocked := gc.checkToolCall(ctx, req.Parsed, upstreamToolName)
 	if blocked != nil {
 		return blocked

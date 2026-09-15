@@ -139,6 +139,41 @@ func (config *MCPServersConfig) GetGuardrails() (api.Checker, *api.Config) {
 	return config.guardrailsChecker, config.GlobalGuardrails
 }
 
+// RoutingSnapshot returns a consistent, request-scoped copy of the routing
+// fields that can change during a configuration reload.
+func (config *MCPServersConfig) RoutingSnapshot() *MCPServersConfig {
+	if config == nil {
+		return nil
+	}
+
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+
+	servers := make([]*MCPServer, len(config.Servers))
+	for i, server := range config.Servers {
+		if server == nil {
+			continue
+		}
+		serverCopy := *server
+		serverCopy.GuardrailsConfigIDs = slices.Clone(server.GuardrailsConfigIDs)
+		servers[i] = &serverCopy
+	}
+
+	var globalGuardrails *api.Config
+	if config.GlobalGuardrails != nil {
+		globalCopy := *config.GlobalGuardrails
+		globalCopy.ConfigIDs = slices.Clone(config.GlobalGuardrails.ConfigIDs)
+		globalGuardrails = &globalCopy
+	}
+
+	return &MCPServersConfig{
+		Servers:                    servers,
+		MCPGatewayExternalHostname: config.MCPGatewayExternalHostname,
+		GlobalGuardrails:           globalGuardrails,
+		guardrailsChecker:          config.guardrailsChecker,
+	}
+}
+
 // ServerByName returns the MCPServer with the given name, or nil if not found.
 func (config *MCPServersConfig) ServerByName(name string) *MCPServer {
 	config.lock.RLock()
