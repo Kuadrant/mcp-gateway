@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +71,7 @@ func newBrokerHarness(t *testing.T, compose func(*brokerHarness) http.Handler, e
 	}
 	opts = append(opts, extra...)
 	h.b = NewBroker(slog.Default(), opts...).(*mcpBrokerImpl)
+	h.b.maxBodyBytes.Store(config.DefaultMaxBodyBytes)
 	h.ts = httptest.NewServer(compose(h))
 	t.Cleanup(h.ts.Close)
 	return h
