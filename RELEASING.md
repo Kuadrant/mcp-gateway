@@ -2,12 +2,11 @@
 
 Creating a GitHub release with a `vX.Y.Z` tag triggers automated workflows that:
 1. Build and push container images (`mcp-gateway`, `mcp-controller`) to `ghcr.io/kuadrant/`
-2. Build and push OLM bundle and catalog images to `ghcr.io/kuadrant/`
-3. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
+2. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
 
 ## Using the `/release` command
 
-The recommended way to cut a release is through the Claude Code `/release` slash command, which automates the version bump, bundle regeneration, and walks you through push, PR, and GitHub release creation interactively.
+The recommended way to cut a release is through the Claude Code `/release` slash command, which automates the version bump and walks you through push, PR, and GitHub release creation interactively.
 
 ```
 /release 0.7.0-rc1
@@ -43,18 +42,9 @@ If CRD or API type changes are included in this release, regenerate all manifest
 make generate-all
 ```
 
-Then regenerate the OLM bundle with the full version:
-```bash
-# For a release candidate:
-make bundle VERSION=X.Y.Z-rcN
-
-# For a final release:
-make bundle VERSION=X.Y.Z
-```
-
 Commit and push:
 ```bash
-git add -u config/ charts/ docs/ bundle/
+git add -u config/ charts/ docs/
 git commit -s -m "Update version to X.Y.Z-rcN"
 git push -u origin release-X.Y
 ```
@@ -75,7 +65,7 @@ Release branches use the minor-level format `release-X.Y` (e.g. `release-0.7`). 
 
 ### 3. Verify Workflows Complete
 
-1. [Build Images](https://github.com/Kuadrant/mcp-gateway/actions/workflows/images.yaml) - builds container images, OLM bundle and catalog with version tag
+1. [Build Images](https://github.com/Kuadrant/mcp-gateway/actions/workflows/images.yaml) - builds container images with version tag
 2. [Helm Chart Release](https://github.com/Kuadrant/mcp-gateway/actions/workflows/helm-release.yaml) - pushes chart to OCI registry
 
 ### 4. Verify Published Artifacts
@@ -85,9 +75,7 @@ Release branches use the minor-level format `release-X.Y` (e.g. `release-0.7`). 
 VERSION=X.Y.Z
 for image in \
   ghcr.io/kuadrant/mcp-gateway:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller-bundle:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller-catalog:v${VERSION}; do
+  ghcr.io/kuadrant/mcp-controller:v${VERSION}; do
   docker manifest inspect "$image" > /dev/null 2>&1 \
     && echo "✅ $image" || echo "❌ $image"
 done
@@ -118,8 +106,7 @@ git checkout main
 git pull
 git checkout -b bump-version-X.Y.Z
 ./scripts/set-release-version.sh X.Y.Z
-make bundle VERSION=X.Y.Z
-git add -u config/ charts/ docs/ bundle/
+git add -u config/ charts/ docs/
 git commit -s -m "Update version to X.Y.Z"
 git push -u origin bump-version-X.Y.Z
 ```

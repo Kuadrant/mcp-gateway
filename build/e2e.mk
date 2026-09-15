@@ -53,10 +53,6 @@ test-e2e-ci: test-e2e-deps ## Run PR-gate e2e tests in CI (excludes slow tier 2 
 test-e2e-ci-full: test-e2e-deps ## Run all e2e tests in CI (tier 1 + 2, full run reports every failure)
 	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) ./tests/e2e
 
-# run only auth-focused tests (CI runs this after ci-auth-setup)
-.PHONY: test-e2e-auth-ci
-test-e2e-auth-ci: test-e2e-deps ## Run auth e2e tests only (requires ci-auth-setup)
-	$(GINKGO) -v --tags=e2e --procs=$(E2E_PROCS) --timeout=$(E2E_TIMEOUT) --fail-fast --focus="AuthPolicy" ./tests/e2e
 
 .PHONY: test-e2e-https
 test-e2e-https: test-e2e-deps ## Run HTTPS-focused E2E tests (requires cert-manager + MCP_PAT)

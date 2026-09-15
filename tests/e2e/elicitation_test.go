@@ -333,7 +333,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 			By("Waiting for tools from both servers to be available")
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID, nil)
+				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(toolName))
 				g.Expect(tools).To(ContainElement(toolName2))
@@ -376,7 +376,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 			By("Waiting for tools to be available")
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID, nil)
+				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(toolName))
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -456,7 +456,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 			By("Waiting for tools to be available")
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID, nil)
+				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(toolName))
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
@@ -485,7 +485,7 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 
 			By("Waiting for tools to be available")
 			Eventually(func(g Gomega) {
-				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID, nil)
+				_, tools, err := mcpListTools(context.Background(), ElicitationGatewayURL, sessionID)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(tools).To(ContainElement(toolName))
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())

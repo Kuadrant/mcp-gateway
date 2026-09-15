@@ -1,12 +1,13 @@
-# Feature: Operator-based Deployment
+# Feature: Operator-based Deployment (historical)
+> This historical design has been superseded by the Kuadrant Operator umbrella model. Standalone MCP Gateway installs use Helm, while the Kuadrant Operator manages the component chart on OpenShift.
 
 ## Summary
 
-Operator-based deployment for MCP Gateway instances using MCPGatewayExtension as the operand. Automates setup, configuration, and lifecycle management of gateway instances with OLM compatibility. Builds on the design described in [isolated gateway deployment](./isolated-gateway-deployment.md).
+Operator-based deployment for MCP Gateway instances using MCPGatewayExtension as the operand. Automates setup, configuration, and lifecycle management through the Kuadrant Operator umbrella model. Builds on the design described in [isolated gateway deployment](./isolated-gateway-deployment.md).
 
 ## Goals
 
-- Allow OLM based installation and upgrade
+- Support Kuadrant Operator-managed installation and upgrade
 - Automate and simplify the setup of MCP Gateway Instance(s) and configuration
 - Automate the uninstall of MCP Gateway Instance(s) and clean up of configuration
 - Handle an MCPGatewayExtension becoming invalid
@@ -28,7 +29,7 @@ Existing MCPGatewayExtensions will become invalid until they are updated with a 
 
 #### Packaging
 
-Required is the packaging of the current controller into the correct OLM format and metadata (CatalogSource, Package Bundle etc). As the project is in a compatible kubebuilder structure and OLM uses kubebuilder, this packaging should not cause too many issues.
+The MCP Gateway controller is distributed as a component Helm chart and consumed by the Kuadrant Operator. Standalone installations use the same chart directly.
 
 #### Deployment Model
 
@@ -280,7 +281,7 @@ As this proposed change will allow teams to share a common ingress gateway, ther
 4. Implement EnvoyFilter generation
 5. Add invalid MCPGatewayExtension handling (cleanup)
 6. Update status reporting on Gateway listeners
-7. Package for OLM
+7. Publish the MCP Gateway component Helm chart and integrate it with Kuadrant Operator
 
 ## Testing Strategy
 
@@ -297,8 +298,8 @@ As this proposed change will allow teams to share a common ingress gateway, ther
 ### Todo
 
 ### Completed
-- [x] Generate OLM bundle (CatalogSource, Package, Bundle metadata)
-- [x] Update installation docs based on Generate OLM bundle being done
+- [x] Publish MCP Gateway Helm chart for standalone installs
+- [x] Integrate MCP Gateway chart with Kuadrant Operator
 - [x] Add trusted-header key pair generation (optional feature)
 - [x] Add MCPGatewayExtension spec properties based on the annotations and definition here
 - [x] Implement HTTPRoute creation for gateway access

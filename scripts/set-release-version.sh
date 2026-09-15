@@ -70,22 +70,11 @@ else
     echo "Warning: $BROKER_DEPLOY not found"
 fi
 
-# Update OLM base CSV containerImage annotation
-CSV_BASE="$REPO_ROOT/config/manifests/bases/mcp-gateway.clusterserviceversion.yaml"
-if [ -f "$CSV_BASE" ]; then
-    sed -i.bak -E "s|containerImage: ghcr.io/kuadrant/mcp-controller:.+|containerImage: ghcr.io/kuadrant/mcp-controller:v$VERSION|" "$CSV_BASE"
-    rm -f "$CSV_BASE.bak"
-    echo "Updated: $CSV_BASE"
-else
-    echo "Warning: $CSV_BASE not found"
-fi
-
 # Update docs/guides MCP_GATEWAY_VERSION
 for GUIDE in \
     "$REPO_ROOT/docs/guides/quick-start.md" \
     "$REPO_ROOT/docs/guides/isolated-gateway-deployment.md" \
-    "$REPO_ROOT/docs/guides/how-to-install-and-configure.md" \
-    "$REPO_ROOT/docs/guides/olm-install.md"; do
+    "$REPO_ROOT/docs/guides/how-to-install-and-configure.md"; do
     if [ -f "$GUIDE" ]; then
         sed -i.bak -E "s/MCP_GATEWAY_VERSION=[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?/MCP_GATEWAY_VERSION=$VERSION/" "$GUIDE"
         rm -f "$GUIDE.bak"
@@ -95,17 +84,5 @@ for GUIDE in \
     fi
 done
 
-# Update OLM CatalogSource image tag
-CATALOG_SOURCE="$REPO_ROOT/config/deploy/olm/catalogsource.yaml"
-if [ -f "$CATALOG_SOURCE" ]; then
-    sed -i.bak "s|image: ghcr.io/kuadrant/mcp-controller-catalog:.*|image: ghcr.io/kuadrant/mcp-controller-catalog:v$VERSION|" "$CATALOG_SOURCE"
-    rm -f "$CATALOG_SOURCE.bak"
-    echo "Updated: $CATALOG_SOURCE"
-else
-    echo "Warning: $CATALOG_SOURCE not found"
-fi
-
 echo "Done. Version set to $VERSION"
-echo ""
-echo "After updating, regenerate the bundle with: make bundle VERSION=$VERSION"
 echo "Review changes with: git diff"

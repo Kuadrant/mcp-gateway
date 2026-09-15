@@ -33,7 +33,6 @@ buildkitd
 buildx
 cainjector
 caitlinelfring
-catalogsource
 cbor
 cenkalti
 cespare

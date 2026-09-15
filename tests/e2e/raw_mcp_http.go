@@ -134,8 +134,8 @@ func mcpListNames(ctx context.Context, url, sessionID, method, resultKey string,
 	return resp.StatusCode, names, nil
 }
 
-func mcpListTools(ctx context.Context, url, sessionID string, headers map[string]string) (int, []string, error) {
-	return mcpListNames(ctx, url, sessionID, "tools/list", "tools", headers)
+func mcpListTools(ctx context.Context, url, sessionID string) (int, []string, error) {
+	return mcpListNames(ctx, url, sessionID, "tools/list", "tools", nil)
 }
 
 func mcpCallTool(ctx context.Context, url, sessionID, toolName string, args map[string]any, headers map[string]string) (int, []toolContent, error) {

@@ -1643,7 +1643,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 			err = mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 
-			_, tools, err := mcpListTools(ctx, gatewayURL, sessionID, nil)
+			_, tools, err := mcpListTools(ctx, gatewayURL, sessionID)
 			g.Expect(err).NotTo(HaveOccurred())
 			hasPrefix := false
 			for _, t := range tools {

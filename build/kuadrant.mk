@@ -8,7 +8,7 @@ KUBECTL ?= kubectl
 .PHONY: kuadrant-install
 kuadrant-install-impl: $(HELM)
 	@if kubectl get crd kuadrants.kuadrant.io >/dev/null 2>&1; then \
-		echo "Kuadrant CRDs already present (installed via OLM or Helm), skipping Helm install."; \
+		echo "Kuadrant CRDs already present (installed via Helm), skipping Helm install."; \
 	else \
 		echo "Installing Kuadrant operator..."; \
 		$(HELM) repo add kuadrant https://kuadrant.io/helm-charts 2>/dev/null || true; \
