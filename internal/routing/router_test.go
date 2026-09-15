@@ -2521,7 +2521,8 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "does not support elicitation")
-	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
@@ -2547,7 +2548,8 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "missing sub claim")
-	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
