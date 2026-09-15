@@ -37,7 +37,7 @@ level=INFO msg="tool call" audit=true user=alice tool=echo server="" status=401 
 | Field | Description |
 |-------|-------------|
 | `audit` | Always `true` — use this to filter audit entries from other Info logs |
-| `user` | JWT `sub` claim from the `Authorization` header; empty if unauthenticated |
+| `user` | JWT `sub` claim from the `Authorization` header; meaningful only when AuthPolicy validates the request |
 | `tool` | Prefixed tool name as sent by the client (e.g. `everything_echo`) |
 | `server` | `namespace/name` of the MCPServerRegistration; empty if routing failed |
 | `status` | HTTP status code of the response |
@@ -68,9 +68,14 @@ For production, ship router pod logs to a log aggregation system (Loki, Elastics
 
 ### The `user` field and authentication
 
-The `user` field is sourced from the JWT `sub` claim in the `Authorization` header, extracted directly by the router. It is not sourced from `x-mcp-verified-sub`, which is a router-set internal header and must not be used for audit purposes.
+The `user` field is sourced from the JWT `sub` claim in the `Authorization`
+header, extracted directly by the router. The router does not authenticate
+this claim.
 
-Without an auth layer, `user` is empty. To populate it, configure an AuthPolicy to require a JWT on the gateway listener — the router then extracts the `sub` claim automatically. See [Authentication](./authentication.md) for setup.
+Configure an AuthPolicy to validate the bearer token before the request reaches
+the router. Without AuthPolicy, a caller can choose the claim value, so do not
+use `user` as proof of caller identity. See [Authentication](./authentication.md)
+for setup.
 
 ---
 
