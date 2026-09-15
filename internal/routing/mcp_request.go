@@ -268,7 +268,6 @@ type ElicitationInfo struct {
 	ElicitationID string
 }
 
-
 // BuildSSEToolResult constructs a successful SSE tool result for 2025-11-25.
 // Used when guardrails modifies response content: the redacted text is a
 // valid result, not an error.
@@ -298,7 +297,6 @@ func BuildJSONToolResult(requestID any, text string) string {
 	b.WriteString("}]}}")
 	return b.String()
 }
-
 
 // ResourceAuthority extracts the authority segment (host) from a resource URI.
 // For malformed URIs, returns the URI unchanged.
