@@ -148,6 +148,9 @@ type mcpBrokerImpl struct {
 	// so that repeated tools/list calls reuse the same upstream session.
 	userSessionPool sync.Map
 
+	// maxBodyBytes is the configured body-size cap, updated on config change
+	maxBodyBytes atomic.Int64
+
 	// cachedTable holds the latest routing table snapshot, rebuilt on config
 	// or tool/prompt list changes. RoutingTable() returns a pointer load.
 	cachedTable atomic.Pointer[routing.Table]
@@ -525,6 +528,8 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	servers := conf.ListServers()
 	virtualServers := conf.ListVirtualServers()
 	newGatewayCACert := conf.GetGatewayCACertPEM()
+	// set max body bytes. This is handled by the router but also set here in case of direct access to the broker
+	m.maxBodyBytes.Store(conf.GetMaxBodyBytes())
 
 	m.logger.DebugContext(ctx, "Broker OnConfigChange start", "total servers", len(servers))
 

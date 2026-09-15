@@ -351,7 +351,7 @@ func TestProcessSpanEnded(t *testing.T) {
 func TestProcess_BufferedBodyExceedsMaxSize(t *testing.T) {
 	srv := newTestServer(t)
 
-	oversized := bytes.Repeat([]byte{'x'}, config.MaxRequestBodySize+1)
+	oversized := bytes.Repeat([]byte{'x'}, int(config.DefaultMaxBodyBytes)+1)
 
 	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
 		requestHeadersStep(),

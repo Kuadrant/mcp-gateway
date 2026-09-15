@@ -257,17 +257,22 @@ func (srw *SecretReaderWriter) WriteGatewayConfig(ctx context.Context, gwCfg *Ga
 
 		caCert := ""
 		var guardrails *GuardrailsConfig
+		var maxBody int64
 		if gwCfg != nil {
 			caCert = gwCfg.CACertPEM
 			guardrails = gwCfg.Guardrails
+			maxBody = gwCfg.MaxBodyBytes
 		}
 
-		if existingConfig.GatewayCACertPEM == caCert && globalGuardrailsEqual(existingConfig.GlobalGuardrails, guardrails) {
+		if existingConfig.GatewayCACertPEM == caCert &&
+			globalGuardrailsEqual(existingConfig.GlobalGuardrails, guardrails) &&
+			existingConfig.MaxBodyBytes == maxBody {
 			return nil
 		}
 
 		existingConfig.GatewayCACertPEM = caCert
 		existingConfig.GlobalGuardrails = guardrails
+		existingConfig.MaxBodyBytes = maxBody
 		updated, err := yaml.Marshal(existingConfig)
 		if err != nil {
 			return fmt.Errorf("write gateway config failed to marshal config: %w", err)
@@ -288,29 +293,6 @@ func globalGuardrailsEqual(a, b *GuardrailsConfig) bool {
 		return false
 	}
 	return slices.Equal(a.ConfigIDs, b.ConfigIDs)
-}
-
-// WriteMaxBodyBytes updates the maxBodyBytes field of the config secret.
-func (srw *SecretReaderWriter) WriteMaxBodyBytes(ctx context.Context, maxBodyBytes int64, namespaceName types.NamespacedName) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-		if err != nil {
-			return fmt.Errorf("write maxBodyBytes failed to read config secret: %w", err)
-		}
-
-		if existingConfig.MaxBodyBytes == maxBodyBytes {
-			return nil
-		}
-
-		existingConfig.MaxBodyBytes = maxBodyBytes
-		updated, err := yaml.Marshal(existingConfig)
-		if err != nil {
-			return fmt.Errorf("write maxBodyBytes failed to marshal config: %w", err)
-		}
-
-		backingSecret.StringData[configFileName] = string(updated)
-		return srw.Client.Update(ctx, backingSecret)
-	})
 }
 
 // DeleteConfig deletes the entire config secret. If the secret doesn't exist,

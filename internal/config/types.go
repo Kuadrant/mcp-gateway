@@ -188,11 +188,8 @@ func (config *MCPServersConfig) ApplyReload(
 	config.guardrailsChecker = checker
 }
 
-// DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (1 MiB).
-const DefaultMaxBodyBytes int64 = 1 << 20
-
-// MaxRequestBodySize caps buffered request bodies (5 MiB).
-const MaxRequestBodySize = 5 << 20
+// DefaultMaxBodyBytes is the MCPGatewayExtension maxBodyBytes default (5 MiB).
+const DefaultMaxBodyBytes int64 = 5 << 20
 
 // SetMaxBodyBytes sets the router body-buffer cap from the
 // MCPGatewayExtension spec. Non-positive values are treated as the default
@@ -363,8 +360,9 @@ type BrokerConfig struct {
 
 // GatewayConfig holds gateway-level configuration fields
 type GatewayConfig struct {
-	CACertPEM  string            `json:"caCertPEM,omitempty"  yaml:"caCertPEM,omitempty"`
-	Guardrails *GuardrailsConfig `json:"guardrails,omitempty" yaml:"guardrails,omitempty"`
+	CACertPEM    string            `json:"caCertPEM,omitempty"    yaml:"caCertPEM,omitempty"`
+	Guardrails   *GuardrailsConfig `json:"guardrails,omitempty"   yaml:"guardrails,omitempty"`
+	MaxBodyBytes int64             `json:"maxBodyBytes,omitempty" yaml:"maxBodyBytes,omitempty"`
 }
 
 // AuthConfig holds auth configuration
