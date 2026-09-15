@@ -325,11 +325,13 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	}
 	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
-	// 2025 upstreams use the custom GET SSE notificationWatcher for push
-	// notifications. 2026 upstreams rely on TTL-based polling; notification
-	// handlers are disabled until go-sdk >= v1.8.0 (see client options above).
+	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
+	// push notifications. stateless upstreams rely on TTL-based polling: 2026
+	// has no notification handlers until go-sdk >= v1.8.0 (see client options
+	// above), and a session-less 2025 upstream has no Mcp-Session-Id to key the
+	// standalone GET SSE stream on.
 	if !up.UsesStatelessProtocol() {
-		up.logger.Debug("starting GET SSE notification watcher (2025 upstream)", "upstream", up.ID())
+		up.logger.Debug("starting GET SSE notification watcher", "upstream", up.ID(), "negotiated-protocol", negotiated)
 		up.startNotificationWatcher(ctx, httpC, session)
 	}
 
@@ -455,10 +457,20 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	}()
 }
 
-// UsesStatelessProtocol returns true if the upstream negotiated protocol
-// version 2026-07-28 or later (stateless, no sessions).
+// UsesStatelessProtocol returns true if the upstream is stateless: it either
+// negotiated protocol version 2026-07-28 or later, or it issued no
+// Mcp-Session-Id — an upstream on an older MCP SDK down-negotiates to an
+// earlier 2025 revision and runs the streamable-HTTP transport in stateless
+// mode. Returns false when not connected: nothing to classify yet.
 func (up *MCPServer) UsesStatelessProtocol() bool {
-	return up.init != nil && up.init.ProtocolVersion >= protocol.Version2026
+	if up.init == nil {
+		return false
+	}
+	if up.init.ProtocolVersion >= protocol.Version2026 {
+		return true
+	}
+	session := up.currentSession()
+	return session != nil && session.ID() == ""
 }
 
 // SupportedVersions returns the list of protocol versions this upstream supports.
@@ -479,9 +491,10 @@ func (up *MCPServer) SupportsVersion(v string) bool {
 }
 
 // Ping sends a ping request to the upstream MCP server to check connectivity.
-// Returns nil for stateless (2026-07-28) upstreams: the SDK does not inject
-// the required _meta fields on ping requests (SDK bug), and a successful
-// Connect via server/discover is sufficient proof of connectivity.
+// Returns nil for stateless upstreams: on 2026-07-28 the SDK does not inject
+// the required _meta fields on ping requests (SDK bug), and a session-less
+// upstream has no session to ping at all. For both, a successful Connect is
+// sufficient proof of connectivity.
 func (up *MCPServer) Ping(ctx context.Context) error {
 	if up.UsesStatelessProtocol() {
 		return nil

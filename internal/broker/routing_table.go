@@ -21,9 +21,9 @@ func (m *mcpBrokerImpl) buildRoutingTable() *routing.Table {
 			UserSpecificList:    cfg.UserSpecificList,
 			GuardrailsConfigIDs: cfg.GuardrailsConfigIDs,
 			// dual-protocol servers have both set to true; each router
-			// checks its own flag independently
+			// checks its own flag independently.
 			Stateless: up.SupportsVersion(protocol.Version2026),
-			Stateful:  up.SupportsVersion(protocol.Version2025),
+			Stateful:  supportsStatefulRoute(up.SupportedVersions()),
 		}
 		if p, err := cfg.Path(); err == nil {
 			route.Path = p

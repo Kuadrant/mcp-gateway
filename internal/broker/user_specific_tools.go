@@ -80,7 +80,15 @@ func (broker *mcpBrokerImpl) fetchUserSpecificTools(ctx context.Context, headers
 	seen := make(map[config.UpstreamMCPID]bool, len(crdServers))
 	var matching []userSpecificServer
 	for _, srv := range crdServers {
-		if broker.ServerSupportsVersion(srv.id, clientVersion) {
+		// stateful clients are served by any upstream in the 2025 family;
+		// the stateless (2026) route stays an exact match.
+		var matches bool
+		if clientVersion == protocol.Version2026 {
+			matches = broker.ServerSupportsVersion(srv.id, protocol.Version2026)
+		} else {
+			matches = broker.serverServesOnStatefulRoute(srv.id)
+		}
+		if matches {
 			matching = append(matching, srv)
 		}
 		seen[srv.id] = true
