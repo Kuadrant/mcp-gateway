@@ -7,6 +7,7 @@ module github.com/Kuadrant/mcp-gateway
 go 1.26.0
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/caitlinelfring/go-env-default v1.1.0
 	github.com/envoyproxy/go-control-plane/envoy v1.39.0
@@ -43,17 +44,16 @@ require (
 	istio.io/api v1.31.0-rc.0.0.20260824154656-b943409680a7
 	istio.io/client-go v1.31.0
 	k8s.io/api v0.37.0
-	k8s.io/apiextensions-apiserver v0.36.0
+	k8s.io/apiextensions-apiserver v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
-	sigs.k8s.io/controller-runtime v0.24.1
-	sigs.k8s.io/gateway-api v1.6.1
+	sigs.k8s.io/controller-runtime v0.25.0
+	sigs.k8s.io/gateway-api v1.6.2
 	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
