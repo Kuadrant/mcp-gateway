@@ -112,7 +112,7 @@ spec:
                 - error
                 type: string
               maxBodyBytes:
-                default: 1048576
+                default: 5242880
                 description: |-
                   maxBodyBytes caps the size of any body the router buffers, in bytes.
                   Applies to request/response prefix stripping and guardrails checks.
