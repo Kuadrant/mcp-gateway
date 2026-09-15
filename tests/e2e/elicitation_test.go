@@ -461,12 +461,14 @@ var _ = Describe("Elicitation", Ordered, ContinueOnFailure, func() {
 				g.Expect(tools).To(ContainElement(toolName))
 			}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
-			By("Calling tool — should get an isError result, NOT -32042")
+			By("Calling tool — should get a JSON-RPC error (code -32000), NOT -32042")
 			status, body, _, err := mcpCallToolRaw(ElicitationGatewayURL, sessionID, toolName, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(status).To(Equal(200))
-			Expect(body).To(ContainSubstring(`"isError":true`))
+			Expect(body).To(ContainSubstring(`"error"`))
+			Expect(body).To(ContainSubstring(`-32000`))
 			Expect(body).To(ContainSubstring("elicitation"))
+			Expect(body).NotTo(ContainSubstring(`"isError":true`))
 			Expect(body).NotTo(ContainSubstring("-32042"))
 		})
 
