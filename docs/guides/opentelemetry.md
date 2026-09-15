@@ -89,7 +89,25 @@ kubectl set env deployment/mcp-gateway -n <namespace> \
   OTEL_EXPORTER_OTLP_INSECURE="true"
 ```
 
-To enable only traces, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` without a logs endpoint. To enable only log export, set `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` without a traces endpoint. Prometheus metrics do not use these endpoint variables.
+To enable only traces after setting a base endpoint in Step 1, remove the base and logs endpoints before setting the trace endpoint:
+
+```bash
+kubectl set env deployment/mcp-gateway -n <namespace> \
+  OTEL_EXPORTER_OTLP_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://traces-collector:4318"
+```
+
+To enable only log export, remove the base and traces endpoints before setting the logs endpoint:
+
+```bash
+kubectl set env deployment/mcp-gateway -n <namespace> \
+  OTEL_EXPORTER_OTLP_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT- \
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="http://logs-collector:4318"
+```
+
+Prometheus metrics do not use these endpoint variables.
 
 ## What Gets Exported
 
@@ -132,11 +150,11 @@ Current tool and prompt routing performs routing-table lookups inside the `mcp-r
 
 #### Router span attributes
 
-Attributes follow [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#server). Attributes below are recorded only on the listed span and when the source value exists. All router spans carry `component=mcp-router`.
+Attributes follow [OpenTelemetry MCP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#server). All router spans carry `component=mcp-router`. Header-derived attributes are set even when the corresponding request header is absent; absent values are recorded as empty strings.
 
 | Span or protocol | Attributes |
 |------------------|------------|
-| `mcp-router.process` | Request-header attributes `http.method`, `http.path`, `http.request_id`, `mcp.protocol_version`, `mcp.header.method`, and `mcp.header.name`; parsed-request attributes `mcp.method.name`, `jsonrpc.protocol.version`, `jsonrpc.request.id`, `gen_ai.operation.name`, `gen_ai.tool.name` for tool calls, `mcp.session.id` when a stateful session is present, and `client.address` when `x-forwarded-for` is present; selected router `mcp.router` (`202511` or `202607`); response attributes `http.status_code` and `mcp.response.protocol_version` |
+| `mcp-router.process` | Request-header attributes `http.method`, `http.path`, `http.request_id`, `mcp.protocol_version`, `mcp.header.method`, and `mcp.header.name`; these attributes have empty-string values when their source headers are absent; parsed-request attributes `mcp.method.name`, `jsonrpc.protocol.version`, `jsonrpc.request.id`, `gen_ai.operation.name`, `gen_ai.tool.name` for tool calls, `mcp.session.id` when a stateful session is present, and `client.address` when `x-forwarded-for` is present; selected router `mcp.router` (`202511` or `202607`); response attributes `http.status_code` and `mcp.response.protocol_version`, where the latter contains the incoming `MCP-Protocol-Version` request-header value and is recorded during response-header processing |
 | `mcp-router.route-decision` | `mcp.method.name`, `protocol.version`, and `mcp.route`. The 2025-11-25 route can be `tool-call`, `prompt-get`, `resource-read`, `elicitation-response`, or `broker`; the 2026-07-28 route can be `tool-call`, `prompt-get`, or `broker` |
 | 2025-11-25 `mcp-router.tool-call` | `gen_ai.tool.name`, `mcp.session.id`, `mcp.server`, and `mcp.server.hostname` |
 | 2025-11-25 `mcp-router.prompt-get` | `mcp.prompt.name`, `mcp.session.id`, `mcp.server`, and `mcp.server.hostname` |
@@ -153,7 +171,7 @@ The MCP Broker emits spans for request handling, capability filtering, resource 
 
 | Span | When | Attributes |
 |------|------|------------|
-| `mcp-broker.handle-request` | Every MCP request handled by the broker | `mcp.method` and `protocol.version`; `mcp.session.id` when the SDK request has a stateful session |
+| `mcp-broker.handle-request` | MCP method requests processed by the broker, such as `initialize`, `ping`, `tools/list`, `tools/call`, `prompts/list`, `prompts/get`, and `resources/list` | `mcp.method` and `protocol.version`; `mcp.session.id` when the SDK request has a stateful session |
 | `mcp-broker.tools-list` | `tools/list` response filtering | `protocol.version` and `mcp.tools.count` |
 | `mcp-broker.prompts-list` | `prompts/list` response filtering | `protocol.version` and `mcp.prompts.count` |
 | `mcp-broker.resources-list` | `resources/list` response filtering | `mcp.resources.count` |

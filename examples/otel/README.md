@@ -295,9 +295,16 @@ echo "Search for trace: $TRACE_ID"
    see the [OpenTelemetry integration guide](../../docs/guides/opentelemetry.md#broker-metrics)
    for the metric definition and behavior.
 
-To inspect the raw gateway metrics without Grafana, use a separate port-forward:
+To inspect the raw gateway metrics without Grafana, use a separate port-forward.
+
+Run the port-forward in one terminal:
 
 ```bash
 kubectl port-forward -n mcp-system deployment/mcp-gateway 9090:9090
+```
+
+In a second terminal, query the metrics endpoint:
+
+```bash
 curl -s http://localhost:9090/metrics | grep mcp_broker_tools_discovered
 ```
