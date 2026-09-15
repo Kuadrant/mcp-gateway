@@ -267,8 +267,6 @@ type ElicitationInfo struct {
 	ElicitationID string
 }
 
-
-
 // ResourceAuthority extracts the authority segment (host) from a resource URI.
 // For malformed URIs, returns the URI unchanged.
 func ResourceAuthority(uri string) string {

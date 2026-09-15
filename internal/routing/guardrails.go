@@ -5,16 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 )
 
-// guardrailsToolErrorBuilder builds the transport-specific JSON-RPC error
-// object for a blocked request: BuildSSEJSONRPCError for 2025-11-25,
-// BuildJSONRPCError for 2026-07-28.
-type guardrailsToolErrorBuilder func(requestID any, message string) string
+// protocolRejectionBuilder builds a transport-specific JSON-RPC error
+// response for a guardrails-blocked request, delegating to the consolidated
+// builders in response_errors.go.
+type protocolRejectionBuilder func(requestID any, message string) string
 
 const (
 	guardrailsUnavailableMessage = "guardrails check unavailable"
@@ -30,7 +29,7 @@ type guardrailsCheck struct {
 	global      *api.Config
 	serverIDs   []string
 	logger      *slog.Logger
-	buildError  guardrailsToolErrorBuilder
+	buildError  protocolRejectionBuilder
 	contentType string
 }
 
@@ -40,7 +39,9 @@ type guardrailsOption func(*guardrailsCheck)
 // withSSEErrors configures 2025-11-25 SSE JSON-RPC error responses.
 func withSSEErrors() guardrailsOption {
 	return func(gc *guardrailsCheck) {
-		gc.buildError = BuildSSEJSONRPCError
+		gc.buildError = func(requestID any, message string) string {
+			return BuildSSEProtocolRejection(requestID, guardrailsJSONRPCCode, message)
+		}
 		gc.contentType = ""
 	}
 }
@@ -64,11 +65,13 @@ func newGuardrailsCheck(cfg *config.MCPServersConfig, configIDs []string, logger
 // GuardrailsForServer), ensuring consistency across a concurrent reload.
 func newGuardrailsCheckFromCheckerAndIDs(checker api.Checker, global *api.Config, configIDs []string, logger *slog.Logger, opts ...guardrailsOption) *guardrailsCheck {
 	gc := &guardrailsCheck{
-		checker:     checker,
-		global:      global,
-		serverIDs:   configIDs,
-		logger:      logger,
-		buildError:  BuildJSONRPCError,
+		checker:   checker,
+		global:    global,
+		serverIDs: configIDs,
+		logger:    logger,
+		buildError: func(requestID any, message string) string {
+			return BuildJSONProtocolRejection(requestID, guardrailsJSONRPCCode, message)
+		},
 		contentType: "application/json",
 	}
 	for _, o := range opts {
@@ -186,7 +189,7 @@ func (g *guardrailsCheck) logError(ctx context.Context, msg, toolName string, er
 	g.logger.ErrorContext(ctx, msg, "tool", toolName, "error", err)
 }
 
-func jsonRPCErrorDecision(status int, requestID any, message string, build guardrailsToolErrorBuilder, contentType string) *Decision {
+func jsonRPCErrorDecision(status int, requestID any, message string, build protocolRejectionBuilder, contentType string) *Decision {
 	return &Decision{
 		Error: &Error{
 			StatusCode:  status,
@@ -314,29 +317,6 @@ func replaceElicitationContent(result map[string]any, content string) (map[strin
 	return rest, nil
 }
 
-// BuildJSONRPCError constructs a JSON-RPC error object for 2026-07-28
-// guardrails rejections (not a tools/call isError result).
-func BuildJSONRPCError(requestID any, message string) string {
-	var b strings.Builder
-	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
-	idBytes, err := json.Marshal(requestID)
-	if err != nil {
-		b.WriteString("null")
-	} else {
-		b.Write(idBytes)
-	}
-	b.WriteString(",\"error\":{\"code\":-32000,\"message\":")
-	b.WriteString(jsonQuote(message))
-	b.WriteString("}}")
-	return b.String()
-}
-
-// BuildSSEJSONRPCError constructs an SSE JSON-RPC error object for 2025-11-25
-// guardrails rejections (not a tools/call isError result).
-func BuildSSEJSONRPCError(requestID any, message string) string {
-	return SseJSONRPC(requestID, func(b *strings.Builder) {
-		b.WriteString(",\"error\":{\"code\":-32000,\"message\":")
-		b.WriteString(jsonQuote(message))
-		b.WriteString("}}")
-	})
-}
+// guardrailsJSONRPCCode is the JSON-RPC error code used for all guardrails
+// rejections (server error).
+const guardrailsJSONRPCCode = -32000
