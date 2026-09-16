@@ -12,7 +12,7 @@ import (
 // fulfilled (e.g. tool not found, token resolution failed).
 
 // BuildSSEToolExecutionError constructs an SSE JSON-RPC result indicating
-// tool execution failure for the 2025-11-05 (SSE/streamable-HTTP) protocol.
+// tool execution failure for the 2025-11-25 (SSE/streamable-HTTP) protocol.
 func BuildSSEToolExecutionError(requestID any, message string) string {
 	return SseJSONRPC(requestID, func(b *strings.Builder) {
 		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
@@ -43,7 +43,7 @@ func BuildJSONToolExecutionError(requestID any, message string) string {
 // reaches any upstream server (e.g. invalid method, unknown prompt).
 
 // BuildSSEProtocolRejection constructs an SSE JSON-RPC error response for
-// the 2025-11-05 (SSE/streamable-HTTP) protocol. code is the JSON-RPC
+// the 2025-11-25 (SSE/streamable-HTTP) protocol. code is the JSON-RPC
 // error code (e.g. -32602 for "Invalid params").
 func BuildSSEProtocolRejection(requestID any, code int, message string) string {
 	return SseJSONRPC(requestID, func(b *strings.Builder) {
