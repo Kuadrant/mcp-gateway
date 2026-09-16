@@ -25,6 +25,7 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -431,14 +432,15 @@ func TestOnConnectionLost_SkippedWhenNoSession(t *testing.T) {
 	}
 }
 
-// regression: stateless streamable-HTTP upstream (responds to initialize but
-// returns no Mcp-Session-Id, returns 405 on GET). session.ID() is empty so
-// OnConnectionLost must not start a session.Wait goroutine.
-func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
+// newSessionlessUpstreamServer starts a streamable-HTTP MCP server behind a
+// proxy that strips Mcp-Session-Id from every response and rejects GET, the
+// wire behaviour of an older-SDK upstream running the transport in stateless
+// mode.
+func newSessionlessUpstreamServer(t *testing.T) *httptest.Server {
+	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "stateless", Version: "0.0.1"}, nil)
 	inner := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return srv }, nil)
 
-	// proxy that strips Mcp-Session-Id from all responses and rejects GET
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -457,7 +459,40 @@ func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
 	}))
-	defer ts.Close()
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// a session-less upstream negotiates a 2025 revision but issues no
+// Mcp-Session-Id, so it must be classified stateless: no GET SSE watcher (the
+// stream is keyed by session ID and the upstream 405s the GET) and no session
+// ping (there is no session to ping).
+func TestSessionlessUpstream_TreatedAsStateless(t *testing.T) {
+	ts := newSessionlessUpstreamServer(t)
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "stateless", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	require.Empty(t, up.currentSession().ID(), "session ID must be empty for stateless upstream")
+	require.Less(t, up.init.ProtocolVersion, protocol.Version2026, "upstream must negotiate a 2025 revision")
+
+	require.True(t, up.UsesStatelessProtocol(), "session-less upstream must be stateless")
+	require.NoError(t, up.Ping(ctx), "session-less upstream must skip the session ping")
+
+	up.clientMu.RLock()
+	watcher := up.watcher
+	up.clientMu.RUnlock()
+	require.Nil(t, watcher, "session-less upstream must not start the GET SSE notification watcher")
+}
+
+// regression: stateless streamable-HTTP upstream (responds to initialize but
+// returns no Mcp-Session-Id, returns 405 on GET). session.ID() is empty so
+// OnConnectionLost must not start a session.Wait goroutine.
+func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
+	ts := newSessionlessUpstreamServer(t)
 
 	up := NewUpstreamMCP(&config.MCPServer{Name: "stateless", URL: ts.URL}, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -655,7 +690,10 @@ func TestUsesStatelessProtocol(t *testing.T) {
 		expected bool
 	}{
 		{"nil init", nil, false},
-		{"2025", &mcp.InitializeResult{ProtocolVersion: "2025-11-25"}, false},
+		// no session: not connected, so nothing to classify. the session-less
+		// case is covered by TestSessionlessUpstream_TreatedAsStateless, which
+		// needs a real connection to produce an empty session ID.
+		{"2025 without session", &mcp.InitializeResult{ProtocolVersion: "2025-11-25"}, false},
 		{"2026", &mcp.InitializeResult{ProtocolVersion: "2026-07-28"}, true},
 		{"future version", &mcp.InitializeResult{ProtocolVersion: "2027-01-01"}, true},
 	}

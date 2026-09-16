@@ -741,6 +741,45 @@ func TestFetchUserSpecificTools_ExcludesPrivateScopeWithoutPrefix(t *testing.T) 
 	}
 }
 
+// regression for the stateful-family match: upstreams on older MCP SDKs
+// downgrade to an earlier 2025 revision at initialize, so a 2025 client must
+// still be served their user-specific tools. An exact Version2025 comparison
+// would drop this upstream from the fetch set.
+func TestFetchUserSpecificTools_Older2025Upstream(t *testing.T) {
+	var initCount atomic.Int32
+	ts := newTestMCPServer(&initCount, "upstream-session-2025-03")
+	defer ts.Close()
+
+	cache, _ := session.NewCache()
+	srv := userSpecificServer{
+		id: "ns/legacy-server", name: "legacy-server",
+		url: ts.URL, prefix: "lg_",
+	}
+	b := &mcpBrokerImpl{
+		userSpecificServers:      []userSpecificServer{srv},
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+	b.serverVersions.Store(srv.id, []string{"2025-03-26"})
+	withProtocolHandlers(b)
+
+	result := &mcp.ListToolsResult{
+		Tools: []*mcp.Tool{{Name: "cached-tool"}},
+	}
+	headers := http.Header{
+		"Mcp-Session-Id":       []string{"gw-session-legacy"},
+		"Mcp-Protocol-Version": []string{"2025-03-26"},
+		"Authorization":        []string{"Bearer user-token"},
+	}
+
+	b.FetchUserSpecificTools(context.Background(), headers, result)
+
+	require.Len(t, result.Tools, 2, "2025 client must see tools from a 2025-03-26 upstream")
+	assert.Equal(t, "cached-tool", result.Tools[0].Name)
+	assert.Equal(t, "lg_user_tool", result.Tools[1].Name)
+}
+
 func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
 	// stateful (2025) test server
 	var initCount2025 atomic.Int32

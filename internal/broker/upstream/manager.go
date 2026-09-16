@@ -109,7 +109,8 @@ type MCP interface {
 	ToolsCacheMetadata() CacheMetadata
 	// PromptsCacheMetadata returns cache metadata from the last prompts/list response.
 	PromptsCacheMetadata() CacheMetadata
-	// UsesStatelessProtocol returns true if the upstream negotiated 2026-07-28 or later.
+	// UsesStatelessProtocol returns true if the upstream negotiated 2026-07-28 or
+	// later, or issued no Mcp-Session-Id (stateless transport on a 2025 revision).
 	UsesStatelessProtocol() bool
 }
 
@@ -610,7 +611,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 
 					// adjust tick interval for 2026 upstreams based on upstream TTL hint.
 					// without notification handlers, polling is the only freshness mechanism.
-					if man.mcp.UsesStatelessProtocol() {
+					// gated on the negotiated version, not UsesStatelessProtocol: a
+					// session-less 2025 upstream sends no TTL hint, so adjusting would
+					// only overwrite the configured interval with the default.
+					if info := man.mcp.ProtocolInfo(); info != nil && info.ProtocolVersion >= protocol.Version2026 {
 						man.adjustTickerFromTTL()
 					}
 				}

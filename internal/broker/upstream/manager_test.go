@@ -44,10 +44,12 @@ type MockMCP struct {
 	resources           []mcp.Resource
 	listResourcesErr    error
 	protocolVersion     string
+	sessionless         bool
 	hasToolsCap         bool
 	hasPromptsCap       bool
 	hasResourcesCap     bool
 	connected           atomic.Bool
+	disconnectCount     atomic.Int32
 	notificationHandler func(method string)
 	toolsCacheMeta      CacheMetadata
 }
@@ -85,6 +87,7 @@ func (m *MockMCP) SupportsToolsListChanged() bool {
 
 func (m *MockMCP) Disconnect() error {
 	m.connected.Store(false)
+	m.disconnectCount.Add(1)
 	return nil
 }
 
@@ -191,7 +194,9 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 
 func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return m.toolsCacheMeta }
 func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
-func (m *MockMCP) UsesStatelessProtocol() bool         { return m.protocolVersion >= "2026-07-28" }
+func (m *MockMCP) UsesStatelessProtocol() bool {
+	return m.protocolVersion >= "2026-07-28" || m.sessionless
+}
 
 // newMockMCP creates a MockMCP with sensible defaults for testing
 func newMockMCP(name, prefix string) *MockMCP {
@@ -1934,6 +1939,25 @@ func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
 			}
 		})
 	}
+}
+
+// a session-less 2025 upstream is stateless but sends no TTL hint, so it must
+// stay out of TTL-based tick adjustment: adjusting would replace the configured
+// interval with the default.
+func TestMCPManager_SessionlessUpstreamKeepsConfiguredTicker(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("stateless-2025", "s25_")
+	mock.protocolVersion = "2025-03-26"
+	mock.sessionless = true
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasToolsCap = false
+	configured := 5 * time.Minute
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, configured, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+
+	assert.Equal(t, configured, manager.tickerInterval, "ticker interval")
 }
 
 func TestMCPManager_adjustTickerFromTTL_ResetOnZero(t *testing.T) {
