@@ -768,6 +768,11 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForReferenceGrant(ct
 }
 
 func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewayExtension, targetGateway *gatewayv1.Gateway, listenerConfig *ListenerConfig) (*istionetv1alpha3.EnvoyFilter, error) {
+	maxBodyBytes := config.DefaultMaxBodyBytes
+	if mcpExt.Spec.MaxBodyBytes != nil {
+		maxBodyBytes = int64(*mcpExt.Spec.MaxBodyBytes)
+	}
+
 	// build the ext_proc filter config as a structpb.Struct
 	extProcConfig, err := structpb.NewStruct(map[string]any{
 		"name": "envoy.filters.http.ext_proc",
@@ -775,6 +780,9 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewa
 			"@type":               "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
 			"failure_mode_allow":  false,
 			"allow_mode_override": true,
+			// max_request_bytes bounds BUFFERED mode body buffering.
+			// must match maxBodyBytes so guardrails response checks are not silently truncated.
+			"max_request_bytes": maxBodyBytes,
 			"mutation_rules": map[string]any{
 				"allow_all_routing": true,
 			},
