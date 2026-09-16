@@ -24,12 +24,9 @@ const statefulVersionPrefix = "2025-"
 // served set. Lock-free so it can be called from paths that already hold
 // mcpLock (e.g. buildRoutingTable).
 func supportsStatefulRoute(versions []string) bool {
-	for _, v := range versions {
-		if strings.HasPrefix(v, statefulVersionPrefix) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(versions, func(v string) bool {
+		return strings.HasPrefix(v, statefulVersionPrefix)
+	})
 }
 
 // serverServesOnStatefulRoute reports whether the upstream advertises any
