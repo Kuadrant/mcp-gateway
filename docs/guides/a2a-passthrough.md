@@ -235,4 +235,4 @@ kubectl -n gateway-system logs deployment/mcp-gateway-istio --tail=50 | grep wea
 ## Next steps
 
 - [Authorization](./authorization.md) — the per-capability authorization pattern this builds on
-- [Auditing MCP Tool Calls](./auditing.md) — the Istio Telemetry access-log approach in depth
+- [Auditing MCP Tool Calls](./auditing.md) — the router structured audit log
