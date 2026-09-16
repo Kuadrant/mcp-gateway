@@ -45,41 +45,19 @@ func generateTestCACertPEM(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 }
 
-type capturingConfigWriter struct {
-	lastCACertPEM string
-	writeCalled   bool
-
-	lastGuardrailsConfig  *config.GuardrailsConfig
-	guardrailsWriteCalled bool
-	lastMaxBodyBytes      int64
-}
+type capturingConfigWriter struct{}
 
 func (c *capturingConfigWriter) DeleteConfig(_ context.Context, _ types.NamespacedName) error {
-	return nil
-}
-func (c *capturingConfigWriter) EnsureConfigExists(_ context.Context, _ types.NamespacedName) error {
 	return nil
 }
 func (c *capturingConfigWriter) WriteEmptyConfig(_ context.Context, _ types.NamespacedName) error {
 	return nil
 }
-func (c *capturingConfigWriter) WriteCACertBundle(_ context.Context, caCertPEM string, _ types.NamespacedName) error {
-	c.lastCACertPEM = caCertPEM
-	c.writeCalled = true
-	return nil
-}
-func (c *capturingConfigWriter) WriteGlobalGuardrails(_ context.Context, guardrailsConfig *config.GuardrailsConfig, _ types.NamespacedName) error {
-	c.lastGuardrailsConfig = guardrailsConfig
-	c.guardrailsWriteCalled = true
+func (c *capturingConfigWriter) WriteGatewayConfig(_ context.Context, _ *config.GatewayConfig, _ types.NamespacedName) error {
 	return nil
 }
 
-func (c *capturingConfigWriter) WriteMaxBodyBytes(_ context.Context, maxBodyBytes int64, _ types.NamespacedName) error {
-	c.lastMaxBodyBytes = maxBodyBytes
-	return nil
-}
-
-func TestReconcileCACertBundle(t *testing.T) {
+func TestResolveCACertBundle(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = mcpv1.AddToScheme(scheme)
@@ -95,7 +73,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 		wantPEM     string
 	}{
 		{
-			name:      "nil ref clears config",
+			name:      "nil ref returns empty string",
 			bundleRef: nil,
 			wantPEM:   "",
 		},
@@ -201,7 +179,7 @@ func TestReconcileCACertBundle(t *testing.T) {
 				},
 			}
 
-			err := r.reconcileCACertBundle(context.Background(), mcpExt)
+			got, err := r.resolveCACertBundle(context.Background(), mcpExt)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -221,52 +199,9 @@ func TestReconcileCACertBundle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !writer.writeCalled {
-				t.Fatal("WriteCACertBundle was not called")
-			}
-			if writer.lastCACertPEM != tt.wantPEM {
-				t.Fatalf("unexpected PEM: got %d bytes, want %d bytes", len(writer.lastCACertPEM), len(tt.wantPEM))
+			if got != tt.wantPEM {
+				t.Fatalf("unexpected PEM: got %d bytes, want %d bytes", len(got), len(tt.wantPEM))
 			}
 		})
 	}
-}
-
-func TestReconcileMaxBodyBytes(t *testing.T) {
-	t.Run("uses default when spec.maxBodyBytes is unset", func(t *testing.T) {
-		writer := &capturingConfigWriter{}
-		r := &MCPGatewayExtensionReconciler{ConfigWriterDeleter: writer}
-
-		mcpExt := &mcpv1.MCPGatewayExtension{
-			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
-		}
-
-		err := r.reconcileMaxBodyBytes(context.Background(), mcpExt)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if writer.lastMaxBodyBytes != config.DefaultMaxBodyBytes {
-			t.Fatalf("lastMaxBodyBytes = %d, want %d", writer.lastMaxBodyBytes, config.DefaultMaxBodyBytes)
-		}
-	})
-
-	t.Run("uses explicit spec.maxBodyBytes when set", func(t *testing.T) {
-		writer := &capturingConfigWriter{}
-		r := &MCPGatewayExtensionReconciler{ConfigWriterDeleter: writer}
-
-		v := int32(2 << 20)
-		mcpExt := &mcpv1.MCPGatewayExtension{
-			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
-			Spec: mcpv1.MCPGatewayExtensionSpec{
-				MaxBodyBytes: &v,
-			},
-		}
-
-		err := r.reconcileMaxBodyBytes(context.Background(), mcpExt)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if writer.lastMaxBodyBytes != int64(v) {
-			t.Fatalf("lastMaxBodyBytes = %d, want %d", writer.lastMaxBodyBytes, v)
-		}
-	})
 }

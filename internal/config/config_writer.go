@@ -246,48 +246,36 @@ func (srw *SecretReaderWriter) RemoveMCPServer(ctx context.Context, serverName s
 	return lastErr
 }
 
-// WriteCACertBundle updates the gatewayCACertPEM field of the config secret.
-// It uses a read-modify-write pattern to preserve other sections.
-func (srw *SecretReaderWriter) WriteCACertBundle(ctx context.Context, caCertPEM string, namespaceName types.NamespacedName) error {
+// WriteGatewayConfig updates both gatewayCACertPEM and globalGuardrails fields
+// of the config secret in a single read-modify-write cycle.
+func (srw *SecretReaderWriter) WriteGatewayConfig(ctx context.Context, gwCfg *GatewayConfig, namespaceName types.NamespacedName) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
 		if err != nil {
-			return fmt.Errorf("write ca cert bundle failed to read config secret: %w", err)
+			return fmt.Errorf("write gateway config failed to read config secret: %w", err)
 		}
 
-		if existingConfig.GatewayCACertPEM == caCertPEM {
+		caCert := ""
+		var guardrails *GuardrailsConfig
+		var maxBody int64
+		if gwCfg != nil {
+			caCert = gwCfg.CACertPEM
+			guardrails = gwCfg.Guardrails
+			maxBody = gwCfg.MaxBodyBytes
+		}
+
+		if existingConfig.GatewayCACertPEM == caCert &&
+			globalGuardrailsEqual(existingConfig.GlobalGuardrails, guardrails) &&
+			existingConfig.MaxBodyBytes == maxBody {
 			return nil
 		}
 
-		existingConfig.GatewayCACertPEM = caCertPEM
+		existingConfig.GatewayCACertPEM = caCert
+		existingConfig.GlobalGuardrails = guardrails
+		existingConfig.MaxBodyBytes = maxBody
 		updated, err := yaml.Marshal(existingConfig)
 		if err != nil {
-			return fmt.Errorf("write ca cert bundle failed to marshal config: %w", err)
-		}
-
-		backingSecret.StringData[configFileName] = string(updated)
-		return srw.Client.Update(ctx, backingSecret)
-	})
-}
-
-// WriteGlobalGuardrails updates the globalGuardrails field of the config secret
-// with the resolved guardrails config. If guardrails is disabled or its Secret is removed,
-// pass nil to clear the globalGuardrails field.
-func (srw *SecretReaderWriter) WriteGlobalGuardrails(ctx context.Context, guardrailsConfig *GuardrailsConfig, namespaceName types.NamespacedName) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-		if err != nil {
-			return fmt.Errorf("write global guardrails failed to read config secret: %w", err)
-		}
-
-		if globalGuardrailsEqual(existingConfig.GlobalGuardrails, guardrailsConfig) {
-			return nil
-		}
-
-		existingConfig.GlobalGuardrails = guardrailsConfig
-		updated, err := yaml.Marshal(existingConfig)
-		if err != nil {
-			return fmt.Errorf("write global guardrails failed to marshal config: %w", err)
+			return fmt.Errorf("write gateway config failed to marshal config: %w", err)
 		}
 
 		backingSecret.StringData[configFileName] = string(updated)
@@ -305,29 +293,6 @@ func globalGuardrailsEqual(a, b *GuardrailsConfig) bool {
 		return false
 	}
 	return slices.Equal(a.ConfigIDs, b.ConfigIDs)
-}
-
-// WriteMaxBodyBytes updates the maxBodyBytes field of the config secret.
-func (srw *SecretReaderWriter) WriteMaxBodyBytes(ctx context.Context, maxBodyBytes int64, namespaceName types.NamespacedName) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-		if err != nil {
-			return fmt.Errorf("write maxBodyBytes failed to read config secret: %w", err)
-		}
-
-		if existingConfig.MaxBodyBytes == maxBodyBytes {
-			return nil
-		}
-
-		existingConfig.MaxBodyBytes = maxBodyBytes
-		updated, err := yaml.Marshal(existingConfig)
-		if err != nil {
-			return fmt.Errorf("write maxBodyBytes failed to marshal config: %w", err)
-		}
-
-		backingSecret.StringData[configFileName] = string(updated)
-		return srw.Client.Update(ctx, backingSecret)
-	})
 }
 
 // DeleteConfig deletes the entire config secret. If the secret doesn't exist,
@@ -349,13 +314,6 @@ func (srw *SecretReaderWriter) DeleteConfig(ctx context.Context, namespaceName t
 		return fmt.Errorf("failed to delete config secret: %w", err)
 	}
 	return nil
-}
-
-// EnsureConfigExists creates the config secret if it doesn't exist.
-// If the secret already exists, this is a no-op.
-func (srw *SecretReaderWriter) EnsureConfigExists(ctx context.Context, namespaceName types.NamespacedName) error {
-	_, _, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-	return err
 }
 
 // WriteEmptyConfig overwrites the config secret with an empty configuration.

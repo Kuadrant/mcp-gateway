@@ -116,11 +116,6 @@ const (
 // header-absent case on resurrected sessions.
 const mainDefaultProtocolVersion = "2025-03-26"
 
-// maxRequestBodyBytes bounds POST body reads. in production the router's
-// ext_proc bounds bodies before they reach the broker (--max-request-body-size,
-// 5MB default); this guards direct broker access against unbounded allocation.
-const maxRequestBodyBytes = 10 << 20
-
 // unsupportedDomain maps methods mark3labs knew but the gateway never
 // enabled to the capability name in its "<domain> not supported" error.
 // the SDK would otherwise serve some of these (empty resource lists,
@@ -201,7 +196,7 @@ func (h *compatHandler) servePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.broker.maxBodyBytes.Load()))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
