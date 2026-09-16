@@ -679,3 +679,139 @@ func storeConfig(cfg *config.MCPServersConfig) *atomic.Pointer[config.MCPServers
 	p.Store(cfg)
 	return p
 }
+
+func TestResponseHandler_BufferResponseBodyForGuardrails(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:              "tools/call",
+		GuardrailsConfigIDs: []string{"svr-1"},
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody, "StreamBody must be true for guardrails")
+	require.True(t, decision.BufferResponseBody, "BufferResponseBody must be true for guardrails")
+}
+
+func TestResponseHandler_BufferResponseBodyNotSetForNon200(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:              "tools/call",
+		GuardrailsConfigIDs: []string{"svr-1"},
+	}
+
+	for _, status := range []string{"404", "500", "401"} {
+		t.Run("status_"+status, func(t *testing.T) {
+			input := &ResponseInput{
+				StatusCode: status,
+				Request:    mcpReq,
+			}
+			decision := handler.HandleResponse(context.Background(), input)
+			require.NotNil(t, decision)
+			require.False(t, decision.StreamBody)
+			require.False(t, decision.BufferResponseBody)
+		})
+	}
+}
+
+func TestResponseHandler_BufferResponseBodyNotSetWithoutGuardrails(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method: "tools/call",
+		// no GuardrailsConfigIDs
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+	require.NotNil(t, decision)
+	require.False(t, decision.StreamBody)
+	require.False(t, decision.BufferResponseBody)
+}
+
+func TestResponseHandler_BufferResponseBodyWithPrefixAlsoSetsStreamBody(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	// guardrails + prefix: both flags set
+	mcpReq := &MCPRequest{
+		Method:              "tools/call",
+		ServerPrefix:        "s_",
+		GuardrailsConfigIDs: []string{"svr-1"},
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody)
+	require.True(t, decision.BufferResponseBody)
+}
+
+func TestResponseHandler_StreamBodyWithPrefixNoGuardrailsDoesNotBuffer(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	handler := &ResponseHandler202511{
+		Logger:       logger,
+		SessionCache: cache,
+	}
+
+	mcpReq := &MCPRequest{
+		Method:       "tools/call",
+		ServerPrefix: "s_",
+		// no GuardrailsConfigIDs
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody, "prefix still requires streaming for resource URI rewriting")
+	require.False(t, decision.BufferResponseBody, "no guardrails means no buffering")
+}

@@ -22,6 +22,10 @@ type ResponseHandler202607 struct {
 }
 
 // HandleResponse returns a pass-through decision for 2026-07-28 responses.
+// TODO: response-side guardrails are not implemented for the 2026 protocol path —
+// GuardrailsConfigIDs is never threaded through router_202607.go and
+// BufferResponseBody is never set here, so CheckToolResponseGuardrails never
+// runs for 2026 clients even when guardrails are configured.
 func (h *ResponseHandler202607) HandleResponse(_ context.Context, _ *ResponseInput) *ResponseDecision {
 	return &ResponseDecision{
 		SetHeaders: make(map[string]string),
@@ -30,8 +34,9 @@ func (h *ResponseHandler202607) HandleResponse(_ context.Context, _ *ResponseInp
 
 // ResponseDecision is the output of response-phase routing logic.
 type ResponseDecision struct {
-	SetHeaders map[string]string
-	StreamBody bool // true if the adapter should switch to streamed response body mode
+	SetHeaders         map[string]string
+	StreamBody         bool // true if the adapter should switch to streamed response body mode
+	BufferResponseBody bool // true if the response body should be fully buffered before forwarding (guardrails)
 }
 
 // ResponseInput is the transport-agnostic input for response-phase routing.
@@ -120,9 +125,16 @@ func (h *ResponseHandler202511) HandleResponse(ctx context.Context, input *Respo
 	// enable streamed response body mode for elicitation ID rewriting and/or
 	// resource URI rewriting - either gate is sufficient on its own, tool calls
 	// to servers with no prefix and no elicitation stay pass-through
-	if req != nil && req.IsToolCall() && input.StatusCode == strconv.Itoa(http.StatusOK) &&
-		(req.ClientElicitation || req.ServerPrefix != "") {
-		decision.StreamBody = true
+	if req != nil && req.IsToolCall() && input.StatusCode == strconv.Itoa(http.StatusOK) {
+		if req.ClientElicitation || req.ServerPrefix != "" {
+			decision.StreamBody = true
+		}
+		if len(req.GuardrailsConfigIDs) > 0 {
+			// buffer the full response before forwarding so guardrails can
+			// inspect (and potentially block) the complete tool result.
+			decision.StreamBody = true
+			decision.BufferResponseBody = true
+		}
 	}
 
 	return decision
