@@ -504,6 +504,8 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		Hint:             mcpsr.Spec.Hint,
 		UserSpecificList: userSpecificListEnabled,
 		Tags:             append([]string(nil), mcpsr.Spec.Tags...),
+
+		SupportedProtocolVersions: append([]string(nil), mcpsr.Spec.SupportedProtocolVersions...),
 	}
 
 	if mcpsr.Spec.TokenURLElicitation != nil {

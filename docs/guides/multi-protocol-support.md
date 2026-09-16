@@ -17,6 +17,39 @@ When a client connects, the gateway detects the protocol version:
 | Only 2026 backends | `["2026-07-28"]` | 2026-07-28 |
 | Both | `["2025-11-25", "2026-07-28"]` | 2026-07-28 (highest) |
 
+### Overriding an upstream's advertised versions
+
+The gateway learns which versions an upstream serves from that upstream's
+`server/discover` response. Some MCP SDKs advertise **only** modern (2026-era)
+revisions there, even though the server still serves legacy (2025-era) requests.
+Such an upstream is classified as 2026-only and its tools are federated only to
+2026 clients — invisible to the entire 2025 client base — despite serving those
+clients correctly.
+
+Set `spec.supportedProtocolVersions` on the `MCPServerRegistration` to declare
+the versions the upstream actually serves. The gateway then classifies and
+serves its tools to clients on each listed version instead of trusting
+`server/discover` alone. The version negotiated at `initialize` is always
+included implicitly.
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPServerRegistration
+metadata:
+  name: example
+spec:
+  targetRef: { ... }
+  # This upstream serves both eras but advertises only 2026-07-28 in
+  # server/discover; declare both so 2025 clients can reach its tools.
+  supportedProtocolVersions:
+    - "2025-11-25"
+    - "2026-07-28"
+```
+
+Only list versions the upstream genuinely serves: a client calls a listed tool
+over its own negotiated version, so declaring a version the upstream does not
+serve will cause those calls to fail.
+
 ## Which tools each client sees
 
 `tools/list` returns only tools from protocol-compatible backends:

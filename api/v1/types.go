@@ -141,6 +141,24 @@ type MCPServerRegistrationSpec struct {
 	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=128
 	Tags []string `json:"tags,omitempty"`
+
+	// supportedProtocolVersions overrides the protocol versions the broker
+	// treats this upstream as supporting.
+	// By default the broker learns an upstream's versions from its
+	// server/discover response, falling back to the version negotiated at
+	// initialize. Some MCP SDKs advertise only modern (2026-era) revisions in
+	// server/discover even though the server also serves legacy (2025-era)
+	// requests; such an upstream is then federated only to clients on the
+	// advertised version and is invisible to the rest.
+	// Set this field to the full list of versions the upstream actually serves
+	// (for example ["2025-11-25","2026-07-28"]) to force the broker to classify
+	// and serve its tools to clients on each listed version. The version
+	// negotiated at initialize is always included implicitly.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	SupportedProtocolVersions []string `json:"supportedProtocolVersions,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
