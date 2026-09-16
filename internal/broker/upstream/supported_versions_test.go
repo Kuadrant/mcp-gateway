@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestResolveSupportedVersions covers the override/captured/negotiated
+// precedence, the union of a differing negotiated version, and empty inputs.
 func TestResolveSupportedVersions(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -33,6 +35,20 @@ func TestResolveSupportedVersions(t *testing.T) {
 			captured:   []string{"2026-07-28"},
 			negotiated: "2026-07-28",
 			want:       []string{"2026-07-28"},
+		},
+		{
+			name:       "captured differing from negotiated appends negotiated",
+			override:   nil,
+			captured:   []string{"2025-11-25"},
+			negotiated: "2026-07-28",
+			want:       []string{"2025-11-25", "2026-07-28"},
+		},
+		{
+			name:       "override differing from negotiated appends negotiated",
+			override:   []string{"2026-07-28"},
+			captured:   []string{"2026-07-28"},
+			negotiated: "2025-11-25",
+			want:       []string{"2026-07-28", "2025-11-25"},
 		},
 		{
 			name:       "no override no captured yields negotiated only",
