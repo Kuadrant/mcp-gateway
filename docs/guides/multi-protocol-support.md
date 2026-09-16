@@ -54,8 +54,8 @@ serve will cause those calls to fail.
 
 `tools/list` returns only tools from protocol-compatible backends:
 
-- **2025-11-25 clients** see tools from servers that negotiated 2025-11-25, plus the `discover_tools` and `select_tools` meta-tools
-- **2026-07-28 clients** see tools from servers that negotiated 2026-07-28, without meta-tools
+- **2025-11-25 clients** see tools from servers that support 2025-11-25, plus the `discover_tools` and `select_tools` meta-tools
+- **2026-07-28 clients** see tools from servers that support 2026-07-28, without meta-tools
 
 UserSpecificList servers follow the same filtering — per-user tools are fetched only from backends matching the client's protocol version.
 
