@@ -4,6 +4,7 @@ package mcprouter
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,9 +14,11 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	api "github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extprochttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/stretchr/testify/require"
@@ -557,8 +560,17 @@ func (m *mockProcessServer) Send(actualResp *extProcV3.ProcessingResponse) error
 		requireMatchingCommonHeaderMutation(m.t, v.RequestBody.Response, actualRequestBody.RequestBody.Response)
 		requireMatchingBodyMutation(m.t, v.RequestBody.Response, actualRequestBody.RequestBody.Response)
 	case *extProcV3.ProcessingResponse_ResponseHeaders:
-		_, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ResponseHeaders)
+		actualRespHeaders, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ResponseHeaders)
 		require.True(m.t, ok, "expected response type to be ResponseHeaders, but it was a %T", actualResp.Response)
+		_ = actualRespHeaders
+		// only assert ModeOverride when the expected step specifies one
+		if expectedResponse.ModeOverride != nil {
+			require.Equal(m.t, expectedResponse.ModeOverride, actualResp.ModeOverride)
+		}
+	case *extProcV3.ProcessingResponse_ResponseBody:
+		actualRespBody, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ResponseBody)
+		require.True(m.t, ok, "expected response type to be ResponseBody, but it was a %T", actualResp.Response)
+		requireMatchingBodyMutation(m.t, v.ResponseBody.Response, actualRespBody.ResponseBody.Response)
 	case *extProcV3.ProcessingResponse_ImmediateResponse:
 		actualImmediateBody, ok := actualResp.Response.(*extProcV3.ProcessingResponse_ImmediateResponse)
 		require.True(m.t, ok, "expected response type to be ImmediateResponse, but it was a %T", actualResp.Response)
@@ -708,6 +720,68 @@ type stubResponseHandler struct{}
 
 func (s *stubResponseHandler) HandleResponse(_ context.Context, _ *routing.ResponseInput) *routing.ResponseDecision {
 	return &routing.ResponseDecision{SetHeaders: map[string]string{}}
+}
+
+// bufferedResponseHandler simulates a ResponseDecision with guardrails buffering active.
+type bufferedResponseHandler struct{}
+
+func (b *bufferedResponseHandler) HandleResponse(_ context.Context, _ *routing.ResponseInput) *routing.ResponseDecision {
+	return &routing.ResponseDecision{
+		StreamBody:         true,
+		BufferResponseBody: true,
+		SetHeaders:         map[string]string{},
+	}
+}
+
+// stubRouterGuardrails is a Router that stamps GuardrailsConfigIDs and ServerPrefix
+// onto the parsed request so the response handler activates buffering.
+type stubRouterGuardrails struct {
+	configIDs    []string
+	serverPrefix string
+}
+
+func (s *stubRouterGuardrails) RouteRequest(_ context.Context, req *routing.Request) *routing.Decision {
+	if req != nil && req.Parsed != nil {
+		req.Parsed.GuardrailsConfigIDs = s.configIDs
+		req.Parsed.ServerPrefix = s.serverPrefix
+	}
+	return &routing.Decision{}
+}
+
+// allowAllChecker is an api.Checker that unconditionally allows every check.
+type allowAllChecker struct{}
+
+func (a *allowAllChecker) CheckRequest(_ context.Context, _ string, _ json.RawMessage, _ []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
+}
+
+func (a *allowAllChecker) CheckResponse(_ context.Context, _ string, _ []byte, _ []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
+}
+
+func (a *allowAllChecker) Close() error { return nil }
+
+// blockAllChecker is an api.Checker that allows requests but blocks every response check.
+type blockAllChecker struct{}
+
+func (b *blockAllChecker) CheckRequest(_ context.Context, _ string, _ json.RawMessage, _ []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusAllowed}, nil
+}
+
+func (b *blockAllChecker) CheckResponse(_ context.Context, _ string, _ []byte, _ []string) (*api.Decision, error) {
+	return &api.Decision{Status: api.StatusBlocked}, nil
+}
+
+func (b *blockAllChecker) Close() error { return nil }
+
+// bufferedModeOverride is the ProcessingMode the adapter sends when BufferResponseBody is true.
+var bufferedModeOverride = &extprochttp.ProcessingMode{
+	RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
+	ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
+	RequestBodyMode:     extprochttp.ProcessingMode_STREAMED,
+	ResponseBodyMode:    extprochttp.ProcessingMode_BUFFERED,
+	RequestTrailerMode:  extprochttp.ProcessingMode_SKIP,
+	ResponseTrailerMode: extprochttp.ProcessingMode_SKIP,
 }
 
 // makeTestBearer builds a minimal unsigned JWT with the given sub claim, sufficient
@@ -972,6 +1046,215 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 	require.Empty(t, found.attrs["server"]) // stub router does not populate ServerName
 	// session is empty on the error path when no gateway session was established
 	require.Empty(t, found.attrs["session"])
+}
+
+// TestProcess_GuardrailsAllowed_BodyPassthrough verifies that when guardrails
+// allow a tools/call response (nil replacement), the body passes through to
+// the client and any downstream rewriters (resourceURIRewriter) still run.
+// This guards the composition branch where replacement==nil and rewriter/resourceRewriter
+// must NOT be nilled out.
+func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	// config with an ALLOWED guardrails checker
+	cfg := &config.MCPServersConfig{}
+	cfg.ApplyReload([]*config.MCPServer{{
+		Name:                "s1",
+		GuardrailsConfigIDs: []string{"cfg-1"},
+	}}, nil, "", 0, nil, &allowAllChecker{})
+
+	srv := &ExtProcServer{
+		Logger:          logger,
+		SessionCache:    cache,
+		Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+		ResponseHandler: &bufferedResponseHandler{},
+	}
+	srv.RoutingConfig.Store(cfg)
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	// a plain JSON-RPC tool result with text content — no resource URIs so resourceRewriter is a no-op
+	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        toolCallBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{},
+							},
+						},
+					},
+				},
+			},
+		},
+		// response headers: assert the ModeOverride is BUFFERED (not just type-checked).
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extProcV3.HttpHeaders{
+						Headers: &corev3.HeaderMap{
+							Headers: []*corev3.HeaderValue{
+								{Key: ":status", Value: "200"},
+							},
+						},
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response:     &extProcV3.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extProcV3.HeadersResponse{}},
+					ModeOverride: bufferedModeOverride,
+				},
+			},
+		},
+		// response body arrives in one shot (BUFFERED mode, endOfStream=true).
+		// guardrails ALLOW → body returned unchanged. resourceRewriter runs but
+		// finds no resource URIs so body is identical.
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseBody{
+					ResponseBody: &extProcV3.HttpBody{
+						Body:        toolResultBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_ResponseBody{
+						ResponseBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								BodyMutation: &extProcV3.BodyMutation{
+									Mutation: &extProcV3.BodyMutation_Body{
+										Body: toolResultBody,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err = srv.Process(mock)
+	require.NoError(t, err)
+	mock.verifyAllResponsesConsumed()
+}
+
+// TestProcess_GuardrailsBlocked_ReplacementBody verifies that when guardrails
+// block a tools/call response, the replacement isError body is sent to the
+// client and the stream completes normally. Also, confirms that rewriter and
+// resourceRewriter are nilled out so they do not corrupt the replacement body.
+func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cfg := &config.MCPServersConfig{}
+	cfg.ApplyReload([]*config.MCPServer{{
+		Name:                "s1",
+		GuardrailsConfigIDs: []string{"cfg-1"},
+	}}, nil, "", 0, nil, &blockAllChecker{})
+
+	srv := &ExtProcServer{
+		Logger:          logger,
+		SessionCache:    cache,
+		Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+		ResponseHandler: &bufferedResponseHandler{},
+	}
+	srv.RoutingConfig.Store(cfg)
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
+	// blockAllChecker blocks every response; adapter must send this replacement.
+	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
+
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		requestHeadersStep(),
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        toolCallBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extProcV3.HttpHeaders{
+						Headers: &corev3.HeaderMap{
+							Headers: []*corev3.HeaderValue{
+								{Key: ":status", Value: "200"},
+							},
+						},
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response:     &extProcV3.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extProcV3.HeadersResponse{}},
+					ModeOverride: bufferedModeOverride,
+				},
+			},
+		},
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseBody{
+					ResponseBody: &extProcV3.HttpBody{
+						Body:        toolResultBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_ResponseBody{
+						ResponseBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								BodyMutation: &extProcV3.BodyMutation{
+									Mutation: &extProcV3.BodyMutation_Body{
+										Body: blockedBody,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err = srv.Process(mock)
+	require.NoError(t, err)
+	mock.verifyAllResponsesConsumed()
 }
 
 // TestExtProcServer_OnConfigChange_DataRace exercises a config-reload landing

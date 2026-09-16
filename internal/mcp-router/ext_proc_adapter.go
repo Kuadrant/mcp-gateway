@@ -139,11 +139,15 @@ func responseDecisionToResponse(d *routing.ResponseDecision) []*extProcV3.Proces
 	responses := rb.WithResponseHeaderResponse(headers).Build()
 
 	if d.StreamBody && len(responses) > 0 {
+		bodyMode := extprochttp.ProcessingMode_STREAMED
+		if d.BufferResponseBody {
+			bodyMode = extprochttp.ProcessingMode_BUFFERED
+		}
 		responses[0].ModeOverride = &extprochttp.ProcessingMode{
 			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
 			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
 			RequestBodyMode:     extprochttp.ProcessingMode_STREAMED,
-			ResponseBodyMode:    extprochttp.ProcessingMode_STREAMED,
+			ResponseBodyMode:    bodyMode,
 			RequestTrailerMode:  extprochttp.ProcessingMode_SKIP,
 			ResponseTrailerMode: extprochttp.ProcessingMode_SKIP,
 		}
@@ -181,6 +185,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		isA2A               = false              // true for /a2a traffic when A2A passthrough is enabled
 		rewriter            *elicitationRewriter // nil until a tool call response arrives
 		resourceRewriter    *resourceURIRewriter // nil until a tool call response with resources arrives
+		guardrailsActive    = false              // true when response body must be buffered for guardrails
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -554,11 +559,17 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			responses := responseDecisionToResponse(respDecision)
 
 			if respDecision.StreamBody {
-				rewriter = &elicitationRewriter{
-					idMap:      s.ElicitationMap,
-					req:        mcpRequest,
-					logger:     s.Logger,
-					gatewayIDs: make([]string, 0),
+				// set guardrailsActive before deciding whether to create the
+				// elicitation rewriter. guardrails-only tool calls (no elicitation,
+				// no prefix) do not need it.
+				guardrailsActive = respDecision.BufferResponseBody
+				if !guardrailsActive || mcpRequest.ClientElicitation {
+					rewriter = &elicitationRewriter{
+						idMap:      s.ElicitationMap,
+						req:        mcpRequest,
+						logger:     s.Logger,
+						gatewayIDs: make([]string, 0),
+					}
 				}
 				// also construct resourceURIRewriter for tool calls with resources on 200 responses
 				if mcpRequest.ServerPrefix != "" && statusCode == "200" {
@@ -577,13 +588,36 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 			}
-			if rewriter != nil {
-				continue // tool call: response body is streamed
+			if rewriter != nil || guardrailsActive {
+				continue // wait for response body (streamed or buffered)
 			}
 			return nil // non-tool-call: response body is not streamed
 		case *extProcV3.ProcessingRequest_ResponseBody:
 			body := r.ResponseBody.GetBody()
 			endOfStream := r.ResponseBody.GetEndOfStream()
+
+			// guardrails: body arrived in one shot (BUFFERED mode); check before
+			// running any rewriters so a block replaces the entire response.
+			if guardrailsActive {
+				text := extractToolResponseText(body)
+				replacement := routing.CheckToolResponseGuardrails(
+					ctx,
+					s.RoutingConfig.Load(),
+					mcpRequest.ToolName(),
+					mcpRequest.GuardrailsConfigIDs,
+					text,
+					mcpRequest.ID,
+					s.Logger,
+					routing.BuildSSEToolError,
+					routing.BuildSSEToolResult,
+				)
+				if replacement != nil {
+					body = replacement
+					// skip the rewriters — replacement body is already final
+					rewriter = nil
+					resourceRewriter = nil
+				}
+			}
 
 			if rewriter != nil {
 				body = rewriter.Process(ctx, body)
