@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	istiov1alpha3 "istio.io/api/networking/v1alpha3"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -206,6 +208,57 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildEnvoyFilter_MaxRequestBytes(t *testing.T) {
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "gw-ns"},
+	}
+	listenerCfg := &ListenerConfig{Port: 443}
+
+	extractMaxRequestBytes := func(t *testing.T, mcpExt *mcpv1.MCPGatewayExtension) float64 {
+		t.Helper()
+		r := &MCPGatewayExtensionReconciler{}
+		ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerCfg)
+		if err != nil {
+			t.Fatalf("buildEnvoyFilter: %v", err)
+		}
+		patch := ef.Spec.ConfigPatches[0]
+		typedCfg, ok := patch.Patch.Value.Fields["typed_config"]
+		if !ok {
+			t.Fatal("typed_config missing from patch value")
+		}
+		v, ok := typedCfg.GetStructValue().Fields["max_request_bytes"]
+		if !ok {
+			t.Fatal("max_request_bytes missing from typed_config")
+		}
+		return v.GetNumberValue()
+	}
+
+	t.Run("defaults to DefaultMaxBodyBytes when spec.maxBodyBytes is unset", func(t *testing.T) {
+		mcpExt := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext", Namespace: "default"},
+		}
+		got := extractMaxRequestBytes(t, mcpExt)
+		want := float64(config.DefaultMaxBodyBytes)
+		if got != want {
+			t.Fatalf("max_request_bytes = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("uses spec.maxBodyBytes when set", func(t *testing.T) {
+		mcpExt := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext", Namespace: "default"},
+			Spec: mcpv1.MCPGatewayExtensionSpec{
+				MaxBodyBytes: ptr.To(int32(4 << 20)), // 4 MiB
+			},
+		}
+		got := extractMaxRequestBytes(t, mcpExt)
+		want := float64(4 << 20)
+		if got != want {
+			t.Fatalf("max_request_bytes = %v, want %v", got, want)
+		}
+	})
 }
 
 func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {

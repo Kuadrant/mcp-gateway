@@ -1050,11 +1050,82 @@ func TestProcess_ToolCallAuditLog_RouterError(t *testing.T) {
 	require.Empty(t, found.attrs["session"])
 }
 
+// guardrailsResponseSteps returns the shared RequestBody → ResponseHeaders →
+// ResponseBody mock steps for the guardrails allow/block tests.
+func guardrailsResponseSteps(toolCallBody, toolResultBody, wantBody []byte) []mockProcessServerMessageAndErr {
+	return []mockProcessServerMessageAndErr{
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_RequestBody{
+					RequestBody: &extProcV3.HttpBody{
+						Body:        toolCallBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_RequestBody{
+						RequestBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								HeaderMutation: &extProcV3.HeaderMutation{},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extProcV3.HttpHeaders{
+						Headers: &corev3.HeaderMap{
+							Headers: []*corev3.HeaderValue{
+								{Key: ":status", Value: "200"},
+							},
+						},
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response:     &extProcV3.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extProcV3.HeadersResponse{}},
+					ModeOverride: bufferedModeOverride,
+				},
+			},
+		},
+		// response body arrives in one shot (BUFFERED mode, endOfStream=true).
+		{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseBody{
+					ResponseBody: &extProcV3.HttpBody{
+						Body:        toolResultBody,
+						EndOfStream: true,
+					},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{
+				{
+					Response: &extProcV3.ProcessingResponse_ResponseBody{
+						ResponseBody: &extProcV3.BodyResponse{
+							Response: &extProcV3.CommonResponse{
+								BodyMutation: &extProcV3.BodyMutation{
+									Mutation: &extProcV3.BodyMutation_Body{
+										Body: wantBody,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // TestProcess_GuardrailsAllowed_BodyPassthrough verifies that when guardrails
-// allow a tools/call response (nil replacement), the body passes through to
-// the client and any downstream rewriters (resourceURIRewriter) still run.
-// This guards the composition branch where replacement==nil and rewriter/resourceRewriter
-// must NOT be nilled out.
+// allow a response (nil replacement), the body passes through unchanged and
+// rewriter/resourceRewriter are not nilled out.
 func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
@@ -1079,78 +1150,10 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	// a plain JSON-RPC tool result with text content — no resource URIs so resourceRewriter is a no-op
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
 
-	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
-		requestHeadersStep(),
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_RequestBody{
-					RequestBody: &extProcV3.HttpBody{
-						Body:        toolCallBody,
-						EndOfStream: true,
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_RequestBody{
-						RequestBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								HeaderMutation: &extProcV3.HeaderMutation{},
-							},
-						},
-					},
-				},
-			},
-		},
-		// response headers: assert the ModeOverride is BUFFERED (not just type-checked).
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
-					ResponseHeaders: &extProcV3.HttpHeaders{
-						Headers: &corev3.HeaderMap{
-							Headers: []*corev3.HeaderValue{
-								{Key: ":status", Value: "200"},
-							},
-						},
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response:     &extProcV3.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extProcV3.HeadersResponse{}},
-					ModeOverride: bufferedModeOverride,
-				},
-			},
-		},
-		// response body arrives in one shot (BUFFERED mode, endOfStream=true).
-		// guardrails ALLOW → body returned unchanged. resourceRewriter runs but
-		// finds no resource URIs so body is identical.
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_ResponseBody{
-					ResponseBody: &extProcV3.HttpBody{
-						Body:        toolResultBody,
-						EndOfStream: true,
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_ResponseBody{
-						ResponseBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								BodyMutation: &extProcV3.BodyMutation{
-									Mutation: &extProcV3.BodyMutation_Body{
-										Body: toolResultBody,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	})
+	// guardrails ALLOW → body returned unchanged.
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody)...)
+	mock := makeMockProcessServer(t, steps)
 
 	err = srv.Process(mock)
 	require.NoError(t, err)
@@ -1158,9 +1161,8 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 }
 
 // TestProcess_GuardrailsBlocked_ReplacementBody verifies that when guardrails
-// block a tools/call response, the replacement isError body is sent to the
-// client and the stream completes normally. Also, confirms that rewriter and
-// resourceRewriter are nilled out so they do not corrupt the replacement body.
+// block a response, the replacement isError body is sent instead, with
+// rewriter/resourceRewriter nilled out so they don't corrupt it.
 func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
@@ -1185,74 +1187,9 @@ func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	// blockAllChecker blocks every response; adapter must send this replacement.
 	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
 
-	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
-		requestHeadersStep(),
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_RequestBody{
-					RequestBody: &extProcV3.HttpBody{
-						Body:        toolCallBody,
-						EndOfStream: true,
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_RequestBody{
-						RequestBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								HeaderMutation: &extProcV3.HeaderMutation{},
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_ResponseHeaders{
-					ResponseHeaders: &extProcV3.HttpHeaders{
-						Headers: &corev3.HeaderMap{
-							Headers: []*corev3.HeaderValue{
-								{Key: ":status", Value: "200"},
-							},
-						},
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response:     &extProcV3.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extProcV3.HeadersResponse{}},
-					ModeOverride: bufferedModeOverride,
-				},
-			},
-		},
-		{
-			msg: &extProcV3.ProcessingRequest{
-				Request: &extProcV3.ProcessingRequest_ResponseBody{
-					ResponseBody: &extProcV3.HttpBody{
-						Body:        toolResultBody,
-						EndOfStream: true,
-					},
-				},
-			},
-			resp: []*extProcV3.ProcessingResponse{
-				{
-					Response: &extProcV3.ProcessingResponse_ResponseBody{
-						ResponseBody: &extProcV3.BodyResponse{
-							Response: &extProcV3.CommonResponse{
-								BodyMutation: &extProcV3.BodyMutation{
-									Mutation: &extProcV3.BodyMutation_Body{
-										Body: blockedBody,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	})
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody)...)
+	mock := makeMockProcessServer(t, steps)
 
 	err = srv.Process(mock)
 	require.NoError(t, err)
