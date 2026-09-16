@@ -1,6 +1,6 @@
 # OpenTelemetry Integration
 
-This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distributed tracing, log export, and Prometheus metrics. Tracing and log export require a base or signal-specific OTLP endpoint. Prometheus metrics are always enabled and require no OTLP endpoint.
+This guide covers enabling OpenTelemetry (OTel) on the MCP Gateway for distributed tracing, log export, and Prometheus metrics. Tracing and log export require a base or signal-specific OTLP endpoint. Prometheus metrics do not require an OTLP endpoint. The gateway serves them at `/metrics` on port `9090` unless it encounters a telemetry configuration error. Check the startup logs for telemetry configuration errors.
 
 ## Prerequisites
 
@@ -183,14 +183,14 @@ The router propagates W3C trace context on forwarded requests. The broker extrac
 
 Error recording is component-specific. An error span does not automatically contain every error attribute:
 
-- ext_proc processing errors record `error.type`, `error_source=ext-proc`, and `http.status_code`.
+- When the router records an external-processing error, the span includes `error.type`, `error_source=ext-proc`, and `http.status_code`.
 - Broker handler errors record `error.type` and `error_source=broker`.
 - Backend connection or discovery errors recorded by `mcp-broker.upstream-manage` record `error.type`, `error_source=backend`, and `mcp.server`.
 - Router route errors can set span status and `error.type`. The resulting HTTP status is recorded on `mcp-router.process` when response headers are processed.
 
 ### Logs
 
-When log export is enabled, all `slog` log lines are sent to the collector through OTLP in addition to stdout. Log lines emitted within a traced request automatically include `trace_id` and `span_id` fields, enabling log-to-trace correlation in backends such as Grafana (Loki to Tempo).
+When log export is enabled, `slog` log lines emitted after telemetry initialization are sent to the collector through OTLP in addition to stdout. Logs emitted before telemetry initialization remain on stdout. Log lines emitted within a traced request automatically include `trace_id` and `span_id` fields, enabling log-to-trace correlation in backends such as Grafana (Loki to Tempo).
 
 ### Resource Attributes
 
@@ -221,7 +221,7 @@ echo "Search for trace: $TRACE_ID"
 
 ## Prometheus Metrics
 
-The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated pod-local port (default `:9090`). Metrics are always enabled and do not require environment variables or an OTLP endpoint.
+The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated pod-local port (default `:9090`).
 
 ### Broker metrics
 
