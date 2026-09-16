@@ -2038,6 +2038,48 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			},
 			wantUpdate: true,
 		},
+		{
+			name: "user-added annotation does not trigger update",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Annotations = map[string]string{
+					"external-dns.alpha.kubernetes.io/controller": "none",
+					"custom.io/note": "user-applied",
+				}
+				// keep all controller labels intact
+				r.Labels = reconciler.buildGatewayHTTPRoute(mcpExt, publicHost).Labels
+			},
+			wantUpdate: false,
+		},
+		{
+			name: "user-added label does not trigger update",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Labels = map[string]string{
+					labelAppName:   brokerRouterName,
+					labelManagedBy: labelManagedByValue,
+					"team":         "platform",
+				}
+			},
+			wantUpdate: false,
+		},
+		{
+			name: "controller label removed triggers update",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Labels = map[string]string{
+					"team": "platform", // only user label, controller labels missing
+				}
+			},
+			wantUpdate: true,
+		},
+		{
+			name: "controller label value changed triggers update",
+			modify: func(r *gatewayv1.HTTPRoute) {
+				r.Labels = map[string]string{
+					labelAppName:   "wrong-value",
+					labelManagedBy: labelManagedByValue,
+				}
+			},
+			wantUpdate: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2048,6 +2090,104 @@ func TestHTTPRouteNeedsUpdate(t *testing.T) {
 			needsUpdate, _ := httpRouteNeedsUpdate(desired, existing)
 			if needsUpdate != tt.wantUpdate {
 				t.Errorf("httpRouteNeedsUpdate() = %v, want %v", needsUpdate, tt.wantUpdate)
+			}
+		})
+	}
+}
+
+func TestMergeMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  map[string]string
+		existing map[string]string
+		want     map[string]string
+	}{
+		{
+			name:     "user annotations preserved",
+			desired:  map[string]string{labelAppName: brokerRouterName},
+			existing: map[string]string{"external-dns.alpha.kubernetes.io/controller": "none", labelAppName: "old"},
+			want:     map[string]string{labelAppName: brokerRouterName, "external-dns.alpha.kubernetes.io/controller": "none"},
+		},
+		{
+			name:     "nil existing",
+			desired:  map[string]string{"a": "1"},
+			existing: nil,
+			want:     map[string]string{"a": "1"},
+		},
+		{
+			name:     "nil desired",
+			desired:  nil,
+			existing: map[string]string{"user": "val"},
+			want:     map[string]string{"user": "val"},
+		},
+		{
+			name:     "both nil",
+			desired:  nil,
+			existing: nil,
+			want:     map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeMetadata(tt.desired, tt.existing)
+			if !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("mergeMetadata() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetadataIsSubset(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  map[string]string
+		existing map[string]string
+		want     bool
+	}{
+		{
+			name:     "exact match",
+			desired:  map[string]string{"a": "1"},
+			existing: map[string]string{"a": "1"},
+			want:     true,
+		},
+		{
+			name:     "existing has extra keys",
+			desired:  map[string]string{"a": "1"},
+			existing: map[string]string{"a": "1", "b": "2"},
+			want:     true,
+		},
+		{
+			name:     "desired key missing from existing",
+			desired:  map[string]string{"a": "1", "b": "2"},
+			existing: map[string]string{"a": "1"},
+			want:     false,
+		},
+		{
+			name:     "value mismatch",
+			desired:  map[string]string{"a": "1"},
+			existing: map[string]string{"a": "wrong"},
+			want:     false,
+		},
+		{
+			name:     "nil desired is always subset",
+			desired:  nil,
+			existing: map[string]string{"a": "1"},
+			want:     true,
+		},
+		{
+			name:     "both nil",
+			desired:  nil,
+			existing: nil,
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := metadataIsSubset(tt.desired, tt.existing)
+			if got != tt.want {
+				t.Errorf("metadataIsSubset() = %v, want %v", got, tt.want)
 			}
 		})
 	}
