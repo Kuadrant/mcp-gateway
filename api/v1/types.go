@@ -146,14 +146,16 @@ type MCPServerRegistrationSpec struct {
 	// treats this upstream as supporting.
 	// By default the broker learns an upstream's versions from its
 	// server/discover response, falling back to the version negotiated at
-	// initialize. Some MCP SDKs advertise only modern (2026-era) revisions in
-	// server/discover even though the server also serves legacy (2025-era)
-	// requests; such an upstream is then federated only to clients on the
-	// advertised version and is invisible to the rest.
+	// initialize. Some MCP servers do not advertise all the protocol versions
+	// they actually support, so the broker classifies them from an incomplete
+	// list and federates their tools only to clients on the advertised versions.
 	// Set this field to the full list of versions the upstream actually serves
 	// (for example ["2025-11-25","2026-07-28"]) to force the broker to classify
 	// and serve its tools to clients on each listed version. The version
 	// negotiated at initialize is always included implicitly.
+	// This is a last-resort override for servers that misreport their supported
+	// versions; it does not guarantee any future protocol discovery or
+	// compatibility.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=10

@@ -20,11 +20,12 @@ When a client connects, the gateway detects the protocol version:
 ### Overriding an upstream's advertised versions
 
 The gateway learns which versions an upstream serves from that upstream's
-`server/discover` response. Some MCP SDKs advertise **only** modern (2026-era)
-revisions there, even though the server still serves legacy (2025-era) requests.
-Such an upstream is classified as 2026-only and its tools are federated only to
-2026 clients — invisible to the entire 2025 client base — despite serving those
-clients correctly.
+`server/discover` response. Some MCP servers do not advertise all the protocol
+versions they actually support. When that happens, the gateway classifies the
+upstream from an incomplete list and federates its tools only to clients on the
+advertised versions — leaving it invisible to clients on the versions it serves
+but did not advertise, despite serving those clients correctly. This field lets
+the gateway accommodate that server-side gap.
 
 Set `spec.supportedProtocolVersions` on the `MCPServerRegistration` to declare
 the versions the upstream actually serves. The gateway then classifies and
@@ -49,6 +50,12 @@ spec:
 Only list versions the upstream genuinely serves: a client calls a listed tool
 over its own negotiated version, so declaring a version the upstream does not
 serve will cause those calls to fail.
+
+This field is a last-resort override for servers that misreport their supported
+versions. Setting it does not guarantee any future protocol discovery or
+cross-version compatibility — it only forces classification against the versions
+you list. Prefer fixing the upstream's `server/discover` advertisement where you
+can, and use this field only when you cannot.
 
 ## Which tools each client sees
 
