@@ -49,13 +49,6 @@ spec:
             - name: metrics
               containerPort: 8082
               protocol: TCP
-          securityContext:
-            runAsNonRoot: true
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
           resources:
             requests:
               memory: "64Mi"
