@@ -967,13 +967,13 @@ func (r *MCPGatewayExtensionReconciler) resolveGuardrails(ctx context.Context, m
 	}
 
 	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return nil, newValidationError(mcpv1.GuardrailsSecretInvalid,
 			fmt.Sprintf("guardrails secret %s missing required label %s=%s", guardrailsSecretRef, ManagedSecretLabel, ManagedSecretValue))
 	}
 
 	guardrailsConfig, err := guardrails.EnsureNeMoConfigData(secret.Type, secret.Data)
 	if err != nil {
-		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return nil, newValidationError(mcpv1.GuardrailsSecretInvalid,
 			fmt.Sprintf("guardrails secret %s is invalid: %v", guardrailsSecretRef, err))
 	}
 

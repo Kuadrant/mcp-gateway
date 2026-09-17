@@ -28,6 +28,7 @@ package config
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -66,6 +67,11 @@ const (
 	// emptyConfigFile is the initial content for a newly created config secret.
 	emptyConfigFile = "servers: []\nvirtualServers: []\n"
 )
+
+// ErrGatewayGuardrailsNotApplied is returned by UpsertMCPServer when a server
+// has per-server guardrails config IDs but the target config has no global
+// guardrails, so the router would have no checker to enforce them.
+var ErrGatewayGuardrailsNotApplied = stderrors.New("gateway guardrails config not applied")
 
 // WriteVirtualServerConfig updates the virtualServers section of the config secret.
 // It uses a read-modify-write pattern to preserve the servers section while updating
@@ -156,13 +162,18 @@ func (srw *SecretReaderWriter) readOrCreateConfigSecret(ctx context.Context, nam
 // UpsertMCPServer updates or inserts a single MCPServer in the config secret.
 // If a server with the same Name already exists, it is replaced. Otherwise, the
 // server is appended to the list. This uses a read-modify-write pattern with
-// automatic retry on conflict errors.
+// automatic retry on conflict errors. Returns ErrGatewayGuardrailsNotApplied if
+// the server has guardrails config IDs and the config has no global guardrails.
 func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPServer, namespaceName types.NamespacedName) error {
 	srw.Logger.Info("SecretReaderWriter UpsertMCPServer", "secret", namespaceName, "name", server.Name)
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
 		if err != nil {
 			return fmt.Errorf("upsert mcpserver failed to read config secret: %w", err)
+		}
+
+		if len(server.GuardrailsConfigIDs) > 0 && existingConfig.GlobalGuardrails == nil {
+			return fmt.Errorf("%w in %s", ErrGatewayGuardrailsNotApplied, namespaceName)
 		}
 
 		// find and replace existing server, or append if not found

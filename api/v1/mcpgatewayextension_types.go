@@ -69,6 +69,12 @@ const (
 	// GuardrailsSecretNotFound is the reason seen when the guardrails secret referenced
 	// by the guardrails-ref annotation is not found
 	GuardrailsSecretNotFound = "GuardrailsSecretNotFound"
+	// GuardrailsSecretInvalid is the reason seen when the guardrails secret referenced
+	// by the guardrails-ref annotation exists but is malformed (missing the managed
+	// label or holding undecodable config data). Distinct from the generic
+	// ConditionReasonSecretInvalid so registrations can fail closed on a broken
+	// guardrails secret without also rejecting on unrelated extension secret failures.
+	GuardrailsSecretInvalid = "GuardrailsSecretInvalid"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.

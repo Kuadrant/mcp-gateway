@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -105,6 +106,27 @@ func TestUpsertMCPServer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUpsertMCPServerRequiresGlobalGuardrails(t *testing.T) {
+	srw := newTestSecretReaderWriter(t)
+	ctx := context.Background()
+	namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
+	server := MCPServer{Name: "s", URL: "http://s.local/mcp", GuardrailsConfigIDs: []string{"strict"}}
+
+	if err := srw.UpsertMCPServer(ctx, server, namespaceName); !errors.Is(err, ErrGatewayGuardrailsNotApplied) {
+		t.Fatalf("UpsertMCPServer err = %v, want ErrGatewayGuardrailsNotApplied", err)
+	}
+	if err := srw.UpsertMCPServer(ctx, MCPServer{Name: "plain", URL: "http://p.local/mcp"}, namespaceName); err != nil {
+		t.Fatalf("UpsertMCPServer without IDs: %v", err)
+	}
+
+	if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{Guardrails: &GuardrailsConfig{URL: "https://rails.internal"}}, namespaceName); err != nil {
+		t.Fatalf("WriteGatewayConfig: %v", err)
+	}
+	if err := srw.UpsertMCPServer(ctx, server, namespaceName); err != nil {
+		t.Fatalf("UpsertMCPServer after gateway guardrails applied: %v", err)
 	}
 }
 
