@@ -83,17 +83,18 @@ var InternalOnlyHeaders = []string{MCPAuthorizedHeader, MCPVirtualServerHeader, 
 
 // MCPRequest encapsulates a mcp protocol request to the gateway
 type MCPRequest struct {
-	ID                any               `json:"id"`
-	JSONRPC           string            `json:"jsonrpc"`
-	Method            string            `json:"method,omitempty"`
-	Params            map[string]any    `json:"params,omitempty"`
-	Result            map[string]any    `json:"result,omitempty"`
-	Headers           map[string]string `json:"-"`
-	SessionID         string            `json:"-"`
-	ServerName        string            `json:"-"`
-	ServerPrefix      string            `json:"-"`
-	BackendSessionID  string            `json:"-"`
-	ClientElicitation bool              `json:"-"`
+	ID                  any               `json:"id"`
+	JSONRPC             string            `json:"jsonrpc"`
+	Method              string            `json:"method,omitempty"`
+	Params              map[string]any    `json:"params,omitempty"`
+	Result              map[string]any    `json:"result,omitempty"`
+	Headers             map[string]string `json:"-"`
+	SessionID           string            `json:"-"`
+	ServerName          string            `json:"-"`
+	ServerPrefix        string            `json:"-"`
+	BackendSessionID    string            `json:"-"`
+	ClientElicitation   bool              `json:"-"`
+	GuardrailsConfigIDs []string          `json:"-"` // per-server IDs for response guardrails check
 }
 
 // GetSingleHeaderValue returns header value by key
@@ -288,6 +289,17 @@ func BuildSSEToolError(requestID any, message string) string {
 		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
 		b.WriteString(jsonQuote(message))
 		b.WriteString("}],\"isError\":true}}")
+	})
+}
+
+// BuildSSEToolResult constructs a successful SSE tool result for 2025-11-25.
+// Used when guardrails modifies response content: the redacted text is a
+// valid result, not an error.
+func BuildSSEToolResult(requestID any, text string) string {
+	return SseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+		b.WriteString(jsonQuote(text))
+		b.WriteString("}]}}")
 	})
 }
 

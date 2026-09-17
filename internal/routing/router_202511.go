@@ -183,6 +183,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 	headers[MethodHeader] = mcpReq.Method
 	mcpReq.ServerName = serverInfo.Name
 	mcpReq.ServerPrefix = serverInfo.Prefix
+	mcpReq.GuardrailsConfigIDs = route.GuardrailsConfigIDs
 	upstreamToolName, _ := strings.CutPrefix(toolName, serverInfo.Prefix)
 	headers[ToolHeader] = upstreamToolName
 	mcpReq.ReWriteToolName(upstreamToolName)

@@ -102,6 +102,97 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 	return true, nil
 }
 
+// checkToolCallResponse runs guardrails against the text content of a
+// tools/call response. Returns a replacement body for the client when the
+// response must be blocked or has been modified, or nil to pass through the
+// original. buildToolError formats an isError tool result; buildToolResult
+// formats a successful tool result (used when StatusModified redacts content).
+func (g *guardrailsCheck) checkToolCallResponse(ctx context.Context, toolName string, textContent []byte, requestID any, buildToolError guardrailsToolErrorBuilder, buildToolResult guardrailsToolErrorBuilder) []byte {
+	if len(textContent) == 0 {
+		return nil
+	}
+	modified, isModified, blockMsg := g.responseCheck(ctx, toolName, textContent)
+	switch {
+	case blockMsg != "":
+		return []byte(buildToolError(requestID, blockMsg))
+	case isModified:
+		// guardrails redacted the content: return it as a successful result,
+		// not as an error — StatusModified means "safe version", not "failure".
+		// content may be empty when the checker redacted everything.
+		return []byte(buildToolResult(requestID, modified))
+	default:
+		return nil
+	}
+}
+
+// responseCheck runs a guardrails check on tools/call response text.
+// Returns (modifiedContent, isModified, blockMessage).
+// isModified distinguishes StatusModified (even with empty content) from
+// StatusAllowed — a checker may return StatusModified with empty content
+// to signal that all text was redacted; treating that as pass-through would
+// forward the original response, violating the guardrails decision.
+// Non-empty blockMessage is the client-visible reason for a block or failure.
+func (g *guardrailsCheck) responseCheck(ctx context.Context, toolName string, content []byte) (modified string, isModified bool, blockMessage string) {
+	var globalConfigIDs []string
+	if g.global != nil {
+		globalConfigIDs = g.global.ConfigIDs
+	}
+	if len(globalConfigIDs) == 0 && len(g.serverIDs) == 0 {
+		return "", false, ""
+	}
+	if g.checker == nil {
+		g.logError(ctx, "guardrails checker unavailable for response check", toolName, fmt.Errorf("checker is nil"))
+		return "", false, guardrailsUnavailableMessage
+	}
+
+	decision, checkErr := g.checker.CheckResponse(ctx, toolName, content, g.serverIDs)
+	if checkErr != nil {
+		g.logError(ctx, "guardrails response translation failed", toolName, checkErr)
+		return "", false, guardrailsCheckFailedMessage
+	}
+	if decision == nil {
+		g.logError(ctx, "guardrails returned nil decision for response", toolName, fmt.Errorf("nil decision"))
+		return "", false, guardrailsCheckFailedMessage
+	}
+
+	switch decision.Status {
+	case api.StatusBlocked:
+		if decision.Err != nil {
+			g.logError(ctx, "guardrails response check unavailable, failing closed", toolName, decision.Err)
+			return "", false, guardrailsUnavailableMessage
+		}
+		if g.logger != nil {
+			g.logger.InfoContext(ctx, "guardrails blocked tool response", "tool", toolName, "reason", decision.Reason)
+		}
+		return "", false, guardrailsBlockedMessage
+	case api.StatusAllowed:
+		if decision.Err != nil && g.logger != nil {
+			g.logger.ErrorContext(ctx, "guardrails response check failed open", "tool", toolName, "error", decision.Err)
+		}
+		return "", false, ""
+	case api.StatusModified:
+		return decision.Content, true, ""
+	default:
+		g.logError(ctx, "guardrails returned unrecognized status for response", toolName, fmt.Errorf("status %q", decision.Status))
+		return "", false, guardrailsCheckFailedMessage
+	}
+}
+
+// CheckToolResponseGuardrails is the entry point for response-phase
+// guardrails used by the ext_proc adapter. configIDs are the per-server IDs
+// from MCPRequest.GuardrailsConfigIDs while global IDs are loaded from cfg.
+// Returns a replacement body when the response must be blocked or modified,
+// or nil to pass through the original body.
+// buildToolError formats an isError tool result (blocked) while buildToolResult
+// formats a successful tool result (StatusModified redacted content).
+// withSSEErrors is passed so that g.buildError matches the 2025-11-25 call site;
+// checkToolCallResponse does not call g.buildError directly, but a future caller
+// of g.errorDecision inside responseCheck would use the wrong format without it.
+func CheckToolResponseGuardrails(ctx context.Context, cfg *config.MCPServersConfig, toolName string, configIDs []string, textContent []byte, requestID any, logger *slog.Logger, buildToolError func(any, string) string, buildToolResult func(any, string) string) []byte {
+	gc := newGuardrailsCheck(cfg, configIDs, logger, withSSEErrors())
+	return gc.checkToolCallResponse(ctx, toolName, textContent, requestID, buildToolError, buildToolResult)
+}
+
 // checkElicitationAccept runs the guardrails check for an elicitation accept
 // and applies any modification in place. Decline/cancel and non-elicitation
 // requests are skipped. requestID is the client-facing id for error bodies.
