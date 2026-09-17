@@ -191,6 +191,11 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		tags = make([]string, len(up.Tags))
 		copy(tags, up.Tags)
 	}
+	var supportedProtocolVersions []string
+	if len(up.SupportedProtocolVersions) > 0 {
+		supportedProtocolVersions = make([]string, len(up.SupportedProtocolVersions))
+		copy(supportedProtocolVersions, up.SupportedProtocolVersions)
+	}
 	return config.MCPServer{
 		Name:                up.Name,
 		URL:                 up.URL,
@@ -204,6 +209,8 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Category:            cat,
 		Hint:                up.Hint,
 		Tags:                tags,
+
+		SupportedProtocolVersions: supportedProtocolVersions,
 	}
 }
 
@@ -315,14 +322,15 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 
 	negotiated := up.init.ProtocolVersion
 	up.dc.SetConnected()
-	if captured, verr := up.dc.Versions(); verr == nil && len(captured) > 0 {
-		up.supportedVersions = captured
-		if !slices.Contains(up.supportedVersions, negotiated) {
-			up.supportedVersions = append(up.supportedVersions, negotiated)
+	// An operator override short-circuits discovery: skip the discover-capture
+	// wait entirely and trust the configured list.
+	var captured []string
+	if len(up.SupportedProtocolVersions) == 0 {
+		if c, verr := up.dc.Versions(); verr == nil {
+			captured = c
 		}
-	} else {
-		up.supportedVersions = []string{negotiated}
 	}
+	up.supportedVersions = resolveSupportedVersions(up.SupportedProtocolVersions, captured, negotiated)
 	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
@@ -471,6 +479,26 @@ func (up *MCPServer) UsesStatelessProtocol() bool {
 	}
 	session := up.currentSession()
 	return session != nil && session.ID() == ""
+}
+
+// resolveSupportedVersions determines the protocol versions the broker treats
+// an upstream as supporting. An explicit operator override wins over the
+// versions captured from server/discover, which in turn win over the single
+// version negotiated at initialize. The negotiated version is always included,
+// since the upstream demonstrably serves it. The returned slice never aliases
+// the override or captured input.
+func resolveSupportedVersions(override, captured []string, negotiated string) []string {
+	var versions []string
+	switch {
+	case len(override) > 0:
+		versions = slices.Clone(override)
+	case len(captured) > 0:
+		versions = slices.Clone(captured)
+	}
+	if negotiated != "" && !slices.Contains(versions, negotiated) {
+		versions = append(versions, negotiated)
+	}
+	return versions
 }
 
 // SupportedVersions returns the list of protocol versions this upstream supports.

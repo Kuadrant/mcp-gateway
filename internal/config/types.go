@@ -245,6 +245,10 @@ type MCPServer struct {
 	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`
 	GuardrailsConfigIDs []string                   `json:"guardrailsConfigIDs,omitempty" yaml:"guardrailsConfigIDs,omitempty"`
+	// SupportedProtocolVersions, when non-empty, overrides the protocol versions
+	// the broker treats this upstream as supporting instead of those learned
+	// from server/discover.
+	SupportedProtocolVersions []string `json:"supportedProtocolVersions,omitempty" yaml:"supportedProtocolVersions,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -265,7 +269,7 @@ func normalizeState(state string) string {
 }
 
 // ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
-// This means having a different name, prefix, url, hostname, credential, state, category, hint, or tags.
+// This means having a different name, prefix, url, hostname, credential, state, category, hint, tags, or supported protocol versions.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	if existingConfig.Name != mcpServer.Name ||
 		existingConfig.Prefix != mcpServer.Prefix ||
@@ -281,6 +285,10 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		return true
 	}
 	if !slices.Equal(existingConfig.Category, mcpServer.Category) {
+		return true
+	}
+	// Order matters: the version list drives stateful/stateless classification.
+	if !slices.Equal(existingConfig.SupportedProtocolVersions, mcpServer.SupportedProtocolVersions) {
 		return true
 	}
 	return !tagsEqual(mcpServer.Tags, existingConfig.Tags)
