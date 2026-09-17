@@ -612,4 +612,34 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, "mytool", restored.Params["name"])
 		require.Equal(t, map[string]any{"query": "SELECT sanitized"}, restored.Params["arguments"])
 	})
+
+	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {
+		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+		cfg := &config.MCPServersConfig{Servers: serverConfigs}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
+
+		req := toolReq()
+		decision := router.RouteRequest(context.Background(), req)
+		require.Nil(t, decision.Error)
+		require.Equal(t, []string{"svr-1"}, req.Parsed.GuardrailsConfigIDs)
+		require.Equal(t, "dummy", req.Parsed.ServerName)
+		require.Equal(t, "s_", req.Parsed.ServerPrefix)
+	})
+
+	t.Run("nil Parsed does not panic", func(t *testing.T) {
+		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+		cfg := &config.MCPServersConfig{Servers: serverConfigs}
+		router.RoutingConfig.Store(cfg)
+
+		req := &Request{
+			MCPMethod: MethodToolCall,
+			MCPName:   "s_mytool",
+			RequestID: "req-1",
+		}
+		require.NotPanics(t, func() {
+			router.RouteRequest(context.Background(), req)
+		})
+	})
 }
