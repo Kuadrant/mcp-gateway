@@ -403,3 +403,88 @@ func TestFindOldestMCPServerRegistration_TieBreakIsSymmetric(t *testing.T) {
 		t.Errorf("expected the lower UID (%q) to win the tie, got %q", a.UID, fromA.UID)
 	}
 }
+
+func TestParseGuardrailsConfigIDs(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        []string
+	}{
+		{name: "nil annotations"},
+		{name: "unset", annotations: map[string]string{}},
+		{
+			name:        "comma separated",
+			annotations: map[string]string{ManagedGuardrailsAnnotation: "strict-input-checking,pii-detection"},
+			want:        []string{"strict-input-checking", "pii-detection"},
+		},
+		{
+			name:        "trims spaces and drops empties",
+			annotations: map[string]string{ManagedGuardrailsAnnotation: " a, ,b "},
+			want:        []string{"a", "b"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseGuardrailsConfigIDs(tt.annotations)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("parseGuardrailsConfigIDs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRequireGatewayGuardrails(t *testing.T) {
+	t.Run("ok when every extension has guardrails-ref", func(t *testing.T) {
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gw", Namespace: "ns",
+				Annotations: map[string]string{labelGuardrailsReference: "rails"},
+			},
+		}}, []string{"strict"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("ok without annotation when no per-server IDs", func(t *testing.T) {
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "ns"},
+		}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("error when an extension has no guardrails-ref", func(t *testing.T) {
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "ns"},
+		}}, []string{"strict"})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("error when guardrails secret is not found even without per-server IDs", func(t *testing.T) {
+		ext := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gw", Namespace: "ns",
+				Annotations: map[string]string{labelGuardrailsReference: "rails"},
+			},
+		}
+		ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound, "guardrails secret rails not found")
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{ext}, nil)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("ok when rails secret is invalid for an unrelated reason; per-server IDs still allowed", func(t *testing.T) {
+		ext := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gw", Namespace: "ns",
+				Annotations: map[string]string{labelGuardrailsReference: "rails"},
+			},
+		}
+		ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.ConditionReasonSecretInvalid, "invalid")
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{ext}, []string{"strict"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+}
