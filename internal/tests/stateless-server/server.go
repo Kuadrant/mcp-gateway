@@ -423,6 +423,26 @@ func deleteToolHandler(s *mcp.Server) http.HandlerFunc {
 
 func elicitationToolHandler() mcp.ToolHandler {
 	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		capabilities, ok := req.Params.Meta[mcp.MetaKeyClientCapabilities].(map[string]any)
+		if !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request client capabilities"}},
+			}, nil
+		}
+		if _, ok := capabilities["elicitation"]; !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request elicitation capability"}},
+			}, nil
+		}
+		if req.Params.RequestState != "" && req.Params.RequestState != "elicitation-pending" {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid MRTR request state"}},
+			}, nil
+		}
+
 		if len(req.Params.InputResponses) == 0 {
 			return &mcp.CallToolResult{
 				InputRequests: mcp.InputRequestMap{

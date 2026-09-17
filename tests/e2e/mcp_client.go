@@ -92,6 +92,14 @@ func NewStatelessClientWithHeaders(ctx context.Context, gatewayHost string, head
 	return client.Connect(ctx, buildGatewayTransport(gatewayHost, headers, false), nil)
 }
 
+// NewStatelessClientWithElicitation creates a 2026 MCP client with an elicitation handler.
+func NewStatelessClientWithElicitation(ctx context.Context, gatewayHost string, handler func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) (*mcp.ClientSession, error) {
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-2026-elicitation", Version: "0.0.1"}, &mcp.ClientOptions{
+		ElicitationHandler: handler,
+	})
+	return client.Connect(ctx, buildGatewayTransport(gatewayHost, nil, false), nil)
+}
+
 // NewStatelessClientWithNotifications creates a 2026 MCP client that reports
 // tools and prompts list_changed notifications to notificationFunc.
 func NewStatelessClientWithNotifications(ctx context.Context, gatewayHost string, notificationFunc func(string)) (*NotifyingMCPClient, error) {
