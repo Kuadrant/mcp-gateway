@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 // Transport-level timeouts for upstream HTTP clients. We bound connection
@@ -27,6 +30,11 @@ var (
 	defaultResponseHeaderTimeout = 30 * time.Second
 	defaultExpectContinueTimeout = 1 * time.Second
 )
+
+// tokenRequestTimeout bounds a single token-endpoint round trip. the source is
+// built per Connect, so a wedged AS fails the connect into the manager's
+// backoff rather than blocking the health tick.
+const tokenRequestTimeout = 10 * time.Second
 
 // cache scope values for upstream list response hints
 const (
@@ -102,7 +110,9 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 		"gateway-server-id": string(up.ID()),
 		"x-client-id":       "broker",
 	}
-	if up.Credential != "" {
+	// a token source owns Authorization; the two are mutually exclusive in the
+	// CRD, but branch on OAuth2 first so a hand-written config cannot set both
+	if up.OAuth2 == nil && up.Credential != "" {
 		up.headers["Authorization"] = up.Credential
 	}
 	return up
@@ -142,13 +152,46 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		}
 	}
 
+	// the token source sits below the header injector so oauth2.Transport sets
+	// Authorization last and wins over anything in up.headers
+	var inner http.RoundTripper = base
+	if up.OAuth2 != nil {
+		ts, err := up.newTokenSource(base)
+		if err != nil {
+			return nil, err
+		}
+		inner = &oauth2.Transport{Source: ts, Base: base}
+	}
+
 	up.dc = &discoverCapture{
 		base: &toolHintsTee{
-			base: &transport.HeaderRoundTripper{Base: base, Headers: up.headers},
+			base: &transport.HeaderRoundTripper{Base: inner, Headers: up.headers},
 			sink: up.storeToolHints,
 		},
 	}
 	return &http.Client{Transport: up.dc}, nil
+}
+
+// newTokenSource builds a client-credentials token source for this upstream.
+// the AS is reached through base — the same trust pool as the upstream, so a
+// private CA in the gateway bundle covers both — and deliberately not through
+// the header chain: the AS is not an MCP server and must not see broker
+// identity headers. the returned source is a ReuseTokenSource that re-requests
+// near expiry; wrapping it again would disable refresh.
+func (up *MCPServer) newTokenSource(base http.RoundTripper) (oauth2.TokenSource, error) {
+	// CEL guards the CRD, but the broker reads a mounted file
+	if !strings.HasPrefix(up.OAuth2.TokenURL, "https://") {
+		return nil, fmt.Errorf("token URL for upstream %s must use https", up.Name)
+	}
+	cc := &clientcredentials.Config{
+		ClientID:     up.OAuth2.ClientID,
+		ClientSecret: up.OAuth2.ClientSecret,
+		TokenURL:     up.OAuth2.TokenURL,
+		Scopes:       up.OAuth2.Scopes,
+	}
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+		&http.Client{Transport: base, Timeout: tokenRequestTimeout})
+	return cc.TokenSource(ctx), nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
