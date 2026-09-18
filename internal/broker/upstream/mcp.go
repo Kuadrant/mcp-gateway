@@ -172,12 +172,31 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	return &http.Client{Transport: up.dc}, nil
 }
 
+// sanitizedTokenSource replaces the oauth2 package's token error, which quotes
+// the AS response body, with one naming the upstream only — the error becomes
+// the /status Message. the detail is logged instead of dropped. it delegates
+// caching to the wrapped ReuseTokenSource, so refresh still happens.
+type sanitizedTokenSource struct {
+	src    oauth2.TokenSource
+	id     config.UpstreamMCPID
+	logger *slog.Logger
+}
+
+func (s *sanitizedTokenSource) Token() (*oauth2.Token, error) {
+	tok, err := s.src.Token()
+	if err != nil {
+		s.logger.Error("token request failed", "upstream mcp server", s.id, "error", err)
+		return nil, fmt.Errorf("failed to obtain access token for upstream %s", s.id)
+	}
+	return tok, nil
+}
+
 // newTokenSource builds a client-credentials token source for this upstream.
 // the AS is reached through base — the same trust pool as the upstream, so a
 // private CA in the gateway bundle covers both — and deliberately not through
 // the header chain: the AS is not an MCP server and must not see broker
-// identity headers. the returned source is a ReuseTokenSource that re-requests
-// near expiry; wrapping it again would disable refresh.
+// identity headers. the ReuseTokenSource underneath re-requests near expiry;
+// wrapping it in another one would disable refresh.
 func (up *MCPServer) newTokenSource(base http.RoundTripper) (oauth2.TokenSource, error) {
 	// CEL guards the CRD, but the broker reads a mounted file
 	if !strings.HasPrefix(up.OAuth2.TokenURL, "https://") {
@@ -191,7 +210,7 @@ func (up *MCPServer) newTokenSource(base http.RoundTripper) (oauth2.TokenSource,
 	}
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
 		&http.Client{Transport: base, Timeout: tokenRequestTimeout})
-	return cc.TokenSource(ctx), nil
+	return &sanitizedTokenSource{src: cc.TokenSource(ctx), id: up.ID(), logger: up.logger}, nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
