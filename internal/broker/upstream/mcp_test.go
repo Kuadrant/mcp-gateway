@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -826,6 +827,74 @@ func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
 	meta := up.ToolsCacheMetadata()
 	require.Equal(t, 0, meta.TTLMs)
 	require.Equal(t, "public", meta.CacheScope)
+}
+
+// the static credentialRef value must reach the upstream verbatim as
+// Authorization on every broker request. guards the header path against
+// anything later inserted into the transport chain.
+func TestStaticCredential_SentToUpstream(t *testing.T) {
+	const credential = "Bearer static-test-token" // #nosec G101 -- test fixture
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "t1",
+		Description: "test tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+
+	var mu sync.Mutex
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Credential: credential}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, seen, "upstream saw no requests")
+	for _, got := range seen {
+		require.Equal(t, credential, got, "every broker request must carry the configured credential")
+	}
+}
+
+// with no token source configured the chain must stay
+// discoverCapture -> toolHintsTee -> HeaderRoundTripper -> *http.Transport.
+// an extra hop below the header injector could overwrite Authorization.
+func TestBuildHTTPClient_StaticCredentialChainShape(t *testing.T) {
+	const credential = "Bearer static-test-token" // #nosec G101 -- test fixture
+
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name:       "static-cred",
+		URL:        "http://localhost:8080/mcp",
+		Credential: credential,
+	}, "", nil)
+	client, err := up.buildHTTPClient()
+	require.NoError(t, err)
+
+	dc, ok := client.Transport.(*discoverCapture)
+	require.True(t, ok, "transport should be *discoverCapture")
+	tee, ok := dc.base.(*toolHintsTee)
+	require.True(t, ok, "discoverCapture base should be *toolHintsTee")
+	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
+	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
+	require.Equal(t, credential, hrt.Headers["Authorization"], "credential must be injected as Authorization")
+	_, ok = hrt.Base.(*http.Transport)
+	require.True(t, ok, "header round tripper must sit directly on *http.Transport")
 }
 
 func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {
