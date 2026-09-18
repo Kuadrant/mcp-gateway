@@ -187,7 +187,7 @@ sequenceDiagram
     Router->>Router: parse JSON-RPC, resolve backend
 
     alt guardrails enabled
-        Router->>Guardrails: POST /v1/guardrail/checks
+        Router->>Guardrails: POST /v1/checks
         Guardrails-->>Router: response
 
         alt status: blocked
@@ -253,7 +253,7 @@ sequenceDiagram
         Backend-->>Envoy: SSE event 1
         Envoy->>Router: ResponseBody chunk(s)
         Router->>Router: accumulate until event boundary
-        Router->>Guardrails: POST /v1/guardrail/checks
+        Router->>Guardrails: POST /v1/checks
         Guardrails-->>Router: pass
         Router-->>Envoy: release event 1
         Envoy-->>Client: SSE event 1
@@ -261,7 +261,7 @@ sequenceDiagram
         Backend-->>Envoy: SSE event 2
         Envoy->>Router: ResponseBody chunk(s)
         Router->>Router: accumulate until event boundary
-        Router->>Guardrails: POST /v1/guardrail/checks
+        Router->>Guardrails: POST /v1/checks
         Guardrails-->>Router: blocked
         Router-->>Envoy: error response
         Envoy-->>Client: error (stream closed)
@@ -270,7 +270,7 @@ sequenceDiagram
         Backend-->>Envoy: response body
         Envoy->>Router: ResponseBody chunks
         Router->>Router: accumulate full body
-        Router->>Guardrails: POST /v1/guardrail/checks
+        Router->>Guardrails: POST /v1/checks
         Guardrails-->>Router: verdict
         alt status: success
             Router-->>Envoy: release body
@@ -294,7 +294,7 @@ sequenceDiagram
 
 ### Translation Mapping (NeMo)
 
-#### Request: `tools/call` → `v1/guardrail/checks`
+#### Request: `tools/call` → `v1/checks`
 
 | MCP field | NeMo field |
 |-----------|------------|
@@ -321,7 +321,7 @@ sequenceDiagram
 }
 ```
 
-#### Request: elicitation `accept` → `v1/guardrail/checks`
+#### Request: elicitation `accept` → `v1/checks`
 
 `decline`/`cancel` bypass guardrails (no user content).
 
@@ -332,7 +332,7 @@ sequenceDiagram
 | N/A | `messages[0].role = "user"` |
 | from config | `guardrails.config_ids`, `model` |
 
-#### Response: `result` → `v1/guardrail/checks`
+#### Response: `result` → `v1/checks`
 
 | MCP response field | NeMo field |
 |-------------------|------------|

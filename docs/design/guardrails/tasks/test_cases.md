@@ -5,7 +5,7 @@ test_suite: guardrails_test.go
 tags: Happy,Guardrails
 ---
 
-> **Note:** E2E tests require a mock guardrails server (deployed in `tests/servers/`) implementing `v1/guardrail/checks` with configurable pass/block responses.
+> **Note:** E2E tests require a mock guardrails server (deployed in `tests/servers/`) implementing `v1/checks` with configurable pass/block responses.
 
 ## E2E Tests
 
