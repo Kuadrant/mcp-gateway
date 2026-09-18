@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,13 +9,17 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -24,6 +29,7 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 		secretName string
 		credRef    *mcpv1.SecretReference
 		caCertRef  *mcpv1.CACertSecretReference
+		oauth2Ref  *mcpv1.OAuth2ClientCredentialsConfig
 		wantMatch  bool
 	}{
 		{
@@ -31,6 +37,24 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 			secretName: "my-ca",
 			caCertRef:  &mcpv1.CACertSecretReference{Name: "my-ca", Key: "ca.crt"},
 			wantMatch:  true,
+		},
+		{
+			name:       "matches oauth2ClientCredentials secretRef",
+			secretName: "my-oauth-client",
+			oauth2Ref: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "my-oauth-client"},
+			},
+			wantMatch: true,
+		},
+		{
+			name:       "no match with oauth2ClientCredentials set",
+			secretName: "unrelated",
+			oauth2Ref: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "my-oauth-client"},
+			},
+			wantMatch: false,
 		},
 		{
 			name:       "matches credentialRef",
@@ -62,11 +86,145 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := mcpv1.MCPServerRegistrationSpec{
-				CredentialRef:   tt.credRef,
-				CACertSecretRef: tt.caCertRef,
+				CredentialRef:           tt.credRef,
+				CACertSecretRef:         tt.caCertRef,
+				OAuth2ClientCredentials: tt.oauth2Ref,
 			}
 			if got := mcpsrReferencesSecret(spec, tt.secretName); got != tt.wantMatch {
 				t.Errorf("mcpsrReferencesSecret() = %v, want %v", got, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestResolveOAuth2ClientCredentials(t *testing.T) {
+	const clientSecretValue = "s3cr3t-value-that-must-never-leak"
+
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = mcpv1.AddToScheme(scheme)
+
+	oauth2Secret := func(name string, labels map[string]string, data map[string][]byte) corev1.Secret {
+		return corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
+			Data:       data,
+		}
+	}
+	labeled := map[string]string{ManagedSecretLabel: ManagedSecretValue}
+	bothKeys := map[string][]byte{
+		oauth2ClientIDKey:     []byte("mcp-broker"),
+		oauth2ClientSecretKey: []byte(clientSecretValue),
+	}
+
+	tests := []struct {
+		name        string
+		oauth2      *mcpv1.OAuth2ClientCredentialsConfig
+		secrets     []corev1.Secret
+		want        *config.OAuth2ClientCredentials
+		errContains string
+	}{
+		{
+			name: "secret not found",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "missing"},
+			},
+			errContains: "secret missing not found",
+		},
+		{
+			name: "missing required label",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "unlabeled"},
+			},
+			secrets:     []corev1.Secret{oauth2Secret("unlabeled", nil, bothKeys)},
+			errContains: "missing required label mcp.kuadrant.io/secret=true",
+		},
+		{
+			name: "missing clientID",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "no-id"},
+			},
+			secrets: []corev1.Secret{oauth2Secret("no-id", labeled, map[string][]byte{
+				oauth2ClientSecretKey: []byte(clientSecretValue),
+			})},
+			errContains: "missing key clientID",
+		},
+		{
+			name: "missing clientSecret",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "no-secret"},
+			},
+			secrets: []corev1.Secret{oauth2Secret("no-secret", labeled, map[string][]byte{
+				oauth2ClientIDKey: []byte("mcp-broker"),
+			})},
+			errContains: "missing key clientSecret",
+		},
+		{
+			name: "resolved with scopes",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+				Scopes:    []string{"mcp.read", "mcp.write"},
+			},
+			secrets: []corev1.Secret{oauth2Secret("oauth-client", labeled, bothKeys)},
+			want: &config.OAuth2ClientCredentials{
+				TokenURL:     "https://as.example.com/token",
+				ClientID:     "mcp-broker",
+				ClientSecret: clientSecretValue,
+				Scopes:       []string{"mcp.read", "mcp.write"},
+			},
+		},
+		{
+			name: "resolved without scopes",
+			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			},
+			secrets: []corev1.Secret{oauth2Secret("oauth-client", labeled, bothKeys)},
+			want: &config.OAuth2ClientCredentials{
+				TokenURL:     "https://as.example.com/token",
+				ClientID:     "mcp-broker",
+				ClientSecret: clientSecretValue,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objs := make([]runtime.Object, len(tt.secrets))
+			for i := range tt.secrets {
+				objs[i] = &tt.secrets[i]
+			}
+			fc := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+			r := &MCPReconciler{DirectAPIReader: fc}
+
+			mcpsr := &mcpv1.MCPServerRegistration{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "test-ns"},
+				Spec:       mcpv1.MCPServerRegistrationSpec{OAuth2ClientCredentials: tt.oauth2},
+			}
+
+			got, err := r.resolveOAuth2ClientCredentials(context.Background(), mcpsr)
+			if tt.errContains != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("error %q does not contain %q", err, tt.errContains)
+				}
+				// the error becomes the Ready condition message verbatim
+				if strings.Contains(err.Error(), clientSecretValue) {
+					t.Fatal("error message leaks the client secret")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
 		})
 	}
