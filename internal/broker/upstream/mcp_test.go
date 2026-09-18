@@ -829,6 +829,31 @@ func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
 	require.Equal(t, "public", meta.CacheScope)
 }
 
+// GetConfig hand-copies a fixed field list and broker.go compares the result
+// against the freshly loaded config via ConfigChanged. a field missing from
+// the copy makes every reload see a phantom diff and rebuild every manager.
+func TestGetConfig_RoundTripsOAuth2WithoutPhantomDiff(t *testing.T) {
+	loaded := config.MCPServer{
+		Name:     "oauth-server",
+		URL:      "https://oauth-server.local/mcp",
+		Prefix:   "oa_",
+		State:    string(mcpv1.ServerStateEnabled),
+		Hostname: "oauth-server.local",
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     "https://as.example.com/token",
+			ClientID:     "broker",
+			ClientSecret: "secret1",
+			Scopes:       []string{"mcp.read"},
+		},
+	}
+
+	up := NewUpstreamMCP(&loaded, "", nil)
+	got := up.GetConfig()
+
+	require.Equal(t, loaded.OAuth2, got.OAuth2, "GetConfig must carry the oauth2 block")
+	require.False(t, got.ConfigChanged(loaded), "an unchanged oauth2 server must not look changed on reload")
+}
+
 // the static credentialRef value must reach the upstream verbatim as
 // Authorization on every broker request. guards the header path against
 // anything later inserted into the transport chain.
