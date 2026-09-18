@@ -459,6 +459,12 @@ func elicitationToolHandler() mcp.ToolHandler {
 				}, nil
 			}
 		}
+		if _, ok := elicitationCapabilities["form"]; !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request form elicitation capability"}},
+			}, nil
+		}
 
 		if len(req.Params.InputResponses) == 0 {
 			if req.Params.RequestState != "" {
