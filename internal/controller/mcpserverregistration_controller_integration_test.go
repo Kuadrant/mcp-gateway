@@ -1039,6 +1039,65 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 		)
 	})
 
+	Context("oauth2ClientCredentials field CRD validation", func() {
+		ctx := context.Background()
+
+		newOAuth2Registration := func(name string, oauth2 *mcpv1.OAuth2ClientCredentialsConfig) *mcpv1.MCPServerRegistration {
+			mcpsr := createTestMCPServerRegistration(name, "default", "some-route", "cc_")
+			mcpsr.Spec.OAuth2ClientCredentials = oauth2
+			return mcpsr
+		}
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, "oauth2-valid", "default")
+		})
+
+		It("accepts oauth2ClientCredentials on its own", func() {
+			mcpsr := newOAuth2Registration("oauth2-valid", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+				Scopes:    []string{"mcp.read"},
+			})
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+		})
+
+		It("rejects credentialRef and oauth2ClientCredentials set together", func() {
+			mcpsr := newOAuth2Registration("oauth2-invalid", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			})
+			mcpsr.Spec.CredentialRef = &mcpv1.SecretReference{Name: "static-token", Key: "token"}
+
+			err := testK8sClient.Create(ctx, mcpsr)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.IsInvalid(err)).To(BeTrue(), "expected Invalid error, got: %v", err)
+			Expect(err.Error()).To(ContainSubstring("mutually exclusive"))
+		})
+
+		DescribeTable("rejects invalid oauth2ClientCredentials values",
+			func(oauth2 *mcpv1.OAuth2ClientCredentialsConfig) {
+				err := testK8sClient.Create(ctx, newOAuth2Registration("oauth2-invalid", oauth2))
+				Expect(err).To(HaveOccurred())
+				Expect(errors.IsInvalid(err)).To(BeTrue(), "expected Invalid error, got: %v", err)
+			},
+			Entry("http tokenURL", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "http://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			}),
+			Entry("empty tokenURL", &mcpv1.OAuth2ClientCredentialsConfig{
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			}),
+			Entry("empty secretRef name", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL: "https://as.example.com/token",
+			}),
+			Entry("more than 10 scopes", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+				Scopes:    []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"},
+			}),
+		)
+	})
+
 	Context("When two MCPServerRegistrations feeding the same MCPGatewayExtension share a prefix", func() {
 		const (
 			resourceName1 = "test-prefix-conflict-1"
