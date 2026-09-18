@@ -463,6 +463,82 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			Expect(ok).To(BeTrue())
 			Expect(text.Text).To(ContainSubstring("Hello, no-prefix!"))
 		})
+		It("[Happy,Protocol2026,Elicitation] tools/call completes MRTR elicitation", func() {
+			elicitationHandler := func(_ context.Context, _ *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+				return &mcp.ElicitResult{
+					Action:  "accept",
+					Content: map[string]any{"name": "mrtr-test-user"},
+				}, nil
+			}
+
+			var c *mcp.ClientSession
+			Eventually(func(g Gomega) {
+				candidate, err := NewStatelessClientWithElicitation(ctx, dpURL, elicitationHandler)
+				g.Expect(err).NotTo(HaveOccurred())
+				c = candidate
+			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+			defer func() {
+				if c != nil {
+					_ = c.Close()
+				}
+			}()
+
+			initResult := c.InitializeResult()
+			Expect(initResult).NotTo(BeNil())
+			Expect(initResult.ProtocolVersion).To(Equal("2026-07-28"))
+
+			waitForToolsWithPrefix(c, "sl_")
+
+			firstCallCtx, cancelFirstCall := context.WithTimeout(ctx, TestTimeoutMedium)
+			result, err := c.CallTool(firstCallCtx, &mcp.CallToolParams{
+				Name: "sl_trigger-elicitation-request",
+			})
+			cancelFirstCall()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.NeedsInput()).To(BeTrue())
+			Expect(result.IsError).To(BeFalse())
+			Expect(result.InputRequests).To(HaveKey("user_info"))
+			requestParams, ok := result.InputRequests["user_info"].(*mcp.ElicitParams)
+			Expect(ok).To(BeTrue())
+			Expect(requestParams.Message).To(Equal("Please provide your information"))
+			Expect(result.RequestState).To(Equal("elicitation-pending"))
+
+			handlerCtx, cancelHandler := context.WithTimeout(ctx, TestTimeoutMedium)
+			elicitationResponse, err := elicitationHandler(handlerCtx, &mcp.ElicitRequest{
+				Params: requestParams,
+			})
+			cancelHandler()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(elicitationResponse).NotTo(BeNil())
+			Expect(elicitationResponse.Action).To(Equal("accept"))
+			name, ok := elicitationResponse.Content["name"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(name).To(Equal("mrtr-test-user"))
+			Expect(name).NotTo(BeEmpty())
+
+			retryCtx, cancelRetry := context.WithTimeout(ctx, TestTimeoutMedium)
+			finalResult, err := c.CallTool(retryCtx, &mcp.CallToolParams{
+				Name: "sl_trigger-elicitation-request",
+				InputResponses: mcp.InputResponseMap{
+					"user_info": elicitationResponse,
+				},
+				RequestState: result.RequestState,
+			})
+			cancelRetry()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalResult).NotTo(BeNil())
+			Expect(finalResult.NeedsInput()).To(BeFalse())
+			Expect(finalResult.IsError).To(BeFalse())
+
+			var responseText string
+			for _, content := range finalResult.Content {
+				if text, ok := content.(*mcp.TextContent); ok {
+					responseText += text.Text
+				}
+			}
+			Expect(responseText).To(ContainSubstring("mrtr-test-user"))
+		})
 
 		It("[Protocol2026] header-body mismatch rejection", func() {
 			c := newStatelessClient()

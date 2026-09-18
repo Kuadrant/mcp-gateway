@@ -423,7 +423,56 @@ func deleteToolHandler(s *mcp.Server) http.HandlerFunc {
 
 func elicitationToolHandler() mcp.ToolHandler {
 	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		capabilities, ok := req.Params.Meta[mcp.MetaKeyClientCapabilities].(map[string]any)
+		if !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request client capabilities"}},
+			}, nil
+		}
+
+		elicitation, ok := capabilities["elicitation"]
+		if !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request elicitation capability"}},
+			}, nil
+		}
+		elicitationCapabilities, ok := elicitation.(map[string]any)
+		if !ok || elicitationCapabilities == nil {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid per-request elicitation capability"}},
+			}, nil
+		}
+		for mode, modeCapabilities := range elicitationCapabilities {
+			if mode != "form" && mode != "url" {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: "invalid per-request elicitation capability"}},
+				}, nil
+			}
+			if object, ok := modeCapabilities.(map[string]any); !ok || object == nil {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: "invalid per-request elicitation capability"}},
+				}, nil
+			}
+		}
+		if _, ok := elicitationCapabilities["form"]; !ok {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "missing per-request form elicitation capability"}},
+			}, nil
+		}
+
 		if len(req.Params.InputResponses) == 0 {
+			if req.Params.RequestState != "" {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: "invalid MRTR request state"}},
+				}, nil
+			}
 			return &mcp.CallToolResult{
 				InputRequests: mcp.InputRequestMap{
 					"user_info": &mcp.ElicitParams{
@@ -443,14 +492,18 @@ func elicitationToolHandler() mcp.ToolHandler {
 				RequestState: "elicitation-pending",
 			}, nil
 		}
+		if req.Params.RequestState != "elicitation-pending" {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid MRTR request state"}},
+			}, nil
+		}
 
 		resp, ok := req.Params.InputResponses["user_info"]
 		if !ok {
 			return &mcp.CallToolResult{
-				InputRequests: mcp.InputRequestMap{
-					"user_info": &mcp.ElicitParams{Message: "Please provide your information (retry)"},
-				},
-				RequestState: req.Params.RequestState,
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid elicitation response"}},
 			}, nil
 		}
 
@@ -463,17 +516,31 @@ func elicitationToolHandler() mcp.ToolHandler {
 		}
 
 		switch elicitResult.Action {
+		case "accept":
+			name, ok := elicitResult.Content["name"].(string)
+			if !ok || name == "" {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: "invalid elicitation response"}},
+				}, nil
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("User provided the requested information. Name: %s", name)}},
+			}, nil
 		case "decline", "cancel":
+			if len(elicitResult.Content) != 0 {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: "invalid elicitation response"}},
+				}, nil
+			}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("User %sed the elicitation request", elicitResult.Action)}},
 			}, nil
 		default:
-			name, _ := elicitResult.Content["name"].(string)
-			if name == "" {
-				name = "unknown"
-			}
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("User provided the requested information. Name: %s", name)}},
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "invalid elicitation response"}},
 			}, nil
 		}
 	}
