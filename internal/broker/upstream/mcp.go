@@ -335,6 +335,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Credential:          up.Credential,
 		CACert:              up.CACert,
 		TokenURLElicitation: up.TokenURLElicitation,
+		OAuth2:              up.OAuth2,
 		UserSpecificList:    up.UserSpecificList,
 		Category:            cat,
 		Hint:                up.Hint,
