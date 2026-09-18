@@ -1194,8 +1194,9 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 	caPEM, caKey, caCert := generateSelfSignedCA(t)
 	serverCert := generateServerCert(t, caCert, caKey)
 
+	const asResponseBody = "internal-as-detail"
 	as := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
+		http.Error(w, asResponseBody, http.StatusInternalServerError)
 	}))
 	as.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverCert}}
 	as.StartTLS()
@@ -1218,6 +1219,9 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 	err := up.Connect(ctx, func() {})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), testClientSecret, "the client secret must never reach an error surface")
+	// the error becomes the status Message, so it names the upstream only
+	require.Contains(t, err.Error(), "failed to obtain access token for upstream "+string(up.ID()))
+	require.NotContains(t, err.Error(), asResponseBody, "the AS response body must not be echoed")
 }
 
 func TestOAuth2_UnreachableTokenEndpointFailsConnect(t *testing.T) {
