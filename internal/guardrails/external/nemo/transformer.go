@@ -1,5 +1,5 @@
 // Package nemo implements the guardrails Transformer for NeMo Guardrails,
-// translating between MCP and NeMo's /v1/guardrail/checks schema.
+// translating between MCP and NeMo's /v1/checks schema.
 package nemo
 
 import (
@@ -14,7 +14,7 @@ const (
 	StatusBlocked  = "blocked"
 )
 
-// CheckRequest is the request body for NeMo's /v1/guardrail/checks endpoint.
+// CheckRequest is the request body for NeMo's /v1/checks endpoint.
 type CheckRequest struct {
 	Model      string           `json:"model"`
 	Messages   []Message        `json:"messages"`
@@ -34,7 +34,7 @@ type GuardrailsConfig struct {
 	ConfigIDs []string `json:"config_ids"`
 }
 
-// CheckResponse is the response body from NeMo's /v1/guardrail/checks endpoint.
+// CheckResponse is the response body from NeMo's /v1/checks endpoint.
 type CheckResponse struct {
 	Status  string `json:"status"`
 	Content string `json:"content"`
@@ -42,7 +42,7 @@ type CheckResponse struct {
 }
 
 // Transformer translates between MCP guardrails checks and NeMo's
-// /v1/guardrail/checks request/response schema.
+// /v1/checks request/response schema.
 type Transformer struct {
 	Model string
 }
@@ -56,7 +56,7 @@ func NewTransformer(model string) *Transformer {
 }
 
 // TransformRequest translates a tools/call request into a NeMo
-// /v1/guardrail/checks request body. Maps params.name to messages[0].name,
+// /v1/checks request body. Maps params.name to messages[0].name,
 // params.arguments (JSON-encoded) to messages[0].content, and role to
 // "user".
 func (t *Transformer) TransformRequest(toolName string, arguments json.RawMessage, configIDs []string) ([]byte, error) {
@@ -96,7 +96,7 @@ func (t *Transformer) TransformRequest(toolName string, arguments json.RawMessag
 }
 
 // TransformResponse translates a tools/call result's text content into a NeMo
-// /v1/guardrail/checks request body. Maps the tool name (from request context)
+// /v1/checks request body. Maps the tool name (from request context)
 // to messages[0].name, the text content to messages[0].content, and role to
 // "assistant".
 func (t *Transformer) TransformResponse(toolName string, content []byte, configIDs []string) ([]byte, error) {
@@ -130,7 +130,7 @@ func (t *Transformer) TransformResponse(toolName string, content []byte, configI
 	return body, nil
 }
 
-// ParseCheckResponse unmarshals a raw /v1/guardrail/checks HTTP response body.
+// ParseCheckResponse unmarshals a raw /v1/checks HTTP response body.
 // An unrecognized Status is a translation failure.
 func (t *Transformer) ParseCheckResponse(body []byte) (*CheckResponse, error) {
 	var resp CheckResponse

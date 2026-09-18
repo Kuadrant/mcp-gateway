@@ -46,7 +46,7 @@ const (
 )
 
 // checksPath is the guardrails server endpoint all checks are sent to.
-const checksPath = "/v1/guardrail/checks"
+const checksPath = "/v1/checks"
 
 // checkTimeout bounds a single guardrails HTTP round trip, comfortably
 // inside the 10s ext_proc message_timeout.
