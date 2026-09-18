@@ -66,6 +66,29 @@ type ServerValidationStatus struct {
 	UsesStatelessProtocol bool                `json:"usesStatelessProtocol"`
 	TickerInterval        string              `json:"tickerInterval"`
 	ConsecutiveFailures   int                 `json:"consecutiveFailures"`
+	// AuthMethod names how the broker authenticates to the upstream:
+	// "static", "oauth2ClientCredentials", or empty for none.
+	AuthMethod string `json:"authMethod,omitempty"`
+}
+
+// auth method names reported on status. only the name is ever reported —
+// the config behind it holds the credential.
+const (
+	authMethodStatic = "static"
+	authMethodOAuth2 = "oauth2ClientCredentials"
+)
+
+// authMethod derives the status name from an upstream's config. oauth2 wins:
+// a token source owns Authorization when both are somehow set.
+func authMethod(cfg config.MCPServer) string {
+	switch {
+	case cfg.OAuth2 != nil:
+		return authMethodOAuth2
+	case cfg.Credential != "":
+		return authMethodStatic
+	default:
+		return ""
+	}
 }
 
 // ProtocolValidation reports the MCP protocol version negotiated with the upstream.
@@ -720,6 +743,7 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.UsesStatelessProtocol = man.mcp.UsesStatelessProtocol()
 	man.status.TickerInterval = man.tickerInterval.String()
 	man.status.ConsecutiveFailures = man.consecutiveFailures
+	man.status.AuthMethod = authMethod(man.mcp.GetConfig())
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
