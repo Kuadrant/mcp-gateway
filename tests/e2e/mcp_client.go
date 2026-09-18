@@ -96,6 +96,7 @@ func NewStatelessClientWithHeaders(ctx context.Context, gatewayHost string, head
 func NewStatelessClientWithElicitation(ctx context.Context, gatewayHost string, handler func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-2026-elicitation", Version: "0.0.1"}, &mcp.ClientOptions{
 		ElicitationHandler: handler,
+		MultiRoundTrip:     &mcp.MultiRoundTripOptions{Disabled: true},
 	})
 	return client.Connect(ctx, buildGatewayTransport(gatewayHost, nil, false), nil)
 }
