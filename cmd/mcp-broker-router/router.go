@@ -2,12 +2,11 @@ package main
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"fmt"
 
 	"github.com/Kuadrant/mcp-gateway/internal/clients"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
+	"github.com/Kuadrant/mcp-gateway/internal/tlsutil"
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc"
 )
@@ -62,12 +61,9 @@ func (a *app) createRouter() {
 }
 
 func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {
-	certPool, err := x509.SystemCertPool()
+	certPool, err := tlsutil.BuildCertPool(caCertPEM)
 	if err != nil {
-		certPool = x509.NewCertPool()
-	}
-	if caCertPEM != "" && !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
-		return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
+		return nil, err
 	}
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,

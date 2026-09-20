@@ -6,7 +6,6 @@ package clients
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/tlsutil"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -189,15 +189,9 @@ func BuildHairpinHTTPClientPool(privateHost, publicHost, caCertPEM string) (*Hai
 		}, nil
 	}
 
-	certPool, err := x509.SystemCertPool()
+	certPool, err := tlsutil.BuildCertPool(caCertPEM)
 	if err != nil {
-		certPool = x509.NewCertPool()
-	}
-
-	if caCertPEM != "" {
-		if !certPool.AppendCertsFromPEM([]byte(caCertPEM)) {
-			return nil, fmt.Errorf("failed to parse gateway CA cert PEM")
-		}
+		return nil, err
 	}
 
 	defaultSNI := publicHost
