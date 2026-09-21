@@ -32,8 +32,8 @@ jobs:
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # ratchet:peter-evans/create-pull-request@v7
         with:
           commit-message: "deps(ci): update pinned GitHub Actions to latest SHAs"
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          author: ${{ github.actor }} <${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com>
+          committer: kuadrant-dev <kuadrant-dev@redhat.com>
+          author: kuadrant-dev <kuadrant-dev@redhat.com>
           token: ${{ secrets.KUADRANT_DEV_PAT }}
           signoff: true
           sign-commits: true
