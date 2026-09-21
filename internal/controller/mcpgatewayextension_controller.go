@@ -784,9 +784,6 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewa
 			"@type":               "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
 			"failure_mode_allow":  false,
 			"allow_mode_override": true,
-			// max_request_bytes bounds BUFFERED mode body buffering.
-			// must match maxBodyBytes so guardrails response checks are not silently truncated.
-			"max_request_bytes": maxBodyBytes,
 			"mutation_rules": map[string]any{
 				"allow_all_routing": true,
 			},
@@ -808,6 +805,20 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewa
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ext_proc config struct: %w", err)
+	}
+
+	// per_connection_buffer_limit_bytes is the real Envoy knob for BUFFERED
+	// mode body buffering; ExternalProcessor's typed_config has no such
+	// field ("max_request_bytes" is not part of that proto and Istio
+	// silently drops it). Merged onto the listener so Envoy does not
+	// truncate or reject a body larger than its default (1 MiB) before the
+	// router/guardrails ever see it. spec.maxBodyBytes is still separately
+	// enforced application-side by the router (see reconcileMaxBodyBytes).
+	listenerBufferLimit, err := structpb.NewStruct(map[string]any{
+		"per_connection_buffer_limit_bytes": maxBodyBytes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create listener buffer limit struct: %w", err)
 	}
 
 	envoyFilterName, _ := envoyFilterNameAndNamespace(mcpExt)
@@ -846,6 +857,21 @@ func (r *MCPGatewayExtensionReconciler) buildEnvoyFilter(mcpExt *mcpv1.MCPGatewa
 					Patch: &istiov1alpha3.EnvoyFilter_Patch{
 						Operation: istiov1alpha3.EnvoyFilter_Patch_INSERT_FIRST,
 						Value:     extProcConfig,
+					},
+				},
+				{
+					ApplyTo: istiov1alpha3.EnvoyFilter_LISTENER,
+					Match: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch{
+						Context: istiov1alpha3.EnvoyFilter_GATEWAY,
+						ObjectTypes: &istiov1alpha3.EnvoyFilter_EnvoyConfigObjectMatch_Listener{
+							Listener: &istiov1alpha3.EnvoyFilter_ListenerMatch{
+								PortNumber: listenerConfig.Port,
+							},
+						},
+					},
+					Patch: &istiov1alpha3.EnvoyFilter_Patch{
+						Operation: istiov1alpha3.EnvoyFilter_Patch_MERGE,
+						Value:     listenerBufferLimit,
 					},
 				},
 			},

@@ -34,7 +34,11 @@ func (f *fakeChecker) CheckRequest(_ context.Context, toolName string, arguments
 	return f.decision, f.err
 }
 
-func (f *fakeChecker) CheckResponse(context.Context, string, []byte, []string) (*api.Decision, error) {
+func (f *fakeChecker) CheckResponse(_ context.Context, toolName string, content []byte, configIDs []string) (*api.Decision, error) {
+	f.calls++
+	f.lastToolName = toolName
+	f.lastArguments = content
+	f.lastConfigIDs = configIDs
 	return f.decision, f.err
 }
 

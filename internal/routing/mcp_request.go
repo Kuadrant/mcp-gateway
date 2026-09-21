@@ -303,7 +303,9 @@ func BuildSSEToolResult(requestID any, text string) string {
 	})
 }
 
-// BuildJSONToolError constructs a plain JSON-RPC error response for 2026-07-28
+// BuildJSONToolError constructs a plain JSON-RPC error response for a tool
+// call. Used for 2026-07-28 responses, and for 2025-11-25 responses whose
+// Content-Type is application/json rather than text/event-stream.
 func BuildJSONToolError(requestID any, message string) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
@@ -316,6 +318,25 @@ func BuildJSONToolError(requestID any, message string) string {
 	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
 	b.WriteString(jsonQuote(message))
 	b.WriteString("}],\"isError\":true}}")
+	return b.String()
+}
+
+// BuildJSONToolResult constructs a successful plain JSON-RPC tool result.
+// Used when guardrails modifies response content for a non-SSE response:
+// the redacted text is a valid result, not an error. Counterpart to
+// BuildSSEToolResult for application/json responses.
+func BuildJSONToolResult(requestID any, text string) string {
+	var b strings.Builder
+	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
+	idBytes, err := json.Marshal(requestID)
+	if err != nil {
+		b.WriteString("null")
+	} else {
+		b.Write(idBytes)
+	}
+	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+	b.WriteString(jsonQuote(text))
+	b.WriteString("}]}}")
 	return b.String()
 }
 

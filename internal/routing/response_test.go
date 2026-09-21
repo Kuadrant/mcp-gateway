@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
+	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -704,6 +705,39 @@ func TestResponseHandler_BufferResponseBodyForGuardrails(t *testing.T) {
 	require.NotNil(t, decision)
 	require.True(t, decision.StreamBody, "StreamBody must be true for guardrails")
 	require.True(t, decision.BufferResponseBody, "BufferResponseBody must be true for guardrails")
+}
+
+func TestResponseHandler_BufferResponseBodyForGlobalGuardrailsOnly(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	cfg := &config.MCPServersConfig{}
+	cfg.SetGuardrails(&api.Config{ConfigIDs: []string{"global-1"}}, nil)
+	var routingConfig atomic.Pointer[config.MCPServersConfig]
+	routingConfig.Store(cfg)
+
+	handler := &ResponseHandler202511{
+		Logger:        logger,
+		SessionCache:  cache,
+		RoutingConfig: &routingConfig,
+	}
+
+	// no per-server GuardrailsConfigIDs - only the gateway-level global
+	// guardrails config is set. Response guardrails must still activate.
+	mcpReq := &MCPRequest{
+		Method: "tools/call",
+	}
+
+	input := &ResponseInput{
+		StatusCode: "200",
+		Request:    mcpReq,
+	}
+
+	decision := handler.HandleResponse(context.Background(), input)
+	require.NotNil(t, decision)
+	require.True(t, decision.StreamBody, "global-only guardrails must still activate response streaming")
+	require.True(t, decision.BufferResponseBody, "global-only guardrails must still activate response buffering")
 }
 
 func TestResponseHandler_BufferResponseBodyNotSetForNon200(t *testing.T) {

@@ -129,9 +129,15 @@ func (h *ResponseHandler202511) HandleResponse(ctx context.Context, input *Respo
 		if req.ClientElicitation || req.ServerPrefix != "" {
 			decision.StreamBody = true
 		}
-		if len(req.GuardrailsConfigIDs) > 0 {
+		var cfg *config.MCPServersConfig
+		if h.RoutingConfig != nil {
+			cfg = h.RoutingConfig.Load()
+		}
+		if GuardrailsConfigured(cfg, req.GuardrailsConfigIDs) {
 			// buffer the full response before forwarding so guardrails can
-			// inspect (and potentially block) the complete tool result.
+			// inspect (and potentially block) the complete tool result,
+			// whether the config IDs come from the per-server route or the
+			// gateway-level global guardrails config.
 			decision.StreamBody = true
 			decision.BufferResponseBody = true
 		}

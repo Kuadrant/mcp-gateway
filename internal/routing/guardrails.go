@@ -77,6 +77,23 @@ func newGuardrailsCheckFromCheckerAndIDs(checker api.Checker, global *api.Config
 	return gc
 }
 
+// configured reports whether a check would actually run: true when either
+// the per-server config IDs or the gateway-level global config IDs are
+// non-empty.
+func (g *guardrailsCheck) configured() bool {
+	if len(g.serverIDs) > 0 {
+		return true
+	}
+	return g.global != nil && len(g.global.ConfigIDs) > 0
+}
+
+// GuardrailsConfigured reports whether a response-phase guardrails check
+// would actually run for serverIDs: true when either the per-server config
+// IDs or the gateway-level global config IDs are non-empty.
+func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool {
+	return newGuardrailsCheck(cfg, serverIDs, nil).configured()
+}
+
 // checkToolCall extracts tool arguments, runs the guardrails check, and
 // applies any modification onto mcpReq in place. modified is true when
 // arguments were rewritten (callers that buffer the body must re-marshal).
@@ -133,11 +150,7 @@ func (g *guardrailsCheck) checkToolCallResponse(ctx context.Context, toolName st
 // forward the original response, violating the guardrails decision.
 // Non-empty blockMessage is the client-visible reason for a block or failure.
 func (g *guardrailsCheck) responseCheck(ctx context.Context, toolName string, content []byte) (modified string, isModified bool, blockMessage string) {
-	var globalConfigIDs []string
-	if g.global != nil {
-		globalConfigIDs = g.global.ConfigIDs
-	}
-	if len(globalConfigIDs) == 0 && len(g.serverIDs) == 0 {
+	if !g.configured() {
 		return "", false, ""
 	}
 	if g.checker == nil {
@@ -217,11 +230,7 @@ func (g *guardrailsCheck) checkElicitationAccept(ctx context.Context, mcpReq *MC
 // verdict is StatusModified. Empty merged config IDs skip the check.
 // Non-empty IDs with no Checker fail closed (503).
 func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, blocked *Decision) {
-	var globalConfigIDs []string
-	if g.global != nil {
-		globalConfigIDs = g.global.ConfigIDs
-	}
-	if len(globalConfigIDs) == 0 && len(g.serverIDs) == 0 {
+	if !g.configured() {
 		return "", nil
 	}
 

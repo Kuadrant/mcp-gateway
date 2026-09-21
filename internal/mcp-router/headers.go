@@ -2,6 +2,7 @@ package mcprouter
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -17,6 +18,15 @@ func getSingleValueHeader(headers *basepb.HeaderMap, name string) string {
 		}
 	}
 	return ""
+}
+
+// isJSONContentType reports whether contentType is application/json,
+// ignoring parameters (e.g. "; charset=utf-8") and case. Anything else,
+// including an empty/missing header, is treated as SSE — the 2025-11-25
+// default before this header is known.
+func isJSONContentType(contentType string) bool {
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "application/json")
 }
 
 // HeadersBuilder builds headers to add to the request or response
