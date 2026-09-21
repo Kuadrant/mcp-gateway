@@ -1032,6 +1032,22 @@ func bearerGuardedMCPUpstream(t *testing.T, want string) *httptest.Server {
 	return ts
 }
 
+// newOAuth2Upstream builds an upstream whose broker credentials come from the
+// client credentials grant at tokenURL. gatewayCA seeds the trust pool used for
+// both the AS and the upstream. scopes may be omitted.
+func newOAuth2Upstream(upstreamURL, tokenURL, gatewayCA string, scopes ...string) *MCPServer {
+	return NewUpstreamMCP(&config.MCPServer{
+		Name: "oauth-up",
+		URL:  upstreamURL,
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     tokenURL,
+			ClientID:     "broker",
+			ClientSecret: testClientSecret,
+			Scopes:       scopes,
+		},
+	}, gatewayCA, nil)
+}
+
 func getThrough(t *testing.T, c *http.Client, url string) error {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
@@ -1048,16 +1064,7 @@ func TestOAuth2_UpstreamCarriesMintedToken(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv, upSeen := recordingUpstream(t)
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL + "/mcp",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-			Scopes:       []string{"mcp.read", "mcp.write"},
-		},
-	}, caPEM, nil)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM, "mcp.read", "mcp.write")
 
 	c, err := up.buildHTTPClient()
 	require.NoError(t, err)
@@ -1079,15 +1086,8 @@ func TestOAuth2_NoScopeParamWhenScopesEmpty(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv, _ := recordingUpstream(t)
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL + "/mcp",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, caPEM, nil)
+	// no scopes passed: that is the condition under test
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
 	c, err := up.buildHTTPClient()
 	require.NoError(t, err)
@@ -1102,15 +1102,7 @@ func TestOAuth2_TokenReusedWithinLifetime(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv, upSeen := recordingUpstream(t)
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL + "/mcp",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, caPEM, nil)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
 	c, err := up.buildHTTPClient()
 	require.NoError(t, err)
@@ -1128,15 +1120,7 @@ func TestOAuth2_TokenRefreshedOnExpiry(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 1)
 	upSrv, upSeen := recordingUpstream(t)
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL + "/mcp",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, caPEM, nil)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
 	c, err := up.buildHTTPClient()
 	require.NoError(t, err)
@@ -1150,15 +1134,7 @@ func TestOAuth2_TokenRefreshedOnExpiry(t *testing.T) {
 func TestOAuth2_NonHTTPSTokenURLRejected(t *testing.T) {
 	upSrv, _ := recordingUpstream(t)
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL + "/mcp",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     "http://as.example.com/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, "", nil)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", "http://as.example.com/token", "")
 
 	_, err := up.buildHTTPClient()
 	require.Error(t, err, "a plaintext token endpoint would expose the client secret")
@@ -1169,15 +1145,7 @@ func TestOAuth2_ConnectAndListToolsWithMintedToken(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL,
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, caPEM, nil)
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", caPEM)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -1204,15 +1172,7 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL,
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     as.URL + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, string(caPEM), nil)
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", string(caPEM))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -1234,15 +1194,7 @@ func TestOAuth2_UnreachableTokenEndpointFailsConnect(t *testing.T) {
 
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
 
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name: "oauth-up",
-		URL:  upSrv.URL,
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     "https://" + dead + "/token",
-			ClientID:     "broker",
-			ClientSecret: testClientSecret,
-		},
-	}, "", nil)
+	up := newOAuth2Upstream(upSrv.URL, "https://"+dead+"/token", "")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -1257,23 +1209,11 @@ func TestOAuth2_TokenEndpointOnPrivateCARequiresGatewayBundle(t *testing.T) {
 	as, caPEM, _ := newTestAuthServer(t, 3600)
 	upSrv, _ := recordingUpstream(t)
 
-	newUp := func(gatewayCA string) *MCPServer {
-		return NewUpstreamMCP(&config.MCPServer{
-			Name: "oauth-up",
-			URL:  upSrv.URL + "/mcp",
-			OAuth2: &config.OAuth2ClientCredentials{
-				TokenURL:     as.URL + "/token",
-				ClientID:     "broker",
-				ClientSecret: testClientSecret,
-			},
-		}, gatewayCA, nil)
-	}
-
-	trusted, err := newUp(caPEM).buildHTTPClient()
+	trusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM).buildHTTPClient()
 	require.NoError(t, err)
 	require.NoError(t, getThrough(t, trusted, upSrv.URL+"/mcp"))
 
-	untrusted, err := newUp("").buildHTTPClient()
+	untrusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", "").buildHTTPClient()
 	require.NoError(t, err)
 	require.Error(t, getThrough(t, untrusted, upSrv.URL+"/mcp"),
 		"an AS on a private CA must not be trusted without the gateway bundle")

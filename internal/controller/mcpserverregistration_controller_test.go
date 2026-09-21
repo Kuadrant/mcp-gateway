@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -99,11 +98,19 @@ func TestMcpsrReferencesSecret(t *testing.T) {
 
 func TestResolveOAuth2ClientCredentials(t *testing.T) {
 	const clientSecretValue = "s3cr3t-value-that-must-never-leak"
+	const authServerURL = "https://as.example.com/token"
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = mcpv1.AddToScheme(scheme)
 
+	oauth2Spec := func(secretName string, scopes ...string) *mcpv1.OAuth2ClientCredentialsConfig {
+		return &mcpv1.OAuth2ClientCredentialsConfig{
+			TokenURL:  authServerURL,
+			SecretRef: mcpv1.ClientCredentialsSecretReference{Name: secretName},
+			Scopes:    scopes,
+		}
+	}
 	oauth2Secret := func(name string, labels map[string]string, data map[string][]byte) corev1.Secret {
 		return corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
@@ -124,68 +131,49 @@ func TestResolveOAuth2ClientCredentials(t *testing.T) {
 		errContains string
 	}{
 		{
-			name: "secret not found",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "missing"},
-			},
+			name:        "secret not found",
+			oauth2:      oauth2Spec("missing"),
 			errContains: "secret missing not found",
 		},
 		{
-			name: "missing required label",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "unlabeled"},
-			},
+			name:        "missing required label",
+			oauth2:      oauth2Spec("unlabeled"),
 			secrets:     []corev1.Secret{oauth2Secret("unlabeled", nil, bothKeys)},
 			errContains: "missing required label mcp.kuadrant.io/secret=true",
 		},
 		{
-			name: "missing clientID",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "no-id"},
-			},
+			name:   "missing clientID",
+			oauth2: oauth2Spec("no-id"),
 			secrets: []corev1.Secret{oauth2Secret("no-id", labeled, map[string][]byte{
 				oauth2ClientSecretKey: []byte(clientSecretValue),
 			})},
 			errContains: "missing key clientID",
 		},
 		{
-			name: "missing clientSecret",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "no-secret"},
-			},
+			name:   "missing clientSecret",
+			oauth2: oauth2Spec("no-secret"),
 			secrets: []corev1.Secret{oauth2Secret("no-secret", labeled, map[string][]byte{
 				oauth2ClientIDKey: []byte("mcp-broker"),
 			})},
 			errContains: "missing key clientSecret",
 		},
 		{
-			name: "resolved with scopes",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
-				Scopes:    []string{"mcp.read", "mcp.write"},
-			},
+			name:    "resolved with scopes",
+			oauth2:  oauth2Spec("oauth-client", "mcp.read", "mcp.write"),
 			secrets: []corev1.Secret{oauth2Secret("oauth-client", labeled, bothKeys)},
 			want: &config.OAuth2ClientCredentials{
-				TokenURL:     "https://as.example.com/token",
+				TokenURL:     authServerURL,
 				ClientID:     "mcp-broker",
 				ClientSecret: clientSecretValue,
 				Scopes:       []string{"mcp.read", "mcp.write"},
 			},
 		},
 		{
-			name: "resolved without scopes",
-			oauth2: &mcpv1.OAuth2ClientCredentialsConfig{
-				TokenURL:  "https://as.example.com/token",
-				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
-			},
+			name:    "resolved without scopes",
+			oauth2:  oauth2Spec("oauth-client"),
 			secrets: []corev1.Secret{oauth2Secret("oauth-client", labeled, bothKeys)},
 			want: &config.OAuth2ClientCredentials{
-				TokenURL:     "https://as.example.com/token",
+				TokenURL:     authServerURL,
 				ClientID:     "mcp-broker",
 				ClientSecret: clientSecretValue,
 			},
@@ -206,7 +194,7 @@ func TestResolveOAuth2ClientCredentials(t *testing.T) {
 				Spec:       mcpv1.MCPServerRegistrationSpec{OAuth2ClientCredentials: tt.oauth2},
 			}
 
-			got, err := r.resolveOAuth2ClientCredentials(context.Background(), mcpsr)
+			got, err := r.resolveOAuth2ClientCredentials(t.Context(), mcpsr)
 			if tt.errContains != "" {
 				if err == nil {
 					t.Fatal("expected error, got nil")
