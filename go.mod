@@ -39,7 +39,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sync v0.23.0
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	istio.io/api v1.31.0-rc.0.0.20260824154656-b943409680a7
 	istio.io/client-go v1.31.0
