@@ -130,7 +130,10 @@ func TestGuardrailsResponseBuffer_SSE_MultiLineDataFieldMatched(t *testing.T) {
 	require.Equal(t, 1, checked)
 }
 
-func TestGuardrailsResponseBuffer_SSE_AfterDoneForwardsUnchanged(t *testing.T) {
+func TestGuardrailsResponseBuffer_SSE_AfterDoneDropsTrailingBytes(t *testing.T) {
+	// a tools/call response holds exactly one terminal result; anything an
+	// upstream sends afterward is unexpected and must be dropped, not
+	// forwarded unchecked.
 	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
 		return nil
 	})
@@ -141,7 +144,27 @@ func TestGuardrailsResponseBuffer_SSE_AfterDoneForwardsUnchanged(t *testing.T) {
 
 	trailer := []byte("trailing bytes after the result")
 	out := buf.Process(context.Background(), trailer)
-	require.Equal(t, string(trailer), string(out))
+	require.Empty(t, out, "bytes after the terminal result must be dropped, never forwarded unchecked")
+}
+
+func TestGuardrailsResponseBuffer_SSE_UnconsumedAfterTerminalEventInSameChunkDropped(t *testing.T) {
+	// a second response-shaped event delivered in the same physical chunk
+	// as the terminal result (e.g. a decoy the upstream hopes rides along
+	// unchecked) must be dropped along with everything else after done,
+	// not appended to the output raw.
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return nil
+	})
+
+	terminal := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"
+	decoy := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"smuggled\"}]}}\n\n"
+	out := buf.Process(context.Background(), []byte(terminal+decoy))
+
+	require.True(t, buf.done)
+	require.Equal(t, 1, checked, "only the first terminal-shaped event is checked")
+	require.NotContains(t, string(out), "smuggled", "a second response-shaped event in the same chunk must not reach the client unchecked")
 }
 
 func TestGuardrailsResponseBuffer_SSE_FlushResolvesUndispatchedTrailer(t *testing.T) {
@@ -245,11 +268,11 @@ func TestGuardrailsResponseBuffer_SSE_OverLimitRejected(t *testing.T) {
 	require.True(t, buf.done)
 	require.Zero(t, checked, "the oversized content itself must never reach the guardrails checker")
 
-	// further chunks in this stream must pass through unchecked, not
-	// re-trigger buffering.
+	// further chunks in this stream must be dropped, not re-trigger
+	// buffering and not forwarded unchecked either.
 	trailer := []byte("more bytes")
 	out = buf.Process(context.Background(), trailer)
-	require.Equal(t, string(trailer), string(out))
+	require.Empty(t, out, "bytes after rejection must be dropped, never forwarded unchecked")
 }
 
 func TestGuardrailsResponseBuffer_JSON_OverLimitRejected(t *testing.T) {

@@ -43,10 +43,16 @@ func (g *guardrailsResponseBuffer) withLimit(maxBytes int, oversized []byte) *gu
 	return g
 }
 
-// Process appends chunk and returns any bytes now safe to forward.
+// Process appends chunk and returns any bytes now safe to forward. Once
+// done, chunk is dropped rather than forwarded: a tools/call response holds
+// exactly one terminal result, so anything the upstream sends afterward is
+// unexpected and must not reach the client without having been through the
+// check above - forwarding it unchecked would let a malicious or
+// misbehaving upstream slip an unaudited payload past guardrails behind an
+// innocuous first result.
 func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []byte {
 	if g.done {
-		return chunk
+		return nil
 	}
 
 	g.detectRawJSON(chunk)
@@ -98,7 +104,8 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 		event = g.normalizeID(event, respID)
 		output = append(output, g.resolve(ctx, event)...)
 		g.done = true
-		output = append(output, g.unconsumed...)
+		// anything still buffered after the terminal event is unexpected
+		// trailing data (see Process's doc comment) - drop it, don't forward.
 		g.unconsumed = nil
 		break
 	}
@@ -106,12 +113,11 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 }
 
 // Flush returns any bytes still withheld when the stream ends. Safe to call
-// multiple times; subsequent calls are no-ops.
+// multiple times; subsequent calls are no-ops. Once done, nothing further is
+// forwarded - see Process's doc comment.
 func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	if g.done {
-		out := g.unconsumed
-		g.unconsumed = nil
-		return out
+		return nil
 	}
 	if g.overLimit() {
 		return g.reject()
@@ -150,8 +156,8 @@ func (g *guardrailsResponseBuffer) overLimit() bool {
 }
 
 // reject discards all buffered bytes and returns oversized in their place,
-// marking the buffer done so any further chunks in this response stream pass
-// through unchecked rather than continuing to accumulate.
+// marking the buffer done so any further chunks in this response stream are
+// dropped (see Process's doc comment) rather than continuing to accumulate.
 func (g *guardrailsResponseBuffer) reject() []byte {
 	g.done = true
 	g.unconsumed = nil
