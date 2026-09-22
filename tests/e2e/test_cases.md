@@ -204,6 +204,26 @@
 
 - When a client sends a prompts/list request with both a valid auth token and an `X-Mcp-Virtualserver` header, the result should be the intersection of both filters. The everything-server is registered with prefix `everything_` and its prompts are federated. If the JWT allows `test1_greet` but the VirtualServer only allows `everything_simple_prompt` (which the user has no JWT role for), the result should be empty.
 
+### [Auth] federates tools from an upstream the broker authenticates to with a minted token
+
+- When an MCPServerRegistration has `oauth2ClientCredentials` pointing at the tls-server fixture's `/token` endpoint and a Secret holding a valid `clientID`/`clientSecret`, the broker should mint an access token and use it for tool discovery against the fixture's protected `:9090` listener, which 401s without one. The registration should become Ready and the federated `oauth_cc_whoami` description should name `e2e-client` — the client the presented token was issued to. The tool is never called: a client's tools/call carries no broker token.
+- **Runs on PR CI** — cert-manager and the TLS test server are deployed by `make ci-setup`.
+
+### [Auth] reports the auth method on /status without leaking the credential
+
+- When a server is registered with `oauth2ClientCredentials`, the broker's `/status` endpoint should report `authMethod: oauth2ClientCredentials` for that server. Neither the `/status` body nor the broker logs should contain the client secret or an access token.
+- **Runs on PR CI** — same dependencies as the happy path test above.
+
+### [Auth] federates no tools when the client secret is wrong
+
+- When the Secret referenced by `oauth2ClientCredentials` holds the wrong `clientSecret`, the controller still resolves it successfully, so the MCPServerRegistration stays Ready — the failure is broker-side. The broker's `/status` should report the server as not ready with a message naming the token failure, and no tools with the server's prefix should appear.
+- **Runs on PR CI** — same dependencies as the happy path test above.
+
+### [Auth] federates tools after the client secret is rotated to the correct value
+
+- When the Secret holding a wrong `clientSecret` is patched with the correct value, the controller rewrites the config and the broker mints a token on the next reload. Tools with the server's prefix should appear without restarting the broker.
+- **Runs on PR CI** — same dependencies as the happy path test above.
+
 ### [Happy] Elicitation accept flow
 
 - When a client connects to the gateway with an elicitation handler that accepts requests and provides user information, and calls a tool that triggers an elicitation request, the gateway should broker the elicitation between the upstream server and the client. The tool response should indicate that the user provided the requested information.

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/broker"
 )
 
 // ScaleDeployment scales a deployment to the specified replicas
@@ -105,6 +108,92 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 		return fmt.Errorf("deployment %s not ready after restart: %s: %w", deploymentName, string(output), err)
 	}
 	return nil
+}
+
+// GetDeploymentLogs returns the logs of a deployment's pod.
+func GetDeploymentLogs(ctx context.Context, namespace, deploymentName string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "logs", "deployment/"+deploymentName,
+		"-n", namespace, "--tail=-1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get logs for deployment %s: %s: %w", deploymentName, string(output), err)
+	}
+	return string(output), nil
+}
+
+// GetBrokerStatus returns the broker's /status response, parsed and raw — leakage
+// assertions need the bytes the broker actually served, not a re-marshalling of
+// the struct. The broker serves /status on port 8080 of deployment/mcp-gateway
+// with no HTTPRoute in front, so this port-forwards to reach it. The local port
+// is OS-assigned: the suite runs under --procs and a fixed port would collide
+// across workers.
+func GetBrokerStatus(ctx context.Context) (*broker.StatusResponse, []byte, error) {
+	port, err := freeLocalPort(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pfCtx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(pfCtx, "kubectl", "port-forward", "-n", SystemNamespace,
+		"deployment/mcp-gateway", fmt.Sprintf("%d:8080", port))
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("failed to start port-forward to broker: %w", err)
+	}
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/status", port)
+	// the forward needs a moment to bind before the first request lands
+	var body []byte
+	var lastErr error
+	for range 40 {
+		if body, lastErr = httpGetBody(pfCtx, url); lastErr == nil {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return nil, nil, fmt.Errorf("failed to read broker /status: %w", lastErr)
+	}
+
+	status := &broker.StatusResponse{}
+	if err := json.Unmarshal(body, status); err != nil {
+		return nil, body, fmt.Errorf("failed to parse broker /status: %w", err)
+	}
+	return status, body, nil
+}
+
+func httpGetBody(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s returned %d", url, resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// freeLocalPort asks the OS for an unused loopback port and releases it again.
+func freeLocalPort(ctx context.Context) (int, error) {
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("failed to reserve a local port: %w", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		return 0, fmt.Errorf("failed to release reserved port %d: %w", port, err)
+	}
+	return port, nil
 }
 
 // AddDeploymentCommandFlag appends a flag to a deployment's container command array.

@@ -105,6 +105,7 @@ type TestResourcesBuilder struct {
 	hint                string
 	credential          *corev1.Secret
 	credentialKey       string
+	oauth2ClientCreds   *mcpv1.OAuth2ClientCredentialsConfig
 	caCertSecretRef     *mcpv1.CACertSecretReference
 	sectionName         string
 	tokenURLElicitation *mcpv1.TokenURLElicitationConfig
@@ -231,6 +232,18 @@ func (b *TestResourcesBuilder) WithCredential(secret *corev1.Secret, key string)
 	return b
 }
 
+// WithOAuth2ClientCredentials sets the client credentials grant the broker uses to
+// mint its own access tokens for this upstream. secretName must name a Secret with
+// the keys clientID and clientSecret, in the registration's namespace.
+func (b *TestResourcesBuilder) WithOAuth2ClientCredentials(secretName, tokenURL string, scopes ...string) *TestResourcesBuilder {
+	b.oauth2ClientCreds = &mcpv1.OAuth2ClientCredentialsConfig{
+		TokenURL:  tokenURL,
+		SecretRef: mcpv1.ClientCredentialsSecretReference{Name: secretName},
+		Scopes:    scopes,
+	}
+	return b
+}
+
 // WithTokenURLElicitation enables per-user token collection via URL elicitation.
 // Pass an empty string for url to use the default broker token page.
 func (b *TestResourcesBuilder) WithTokenURLElicitation(url string) *TestResourcesBuilder {
@@ -293,6 +306,9 @@ func (b *TestResourcesBuilder) Build() *TestResourcesBuilder {
 			Name: b.credential.Name,
 			Key:  b.credentialKey,
 		}
+	}
+	if b.oauth2ClientCreds != nil {
+		b.mcpServer.Spec.OAuth2ClientCredentials = b.oauth2ClientCreds
 	}
 	if b.caCertSecretRef != nil {
 		b.mcpServer.Spec.CACertSecretRef = b.caCertSecretRef
@@ -626,6 +642,25 @@ func BuildCredentialSecret(name, token string) *corev1.Secret {
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
 			"token": fmt.Sprintf("Bearer %s", token),
+		},
+	}
+}
+
+// BuildClientCredentialsSecret creates an OAuth2 client credentials secret for testing
+func BuildClientCredentialsSecret(name, clientID, clientSecret string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: TestServerNameSpace,
+			Labels: map[string]string{
+				"mcp.kuadrant.io/secret": "true",
+				"e2e":                    "test",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"clientID":     clientID,
+			"clientSecret": clientSecret,
 		},
 	}
 }
