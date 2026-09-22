@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,6 +13,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -1048,6 +1050,25 @@ func newOAuth2Upstream(upstreamURL, tokenURL, gatewayCA string, scopes ...string
 	}, gatewayCA, nil)
 }
 
+// logBuffer collects log output for assertions. the transport retries the
+// token request, so writes can arrive from more than one goroutine.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func getThrough(t *testing.T, c *http.Client, url string) error {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
@@ -1172,7 +1193,9 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
 
+	var logs logBuffer
 	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", string(caPEM))
+	up.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -1182,6 +1205,13 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 	// the error becomes the status Message, so it names the upstream only
 	require.Contains(t, err.Error(), "failed to obtain access token for upstream "+string(up.ID()))
 	require.NotContains(t, err.Error(), asResponseBody, "the AS response body must not be echoed")
+
+	// the log is the other half: oauth2's RetrieveError quotes the AS body, and
+	// it raises one for a mislabelled 2xx too, where that body holds a token
+	logged := logs.String()
+	require.NotContains(t, logged, asResponseBody, "the AS response body must not be logged")
+	require.NotContains(t, logged, testClientSecret, "the client secret must never reach the log")
+	require.Contains(t, logged, "500 Internal Server Error", "the status is what makes the failure triageable")
 }
 
 func TestOAuth2_UnreachableTokenEndpointFailsConnect(t *testing.T) {
