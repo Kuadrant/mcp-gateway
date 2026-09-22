@@ -55,7 +55,7 @@ func extractSSETexts(body []byte) []string {
 // field as a tools/call result JSON document.
 func extractSSEEventTexts(event []byte) []string {
 	data := sseEventData(event)
-	if len(data) == 0 || data[0] != '{' {
+	if len(data) == 0 {
 		return nil
 	}
 	return extractTextFromResultJSON(data)

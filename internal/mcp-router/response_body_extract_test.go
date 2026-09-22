@@ -50,6 +50,16 @@ func TestExtractToolResponseText_SSEWrapped(t *testing.T) {
 	require.Equal(t, "sse text", string(got))
 }
 
+func TestExtractToolResponseText_SSEExtraSpaceAfterColon(t *testing.T) {
+	// only one leading space after "data:" is stripped.
+	// The second space is part of the field value.
+	// Guardrails must still see the text, not silently skip the
+	// check because the data field doesn't start with '{' anymore.
+	body := []byte("\nevent: message\ndata:  {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"sse text\"}]}}\n\n")
+	got := extractToolResponseText(body)
+	require.Equal(t, "sse text", string(got), "guardrails must inspect text even with an extra space after the SSE data: colon")
+}
+
 func TestExtractToolResponseText_NoTextContent(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"image","data":"abc"}]}}`)
 	got := extractToolResponseText(body)
