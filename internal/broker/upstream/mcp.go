@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -185,7 +186,12 @@ type sanitizedTokenSource struct {
 func (s *sanitizedTokenSource) Token() (*oauth2.Token, error) {
 	tok, err := s.src.Token()
 	if err != nil {
-		s.logger.Error("token request failed", "upstream mcp server", s.id, "error", err)
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) {
+			s.logger.Error("token request failed", "upstream mcp server", s.id, "status", re.Response.Status)
+		} else {
+			s.logger.Error("token request failed", "upstream mcp server", s.id, "error", err)
+		}
 		return nil, fmt.Errorf("failed to obtain access token for upstream %s", s.id)
 	}
 	return tok, nil
