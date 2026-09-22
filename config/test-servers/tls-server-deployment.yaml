@@ -10,6 +10,9 @@ spec:
   - name: https
     port: 8443
     targetPort: 8443
+  - name: protected
+    port: 9090
+    targetPort: 9090
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,11 +46,15 @@ spec:
         - "/etc/tls/tls.key"
         - "--health"
         - ":8080"
+        - "--oauth-clients"
+        - "e2e-client:e2e-secret"
         ports:
         - containerPort: 8443
           name: https
         - containerPort: 8080
           name: health
+        - containerPort: 9090
+          name: protected
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
