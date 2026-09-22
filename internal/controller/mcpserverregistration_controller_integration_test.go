@@ -58,13 +58,20 @@ func generateIntegrationTestCACertPEM() []byte {
 type mockMCPServerConfigReaderWriter struct {
 	upsertedServers map[string]config.MCPServer
 	removedServers  []string
+	// unresolvedGuardrails holds config namespaces with no resolved gateway guardrails
+	unresolvedGuardrails map[string]bool
 }
 
 func newMockMCPServerConfigReaderWriter() *mockMCPServerConfigReaderWriter {
 	return &mockMCPServerConfigReaderWriter{
-		upsertedServers: make(map[string]config.MCPServer),
-		removedServers:  []string{},
+		upsertedServers:      make(map[string]config.MCPServer),
+		removedServers:       []string{},
+		unresolvedGuardrails: make(map[string]bool),
 	}
+}
+
+func (m *mockMCPServerConfigReaderWriter) GatewayGuardrailsResolved(_ context.Context, namespaceName types.NamespacedName) (bool, error) {
+	return !m.unresolvedGuardrails[namespaceName.Namespace], nil
 }
 
 func (m *mockMCPServerConfigReaderWriter) UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error {
@@ -1448,6 +1455,38 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}))
 		})
 
+		// assertFailsClosedForServerWithNoOverride is shared by the
+		// GuardrailsSecretNotFound and GuardrailsSecretInvalid. both
+		// expect a server with no per-server override to be rejected
+		// once the extension's GuardrailsResolved condition carries a
+		// guardrails-specific not-ready reason.
+		assertFailsClosedForServerWithNoOverride := func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "nemo_")
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconciler := newMCPServerReconciler(configWriter)
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName)
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(conditionReasonGatewayGuardrailsNotConfigured))
+				g.Expect(cond.Message).To(ContainSubstring("guardrails secret"))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// fails closed - no config written for this server
+			Expect(configWriter.upsertedServers).To(BeEmpty())
+		}
 		Context("and the gateway's guardrails-ref resolves to a valid NeMo secret", func() {
 			BeforeEach(func() {
 				secret := createTestNeMoGuardrailsSecret(guardrailsSecretName, "default")
@@ -1458,7 +1497,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
 
 				// mark the extension Ready directly, as if it already picked up
-				// the secret - keeps this test focused on the server's own logic.
+				// the secret.
 				Eventually(func(g Gomega) {
 					ext := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
@@ -1539,6 +1578,67 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			})
 		})
 
+		Context("and an unrelated extension secret is invalid, so gateway guardrails were never resolved", func() {
+			BeforeEach(func() {
+				secret := createTestNeMoGuardrailsSecret(guardrailsSecretName, "default")
+				Expect(testK8sClient.Create(ctx, secret)).To(Succeed())
+
+				mcpExt := createTestMCPGatewayExtension(extName, "default", gatewayName, "default")
+				mcpExt.Annotations = map[string]string{labelGuardrailsReference: guardrailsSecretName}
+				Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
+
+				// reconcileActive stopped before resolveGuardrails/WriteGatewayConfig
+				Eventually(func(g Gomega) {
+					ext := &mcpv1.MCPGatewayExtension{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
+					ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.ConditionReasonSecretInvalid, "ca bundle secret invalid")
+					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+			})
+
+			It("rejects a server with no per-server override until gateway guardrails are resolved", func() {
+				mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "nemo_")
+				Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+				configWriter := newMockMCPServerConfigReaderWriter()
+				configWriter.unresolvedGuardrails["default"] = true
+				reconciler := newMCPServerReconciler(configWriter)
+				waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName)
+
+				Eventually(func(g Gomega) {
+					result, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+					g.Expect(reconcileErr).NotTo(HaveOccurred())
+					g.Expect(result.RequeueAfter).To(Equal(guardrailsUnresolvedRequeueTime))
+
+					updated := &mcpv1.MCPServerRegistration{}
+					g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+					cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+					g.Expect(cond).NotTo(BeNil())
+					g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+					g.Expect(cond.Reason).To(Equal(conditionReasonGatewayGuardrailsNotConfigured))
+					g.Expect(cond.Message).To(ContainSubstring("not yet resolved"))
+				}, testTimeout, testRetryInterval).Should(Succeed())
+				Expect(configWriter.upsertedServers).To(BeEmpty())
+
+				// gateway config written once the extension recovers
+				delete(configWriter.unresolvedGuardrails, "default")
+				Eventually(func(g Gomega) {
+					_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+					g.Expect(reconcileErr).NotTo(HaveOccurred())
+
+					updated := &mcpv1.MCPServerRegistration{}
+					g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+					cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+					g.Expect(cond).NotTo(BeNil())
+					g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				}, testTimeout, testRetryInterval).Should(Succeed())
+				Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+			})
+		})
 		Context("and the gateway has no guardrails-ref annotation at all", func() {
 			BeforeEach(func() {
 				mcpExt := createTestMCPGatewayExtension(extName, "default", gatewayName, "default")
@@ -1603,35 +1703,9 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				}, testTimeout, testRetryInterval).Should(Succeed())
 			})
 
-			It("fails closed for a server with no per-server override", func() {
-				mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "nemo_")
-				Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
-
-				configWriter := newMockMCPServerConfigReaderWriter()
-				reconciler := newMCPServerReconciler(configWriter)
-				waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
-
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
-				Expect(err).NotTo(HaveOccurred())
-				waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName)
-
-				_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
-
-				Eventually(func(g Gomega) {
-					updated := &mcpv1.MCPServerRegistration{}
-					g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-					cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
-					g.Expect(cond).NotTo(BeNil())
-					g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-					g.Expect(cond.Reason).To(Equal(conditionReasonGatewayGuardrailsNotConfigured))
-					g.Expect(cond.Message).To(ContainSubstring("guardrails secret"))
-				}, testTimeout, testRetryInterval).Should(Succeed())
-
-				Expect(configWriter.upsertedServers).To(BeEmpty())
-			})
+			It("fails closed for a server with no per-server override", assertFailsClosedForServerWithNoOverride)
 
 			It("removes a server's config once the gateway's guardrails secret goes missing", func() {
-				// bring the secret in first so the server reconciles fine...
 				secret := createTestNeMoGuardrailsSecret(guardrailsSecretName, "default")
 				Expect(testK8sClient.Create(ctx, secret)).To(Succeed())
 				Eventually(func(g Gomega) {
@@ -1660,13 +1734,88 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 					g.Expect(configWriter.upsertedServers).NotTo(BeEmpty())
 				}, testTimeout, testRetryInterval).Should(Succeed())
 
-				// ...then simulate the secret disappearing and re-reconcile
+				// simulate the secret disappearing and re-reconcile
 				Expect(testK8sClient.Delete(ctx, secret)).To(Succeed())
 				Eventually(func(g Gomega) {
 					ext := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
 					ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound,
 						fmt.Sprintf("guardrails secret %s not found", guardrailsSecretName))
+					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+
+				Eventually(func(g Gomega) {
+					_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+					g.Expect(reconcileErr).NotTo(HaveOccurred())
+					g.Expect(configWriter.removedServers).To(ContainElement(fmt.Sprintf("default/%s", resourceName)))
+
+					updated := &mcpv1.MCPServerRegistration{}
+					g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+					cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+					g.Expect(cond).NotTo(BeNil())
+					g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+					g.Expect(cond.Reason).To(Equal(conditionReasonGatewayGuardrailsNotConfigured))
+				}, testTimeout, testRetryInterval).Should(Succeed())
+			})
+		})
+
+		Context("and the gateway's guardrails secret is malformed (GuardrailsSecretInvalid)", func() {
+			BeforeEach(func() {
+				// mark the extension's guardrails unresolved, as if
+				// resolveGuardrails found the secret but rejected it (missing
+				// the managed label, or undecodable NeMo config data).
+				mcpExt := createTestMCPGatewayExtension(extName, "default", gatewayName, "default")
+				mcpExt.Annotations = map[string]string{labelGuardrailsReference: guardrailsSecretName}
+				Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					ext := &mcpv1.MCPGatewayExtension{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretInvalid,
+						fmt.Sprintf("guardrails secret %s missing required label", guardrailsSecretName))
+					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+			})
+
+			It("fails closed for a server with no per-server override", assertFailsClosedForServerWithNoOverride)
+
+			It("removes a server's config once the gateway's guardrails secret becomes invalid", func() {
+				// bring a valid secret in first so the server reconciles fine.
+				secret := createTestNeMoGuardrailsSecret(guardrailsSecretName, "default")
+				Expect(testK8sClient.Create(ctx, secret)).To(Succeed())
+				Eventually(func(g Gomega) {
+					ext := &mcpv1.MCPGatewayExtension{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
+					ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionTrue, mcpv1.ConditionReasonGuardrailsResolved,
+						fmt.Sprintf("guardrails secret %s resolved", guardrailsSecretName))
+					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+
+				mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "nemo_")
+				Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+				configWriter := newMockMCPServerConfigReaderWriter()
+				reconciler := newMCPServerReconciler(configWriter)
+				waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName)
+
+				Eventually(func(g Gomega) {
+					_, reconcileErr := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+					g.Expect(reconcileErr).NotTo(HaveOccurred())
+					g.Expect(configWriter.upsertedServers).NotTo(BeEmpty())
+				}, testTimeout, testRetryInterval).Should(Succeed())
+
+				// simulate the secret becoming invalid (e.g. edited to drop
+				// the managed label) and re-reconcile
+				Eventually(func(g Gomega) {
+					ext := &mcpv1.MCPGatewayExtension{}
+					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretInvalid,
+						fmt.Sprintf("guardrails secret %s missing required label", guardrailsSecretName))
 					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
 
