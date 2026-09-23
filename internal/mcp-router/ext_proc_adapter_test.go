@@ -458,8 +458,9 @@ func requestHeadersStep() mockProcessServerMessageAndErr {
 }
 
 // requestHeadersStep202607 returns a request headers step for the
-// 2026-07-28 header-based routing protocol.
-func requestHeadersStep202607(toolName string) mockProcessServerMessageAndErr {
+// 2026-07-28 header-based routing protocol. All callers route to the same
+// "s1_echo" test tool.
+func requestHeadersStep202607() mockProcessServerMessageAndErr {
 	return mockProcessServerMessageAndErr{
 		msg: &extProcV3.ProcessingRequest{
 			Request: &extProcV3.ProcessingRequest_RequestHeaders{
@@ -469,7 +470,7 @@ func requestHeadersStep202607(toolName string) mockProcessServerMessageAndErr {
 							{Key: "content-type", RawValue: []byte("application/json")},
 							{Key: "mcp-protocol-version", RawValue: []byte(protocol.Version2026)},
 							{Key: "mcp-method", RawValue: []byte(routing.MethodToolCall)},
-							{Key: "mcp-name", RawValue: []byte(toolName)},
+							{Key: "mcp-name", RawValue: []byte("s1_echo")},
 						},
 					},
 				},
@@ -1419,7 +1420,7 @@ func TestProcess202607_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
 
 	// 2026-07-28 responses are always application/json, never SSE.
-	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607("s1_echo")},
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "application/json")...)
 	mock := makeMockProcessServer(t, steps)
 
@@ -1456,7 +1457,7 @@ func TestProcess202607_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	// framed as plain JSON (not an SSE event) for the 2026-07-28 protocol.
 	blockedBody := []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))
 
-	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607("s1_echo")},
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "application/json")...)
 	mock := makeMockProcessServer(t, steps)
 
@@ -1497,7 +1498,7 @@ func TestProcess202607_GuardrailsBlocked_MissingContentTypeUsesJSON(t *testing.T
 		{name: "problem_json", contentType: "application/problem+json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607("s1_echo")},
+			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 				guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, tc.contentType)...)
 			mock := makeMockProcessServer(t, steps)
 
@@ -1530,7 +1531,7 @@ func TestProcess202607_GuardrailsModified_ReplacementBody(t *testing.T) {
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
 	wantBody := []byte(routing.BuildJSONToolResult(1, "redacted"))
 
-	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607("s1_echo")},
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, wantBody, "application/json")...)
 	mock := makeMockProcessServer(t, steps)
 
@@ -1665,7 +1666,7 @@ func TestProcess202607_RealRouterStampsPrefixAndRewritesResource(t *testing.T) {
 		}},
 	}
 
-	steps := []mockProcessServerMessageAndErr{requestHeadersStep202607("s1_echo"), reqBodyStep}
+	steps := []mockProcessServerMessageAndErr{requestHeadersStep202607(), reqBodyStep}
 	steps = append(steps, guardrailsResponseSteps(toolCallBody, toolResultBody, wantRespBody, "application/json")[1:]...)
 	mock := makeMockProcessServer(t, steps)
 

@@ -187,11 +187,11 @@ func (g *guardrailsResponseBuffer) isTerminalResult(event []byte) (id any, ok bo
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil, false
 	}
-	if msg.Method != "" {
-		return nil, false // request or notification, not a response
-	}
+	// a result or error makes this the response, even if the upstream also
+	// sent a (spoofed or malformed) method - gating on method's absence let
+	// a crafted event carrying both fields skip the check entirely.
 	if len(msg.Result) == 0 && len(msg.Error) == 0 {
-		return nil, false
+		return nil, false // request or notification, not a response
 	}
 	return msg.ID, true
 }

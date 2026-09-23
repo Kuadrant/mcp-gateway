@@ -198,6 +198,14 @@ func CheckToolResponseGuardrails(ctx context.Context, cfg *config.MCPServersConf
 	return gc.checkToolCallResponse(ctx, toolName, textContent, requestID, buildToolError, buildToolResult)
 }
 
+// GuardrailsExtractionFailed builds the client-visible error body for a
+// tool response guardrails could not reliably parse. Callers must use this
+// instead of skipping the check, so a malformed or adversarial upstream
+// response can't bypass guardrails simply by being undecodable.
+func GuardrailsExtractionFailed(requestID any, buildToolError func(any, string) string) []byte {
+	return []byte(buildToolError(requestID, guardrailsCheckFailedMessage))
+}
+
 // checkElicitationAccept runs the guardrails check for an elicitation accept
 // and applies any modification in place. Decline/cancel and non-elicitation
 // requests are skipped. requestID is the client-facing id for error bodies.
