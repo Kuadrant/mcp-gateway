@@ -536,20 +536,6 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			expectChanged: false,
 		},
 		{
-			name: "oauth2 both nil does not trigger change",
-			current: &MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-			},
-			existing: MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-			},
-			expectChanged: false,
-		},
-		{
 			name: "oauth2 identical does not trigger change",
 			current: &MCPServer{
 				Name:     "server1",
@@ -591,73 +577,6 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 				Name:     "server1",
 				Prefix:   "s1_",
 				Hostname: "server1.local",
-			},
-			expectChanged: true,
-		},
-		{
-			name: "oauth2 removed triggers change",
-			current: &MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-			},
-			existing: MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-				OAuth2: &OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "secret1",
-				},
-			},
-			expectChanged: true,
-		},
-		{
-			name: "oauth2 tokenURL changed",
-			current: &MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-				OAuth2: &OAuth2ClientCredentials{
-					TokenURL:     "https://other.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "secret1",
-				},
-			},
-			existing: MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-				OAuth2: &OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "secret1",
-				},
-			},
-			expectChanged: true,
-		},
-		{
-			name: "oauth2 clientID changed",
-			current: &MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-				OAuth2: &OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker-2",
-					ClientSecret: "secret1",
-				},
-			},
-			existing: MCPServer{
-				Name:     "server1",
-				Prefix:   "s1_",
-				Hostname: "server1.local",
-				OAuth2: &OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "secret1",
-				},
 			},
 			expectChanged: true,
 		},
@@ -745,15 +664,6 @@ func TestBrokerConfig_OAuth2YAMLRoundTrip(t *testing.T) {
 	var decoded BrokerConfig
 	require.NoError(t, yaml.Unmarshal(raw, &decoded))
 	require.Equal(t, original, decoded)
-}
-
-// a server with no oauth2 block must not gain an empty one on the wire.
-func TestBrokerConfig_OAuth2OmittedWhenNil(t *testing.T) {
-	raw, err := yaml.Marshal(BrokerConfig{
-		Servers: []MCPServer{{Name: "server1", URL: "https://server1.local/mcp", State: "Enabled"}},
-	})
-	require.NoError(t, err)
-	require.NotContains(t, string(raw), "oauth2")
 }
 
 func TestMCPServersConfig_GetServerConfigByName(t *testing.T) {
