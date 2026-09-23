@@ -553,6 +553,24 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 - A GET on an `/a2a` route is passed through to the agent (the agent's POST-only `/a2a` handler answers 405, proving the request traversed the router rather than being rejected). With the flag on, MCP `tools/list` on the same gateway still returns the registered server's tools — enabling A2A does not affect the MCP path.
 
+## NeMo Guardrails
+
+Backed by test infra deployed via `config/test-servers/` (`llm-d-inference-sim` + `nemo-guardrails-custom`).
+`llm-d-inference-sim` is a response simulator, not a real judge model, so these tests only assert
+that a tools/call round-trips through the guardrails check and gets a definitive verdict (allowed
+or blocked) — not that the verdict itself is correct. Each case runs against a dual-protocol
+backend once per router (2025-11-25 and 2026-07-28) to prove guardrails checks work on both.
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: tools/call round-trips through the gateway-level NeMo guardrails check
+
+- An MCPGatewayExtension has `guardrails-ref` pointing at a NeMo config Secret. A server registered under it with no per-server override gets its tools/call checked against the gateway-level config IDs. The call completes with either a normal result or a "blocked by guardrails" error — never a timeout or unrelated failure.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: per-server guardrails-config-ids annotation merges without breaking tools/call
+
+- Same gateway-level guardrails config, but the server also carries a `guardrails-config-ids` annotation. The controller merges the per-server IDs with the gateway's global ones; tools/call still completes with a definitive verdict, proving the merge doesn't break the request path.
+- **Nightly / on-demand only** (`[Full]` tag).
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.
