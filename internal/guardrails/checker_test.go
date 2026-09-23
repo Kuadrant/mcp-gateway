@@ -34,7 +34,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 		checker := newTestChecker(t, func(w http.ResponseWriter, r *http.Request) {
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-			require.Equal(t, "/v1/guardrail/checks", r.URL.Path)
+			require.Equal(t, "/v1/checks", r.URL.Path)
 
 			messages := body["messages"].([]any)
 			msg := messages[0].(map[string]any)
