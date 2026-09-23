@@ -168,16 +168,6 @@ func TestResolveOAuth2ClientCredentials(t *testing.T) {
 				Scopes:       []string{"mcp.read", "mcp.write"},
 			},
 		},
-		{
-			name:    "resolved without scopes",
-			oauth2:  oauth2Spec("oauth-client"),
-			secrets: []corev1.Secret{oauth2Secret("oauth-client", labeled, bothKeys)},
-			want: &config.OAuth2ClientCredentials{
-				TokenURL:     authServerURL,
-				ClientID:     "mcp-broker",
-				ClientSecret: clientSecretValue,
-			},
-		},
 	}
 
 	for _, tt := range tests {

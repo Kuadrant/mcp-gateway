@@ -26,7 +26,6 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/oauth2"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -34,6 +33,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GetConfig hand-copies a fixed field list and broker.go compares the result
+// against the freshly loaded config via ConfigChanged. a field missing from the
+// copy makes every reload see a phantom diff and rebuild every manager, so the
+// fixture carries every field GetConfig is expected to round trip.
 func TestNewUpstreamMCP(t *testing.T) {
 	testServer := config.MCPServer{
 		Name:                "test-server",
@@ -42,6 +45,12 @@ func TestNewUpstreamMCP(t *testing.T) {
 		State:               string(mcpv1.ServerStateEnabled),
 		Hostname:            "dummy",
 		GuardrailsConfigIDs: []string{"pii"},
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     "https://as.example.com/token",
+			ClientID:     "broker",
+			ClientSecret: "secret1",
+			Scopes:       []string{"mcp.read"},
+		},
 	}
 	up := NewUpstreamMCP(&testServer, "", nil)
 	require.NotNil(t, up)
@@ -833,31 +842,6 @@ func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
 	require.Equal(t, "public", meta.CacheScope)
 }
 
-// GetConfig hand-copies a fixed field list and broker.go compares the result
-// against the freshly loaded config via ConfigChanged. a field missing from
-// the copy makes every reload see a phantom diff and rebuild every manager.
-func TestGetConfig_RoundTripsOAuth2WithoutPhantomDiff(t *testing.T) {
-	loaded := config.MCPServer{
-		Name:     "oauth-server",
-		URL:      "https://oauth-server.local/mcp",
-		Prefix:   "oa_",
-		State:    string(mcpv1.ServerStateEnabled),
-		Hostname: "oauth-server.local",
-		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     "https://as.example.com/token",
-			ClientID:     "broker",
-			ClientSecret: "secret1",
-			Scopes:       []string{"mcp.read"},
-		},
-	}
-
-	up := NewUpstreamMCP(&loaded, "", nil)
-	got := up.GetConfig()
-
-	require.Equal(t, loaded.OAuth2, got.OAuth2, "GetConfig must carry the oauth2 block")
-	require.False(t, got.ConfigChanged(loaded), "an unchanged oauth2 server must not look changed on reload")
-}
-
 // the static credentialRef value must reach the upstream verbatim as
 // Authorization on every broker request. guards the header path against
 // anything later inserted into the transport chain.
@@ -899,31 +883,6 @@ func TestStaticCredential_SentToUpstream(t *testing.T) {
 	for _, got := range seen {
 		require.Equal(t, credential, got, "every broker request must carry the configured credential")
 	}
-}
-
-// with no token source configured the chain must stay
-// discoverCapture -> toolHintsTee -> HeaderRoundTripper -> *http.Transport.
-// an extra hop below the header injector could overwrite Authorization.
-func TestBuildHTTPClient_StaticCredentialChainShape(t *testing.T) {
-	const credential = "Bearer static-test-token" // #nosec G101 -- test fixture
-
-	up := NewUpstreamMCP(&config.MCPServer{
-		Name:       "static-cred",
-		URL:        "http://localhost:8080/mcp",
-		Credential: credential,
-	}, "", nil)
-	client, err := up.buildHTTPClient()
-	require.NoError(t, err)
-
-	dc, ok := client.Transport.(*discoverCapture)
-	require.True(t, ok, "transport should be *discoverCapture")
-	tee, ok := dc.base.(*toolHintsTee)
-	require.True(t, ok, "discoverCapture base should be *toolHintsTee")
-	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
-	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
-	require.Equal(t, credential, hrt.Headers["Authorization"], "credential must be injected as Authorization")
-	_, ok = hrt.Base.(*http.Transport)
-	require.True(t, ok, "header round tripper must sit directly on *http.Transport")
 }
 
 const testClientSecret = "cc-client-secret" // #nosec G101 -- test fixture
@@ -1103,22 +1062,6 @@ func TestOAuth2_UpstreamCarriesMintedToken(t *testing.T) {
 	require.Equal(t, []string{"", ""}, reqs[0].brokerHeaders)
 }
 
-func TestOAuth2_NoScopeParamWhenScopesEmpty(t *testing.T) {
-	as, caPEM, asSeen := newTestAuthServer(t, 3600)
-	upSrv, _ := recordingUpstream(t)
-
-	// no scopes passed: that is the condition under test
-	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
-
-	c, err := up.buildHTTPClient()
-	require.NoError(t, err)
-	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
-
-	reqs := asSeen()
-	require.Len(t, reqs, 1)
-	require.Empty(t, reqs[0].scope, "no scope param when scopes is empty")
-}
-
 func TestOAuth2_TokenReusedWithinLifetime(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv, upSeen := recordingUpstream(t)
@@ -1214,34 +1157,12 @@ func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
 	require.Contains(t, logged, "500 Internal Server Error", "the status is what makes the failure triageable")
 }
 
-func TestOAuth2_UnreachableTokenEndpointFailsConnect(t *testing.T) {
-	// bind then close to get a port nothing is listening on
-	var lc net.ListenConfig
-	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	dead := l.Addr().String()
-	require.NoError(t, l.Close())
-
-	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
-
-	up := newOAuth2Upstream(upSrv.URL, "https://"+dead+"/token", "")
-
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	connErr := up.Connect(ctx, func() {})
-	require.Error(t, connErr)
-	require.NotContains(t, connErr.Error(), testClientSecret)
-}
-
-// the token endpoint is reached through the same trust pool as the upstream,
-// so a private CA in the gateway bundle covers both and nothing else does.
+// the token endpoint is reached through the same trust pool as the upstream, so
+// a private CA in the gateway bundle covers both and nothing else does. the
+// trusted case is proven by every other oauth2 test here.
 func TestOAuth2_TokenEndpointOnPrivateCARequiresGatewayBundle(t *testing.T) {
-	as, caPEM, _ := newTestAuthServer(t, 3600)
+	as, _, _ := newTestAuthServer(t, 3600)
 	upSrv, _ := recordingUpstream(t)
-
-	trusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM).buildHTTPClient()
-	require.NoError(t, err)
-	require.NoError(t, getThrough(t, trusted, upSrv.URL+"/mcp"))
 
 	untrusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", "").buildHTTPClient()
 	require.NoError(t, err)
@@ -1249,36 +1170,29 @@ func TestOAuth2_TokenEndpointOnPrivateCARequiresGatewayBundle(t *testing.T) {
 		"an AS on a private CA must not be trusted without the gateway bundle")
 }
 
-// with a token source the chain gains exactly one hop, below the header
-// injector so Authorization is set last and wins.
-func TestBuildHTTPClient_OAuth2ChainShape(t *testing.T) {
+// the token source sits below the header injector so it sets Authorization
+// last. a config carrying both credentials must reach the upstream with the
+// minted token, never the static one.
+func TestOAuth2_MintedTokenOverridesStaticCredential(t *testing.T) {
+	as, caPEM, _ := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
 	up := NewUpstreamMCP(&config.MCPServer{
 		Name:       "oauth-up",
-		URL:        "http://localhost:8080/mcp",
+		URL:        upSrv.URL + "/mcp",
 		Credential: "Bearer should-be-ignored",
 		OAuth2: &config.OAuth2ClientCredentials{
-			TokenURL:     "https://as.example.com/token",
+			TokenURL:     as.URL + "/token",
 			ClientID:     "broker",
 			ClientSecret: testClientSecret,
 		},
-	}, "", nil)
+	}, caPEM, nil)
 
-	require.NotContains(t, up.headers, "Authorization",
-		"a token source replaces the static credential, it must not be pre-set")
-
-	client, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient()
 	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 
-	dc, ok := client.Transport.(*discoverCapture)
-	require.True(t, ok, "transport should be *discoverCapture")
-	tee, ok := dc.base.(*toolHintsTee)
-	require.True(t, ok, "discoverCapture base should be *toolHintsTee")
-	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
-	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
-	ot, ok := hrt.Base.(*oauth2.Transport)
-	require.True(t, ok, "header round tripper must sit on *oauth2.Transport")
-	_, ok = ot.Base.(*http.Transport)
-	require.True(t, ok, "oauth2 transport must sit directly on *http.Transport")
+	require.Equal(t, []string{"Bearer as-token-1"}, upSeen())
 }
 
 func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {

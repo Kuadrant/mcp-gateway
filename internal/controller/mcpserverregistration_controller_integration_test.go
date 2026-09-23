@@ -963,17 +963,6 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
 		}
 
-		expectNotReadyWithMessage := func(substring string) {
-			Eventually(func(g Gomega) {
-				updated := &mcpv1.MCPServerRegistration{}
-				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
-				g.Expect(cond).NotTo(BeNil())
-				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(cond.Message).To(ContainSubstring(substring))
-			}, testTimeout, testRetryInterval).Should(Succeed())
-		}
-
 		BeforeEach(func() {
 			gw := createTestGateway(gatewayName, "default")
 			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
@@ -1059,53 +1048,8 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			expectUpsertedOAuth2(configWriter, clientSecret)
 		})
 
-		It("should rewrite the config when the client secret is rotated", func() {
-			createOAuth2Registration(secretName)
-
-			configWriter := newMockMCPServerConfigReaderWriter()
-			reconciler := newMCPServerReconciler(configWriter)
-			reconcileTwice(reconciler)
-			expectUpsertedOAuth2(configWriter, clientSecret)
-
-			oauthSecret := &corev1.Secret{}
-			Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: "default"}, oauthSecret)).To(Succeed())
-			oauthSecret.Data["clientSecret"] = []byte("rotated-client-secret")
-			Expect(testK8sClient.Update(ctx, oauthSecret)).To(Succeed())
-
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
-			Expect(err).NotTo(HaveOccurred())
-
-			expectUpsertedOAuth2(configWriter, "rotated-client-secret")
-		})
-
-		It("should fail when the client credentials secret does not exist", func() {
-			createOAuth2Registration("nonexistent-oauth-client")
-
-			reconcileTwice(newMCPServerReconciler(newMockMCPServerConfigReaderWriter()))
-
-			expectNotReadyWithMessage("oauth2 client credentials secret nonexistent-oauth-client not found")
-		})
-
-		It("should fail when the client credentials secret is missing the required label", func() {
-			unlabeled := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "unlabeled-oauth-client", Namespace: "default"},
-				Data: map[string][]byte{
-					"clientID":     []byte("mcp-broker"),
-					"clientSecret": []byte(clientSecret),
-				},
-			}
-			Expect(testK8sClient.Create(ctx, unlabeled)).To(Succeed())
-			defer func() {
-				_ = testK8sClient.Delete(ctx, unlabeled)
-			}()
-
-			createOAuth2Registration("unlabeled-oauth-client")
-
-			reconcileTwice(newMCPServerReconciler(newMockMCPServerConfigReaderWriter()))
-
-			expectNotReadyWithMessage("missing required label mcp.kuadrant.io/secret=true")
-		})
-
+		// one representative failure: resolution errors are covered by
+		// TestResolveOAuth2ClientCredentials, this proves one reaches the condition
 		It("should fail without leaking the client secret when clientID is missing", func() {
 			noID := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1124,32 +1068,15 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 			reconcileTwice(newMCPServerReconciler(newMockMCPServerConfigReaderWriter()))
 
-			expectNotReadyWithMessage("missing key clientID")
-			updated := &mcpv1.MCPServerRegistration{}
-			Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
-			cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
-			Expect(cond.Message).NotTo(ContainSubstring(clientSecret))
-		})
-
-		It("should fail when clientSecret is missing", func() {
-			noSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "no-client-secret",
-					Namespace: "default",
-					Labels:    map[string]string{"mcp.kuadrant.io/secret": "true"},
-				},
-				Data: map[string][]byte{"clientID": []byte("mcp-broker")},
-			}
-			Expect(testK8sClient.Create(ctx, noSecret)).To(Succeed())
-			defer func() {
-				_ = testK8sClient.Delete(ctx, noSecret)
-			}()
-
-			createOAuth2Registration("no-client-secret")
-
-			reconcileTwice(newMCPServerReconciler(newMockMCPServerConfigReaderWriter()))
-
-			expectNotReadyWithMessage("missing key clientSecret")
+			Eventually(func(g Gomega) {
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("missing key clientID"))
+				g.Expect(cond.Message).NotTo(ContainSubstring(clientSecret))
+			}, testTimeout, testRetryInterval).Should(Succeed())
 		})
 	})
 

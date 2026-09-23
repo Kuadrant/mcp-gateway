@@ -95,11 +95,13 @@ var _ = Describe("OAuth2 Client Credentials", func() {
 			Expect(string(rawStatus)).NotTo(ContainSubstring(oauthCCClientSecret))
 			Expect(string(rawStatus)).NotTo(ContainSubstring("access_token"))
 
+			// only the client secret: it is unique to this suite. a generic
+			// token like "access_token" would couple this assertion to whatever
+			// else is writing to the shared broker log under --procs
 			By("Verifying the broker logs carry no secret material")
 			logs, err := GetDeploymentLogs(ctx, SystemNamespace, "mcp-gateway")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(logs).NotTo(ContainSubstring(oauthCCClientSecret))
-			Expect(logs).NotTo(ContainSubstring("access_token"))
 		})
 	})
 
