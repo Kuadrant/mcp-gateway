@@ -167,42 +167,21 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				// don't log these as they are just noise
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, err.Error(), fmt.Errorf("reconcile failed %w", err))
 	}
 	logger.Info("target route found ", "mcpregistrationname", targetRoute.Name)
 
 	// find gateways that have accepted the httproute
 	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				// don't log these as they are just noise
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, err.Error(), fmt.Errorf("reconcile failed %w", err))
 	}
 
 	// no valid gateways found, exit with error
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				// don't log these as they are just noise
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, err.Error(), fmt.Errorf("reconcile failed %w", err))
 	}
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
 	// check for valid MCPGatewayExtension
@@ -213,23 +192,12 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		if err != nil {
 			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
 			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-				if apierrors.IsConflict(err) {
-					// don't log these as they are just noise
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+				return statusUpdateFailed(err)
 			}
 		}
 		if len(mcpGatewayExtensions) == 0 {
 			// this is not an error so we are going to exit
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
-				if apierrors.IsConflict(err) {
-					// don't log these as they are just noise
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
+			return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, "no valid mcpgatewayextensions configured", nil)
 		}
 		for _, vext := range mcpGatewayExtensions {
 			// only include extensions whose listener matches the HTTPRoute
@@ -244,23 +212,11 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 
 	if len(validNamespaces) == 0 {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no matching mcpgatewayextensions for attached listener"); err != nil {
-			if apierrors.IsConflict(err) {
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, "no matching mcpgatewayextensions for attached listener", nil)
 	}
 
 	if err := r.checkPrefixConflict(ctx, mcpsr, validNamespaces); err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonPrefixConflict, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonPrefixConflict, err.Error(), nil)
 	}
 
 	if err := requireGatewayGuardrails(validExts, parseGuardrailsConfigIDs(mcpsr.Annotations)); err != nil {
@@ -275,45 +231,24 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				// don't log these as they are just noise
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return reconcile.Result{}, fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err)
+		return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, err.Error(), fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err))
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
 			if errors.Is(err, config.ErrGatewayGuardrailsNotApplied) {
 				return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsNotAppliedRequeueTime})
 			}
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
-				if apierrors.IsConflict(err) {
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-			}
-			return reconcile.Result{}, fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err)
+			return r.updateStatusOrRequeue(ctx, mcpsr, conditionReasonNotReady, err.Error(), fmt.Errorf("failed to reconcile %s %w", mcpsr.Name, err))
 		}
 	}
 
 	// config written, set status to ready
+	ready, reason, message := true, conditionReasonReady, "config written successfully"
 	if mcpsr.Spec.State == mcpv1.ServerStateDisabled {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonDisabled, "server is disabled"); err != nil {
-			if apierrors.IsConflict(err) {
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-	} else {
-		if err := r.updateStatus(ctx, mcpsr, true, conditionReasonReady, "config written successfully"); err != nil {
-			if apierrors.IsConflict(err) {
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
+		ready, reason, message = false, conditionReasonDisabled, "server is disabled"
+	}
+	if err := r.updateStatus(ctx, mcpsr, ready, reason, message); err != nil {
+		return statusUpdateFailed(err)
 	}
 
 	if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
@@ -343,10 +278,7 @@ func (r *MCPReconciler) rejectForGuardrails(ctx context.Context, mcpsr *mcpv1.MC
 		return ctrl.Result{}, err
 	}
 	if err := r.updateStatus(ctx, mcpsr, false, conditionReasonGatewayGuardrailsNotConfigured, cause.Error()); err != nil {
-		if apierrors.IsConflict(err) {
-			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-		}
-		return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+		return statusUpdateFailed(err)
 	}
 	return result, nil
 }
@@ -874,6 +806,27 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 	}
 	return nil
 
+}
+
+// updateStatusOrRequeue sets a not-ready status and returns retErr, requeueing on status conflicts
+func (r *MCPReconciler) updateStatusOrRequeue(
+	ctx context.Context,
+	mcpsr *mcpv1.MCPServerRegistration,
+	reason, message string,
+	retErr error,
+) (ctrl.Result, error) {
+	if err := r.updateStatus(ctx, mcpsr, false, reason, message); err != nil {
+		return statusUpdateFailed(err)
+	}
+	return ctrl.Result{}, retErr
+}
+
+// statusUpdateFailed requeues on conflict, which is expected noise, and wraps other errors
+func statusUpdateFailed(err error) (ctrl.Result, error) {
+	if apierrors.IsConflict(err) {
+		return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+	}
+	return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 }
 
 func (r *MCPReconciler) updateStatus(

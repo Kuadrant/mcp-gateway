@@ -222,61 +222,33 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 
 	// check for namespace conflict first - only one MCPGatewayExtension per namespace
 	if err := r.checkNamespaceConflict(ctx, mcpExt); err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	targetGateway, listenerConfig, err := r.validateGatewayTarget(ctx, mcpExt)
 	if err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 	// listener port conflict check must always be done after the validation
 	if err := r.checkListenerConflict(ctx, mcpExt, targetGateway, listenerConfig); err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	if err := r.reconcileTrustedHeaders(ctx, mcpExt); err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	if err := r.reconcileSessionSigningKey(ctx, mcpExt); err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	if err := r.validateSessionStore(ctx, mcpExt); err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	caCertPEM, err := r.resolveCACertBundle(ctx, mcpExt)
 	if err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	if guardrailsValErr != nil {
@@ -298,11 +270,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 
 	deploymentReady, err := r.reconcileBrokerRouter(ctx, mcpExt, listenerConfig, string(targetGateway.Spec.GatewayClassName))
 	if err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+		return r.statusOnValidationError(ctx, mcpExt, err)
 	}
 
 	if !deploymentReady {
@@ -324,6 +292,15 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	}
 
 	return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "successfully verified and configured")
+}
+
+// statusOnValidationError reports validation errors on status, other errors are returned for retry
+func (r *MCPGatewayExtensionReconciler) statusOnValidationError(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, err error) (ctrl.Result, error) {
+	var valErr *validationError
+	if errors.As(err, &valErr) {
+		return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
+	}
+	return ctrl.Result{}, err
 }
 
 func (r *MCPGatewayExtensionReconciler) validateGatewayTarget(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (*gatewayv1.Gateway, *ListenerConfig, error) {
