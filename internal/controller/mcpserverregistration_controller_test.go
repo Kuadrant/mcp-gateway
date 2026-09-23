@@ -147,7 +147,7 @@ func TestResolveOAuth2ClientCredentials(t *testing.T) {
 			secrets: []corev1.Secret{oauth2Secret("no-id", labeled, map[string][]byte{
 				oauth2ClientSecretKey: []byte(clientSecretValue),
 			})},
-			errContains: "missing key clientID",
+			errContains: "missing or empty key clientID",
 		},
 		{
 			name:   "missing clientSecret",
@@ -155,7 +155,25 @@ func TestResolveOAuth2ClientCredentials(t *testing.T) {
 			secrets: []corev1.Secret{oauth2Secret("no-secret", labeled, map[string][]byte{
 				oauth2ClientIDKey: []byte("mcp-broker"),
 			})},
-			errContains: "missing key clientSecret",
+			errContains: "missing or empty key clientSecret",
+		},
+		{
+			name:   "empty clientID",
+			oauth2: oauth2Spec("empty-id"),
+			secrets: []corev1.Secret{oauth2Secret("empty-id", labeled, map[string][]byte{
+				oauth2ClientIDKey:     {},
+				oauth2ClientSecretKey: []byte(clientSecretValue),
+			})},
+			errContains: "missing or empty key clientID",
+		},
+		{
+			name:   "empty clientSecret",
+			oauth2: oauth2Spec("empty-secret"),
+			secrets: []corev1.Secret{oauth2Secret("empty-secret", labeled, map[string][]byte{
+				oauth2ClientIDKey:     []byte("mcp-broker"),
+				oauth2ClientSecretKey: {},
+			})},
+			errContains: "missing or empty key clientSecret",
 		},
 		{
 			name:    "resolved with scopes",

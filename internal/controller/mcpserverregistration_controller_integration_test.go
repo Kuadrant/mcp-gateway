@@ -1074,7 +1074,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-				g.Expect(cond.Message).To(ContainSubstring("missing key clientID"))
+				g.Expect(cond.Message).To(ContainSubstring("missing or empty key clientID"))
 				g.Expect(cond.Message).NotTo(ContainSubstring(clientSecret))
 			}, testTimeout, testRetryInterval).Should(Succeed())
 		})

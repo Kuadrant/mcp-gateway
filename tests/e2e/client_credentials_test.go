@@ -156,6 +156,14 @@ var _ = Describe("OAuth2 Client Credentials", func() {
 				)))
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
+			// the status Message is the same for a TLS failure and a rejected
+			// credential, so pin the cause: errorCode is the parsed RFC 6749
+			// field and only this suite exercises the token endpoint
+			By("Verifying the AS rejected the credential rather than the connection failing")
+			logs, err := GetDeploymentLogs(ctx, SystemNamespace, "mcp-gateway")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(logs).To(ContainSubstring("invalid_client"))
+
 			By("Verifying no tools with the oauth_cc_rot_ prefix appear")
 			WaitForToolsWithPrefixAbsent(ctx, mcpGatewayClient, "oauth_cc_rot_")
 		})

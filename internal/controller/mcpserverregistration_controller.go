@@ -587,7 +587,7 @@ func (r *MCPReconciler) getManagedSecret(ctx context.Context, name, namespace, d
 
 // resolveOAuth2ClientCredentials reads the client credentials the broker uses to mint its own
 // access tokens for this upstream. errors surface verbatim as the Ready condition message, so
-// they name the secret and the missing key only, never a value.
+// they name the secret and the offending key only, never a value.
 // mcpsr.Spec.OAuth2ClientCredentials must be non-nil.
 func (r *MCPReconciler) resolveOAuth2ClientCredentials(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) (*config.OAuth2ClientCredentials, error) {
 	cc := mcpsr.Spec.OAuth2ClientCredentials
@@ -597,13 +597,15 @@ func (r *MCPReconciler) resolveOAuth2ClientCredentials(ctx context.Context, mcps
 		return nil, err
 	}
 
+	// an empty value would reach the AS as an empty credential and surface only as the
+	// broker's sanitized "failed to obtain access token", which does not name the cause
 	clientID, ok := secret.Data[oauth2ClientIDKey]
-	if !ok {
-		return nil, fmt.Errorf("oauth2 client credentials secret %s missing key %s", cc.SecretRef.Name, oauth2ClientIDKey)
+	if !ok || len(clientID) == 0 {
+		return nil, fmt.Errorf("oauth2 client credentials secret %s missing or empty key %s", cc.SecretRef.Name, oauth2ClientIDKey)
 	}
 	clientSecret, ok := secret.Data[oauth2ClientSecretKey]
-	if !ok {
-		return nil, fmt.Errorf("oauth2 client credentials secret %s missing key %s", cc.SecretRef.Name, oauth2ClientSecretKey)
+	if !ok || len(clientSecret) == 0 {
+		return nil, fmt.Errorf("oauth2 client credentials secret %s missing or empty key %s", cc.SecretRef.Name, oauth2ClientSecretKey)
 	}
 
 	return &config.OAuth2ClientCredentials{
