@@ -1095,6 +1095,25 @@ func TestOAuth2_TokenRefreshedOnExpiry(t *testing.T) {
 	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-2"}, upSeen())
 }
 
+// Connect rebuilds the transport chain on every reconnect. the token source is
+// cached on the upstream instead, so a flapping upstream does not re-mint a
+// token that is still live.
+func TestOAuth2_TokenSurvivesReconnect(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	for range 2 {
+		c, err := up.buildHTTPClient()
+		require.NoError(t, err)
+		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	}
+
+	require.Len(t, asSeen(), 1, "rebuilding the client must not re-mint a live token")
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-1"}, upSeen())
+}
+
 func TestOAuth2_NonHTTPSTokenURLRejected(t *testing.T) {
 	upSrv, _ := recordingUpstream(t)
 

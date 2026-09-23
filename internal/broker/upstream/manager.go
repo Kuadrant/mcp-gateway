@@ -78,9 +78,9 @@ const (
 	authMethodOAuth2 = "oauth2ClientCredentials"
 )
 
-// authMethod derives the status name from an upstream's config. oauth2 wins:
-// a token source owns Authorization when both are somehow set.
-func authMethod(cfg config.MCPServer) string {
+// deriveAuthMethod derives the status name from an upstream's config. oauth2
+// wins: a token source owns Authorization when both are somehow set.
+func deriveAuthMethod(cfg config.MCPServer) string {
 	switch {
 	case cfg.OAuth2 != nil:
 		return authMethodOAuth2
@@ -276,6 +276,11 @@ type MCPManager struct {
 	// consecutiveFailures counts connect/ping failures since the last
 	// healthy pass. only touched from the event loop goroutine.
 	consecutiveFailures int
+
+	// authMethod names how the broker authenticates to this upstream. derived
+	// once: a credential change replaces the whole manager via ConfigChanged,
+	// so re-deriving it per health tick would only re-copy the config.
+	authMethod string
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
@@ -347,6 +352,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 
 	return &MCPManager{
 		mcp:                upstream,
+		authMethod:         deriveAuthMethod(upstream.GetConfig()),
 		gatewayServer:      gatewayServer,
 		promptsServer:      promptsServer,
 		tickerInterval:     tickerInterval,
@@ -743,7 +749,7 @@ func (man *MCPManager) setStatus(err error, toolCount int, promptCount int, inva
 	man.status.UsesStatelessProtocol = man.mcp.UsesStatelessProtocol()
 	man.status.TickerInterval = man.tickerInterval.String()
 	man.status.ConsecutiveFailures = man.consecutiveFailures
-	man.status.AuthMethod = authMethod(man.mcp.GetConfig())
+	man.status.AuthMethod = man.authMethod
 	if err != nil {
 		man.status.Message = err.Error()
 		man.status.Ready = false
