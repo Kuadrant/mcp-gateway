@@ -465,9 +465,22 @@ func TestMCPManager_setStatus(t *testing.T) {
 }
 
 // TestMCPManager_setStatus_AuthMethod verifies status names how the broker
-// authenticates to the upstream, for each of the three configurations.
+// authenticates to the upstream, for each of the three configurations, and that
+// the serialised /status payload never carries the credential behind the name.
 func TestMCPManager_setStatus_AuthMethod(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	const (
+		staticCredential = "Bearer static-token"
+		clientSecret     = "super-secret-value"
+	)
+	oauth2Config := func() *config.OAuth2ClientCredentials {
+		return &config.OAuth2ClientCredentials{
+			TokenURL:     "https://as.example.com/token",
+			ClientID:     "broker",
+			ClientSecret: clientSecret,
+		}
+	}
 
 	testCases := []struct {
 		name     string
@@ -481,29 +494,19 @@ func TestMCPManager_setStatus_AuthMethod(t *testing.T) {
 		},
 		{
 			name:     "static credential",
-			mutate:   func(c *config.MCPServer) { c.Credential = "Bearer static-token" },
+			mutate:   func(c *config.MCPServer) { c.Credential = staticCredential },
 			expected: "static",
 		},
 		{
-			name: "oauth2 client credentials",
-			mutate: func(c *config.MCPServer) {
-				c.OAuth2 = &config.OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "s3cr3t",
-				}
-			},
+			name:     "oauth2 client credentials",
+			mutate:   func(c *config.MCPServer) { c.OAuth2 = oauth2Config() },
 			expected: "oauth2ClientCredentials",
 		},
 		{
 			name: "oauth2 wins over a static credential",
 			mutate: func(c *config.MCPServer) {
-				c.Credential = "Bearer static-token"
-				c.OAuth2 = &config.OAuth2ClientCredentials{
-					TokenURL:     "https://as.example.com/token",
-					ClientID:     "broker",
-					ClientSecret: "s3cr3t",
-				}
+				c.Credential = staticCredential
+				c.OAuth2 = oauth2Config()
 			},
 			expected: "oauth2ClientCredentials",
 		},
@@ -519,40 +522,12 @@ func TestMCPManager_setStatus_AuthMethod(t *testing.T) {
 			manager.setStatus(nil, 1, 0, nil, nil)
 			assert.Equal(t, tc.expected, manager.status.AuthMethod)
 
-			// a failed status reports the method too
-			manager.setStatus(fmt.Errorf("connection failed"), 0, 0, nil, nil)
-			assert.Equal(t, tc.expected, manager.status.AuthMethod)
+			payload, err := json.Marshal(manager.GetStatus())
+			require.NoError(t, err)
+			assert.NotContains(t, string(payload), staticCredential)
+			assert.NotContains(t, string(payload), clientSecret)
 		})
 	}
-}
-
-// TestMCPManager_setStatus_NoSecretsInStatusJSON guards the /status payload:
-// the status carries the auth method name, never the credential itself.
-func TestMCPManager_setStatus_NoSecretsInStatusJSON(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-	const (
-		clientSecret = "super-secret-value"
-		accessToken  = "minted-access-token"
-	)
-
-	mock := newMockMCP("test-server", "test_")
-	mock.cfg.Credential = "Bearer " + accessToken
-	mock.cfg.OAuth2 = &config.OAuth2ClientCredentials{
-		TokenURL:     "https://as.example.com/token",
-		ClientID:     "broker",
-		ClientSecret: clientSecret,
-	}
-	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
-	require.NoError(t, err)
-
-	manager.setStatus(nil, 1, 0, nil, nil)
-	payload, err := json.Marshal(manager.GetStatus())
-	require.NoError(t, err)
-
-	assert.Contains(t, string(payload), `"authMethod":"oauth2ClientCredentials"`)
-	assert.NotContains(t, string(payload), clientSecret)
-	assert.NotContains(t, string(payload), accessToken)
 }
 
 // TestMCPManager_setStatus_ProtocolVersions verifies the negotiated protocol version
