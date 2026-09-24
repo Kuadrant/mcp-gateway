@@ -444,6 +444,9 @@ func (a *app) parseConfigFile(path string) (*configSnapshot, error) {
 		if err := viper.UnmarshalKey("globalGuardrails", &globalGuardrails); err != nil {
 			return nil, fmt.Errorf("decoding globalGuardrails config: %w", err)
 		}
+		if err := globalGuardrails.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid globalGuardrails config: %w", err)
+		}
 	}
 
 	a.logger.Debug("config successfully loaded", "# servers", len(newServers))

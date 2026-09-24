@@ -84,6 +84,8 @@ stringData:
 
 The Secret type determines which provider validates and parses the content. The controller resolves the type to a provider implementation that exposes a `ValidateConfig()` method, returning a typed config or an error.
 
+The validator rejects `localhost` and literal loopback, private, link-local, and unspecified IP addresses. DNS names remain supported for in-cluster guardrails services; enforce restrictions on resolved destinations through network policy or an explicit egress allowlist.
+
 TLS uses the gateway's existing CA bundle (`caCertBundleRef`). `maxBodyBytes` is configured on MCPGatewayExtension spec, not per guardrails config.
 
 ### API Changes

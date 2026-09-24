@@ -107,3 +107,13 @@ failMode: retry
 		require.Error(t, err)
 	})
 }
+func TestEnsureNeMoConfigDataRejectsLoopbackEndpoint(t *testing.T) {
+	_, err := EnsureNeMoConfigData(SecretTypeNeMo, map[string][]byte{
+		configDataKey: []byte(`
+url: http://127.0.0.1:8080
+model: meta/llama-3.1-8b-instruct
+`),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "private or loopback")
+}
