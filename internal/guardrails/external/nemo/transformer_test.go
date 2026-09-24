@@ -101,10 +101,15 @@ func TestNeMoTransformer_TransformResponse(t *testing.T) {
 func TestNeMoTransformer_ParseCheckResponse(t *testing.T) {
 	transformer := NewTransformer("meta/llama-3.1-8b-instruct")
 
-	t.Run("parses a success verdict", func(t *testing.T) {
-		resp, err := transformer.ParseCheckResponse([]byte(`{"status":"success","content":"ok","rail":null}`))
+	t.Run("parses a passed verdict", func(t *testing.T) {
+		resp, err := transformer.ParseCheckResponse([]byte(`{"status":"passed","content":"ok","rail":null}`))
 		require.NoError(t, err)
-		require.Equal(t, &CheckResponse{Status: StatusSuccess, Content: "ok"}, resp)
+		require.Equal(t, &CheckResponse{Status: StatusPassed, Content: "ok"}, resp)
+	})
+
+	t.Run("rejects the former success status", func(t *testing.T) {
+		_, err := transformer.ParseCheckResponse([]byte(`{"status":"success","content":"ok"}`))
+		require.Error(t, err)
 	})
 
 	t.Run("parses a modified verdict with the substituted content and triggering rail", func(t *testing.T) {

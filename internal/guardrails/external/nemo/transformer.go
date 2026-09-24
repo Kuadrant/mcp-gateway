@@ -9,7 +9,7 @@ import (
 
 // Status values in CheckResponse.Status.
 const (
-	StatusSuccess  = "success"
+	StatusPassed   = "passed"
 	StatusModified = "modified"
 	StatusBlocked  = "blocked"
 )
@@ -139,7 +139,7 @@ func (t *Transformer) ParseCheckResponse(body []byte) (*CheckResponse, error) {
 	}
 
 	switch resp.Status {
-	case StatusSuccess, StatusModified, StatusBlocked:
+	case StatusPassed, StatusModified, StatusBlocked:
 	default:
 		return nil, fmt.Errorf("nemo: unrecognized status %q", resp.Status)
 	}
