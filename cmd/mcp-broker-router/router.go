@@ -12,10 +12,24 @@ import (
 	"google.golang.org/grpc"
 )
 
+// grpcMaxRecvMsgSize is the ext_proc receive limit. 16 MiB leaves room above
+// the 5 MiB maxBodyBytes default and covers the documented 10 MiB example,
+// plus the ext_proc framing carried with a BUFFERED body. grpc's 4 MiB
+// default would reject those bodies before the router sees them.
+const grpcMaxRecvMsgSize = 16 << 20
+
+func newGRPCServer() *grpc.Server {
+	return grpc.NewServer(grpc.MaxRecvMsgSize(grpcMaxRecvMsgSize))
+}
+
+func (a *app) createGRPCServer() {
+	a.grpcServer = newGRPCServer()
+	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.server)
+}
+
 func (a *app) createRouter() {
 	cfg := &a.routerCfg
 
-	a.grpcServer = grpc.NewServer()
 	a.server = &mcpRouter.ExtProcServer{
 		Logger:         a.logger.With("component", "router"),
 		SessionCache:   a.sessionCache,
@@ -58,8 +72,6 @@ func (a *app) createRouter() {
 		ElicitationEnabled: cfg.enableURLElicitation,
 		Logger:             a.logger.With("component", "response-handler-202511"),
 	}
-
-	extProcV3.RegisterExternalProcessorServer(a.grpcServer, a.server)
 }
 
 func tlsConfigFromCACertPEM(caCertPEM string) (*tls.Config, error) {
