@@ -191,6 +191,11 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		tags = make([]string, len(up.Tags))
 		copy(tags, up.Tags)
 	}
+	var guardrailsConfigIDs []string
+	if len(up.GuardrailsConfigIDs) > 0 {
+		guardrailsConfigIDs = make([]string, len(up.GuardrailsConfigIDs))
+		copy(guardrailsConfigIDs, up.GuardrailsConfigIDs)
+	}
 	var supportedProtocolVersions []string
 	if len(up.SupportedProtocolVersions) > 0 {
 		supportedProtocolVersions = make([]string, len(up.SupportedProtocolVersions))
@@ -209,6 +214,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Category:            cat,
 		Hint:                up.Hint,
 		Tags:                tags,
+		GuardrailsConfigIDs: guardrailsConfigIDs,
 
 		SupportedProtocolVersions: supportedProtocolVersions,
 	}

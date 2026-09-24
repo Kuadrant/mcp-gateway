@@ -31,15 +31,27 @@ import (
 
 func TestNewUpstreamMCP(t *testing.T) {
 	testServer := config.MCPServer{
-		Name:     "test-server",
-		URL:      "http://localhost:8088/mcp",
-		Prefix:   "",
-		State:    string(mcpv1.ServerStateEnabled),
-		Hostname: "dummy",
+		Name:                "test-server",
+		URL:                 "http://localhost:8088/mcp",
+		Prefix:              "",
+		State:               string(mcpv1.ServerStateEnabled),
+		Hostname:            "dummy",
+		GuardrailsConfigIDs: []string{"pii"},
 	}
 	up := NewUpstreamMCP(&testServer, "", nil)
 	require.NotNil(t, up)
 	require.Equal(t, testServer, up.GetConfig())
+}
+
+func TestGetConfig_CopiesGuardrailsConfigIDs(t *testing.T) {
+	ids := []string{"pii", "toxicity"}
+	up := NewUpstreamMCP(&config.MCPServer{Name: "s", GuardrailsConfigIDs: ids}, "", nil)
+
+	cfg := up.GetConfig()
+	require.Equal(t, ids, cfg.GuardrailsConfigIDs)
+
+	cfg.GuardrailsConfigIDs[0] = "mutated"
+	require.Equal(t, "pii", up.GetConfig().GuardrailsConfigIDs[0], "returned slice must not alias upstream state")
 }
 
 func TestMCPServer_IsEnabled(t *testing.T) {
