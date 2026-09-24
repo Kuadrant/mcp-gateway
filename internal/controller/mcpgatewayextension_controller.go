@@ -11,7 +11,6 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
-	"github.com/Kuadrant/mcp-gateway/internal/guardrails"
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -206,6 +205,21 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 	if r.envoyFilterUnavailable.Load() {
 		return r.reconcileUnavailableEnvoyFilter(ctx, mcpExt)
 	}
+
+	// resolved before the other validations so a failure can't hide
+	// a broken guardrails secret from the GuardrailsResolved condition, which
+	// MCPServerRegistrations key off to fail closed.
+	guardrailsConfig, guardrailsErr := r.resolveGuardrails(ctx, mcpExt)
+	var guardrailsValErr *validationError
+	if guardrailsErr != nil && !errors.As(guardrailsErr, &guardrailsValErr) {
+		return ctrl.Result{}, guardrailsErr
+	}
+	if setGuardrailsResolvedCondition(mcpExt, guardrailsValErr) {
+		if err := r.Status().Update(ctx, mcpExt); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// check for namespace conflict first - only one MCPGatewayExtension per namespace
 	if err := r.checkNamespaceConflict(ctx, mcpExt); err != nil {
 		var valErr *validationError
@@ -265,13 +279,8 @@ func (r *MCPGatewayExtensionReconciler) reconcileActive(ctx context.Context, mcp
 		return ctrl.Result{}, err
 	}
 
-	guardrailsConfig, err := r.resolveGuardrails(ctx, mcpExt)
-	if err != nil {
-		var valErr *validationError
-		if errors.As(err, &valErr) {
-			return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, valErr.reason, valErr.message)
-		}
-		return ctrl.Result{}, err
+	if guardrailsValErr != nil {
+		return ctrl.Result{}, r.updateStatus(ctx, mcpExt, metav1.ConditionFalse, guardrailsValErr.reason, guardrailsValErr.message)
 	}
 
 	maxBodyBytes := config.DefaultMaxBodyBytes
@@ -981,37 +990,6 @@ func (r *MCPGatewayExtensionReconciler) enqueueMCPGatewayExtForEnvoyFilter(_ con
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{Name: extName, Namespace: extNamespace},
 	}}
-}
-
-// resolveGuardrails validates the guardrails Secret referenced by the
-// labelGuardrailsReference annotation and returns the resolved config.
-func (r *MCPGatewayExtensionReconciler) resolveGuardrails(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (*config.GuardrailsConfig, error) {
-	guardrailsSecretRef := mcpExt.Annotations[labelGuardrailsReference]
-	if guardrailsSecretRef == "" {
-		return nil, nil //nolint:nilnil
-	}
-
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: guardrailsSecretRef, Namespace: mcpExt.Namespace}, secret); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, newValidationError(mcpv1.GuardrailsSecretNotFound,
-				fmt.Sprintf("guardrails secret %s not found", guardrailsSecretRef))
-		}
-		return nil, fmt.Errorf("failed to get guardrails secret: %w", err)
-	}
-
-	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
-			fmt.Sprintf("guardrails secret %s missing required label %s=%s", guardrailsSecretRef, ManagedSecretLabel, ManagedSecretValue))
-	}
-
-	guardrailsConfig, err := guardrails.EnsureNeMoConfigData(secret.Type, secret.Data)
-	if err != nil {
-		return nil, newValidationError(mcpv1.ConditionReasonSecretInvalid,
-			fmt.Sprintf("guardrails secret %s is invalid: %v", guardrailsSecretRef, err))
-	}
-
-	return guardrailsConfig, nil
 }
 
 // SetupWithManager sets up the controller.
