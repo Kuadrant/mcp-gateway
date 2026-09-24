@@ -49,8 +49,14 @@ const (
 const checksPath = "/v1/checks"
 
 // checkTimeout bounds a single guardrails HTTP round trip, comfortably
-// inside the 10s ext_proc message_timeout.
-const checkTimeout = 3 * time.Second
+// inside the 10s ext_proc message_timeout (config/istio/envoyfilter.yaml,
+// mcpgatewayextension_controller.go). 3s was too tight in practice: a small
+// self-hosted judge model (e.g. phi3) can take ~3.3s for a single
+// self-check LLM call under light load, causing "guardrails check
+// unavailable" (fail-closed) on otherwise-benign requests. 8s leaves ~2s of
+// headroom within the ext_proc window for HTTP/TLS overhead on top of the
+// LLM call itself.
+const checkTimeout = 8 * time.Second
 
 // dialTimeout bounds DNS/TCP connection setup so an unreachable guardrails
 // server fails fast rather than eating the full checkTimeout on dial alone.
