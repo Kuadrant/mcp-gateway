@@ -813,6 +813,11 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("user-specific-server", "us_")
 	mock.cfg.UserSpecificList = true
+	mock.cfg.OAuth2 = &config.OAuth2ClientCredentials{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "broker",
+		ClientSecret: "super-secret-value",
+	}
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
@@ -825,6 +830,8 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 	assert.True(t, status.Ready, "server should be healthy")
 	assert.Equal(t, 0, status.TotalTools, "no tools should be cached")
 	assert.Contains(t, status.Message, "userSpecificList")
+	// this path returns before setStatus, so the field has to survive without it
+	assert.Equal(t, authMethodOAuth2, status.AuthMethod)
 
 	// no tools added to gateway
 	assert.Empty(t, gateway.tools, "tools should not be added to gateway for userSpecificList servers")
