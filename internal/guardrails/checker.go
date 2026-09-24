@@ -87,7 +87,7 @@ func (p *nemoProvider) ParseCheckResponse(body []byte) (Status, string, string, 
 		return "", "", "", err
 	}
 	switch resp.Status {
-	case nemo.StatusSuccess:
+	case nemo.StatusPassed:
 		return StatusAllowed, resp.Content, resp.Rail, nil
 	case nemo.StatusModified:
 		return StatusModified, resp.Content, resp.Rail, nil

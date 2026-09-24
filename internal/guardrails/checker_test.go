@@ -45,7 +45,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 			require.Equal(t, []any{"global-1", "server-1"}, guardrails["config_ids"])
 
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"success","content":"ok"}`))
+			_, _ = w.Write([]byte(`{"status":"passed","content":"ok"}`))
 		}, FailModeDeny)
 
 		decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{"query":"SELECT 1"}`), []string{"server-1"})
@@ -111,7 +111,7 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	t.Run("oversized guardrails response applies failMode rather than erroring", func(t *testing.T) {
 		checker := newTestCheckerWithMaxBodyBytes(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"success","content":"` + strings.Repeat("a", 32) + `"}`))
+			_, _ = w.Write([]byte(`{"status":"passed","content":"` + strings.Repeat("a", 32) + `"}`))
 		}, FailModeDeny, 8)
 
 		decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{}`), nil)

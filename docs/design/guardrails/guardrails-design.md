@@ -193,7 +193,7 @@ sequenceDiagram
         alt status: blocked
             Router-->>Envoy: Decision.Error (403)
             Envoy-->>Client: JSON-RPC error
-        else status: success
+        else status: passed
             Router-->>Envoy: Decision (route to backend)
             Envoy->>Backend: tools/call
             Backend-->>Envoy: result
@@ -272,7 +272,7 @@ sequenceDiagram
         Router->>Router: accumulate full body
         Router->>Guardrails: POST /v1/checks
         Guardrails-->>Router: verdict
-        alt status: success
+        alt status: passed
             Router-->>Envoy: release body
             Envoy-->>Client: response
         else status: blocked
@@ -286,7 +286,7 @@ sequenceDiagram
 
 | Outcome | Router action |
 |---------|---------------|
-| `status: "success"` | Release original body to client |
+| `status: "passed"` | Release original body to client |
 | `status: "modified"` | Forward modified content to client, log status at `Debug` level. Body logging is NeMo's responsibility |
 | `status: "blocked"` | Error response, discard buffer, close stream |
 | Exceeds `maxBodyBytes` | 413. `failMode` does not apply |
@@ -346,7 +346,7 @@ sequenceDiagram
 | Outcome | Router action |
 |---------|---------------|
 | Translation failure | Always deny (400). `failMode` does not apply |
-| `status: "success"` | Proceed |
+| `status: "passed"` | Proceed |
 | `status: "blocked"` | 403 with rails message |
 | Non-2xx / timeout / malformed | Apply `failMode` |
 
@@ -415,7 +415,7 @@ Span attributes on `mcp-router.tool-call`:
 | Attribute | Value |
 |-----------|-------|
 | `guardrails.enabled` | `true` / `false` |
-| `guardrails.status` | `success` / `blocked` / `error` |
+| `guardrails.status` | `passed` / `blocked` / `error` |
 | `guardrails.config_ids` | config IDs used |
 | `guardrails.latency_ms` | round-trip time |
 | `guardrails.fail_mode` | `deny` / `allow` |
