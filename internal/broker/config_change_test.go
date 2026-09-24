@@ -110,6 +110,42 @@ func TestOnConfigChange_ReplacedManagerDoesNotDeleteReplacementTools(t *testing.
 	require.NoError(t, b.Shutdown(context.Background()))
 }
 
+// regression: an oauth2 upstream reaches its https token endpoint through the
+// gateway trust pool, so a plain-http MCP URL is no evidence the manager holds
+// no TLS config. keying replacement on the MCP scheme alone left these managers
+// on a stale CA pool with no way to recover after a bundle rotation.
+func TestOnConfigChange_GatewayCAChangeReplacesOAuth2ManagerOnHTTPUpstream(t *testing.T) {
+	up := fakeUpstream(t, "t1", "sess", 0)
+	defer up.Close()
+
+	b := NewBroker(slog.Default(), WithDiscoveryToolsEnabled(false)).(*mcpBrokerImpl)
+
+	server := func() *config.MCPServer {
+		return &config.MCPServer{
+			Name: "server-one", URL: up.URL, Prefix: "s1_",
+			OAuth2: &config.OAuth2ClientCredentials{
+				TokenURL: "https://as.example.com/token", ClientID: "broker", ClientSecret: "test-secret",
+			},
+		}
+	}
+
+	conf := &config.MCPServersConfig{Servers: []*config.MCPServer{server()}}
+	conf.SetGatewayCACertPEM("old-bundle")
+	b.OnConfigChange(context.Background(), conf)
+
+	before := b.mcpServers[server().ID()]
+	require.NotNil(t, before)
+
+	conf = &config.MCPServersConfig{Servers: []*config.MCPServer{server()}}
+	conf.SetGatewayCACertPEM("new-bundle")
+	b.OnConfigChange(context.Background(), conf)
+
+	require.NotSame(t, before, b.mcpServers[server().ID()],
+		"a gateway CA rotation must rebuild the manager holding the token endpoint's trust pool")
+
+	require.NoError(t, b.Shutdown(context.Background()))
+}
+
 // regression: config.Notify runs each observer in its own goroutine and
 // secret-mount updates emit several fsnotify events back to back, so
 // OnConfigChange can be invoked concurrently. with Stop outside mcpLock,

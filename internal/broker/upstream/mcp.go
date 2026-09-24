@@ -89,11 +89,11 @@ type MCPServer struct {
 	// to capture the upstream's SupportedVersions.
 	dc *discoverCapture
 
-	// client-credentials token source for OAuth2 upstreams, built once by
-	// tokenSource() so its cached token outlives a reconnect
-	tokenOnce sync.Once
-	tokenSrc  oauth2.TokenSource
-	tokenErr  error
+	// client-credentials token source for OAuth2 upstreams, built on first use
+	// so its cached token outlives a reconnect, and dropped by
+	// invalidateTokenSource when the upstream rejects the token
+	tokenMu  sync.Mutex
+	tokenSrc oauth2.TokenSource
 
 	// supportedVersions lists protocol versions this upstream supports.
 	supportedVersions []string
@@ -177,7 +177,7 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		inner = &oauth2.Transport{Source: ts, Base: base}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: ts, Base: base}, up: up}
 	}
 
 	up.dc = &discoverCapture{
@@ -187,6 +187,24 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 		},
 	}
 	return &http.Client{Transport: up.dc}, nil
+}
+
+// tokenInvalidator drops the cached token source when the upstream rejects the
+// bearer token it carried. it sits above oauth2.Transport so it only sees
+// responses to requests that actually presented a token.
+type tokenInvalidator struct {
+	base http.RoundTripper
+	up   *MCPServer
+}
+
+func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		t.up.logger.Debug("upstream rejected access token, discarding cached token source",
+			"upstream mcp server", t.up.ID())
+		t.up.invalidateTokenSource()
+	}
+	return resp, err
 }
 
 // sanitizedTokenSource replaces the oauth2 package's token error, which quotes
@@ -218,15 +236,33 @@ func (s *sanitizedTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // tokenSource returns this upstream's client-credentials source, building it on
-// first use. it is cached for the life of the MCPServer so a reconnect reuses a
-// still-valid token: Connect rebuilds the transport chain, and a source rebuilt
-// alongside it would re-mint on every reconnect. a credential or CA change
-// replaces the whole MCPServer, so the cache cannot go stale.
+// first use. it is cached so a reconnect reuses a still-valid token: Connect
+// rebuilds the transport chain, and a source rebuilt alongside it would re-mint
+// on every reconnect. a credential or CA change replaces the whole MCPServer,
+// so config cannot make the cache stale; revocation can, which is what
+// invalidateTokenSource handles.
 func (up *MCPServer) tokenSource() (oauth2.TokenSource, error) {
-	up.tokenOnce.Do(func() {
-		up.tokenSrc, up.tokenErr = up.newTokenSource()
-	})
-	return up.tokenSrc, up.tokenErr
+	up.tokenMu.Lock()
+	defer up.tokenMu.Unlock()
+	if up.tokenSrc != nil {
+		return up.tokenSrc, nil
+	}
+	ts, err := up.newTokenSource()
+	if err != nil {
+		return nil, err
+	}
+	up.tokenSrc = ts
+	return ts, nil
+}
+
+// invalidateTokenSource drops the cached source so the next transport build
+// mints a fresh token. a revoked token is still unexpired, so the underlying
+// ReuseTokenSource would otherwise serve it until expiry and every reconnect
+// would fail the same way.
+func (up *MCPServer) invalidateTokenSource() {
+	up.tokenMu.Lock()
+	up.tokenSrc = nil
+	up.tokenMu.Unlock()
 }
 
 // newTokenSource builds a client-credentials token source for this upstream.
@@ -250,8 +286,17 @@ func (up *MCPServer) newTokenSource() (oauth2.TokenSource, error) {
 		TokenURL:     up.OAuth2.TokenURL,
 		Scopes:       up.OAuth2.Scopes,
 	}
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Transport: base, Timeout: tokenRequestTimeout})
+	// the https check above only covers the first hop. a 307 from the token
+	// endpoint would re-POST the client secret wherever it points, plaintext
+	// included, so no redirect is followed at all — token endpoints do not
+	// legitimately redirect a client-credentials POST
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{
+		Transport: base,
+		Timeout:   tokenRequestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("token endpoint for upstream %s returned a redirect", up.Name)
+		},
+	})
 	return &sanitizedTokenSource{src: cc.TokenSource(ctx), id: up.ID(), logger: up.logger}, nil
 }
 

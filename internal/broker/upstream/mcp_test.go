@@ -1124,6 +1124,82 @@ func TestOAuth2_NonHTTPSTokenURLRejected(t *testing.T) {
 	require.NotContains(t, err.Error(), testClientSecret)
 }
 
+// the https check covers the first hop only. following a 307 would re-POST the
+// client secret wherever the AS points, plaintext included.
+func TestOAuth2_TokenEndpointRedirectRejected(t *testing.T) {
+	var mu sync.Mutex
+	var secretsLeaked int
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		_, secret, _ := r.BasicAuth()
+		if secret == testClientSecret || r.PostForm.Get("client_secret") == testClientSecret {
+			mu.Lock()
+			secretsLeaked++
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "leaked-token", "token_type": "Bearer", "expires_in": 3600,
+		})
+	}))
+	defer sink.Close()
+
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	as := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, sink.URL+"/token", http.StatusTemporaryRedirect)
+	}))
+	as.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{generateServerCert(t, caCert, caKey)}}
+	as.StartTLS()
+	defer as.Close()
+
+	upSrv, upSeen := recordingUpstream(t)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", string(caPEM))
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.Error(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Zero(t, secretsLeaked, "the client secret must not follow a redirect off the verified https endpoint")
+	require.Empty(t, upSeen(), "no token means no upstream request")
+}
+
+// a revoked token is still unexpired, so the cached source would keep serving it
+// until expiry and every reconnect would fail the same way.
+func TestOAuth2_RejectedTokenDiscardedOnReconnect(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+
+	var mu sync.Mutex
+	var seen []string
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seen = append(seen, auth)
+		mu.Unlock()
+		// the first token is revoked upstream while still inside its lifetime
+		if auth == "Bearer as-token-1" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upSrv.Close()
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	for range 2 {
+		c, err := up.buildHTTPClient()
+		require.NoError(t, err)
+		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	}
+
+	require.Len(t, asSeen(), 2, "a rejected token must be re-minted, not reused until expiry")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-2"}, seen)
+}
+
 func TestOAuth2_ConnectAndListToolsWithMintedToken(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
