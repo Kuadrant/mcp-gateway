@@ -108,6 +108,28 @@ func TestNewUpstreamMCP_WithCACert(t *testing.T) {
 	require.Equal(t, testServer.CACert, cfg.CACert)
 }
 
+func TestNewUpstreamMCP_WithGuardrailsConfigIDs(t *testing.T) {
+	testServer := config.MCPServer{
+		Name:                "test-server",
+		URL:                 "http://localhost:8088/mcp",
+		Prefix:              "",
+		State:               string(mcpv1.ServerStateEnabled),
+		Hostname:            "dummy",
+		GuardrailsConfigIDs: []string{"phi3-judge-everything"},
+	}
+	up := NewUpstreamMCP(&testServer, "", nil)
+	require.NotNil(t, up)
+	cfg := up.GetConfig()
+
+	// Regression test: GetConfig previously omitted GuardrailsConfigIDs from
+	// the returned config.MCPServer snapshot, so per-server guardrails IDs
+	// set via the mcp.kuadrant.io/guardrails-config-ids annotation never
+	// reached the routing table (routing_table.go reads route.GuardrailsConfigIDs
+	// from this snapshot), silently disabling per-server guardrails checks.
+	require.Equal(t, testServer.GuardrailsConfigIDs, cfg.GuardrailsConfigIDs)
+	require.Equal(t, testServer, cfg)
+}
+
 func generateSelfSignedCA(t *testing.T) (certPEM []byte, key *ecdsa.PrivateKey, cert *x509.Certificate) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
