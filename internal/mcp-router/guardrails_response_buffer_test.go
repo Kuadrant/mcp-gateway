@@ -1,6 +1,7 @@
 package mcprouter
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -303,6 +304,40 @@ func TestGuardrailsResponseBuffer_OverLimitAcrossMultipleChunks(t *testing.T) {
 
 	out = buf.Process(context.Background(), []byte("data: more bytes than the limit allows\n"))
 	require.Equal(t, string(oversized), string(out), "cumulative bytes across both chunks now exceed the limit")
+	require.True(t, buf.done)
+}
+
+func TestGuardrailsResponseBuffer_SSE_LimitAppliesPerEventNotPerChunk(t *testing.T) {
+	// Envoy may coalesce several events into one chunk; two events each
+	// under the limit must pass even when the chunk as a whole exceeds it.
+	progress := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n"
+	result := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"
+	limit := max(len(progress), len(result))
+	require.Greater(t, len(progress)+len(result), limit)
+
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return nil
+	}).withLimit(limit, []byte("oversized"))
+
+	out := buf.Process(context.Background(), []byte(progress+result))
+	require.Equal(t, progress+result, string(out))
+	require.Equal(t, 1, checked)
+}
+
+func TestGuardrailsResponseBuffer_SSE_PartialLineCountsTowardEventLimit(t *testing.T) {
+	// a complete event forwarded earlier in the chunk must not count, but
+	// the open event's partial line must.
+	progress := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n"
+	oversized := []byte("oversized")
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		return nil
+	}).withLimit(len(progress), oversized)
+
+	partial := "data: " + string(bytes.Repeat([]byte{'x'}, len(progress)))
+	out := buf.Process(context.Background(), []byte(progress+partial))
+	require.Equal(t, progress+string(oversized), string(out))
 	require.True(t, buf.done)
 }
 

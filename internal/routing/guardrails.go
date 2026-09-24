@@ -144,11 +144,6 @@ func (g *guardrailsCheck) checkToolCallResponse(ctx context.Context, toolName st
 
 // responseCheck runs a guardrails check on tools/call response text.
 // Returns (modifiedContent, isModified, blockMessage).
-// isModified distinguishes StatusModified (even with empty content) from
-// StatusAllowed — a checker may return StatusModified with empty content
-// to signal that all text was redacted; treating that as pass-through would
-// forward the original response, violating the guardrails decision.
-// Non-empty blockMessage is the client-visible reason for a block or failure.
 func (g *guardrailsCheck) responseCheck(ctx context.Context, toolName string, content []byte) (modified string, isModified bool, blockMessage string) {
 	if !g.configured() {
 		return "", false, ""
@@ -192,18 +187,23 @@ func (g *guardrailsCheck) responseCheck(ctx context.Context, toolName string, co
 }
 
 // CheckToolResponseGuardrails is the entry point for response-phase
-// guardrails used by the ext_proc adapter. configIDs are the per-server IDs
-// from MCPRequest.GuardrailsConfigIDs while global IDs are loaded from cfg.
-// Returns a replacement body when the response must be blocked or modified,
-// or nil to pass through the original body.
-// buildToolError formats an isError tool result (blocked) while buildToolResult
-// formats a successful tool result (StatusModified redacted content).
-// withSSEErrors is passed so that g.buildError matches the 2025-11-25 call site;
-// checkToolCallResponse does not call g.buildError directly, but a future caller
-// of g.errorDecision inside responseCheck would use the wrong format without it.
+// guardrails used by the ext_proc adapter. Returns a replacement body when
+// the response is blocked or modified, nil to pass through unchanged.
+// buildToolError/buildToolResult must already be framed for the caller's
+// transport (SSE event vs plain JSON); checkToolCallResponse uses those
+// directly and never consults g.buildError/g.contentType, so there is no
+// transport option to select here.
 func CheckToolResponseGuardrails(ctx context.Context, cfg *config.MCPServersConfig, toolName string, configIDs []string, textContent []byte, requestID any, logger *slog.Logger, buildToolError func(any, string) string, buildToolResult func(any, string) string) []byte {
-	gc := newGuardrailsCheck(cfg, configIDs, logger, withSSEErrors())
+	gc := newGuardrailsCheck(cfg, configIDs, logger)
 	return gc.checkToolCallResponse(ctx, toolName, textContent, requestID, buildToolError, buildToolResult)
+}
+
+// GuardrailsExtractionFailed builds the client-visible error body for a
+// tool response guardrails could not reliably parse. Callers must use this
+// instead of skipping the check, so a malformed or adversarial upstream
+// response can't bypass guardrails simply by being undecodable.
+func GuardrailsExtractionFailed(requestID any, buildToolError func(any, string) string) []byte {
+	return []byte(buildToolError(requestID, guardrailsCheckFailedMessage))
 }
 
 // checkElicitationAccept runs the guardrails check for an elicitation accept

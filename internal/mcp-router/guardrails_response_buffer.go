@@ -34,9 +34,10 @@ func newGuardrailsResponseBuffer(sse bool, requestID any, check func(context.Con
 	return &guardrailsResponseBuffer{sse: sse, requestID: requestID, check: check}
 }
 
-// withLimit caps how many bytes we'll buffer (0 means no cap). Once a
-// response grows past that limit we stop buffering and send oversized
-// instead, so a broken or malicious upstream can't use unlimited memory.
+// withLimit caps how many bytes we'll buffer (0 means no cap): per SSE
+// event, or for the whole body when withholding JSON. Once that grows past
+// the limit we stop buffering and send oversized instead, so a broken or
+// malicious upstream can't use unlimited memory.
 func (g *guardrailsResponseBuffer) withLimit(maxBytes int, oversized []byte) *guardrailsResponseBuffer {
 	g.maxBytes = maxBytes
 	g.oversized = oversized
@@ -69,10 +70,8 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 		return nil
 	}
 
-	if g.overLimit() {
-		return g.reject()
-	}
-
+	// the limit applies per event: unconsumed may hold several complete
+	// events coalesced into one chunk, so only the open event is measured.
 	var output []byte
 	for {
 		idx := bytes.IndexByte(g.unconsumed, '\n')
@@ -84,9 +83,8 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 
 		if len(bytes.TrimSpace(line)) != 0 {
 			g.eventBytes = append(g.eventBytes, line...)
-			if g.overLimit() {
-				output = append(output, g.reject()...)
-				break
+			if g.exceeds(len(g.eventBytes)) {
+				return append(output, g.reject()...)
 			}
 			continue
 		}
@@ -107,7 +105,11 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 		// anything still buffered after the terminal event is unexpected
 		// trailing data (see Process's doc comment) - drop it, don't forward.
 		g.unconsumed = nil
-		break
+		return output
+	}
+	// unconsumed is now only the open event's partial line
+	if g.overLimit() {
+		return append(output, g.reject()...)
 	}
 	return output
 }
@@ -152,7 +154,11 @@ func (g *guardrailsResponseBuffer) detectRawJSON(chunk []byte) {
 
 // overLimit reports whether currently buffered bytes exceed maxBytes.
 func (g *guardrailsResponseBuffer) overLimit() bool {
-	return g.maxBytes > 0 && len(g.unconsumed)+len(g.eventBytes) > g.maxBytes
+	return g.exceeds(len(g.unconsumed) + len(g.eventBytes))
+}
+
+func (g *guardrailsResponseBuffer) exceeds(n int) bool {
+	return g.maxBytes > 0 && n > g.maxBytes
 }
 
 // reject discards all buffered bytes and returns oversized in their place,
@@ -187,11 +193,11 @@ func (g *guardrailsResponseBuffer) isTerminalResult(event []byte) (id any, ok bo
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil, false
 	}
-	if msg.Method != "" {
-		return nil, false // request or notification, not a response
-	}
+	// a result or error makes this the response, even if the upstream also
+	// sent a (spoofed or malformed) method - gating on method's absence let
+	// a crafted event carrying both fields skip the check entirely.
 	if len(msg.Result) == 0 && len(msg.Error) == 0 {
-		return nil, false
+		return nil, false // request or notification, not a response
 	}
 	return msg.ID, true
 }

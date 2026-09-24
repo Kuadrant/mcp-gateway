@@ -15,21 +15,37 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// ResponseHandler202607 handles response-phase logic for the 2026-07-28 protocol.
-// Pass-through: no session mapping, no elicitation rewriting, no SSE streaming.
+// ResponseHandler202607 handles response-phase logic for the 2026-07-28
+// protocol. Stateless: no session mapping, no elicitation rewriting.
 type ResponseHandler202607 struct {
-	Logger *slog.Logger
+	RoutingConfig *atomic.Pointer[config.MCPServersConfig]
+	Logger        *slog.Logger
 }
 
-// HandleResponse returns a pass-through decision for 2026-07-28 responses.
-// TODO: response-side guardrails are not implemented for the 2026 protocol path —
-// GuardrailsConfigIDs is never threaded through router_202607.go and
-// BufferResponseBody is never set here, so CheckToolResponseGuardrails never
-// runs for 2026 clients even when guardrails are configured.
-func (h *ResponseHandler202607) HandleResponse(_ context.Context, _ *ResponseInput) *ResponseDecision {
-	return &ResponseDecision{
+// HandleResponse buffers tools/call responses for guardrails when
+// configured, whether via per-server GuardrailsConfigIDs or the
+// gateway-level global guardrails config; otherwise passes through
+// unchanged.
+func (h *ResponseHandler202607) HandleResponse(_ context.Context, input *ResponseInput) *ResponseDecision {
+	decision := &ResponseDecision{
 		SetHeaders: make(map[string]string),
 	}
+
+	req := input.Request
+	if req == nil || !req.IsToolCall() || input.StatusCode != strconv.Itoa(http.StatusOK) {
+		return decision
+	}
+
+	var cfg *config.MCPServersConfig
+	if h.RoutingConfig != nil {
+		cfg = h.RoutingConfig.Load()
+	}
+	if GuardrailsConfigured(cfg, req.GuardrailsConfigIDs) {
+		decision.StreamBody = true
+		decision.BufferResponseBody = true
+	}
+
+	return decision
 }
 
 // ResponseDecision is the output of response-phase routing logic.

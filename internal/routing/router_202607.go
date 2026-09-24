@@ -109,6 +109,12 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 	}
 	serverInfo := routeToMCPServer(route)
 
+	if req.Parsed != nil {
+		req.Parsed.ServerName = serverInfo.Name
+		req.Parsed.ServerPrefix = serverInfo.Prefix
+		req.Parsed.GuardrailsConfigIDs = route.GuardrailsConfigIDs
+	}
+
 	span.SetAttributes(
 		attribute.String("mcp.server", serverInfo.Name),
 		attribute.String("mcp.server.hostname", serverInfo.Hostname),

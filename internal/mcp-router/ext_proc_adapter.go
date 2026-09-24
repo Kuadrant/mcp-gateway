@@ -167,7 +167,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		localRequestHeaders *extProcV3.HttpHeaders
 		requestID           string
 		requestPath         string
-		protocolVersion     string
+		protocolVersion     string // raw MCP-Protocol-Version header, for telemetry - never overridden, per docs/guides/opentelemetry.md
+		effectiveVersion    string // protocolVersion, or 2025 when /mcp/stateful forces it - drives routing and response handling
 		mcpMethodHeader     string
 		mcpNameHeader       string
 		endOfStream         = false
@@ -223,6 +224,15 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			requestPath = getSingleValueHeader(localRequestHeaders.Headers, ":path")
 			method := getSingleValueHeader(localRequestHeaders.Headers, ":method")
 			protocolVersion = getSingleValueHeader(localRequestHeaders.Headers, "mcp-protocol-version")
+			// /mcp/stateful forces 2025 for the rest of this request - router
+			// selection, response handler selection, and JSON vs SSE builders -
+			// without losing the client's actual declared header for the
+			// mcp.protocol_version/mcp.response.protocol_version telemetry
+			// attributes below.
+			effectiveVersion = protocolVersion
+			if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
+				effectiveVersion = protocol.Version2025
+			}
 			mcpMethodHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-method")
 			mcpNameHeader = getSingleValueHeader(localRequestHeaders.Headers, "mcp-name")
 
@@ -438,12 +448,6 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				Parsed:    mcpRequest,
 			}
 
-			// path-based protocol override: /mcp/stateful forces 2025
-			effectiveVersion := protocolVersion
-			if strings.HasSuffix(requestPath, protocol.PathSuffixStateful) {
-				effectiveVersion = protocol.Version2025
-			}
-
 			router := s.Router
 			routerName := "202511"
 			if s.Router202607 != nil && effectiveVersion == protocol.Version2026 {
@@ -454,7 +458,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			span.SetAttributes(attribute.String("mcp.router", routerName))
-			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", protocolVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
+			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", effectiveVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
 			decision := router.RouteRequest(ctx, routingReq)
 			if decision.Error != nil && mcpRequest.IsToolCall() {
 				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
@@ -508,7 +512,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
-			responseIsJSON = isJSONContentType(getSingleValueHeader(r.ResponseHeaders.Headers, "content-type"))
+			// 2026 is always JSON-RPC; missing Content-Type must not default to SSE.
+			responseIsJSON = effectiveVersion == protocol.Version2026 ||
+				isJSONContentType(getSingleValueHeader(r.ResponseHeaders.Headers, "content-type"))
 			span.SetAttributes(
 				attribute.String("http.status_code", statusCode),
 				attribute.String("mcp.response.protocol_version", protocolVersion),
@@ -523,7 +529,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			respHandler := s.ResponseHandler
-			if s.ResponseHandler2026 != nil && protocolVersion == protocol.Version2026 {
+			if s.ResponseHandler2026 != nil && effectiveVersion == protocol.Version2026 {
 				respHandler = s.ResponseHandler2026
 			} else {
 				if mcpRequest != nil && mcpRequest.IsToolCall() {
@@ -586,7 +592,19 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					// from the request size check above.
 					oversizedBody := []byte(buildToolError(reqID, "response body exceeds configured size limit"))
 					guardrailsBuf = newGuardrailsResponseBuffer(!responseIsJSON, reqID, func(checkCtx context.Context, unit []byte) []byte {
-						text := extractToolResponseText(unit)
+						text, isError, ok := extractToolResponseText(unit)
+						if !ok {
+							// undecodable/ambiguous body: fail closed rather than
+							// forward it unchecked - see extractToolResponseText.
+							s.Logger.ErrorContext(checkCtx, "guardrails: could not parse tool response for check", "tool", toolName)
+							return routing.GuardrailsExtractionFailed(reqID, buildToolError)
+						}
+						// a redacted failed call must stay failed: the error
+						// builders produce the same result shape with isError set.
+						buildRedacted := buildToolResult
+						if isError {
+							buildRedacted = buildToolError
+						}
 						return routing.CheckToolResponseGuardrails(
 							checkCtx,
 							s.RoutingConfig.Load(),
@@ -596,7 +614,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 							reqID,
 							s.Logger,
 							buildToolError,
-							buildToolResult,
+							buildRedacted,
 						)
 					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
 				}

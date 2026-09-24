@@ -106,6 +106,7 @@ func main() {
 	a.mcpConfig.MCPGatewayExternalHostname = a.brokerCfg.publicHost
 	a.mcpConfig.MCPGatewayInternalHostname = a.brokerCfg.privateHost
 	a.loadAndWatchConfig(ctx)
+	a.createGRPCServer()
 	a.run(ctx)
 }
 

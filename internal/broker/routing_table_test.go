@@ -108,3 +108,29 @@ func TestBuildRoutingTable_CopiesGuardrailsConfigIDs(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, []string{"pii"}, route.GuardrailsConfigIDs)
 }
+
+// TestBuildRoutingTable_GuardrailsConfigIDsFromUpstreamConfig covers the
+// production path: the route's IDs come from upstream.MCPServer.GetConfig,
+// which is what activeMCP.Config returns.
+func TestBuildRoutingTable_GuardrailsConfigIDsFromUpstreamConfig(t *testing.T) {
+	up := upstream.NewUpstreamMCP(&config.MCPServer{
+		Name:                "s",
+		Prefix:              "s_",
+		Hostname:            "s.mcp.local",
+		URL:                 "http://s.mcp.local/mcp",
+		GuardrailsConfigIDs: []string{"pii"},
+	}, "", nil)
+	b := &mcpBrokerImpl{
+		logger: slog.Default(),
+		mcpServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+			"s": &resourceCapableMockServer{
+				cfg:   up.GetConfig(),
+				tools: []mcp.Tool{{Name: "mytool"}},
+			},
+		},
+	}
+
+	route, ok := b.buildRoutingTable().LookupTool("s_mytool")
+	assert.True(t, ok)
+	assert.Equal(t, []string{"pii"}, route.GuardrailsConfigIDs)
+}
