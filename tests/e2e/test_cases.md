@@ -555,20 +555,21 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 ## NeMo Guardrails
 
-Backed by test infra deployed via `config/test-servers/` (`llm-d-inference-sim` + `nemo-guardrails-custom`).
-`llm-d-inference-sim` is a response simulator, not a real judge model, so these tests only assert
-that a tools/call round-trips through the guardrails check and gets a definitive verdict (allowed
-or blocked) — not that the verdict itself is correct. Each case runs against a dual-protocol
-backend once per router (2025-11-25 and 2026-07-28) to prove guardrails checks work on both.
+Optional infra in `config/test-servers/nemo-guardrails/` (`llm-d-inference-sim` + `nemo-guardrails-custom`), deployed with `make deploy-nemo-guardrails-test-servers`; the nightly and `/test-e2e full` workflows run it first. The sim isn't a real judge, so verdicts aren't asserted: each allowed-or-blocked case checks that `vllm:request_success_total` rose. Every case runs once per router. A block is a JSON-RPC error or an `isError` result, both saying "blocked by guardrails".
 
 ### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: tools/call round-trips through the gateway-level NeMo guardrails check
 
-- An MCPGatewayExtension has `guardrails-ref` pointing at a NeMo config Secret. A server registered under it with no per-server override gets its tools/call checked against the gateway-level config IDs. The call completes with either a normal result or a "blocked by guardrails" error — never a timeout or unrelated failure.
+- A server with no per-server override is checked against the gateway-level config IDs. The call returns a normal result or a block, and the sim served a completion for it.
 - **Nightly / on-demand only** (`[Full]` tag).
 
-### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: per-server guardrails-config-ids annotation merges without breaking tools/call
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: tools/call still round-trips with a per-server guardrails-config-ids annotation set
 
-- Same gateway-level guardrails config, but the server also carries a `guardrails-config-ids` annotation. The controller merges the per-server IDs with the gateway's global ones; tools/call still completes with a definitive verdict, proving the merge doesn't break the request path.
+- Same setup plus a `guardrails-config-ids` annotation that reuses the gateway-level ID, so this can't tell a merged ID from a dropped one. The call still completes and reaches the sim.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: a per-server config ID NeMo rejects fails the call closed
+
+- `guardrails-config-ids: e2e-unknown-config` makes NeMo return 422, so with `failMode: deny` the call must be HTTP 503 "guardrails check unavailable". That only happens if the per-server ID reached the router. Raw HTTP, since the SDK drops a 503 body.
 - **Nightly / on-demand only** (`[Full]` tag).
 
 ## Common pitfalls

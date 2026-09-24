@@ -4,6 +4,11 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
@@ -20,16 +25,16 @@ const (
 	nemoGuardrailsNamespace  = "mcp-nemo-guardrails"
 	nemoGuardrailsSecretName = "nemo-guardrails-config"
 
-	// annotation names the controller reads for guardrails wiring
-	// (internal/controller/mcpgatewayextension_controller.go,
-	// internal/controller/mcpserverregistration_controller.go).
 	guardrailsRefAnnotation       = "mcp.kuadrant.io/guardrails-ref"
 	guardrailsConfigIDsAnnotation = "mcp.kuadrant.io/guardrails-config-ids"
+
+	// nemo-guardrails-custom answers any check naming this with a 422
+	unknownGuardrailsConfigID = "e2e-unknown-config"
+	// router's fail-closed error text
+	guardrailsUnavailableMessage = "guardrails check unavailable"
 )
 
-// createNemoGuardrailsSecret builds the Secret the gateway's guardrails-ref
-// annotation resolves: nemo-guardrails-custom's URL/model/config ID, matching
-// the test infra deployed by config/test-servers/nemo-guardrails-*.yaml.
+// createNemoGuardrailsSecret is the Secret guardrails-ref resolves, pointed at the test NeMo server.
 func createNemoGuardrailsSecret(namespace string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -48,41 +53,62 @@ func createNemoGuardrailsSecret(namespace string) *corev1.Secret {
 	}
 }
 
-// toolCaller is satisfied by both *mcp.ClientSession (stateful/stateless
-// clients) and *NotifyingMCPClient, letting the same assertion helper cover
-// both the 2025-11-25 and 2026-07-28 routers.
+// toolCaller lets one helper cover both the stateful and stateless SDK clients.
 type toolCaller interface {
 	CallTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error)
 }
 
-// callGuardedToolAndExpectVerdict calls prefix+"hello_world" through c and
-// accepts a normal response or a guardrails block in either form: a
-// request-phase block is a JSON-RPC error, a response-phase block is an
-// isError tool result. llm-d-inference-sim is a response simulator, not a
-// real judge model, so its allow/block verdict isn't meaningful - only that
-// the check round-trips end-to-end (gateway -> NeMo -> sim -> back to the
-// client) is.
+// simCompletions sums the sim's vllm:request_success_total, read through the API
+// server proxy. every NeMo check calls the sim, so a rise means the check ran.
+func simCompletions() (int, error) {
+	out, err := exec.CommandContext(ctx, "kubectl", "get", "--raw",
+		"/api/v1/namespaces/"+TestServerNameSpace+"/services/llm-d-inference-sim:8032/proxy/metrics").Output()
+	if err != nil {
+		return 0, fmt.Errorf("reading llm-d-inference-sim metrics: %w", err)
+	}
+	total := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "vllm:request_success_total{") {
+			continue
+		}
+		fields := strings.Fields(line)
+		v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+		if err != nil {
+			return 0, fmt.Errorf("parsing %q: %w", line, err)
+		}
+		total += int(v)
+	}
+	return total, nil
+}
+
+// callGuardedToolAndExpectVerdict accepts an allowed result or a block, as a
+// JSON-RPC error or an isError result. the sim's verdict is meaningless; the
+// assertion is that its completion count rose, so a skipped check can't pass.
 func callGuardedToolAndExpectVerdict(c toolCaller, toolName string) {
+	before, err := simCompletions()
+	Expect(err).NotTo(HaveOccurred())
+
 	res, err := c.CallTool(ctx, &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: map[string]string{"name": "e2e"},
 	})
 	if err != nil {
 		Expect(err.Error()).To(ContainSubstring("blocked by guardrails"), "unexpected error: %v", err)
-		return
+	} else {
+		Expect(res).NotTo(BeNil())
+		Expect(res.Content).NotTo(BeEmpty())
+		if res.IsError {
+			text, ok := res.Content[0].(*mcp.TextContent)
+			Expect(ok).To(BeTrue(), "tool call failed with non-text content: %v", res.Content)
+			Expect(text.Text).To(Equal("blocked by guardrails"), "tool call failed: %s", text.Text)
+		}
 	}
-	Expect(res).NotTo(BeNil())
-	Expect(res.Content).NotTo(BeEmpty())
-	if res.IsError {
-		text, ok := res.Content[0].(*mcp.TextContent)
-		Expect(ok).To(BeTrue(), "tool call failed with non-text content: %v", res.Content)
-		Expect(text.Text).To(Equal("blocked by guardrails"), "tool call failed: %s", text.Text)
-	}
+
+	Eventually(simCompletions, TestTimeoutShort, TestRetryInterval).Should(BeNumerically(">", before),
+		"no guardrails check reached NeMo's judge model for %s", toolName)
 }
 
-// Registers mcp-test-stateless-server (2025+2026 dual-protocol) once so both
-// router paths can be exercised against the same backend and guardrails
-// config, without repeating registration/readiness setup per protocol.
+// one dual-protocol backend, exercised by both routers.
 var _ = Describe("NeMo Guardrails", Ordered, func() {
 	var (
 		testResources []client.Object
@@ -92,12 +118,13 @@ var _ = Describe("NeMo Guardrails", Ordered, func() {
 
 	BeforeAll(func() {
 		By("waiting for NeMo guardrails test infra (llm-d-inference-sim, nemo-guardrails-custom) to be ready")
+		const notDeployed = "not ready; deploy with make deploy-nemo-guardrails-test-servers"
 		Eventually(func(g Gomega) {
 			g.Expect(WaitForDeploymentReady(ctx, TestServerNameSpace, "llm-d-inference-sim")).To(Succeed())
-		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed(), "llm-d-inference-sim "+notDeployed)
 		Eventually(func(g Gomega) {
 			g.Expect(WaitForDeploymentReady(ctx, TestServerNameSpace, "nemo-guardrails-custom")).To(Succeed())
-		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed(), "nemo-guardrails-custom "+notDeployed)
 
 		By("creating nemo-guardrails namespace")
 		ns := &corev1.Namespace{
@@ -165,9 +192,24 @@ var _ = Describe("NeMo Guardrails", Ordered, func() {
 		testResources = append(testResources, regSrv.GetObjects()...)
 		serverSrv := regSrv.Register(ctx)
 
+		By("registering the dual-protocol backend a third time with a per-server config ID NeMo doesn't have")
+		regUnknown := NewTestResources("nemo-unknown", k8sClient).
+			InNamespace(nemoGuardrailsNamespace).
+			WithBackendTarget("mcp-test-stateless-server", 9090).
+			WithBackendNamespace(TestServerNameSpace).
+			WithHostname(NemoGuardrailsServerHost).
+			WithPrefix("nemo_unknown_").
+			WithSectionName(NemoGuardrailsListenerName).
+			WithParentGateway(GatewayName, GatewayNamespace).
+			Build()
+		regUnknown.GetMCPServer().Annotations = map[string]string{guardrailsConfigIDsAnnotation: unknownGuardrailsConfigID}
+		testResources = append(testResources, regUnknown.GetObjects()...)
+		serverUnknown := regUnknown.Register(ctx)
+
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, serverGW.Name, serverGW.Namespace)).To(Succeed())
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, serverSrv.Name, serverSrv.Namespace)).To(Succeed())
+			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, serverUnknown.Name, serverUnknown.Namespace)).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
@@ -221,15 +263,44 @@ var _ = Describe("NeMo Guardrails", Ordered, func() {
 		callGuardedToolAndExpectVerdict(c, "nemo_gw_hello_world")
 	})
 
-	It("[Full,NemoGuardrails] 2025-11-25 router: per-server guardrails-config-ids annotation merges without breaking tools/call", func() {
+	It("[Full,NemoGuardrails] 2025-11-25 router: tools/call still round-trips with a per-server guardrails-config-ids annotation set", func() {
 		c := newStatefulGuardrailsClient()
 		WaitForToolsWithPrefix(ctx, c, "nemo_srv_")
 		callGuardedToolAndExpectVerdict(c, "nemo_srv_hello_world")
 	})
 
-	It("[Full,NemoGuardrails] 2026-07-28 router: per-server guardrails-config-ids annotation merges without breaking tools/call", func() {
+	It("[Full,NemoGuardrails] 2026-07-28 router: tools/call still round-trips with a per-server guardrails-config-ids annotation set", func() {
 		c := newStatelessGuardrailsClient()
 		WaitForToolsWithPrefix(ctx, c, "nemo_srv_")
 		callGuardedToolAndExpectVerdict(c, "nemo_srv_hello_world")
+	})
+
+	// a 503 only happens if the per-server ID reached NeMo. raw HTTP: the SDK drops a 503 body.
+	It("[Full,NemoGuardrails] 2025-11-25 router: a per-server config ID NeMo rejects fails the call closed", func() {
+		WaitForToolsWithPrefix(ctx, newStatefulGuardrailsClient(), "nemo_unknown_")
+
+		sessionID, err := mcpInitialize(ctx, nemoURL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mcpNotifyInitialized(ctx, nemoURL, sessionID, nil)).To(Succeed())
+
+		status, _, err := mcpCallTool(ctx, nemoURL, sessionID, "nemo_unknown_hello_world", map[string]any{"name": "e2e"}, nil)
+		Expect(status).To(Equal(http.StatusServiceUnavailable), "tools/call: %v", err)
+		Expect(err).To(MatchError(ContainSubstring(guardrailsUnavailableMessage)))
+	})
+
+	It("[Full,NemoGuardrails] 2026-07-28 router: a per-server config ID NeMo rejects fails the call closed", func() {
+		WaitForToolsWithPrefix(ctx, newStatelessGuardrailsClient(), "nemo_unknown_")
+
+		const toolName = "nemo_unknown_hello_world"
+		body, err := mcp2026Payload("tools/call", map[string]any{
+			"name":      toolName,
+			"arguments": map[string]any{"name": "e2e"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		status, respBody, err := mcp2026RawPost(ctx, nemoURL, body, mcp2026Headers("tools/call", toolName))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusServiceUnavailable), "tools/call body: %s", respBody)
+		Expect(respBody).To(ContainSubstring(guardrailsUnavailableMessage))
 	})
 })
