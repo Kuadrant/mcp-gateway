@@ -1,5 +1,9 @@
 name: Build Images
 
+# Pull requests build both images for the native runner architecture in the
+# E2E and conformance workflows. Keep this multi-architecture build on main
+# and release paths.
+
 on:
   workflow_dispatch:
     inputs:
@@ -17,20 +21,9 @@ on:
       - 'LICENSE'
       - 'charts/**'
       - 'tests/servers/**'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'examples/**'
-      - 'LICENSE'
-      - 'charts/**'
-      - 'tests/servers/**'
-  merge_group:
-    types: [checks_requested]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -74,13 +67,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # ratchet:actions/checkout@v4
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # ratchet:docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set lowercase owner
         id: owner
         run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
@@ -94,7 +85,6 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -117,9 +107,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME}"
           GIT_SHA="${GITHUB_SHA::7}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            VERSION="pr-${{ github.event.pull_request.number }}"
-          fi
           LDFLAGS="-X main.version=${VERSION} -X main.gitSHA=${GIT_SHA}"
           echo "ldflags=${LDFLAGS}" >> $GITHUB_OUTPUT
 
@@ -130,7 +117,7 @@ jobs:
           context: .
           file: ./${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           provenance: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
