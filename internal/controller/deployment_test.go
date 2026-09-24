@@ -201,6 +201,16 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			expected: false,
 		},
 		{
+			name: "user-managed split-form flag does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Containers[0].Command = append(
+					d.Spec.Template.Spec.Containers[0].Command,
+					"--session-length", "3600",
+				)
+			},
+			expected: false,
+		},
+		{
 			name: "env var added",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{
@@ -1551,6 +1561,16 @@ func TestFilterManagedFlags(t *testing.T) {
 			command: []string{},
 			want:    nil,
 		},
+		{
+			name:    "user split-form flag with value stripped",
+			command: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--session-length", "3600"},
+			want:    []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
+		},
+		{
+			name:    "managed split-form flag with value kept as a unit",
+			command: []string{"./mcp_gateway", "--mcp-broker-public-address", "0.0.0.0:8080", "--log-level=-4"},
+			want:    []string{"./mcp_gateway", "--mcp-broker-public-address", "0.0.0.0:8080", "--log-level=-4"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1616,6 +1636,24 @@ func TestMergeCommand(t *testing.T) {
 			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
 			existing: []string{"./mcp_gateway"},
 			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
+		},
+		{
+			name:     "preserves user split-form flag with value",
+			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--session-length", "3600"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--session-length", "3600"},
+		},
+		{
+			name:     "preserves mixed managed equals-form and user split-form flags",
+			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=-4"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=0", "--session-length", "3600"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:8080", "--log-level=-4", "--session-length", "3600"},
+		},
+		{
+			name:     "managed split-form flag replaced by desired equals-form value",
+			desired:  []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:9090"},
+			existing: []string{"./mcp_gateway", "--mcp-broker-public-address", "0.0.0.0:8080", "--session-length", "3600"},
+			want:     []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:9090", "--session-length", "3600"},
 		},
 	}
 
