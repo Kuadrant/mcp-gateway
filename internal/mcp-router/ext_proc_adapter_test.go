@@ -1528,15 +1528,33 @@ func TestProcess202607_GuardrailsModified_ReplacementBody(t *testing.T) {
 	srv.RoutingConfig.Store(cfg)
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
-	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
-	wantBody := []byte(routing.BuildJSONToolResult(1, "redacted"))
 
-	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
-		guardrailsResponseSteps(toolCallBody, toolResultBody, wantBody, "application/json")...)
-	mock := makeMockProcessServer(t, steps)
+	for _, tc := range []struct {
+		name       string
+		toolResult string
+		want       string
+	}{
+		{
+			name:       "success",
+			toolResult: `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`,
+			want:       routing.BuildJSONToolResult(1, "redacted"),
+		},
+		{
+			// redacting a failed call must not make it look successful
+			name:       "isError",
+			toolResult: `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}],"isError":true}}`,
+			want:       `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"redacted"}],"isError":true}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
+				guardrailsResponseSteps(toolCallBody, []byte(tc.toolResult), []byte(tc.want), "application/json")...)
+			mock := makeMockProcessServer(t, steps)
 
-	require.NoError(t, srv.Process(mock))
-	mock.verifyAllResponsesConsumed()
+			require.NoError(t, srv.Process(mock))
+			mock.verifyAllResponsesConsumed()
+		})
+	}
 }
 
 func TestProcess_StatefulPathOverrides2026Header_UsesSSEReplacement(t *testing.T) {

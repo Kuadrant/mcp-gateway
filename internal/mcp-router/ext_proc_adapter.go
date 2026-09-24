@@ -592,12 +592,18 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					// from the request size check above.
 					oversizedBody := []byte(buildToolError(reqID, "response body exceeds configured size limit"))
 					guardrailsBuf = newGuardrailsResponseBuffer(!responseIsJSON, reqID, func(checkCtx context.Context, unit []byte) []byte {
-						text, ok := extractToolResponseText(unit)
+						text, isError, ok := extractToolResponseText(unit)
 						if !ok {
 							// undecodable/ambiguous body: fail closed rather than
 							// forward it unchecked - see extractToolResponseText.
 							s.Logger.ErrorContext(checkCtx, "guardrails: could not parse tool response for check", "tool", toolName)
 							return routing.GuardrailsExtractionFailed(reqID, buildToolError)
+						}
+						// a redacted failed call must stay failed: the error
+						// builders produce the same result shape with isError set.
+						buildRedacted := buildToolResult
+						if isError {
+							buildRedacted = buildToolError
 						}
 						return routing.CheckToolResponseGuardrails(
 							checkCtx,
@@ -608,7 +614,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 							reqID,
 							s.Logger,
 							buildToolError,
-							buildToolResult,
+							buildRedacted,
 						)
 					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
 				}
