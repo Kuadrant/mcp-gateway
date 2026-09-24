@@ -69,7 +69,7 @@ const (
 )
 
 // ErrGatewayGuardrailsNotApplied is returned by UpsertMCPServer when a server
-// has per-server guardrails config IDs but the target config has no global
+// has per-server guardrails config IDs but the target config has no valid global
 // guardrails, so the router would have no checker to enforce them.
 var ErrGatewayGuardrailsNotApplied = stderrors.New("gateway guardrails config not applied")
 
@@ -163,7 +163,8 @@ func (srw *SecretReaderWriter) readOrCreateConfigSecret(ctx context.Context, nam
 // If a server with the same Name already exists, it is replaced. Otherwise, the
 // server is appended to the list. This uses a read-modify-write pattern with
 // automatic retry on conflict errors. Returns ErrGatewayGuardrailsNotApplied if
-// the server has guardrails config IDs and the config has no global guardrails.
+// the server has guardrails config IDs but the config has no valid global
+// guardrails.
 func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPServer, namespaceName types.NamespacedName) error {
 	srw.Logger.Info("SecretReaderWriter UpsertMCPServer", "secret", namespaceName, "name", server.Name)
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
@@ -172,8 +173,13 @@ func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPSe
 			return fmt.Errorf("upsert mcpserver failed to read config secret: %w", err)
 		}
 
-		if len(server.GuardrailsConfigIDs) > 0 && existingConfig.GlobalGuardrails == nil {
-			return fmt.Errorf("%w in %s", ErrGatewayGuardrailsNotApplied, namespaceName)
+		if len(server.GuardrailsConfigIDs) > 0 {
+			if existingConfig.GlobalGuardrails == nil {
+				return fmt.Errorf("%w in %s", ErrGatewayGuardrailsNotApplied, namespaceName)
+			}
+			if err := existingConfig.GlobalGuardrails.Validate(); err != nil {
+				return fmt.Errorf("%w in %s: %w", ErrGatewayGuardrailsNotApplied, namespaceName, err)
+			}
 		}
 
 		// find and replace existing server, or append if not found

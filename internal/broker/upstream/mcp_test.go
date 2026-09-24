@@ -121,11 +121,7 @@ func TestNewUpstreamMCP_WithGuardrailsConfigIDs(t *testing.T) {
 	require.NotNil(t, up)
 	cfg := up.GetConfig()
 
-	// Regression test: GetConfig previously omitted GuardrailsConfigIDs from
-	// the returned config.MCPServer snapshot, so per-server guardrails IDs
-	// set via the mcp.kuadrant.io/guardrails-config-ids annotation never
-	// reached the routing table (routing_table.go reads route.GuardrailsConfigIDs
-	// from this snapshot), silently disabling per-server guardrails checks.
+	// preserve per-server guardrails IDs in the config snapshot.
 	require.Equal(t, testServer.GuardrailsConfigIDs, cfg.GuardrailsConfigIDs)
 	require.Equal(t, testServer, cfg)
 }
