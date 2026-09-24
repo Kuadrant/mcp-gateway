@@ -572,13 +572,102 @@ func (up *MCPServer) SupportsPromptsListChanged() bool {
 	return up.init.Capabilities.Prompts.ListChanged
 }
 
+// maxListPages bounds the pagination loop over paginated upstream list
+// responses so a misbehaving upstream cannot pin the broker in an endless
+// cursor walk.
+const maxListPages = 100
+
+// listFetchTimeout bounds one full list walk (all pages), so upstream
+// pagination cannot extend discovery past a fixed deadline.
+const listFetchTimeout = 30 * time.Second
+
+// listAllPrompts fetches every prompt page, following NextCursor. The
+// returned result carries all prompts plus the TTLMs/CacheScope of the
+// final page; nil prompts are preserved.
+func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSession) (*mcp.ListPromptsResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
+	defer cancel()
+	var result mcp.ListPromptsResult
+	for page := 0; ; page++ {
+		if page >= maxListPages {
+			return nil, fmt.Errorf("prompts/list from upstream %q exceeded %d pages", up.Name, maxListPages)
+		}
+		res, err := session.ListPrompts(ctx, &mcp.ListPromptsParams{Cursor: result.NextCursor})
+		if err != nil {
+			return nil, err
+		}
+		if res == nil {
+			return &result, nil
+		}
+		result.Prompts = append(result.Prompts, res.Prompts...)
+		result.NextCursor = res.NextCursor
+		result.TTLMs = res.TTLMs
+		result.CacheScope = res.CacheScope
+		if res.NextCursor == "" {
+			return &result, nil
+		}
+	}
+}
+
+// listAllTools is the tools counterpart of listAllPrompts.
+func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSession) (*mcp.ListToolsResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
+	defer cancel()
+	var result mcp.ListToolsResult
+	for page := 0; ; page++ {
+		if page >= maxListPages {
+			return nil, fmt.Errorf("tools/list from upstream %q exceeded %d pages", up.Name, maxListPages)
+		}
+		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
+		if err != nil {
+			return nil, err
+		}
+		if res == nil {
+			return &result, nil
+		}
+		result.Tools = append(result.Tools, res.Tools...)
+		result.NextCursor = res.NextCursor
+		result.TTLMs = res.TTLMs
+		result.CacheScope = res.CacheScope
+		if res.NextCursor == "" {
+			return &result, nil
+		}
+	}
+}
+
+// listAllResources is the resources counterpart of listAllPrompts.
+func (up *MCPServer) listAllResources(ctx context.Context, session *mcp.ClientSession) (*mcp.ListResourcesResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
+	defer cancel()
+	var result mcp.ListResourcesResult
+	for page := 0; ; page++ {
+		if page >= maxListPages {
+			return nil, fmt.Errorf("resources/list from upstream %q exceeded %d pages", up.Name, maxListPages)
+		}
+		res, err := session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: result.NextCursor})
+		if err != nil {
+			return nil, err
+		}
+		// Re-use the accumulated NextCursor: pages that return no
+		// resources do not clear progress.
+		if res == nil {
+			return &result, nil
+		}
+		result.Resources = append(result.Resources, res.Resources...)
+		result.NextCursor = res.NextCursor
+		if res.NextCursor == "" {
+			return &result, nil
+		}
+	}
+}
+
 // ListPrompts retrieves the list of available prompts from the upstream MCP server
 func (up *MCPServer) ListPrompts(ctx context.Context) (*mcp.ListPromptsResult, error) {
 	session := up.currentSession()
 	if session == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
-	result, err := session.ListPrompts(ctx, nil)
+	result, err := up.listAllPrompts(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +685,7 @@ func (up *MCPServer) ListTools(ctx context.Context) (*mcp.ListToolsResult, error
 	if session == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
-	result, err := session.ListTools(ctx, nil)
+	result, err := up.listAllTools(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -624,5 +713,9 @@ func (up *MCPServer) ListResources(ctx context.Context) (*mcp.ListResourcesResul
 	if session == nil {
 		return nil, fmt.Errorf("client not connected")
 	}
-	return session.ListResources(ctx, nil)
+	result, err := up.listAllResources(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
