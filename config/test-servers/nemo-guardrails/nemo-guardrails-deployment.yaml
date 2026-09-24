@@ -19,7 +19,9 @@ spec:
     spec:
       containers:
         - name: nemo-guardrails
-          image: quay.io/trustyai/nemo-guardrails-server:latest
+          # pinned: the gateway parses /v1/checks status values (passed/modified/blocked),
+          # so a server update that renames them breaks every check. bump deliberately.
+          image: quay.io/trustyai/nemo-guardrails-server@sha256:bf08994e25d84f03b5182f5505cb8358e99e2d5a8879a64728322fd569b6c327
           ports:
             - containerPort: 8000
               protocol: TCP

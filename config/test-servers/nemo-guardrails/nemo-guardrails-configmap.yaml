@@ -14,13 +14,13 @@ data:
         model: "Qwen2.5-1.5B-Instruct"
         api_key_env_var: SIM_API_KEY
         parameters:
-          base_url: "http://llm-d-inference-sim.mcp-test.svc.cluster.local:8032/v1"
+          base_url: "http://llm-d-inference-sim:8032/v1"
       - type: self_check_output
         engine: openai
         model: "Qwen2.5-1.5B-Instruct"
         api_key_env_var: SIM_API_KEY
         parameters:
-          base_url: "http://llm-d-inference-sim.mcp-test.svc.cluster.local:8032/v1"
+          base_url: "http://llm-d-inference-sim:8032/v1"
     rails:
       input:
         flows:

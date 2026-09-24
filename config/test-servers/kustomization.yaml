@@ -50,8 +50,3 @@ resources:
   - a2a-server-service.yaml
   - a2a-server-httproute.yaml
   - a2a-server-httproute-ext.yaml
-  - llm-inference-sim-deployment.yaml
-  - llm-inference-sim-service.yaml
-  - nemo-guardrails-configmap.yaml
-  - nemo-guardrails-deployment.yaml
-  - nemo-guardrails-service.yaml

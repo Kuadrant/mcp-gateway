@@ -344,15 +344,19 @@ func parseGuardrailsConfigIDs(annotations map[string]string) []string {
 }
 
 // requireGatewayGuardrails fails closed when the gateway can't run the rails
-// this registration needs: a missing guardrails Secret evicts everything on
-// that gateway; per-server IDs additionally require guardrails-ref, since
-// they only extend a gateway-level policy.
+// this registration needs: an unresolved guardrails secret evicts everything
+// on that gateway; per-server IDs additionally require guardrails-ref, since
+// they only extend a gateway-level policy. Checks the dedicated
+// GuardrailsResolved condition rather than Ready, since Ready can be false
+// for reasons unrelated to guardrails (a bad CA bundle, trusted headers
+// secret, etc.) that must not block a registration that only depends on
+// guardrails being resolved.
 func requireGatewayGuardrails(exts []*mcpv1.MCPGatewayExtension, perServerIDs []string) error {
 	for _, ext := range exts {
-		if cond := meta.FindStatusCondition(ext.Status.Conditions, mcpv1.ConditionTypeReady); cond != nil &&
-			cond.Status == metav1.ConditionFalse && cond.Reason == mcpv1.GuardrailsSecretNotFound {
-			return fmt.Errorf("MCPGatewayExtension %s/%s guardrails secret not found",
-				ext.Namespace, ext.Name)
+		if cond := meta.FindStatusCondition(ext.Status.Conditions, mcpv1.ConditionTypeGuardrailsResolved); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return fmt.Errorf("MCPGatewayExtension %s/%s guardrails unresolved: %s",
+				ext.Namespace, ext.Name, cond.Message)
 		}
 		if len(perServerIDs) > 0 && ext.Annotations[labelGuardrailsReference] == "" {
 			return fmt.Errorf("MCPGatewayExtension %s/%s has no %s annotation required by %s",

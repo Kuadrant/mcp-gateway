@@ -468,20 +468,39 @@ func TestRequireGatewayGuardrails(t *testing.T) {
 				Annotations: map[string]string{labelGuardrailsReference: "rails"},
 			},
 		}
-		ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound, "guardrails secret rails not found")
+		ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound, "guardrails secret rails not found")
 		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{ext}, nil)
 		if err == nil {
 			t.Fatal("expected error")
 		}
+		if !strings.Contains(err.Error(), "guardrails secret rails not found") {
+			t.Fatalf("error %q does not include the GuardrailsResolved condition message", err.Error())
+		}
 	})
-	t.Run("ok when rails secret is invalid for an unrelated reason; per-server IDs still allowed", func(t *testing.T) {
+	t.Run("error when guardrails secret is invalid even without per-server IDs", func(t *testing.T) {
 		ext := &mcpv1.MCPGatewayExtension{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "gw", Namespace: "ns",
 				Annotations: map[string]string{labelGuardrailsReference: "rails"},
 			},
 		}
-		ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.ConditionReasonSecretInvalid, "invalid")
+		ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretInvalid, "guardrails secret rails missing required label")
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{ext}, nil)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("ok when Ready is false for an unrelated reason; per-server IDs still allowed", func(t *testing.T) {
+		ext := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gw", Namespace: "ns",
+				Annotations: map[string]string{labelGuardrailsReference: "rails"},
+			},
+		}
+		// GuardrailsResolved is left untouched (unset) - an unrelated Ready
+		// failure (e.g. a bad CA bundle secret) must not block a
+		// registration that only depends on guardrails being resolved.
+		ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.ConditionReasonSecretInvalid, "unrelated CA bundle secret invalid")
 		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{ext}, []string{"strict"})
 		if err != nil {
 			t.Fatal(err)

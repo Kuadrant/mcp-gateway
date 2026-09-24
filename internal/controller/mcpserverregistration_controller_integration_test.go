@@ -1584,8 +1584,12 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 		Context("and the gateway's guardrails secret has gone missing (GuardrailsSecretNotFound)", func() {
 			BeforeEach(func() {
-				// no Secret created - mark the extension not-ready as if its
-				// guardrails secret was deleted.
+				// no Secret created - mark the extension's dedicated
+				// GuardrailsResolved condition unresolved, as if its
+				// guardrails secret was deleted. requireGatewayGuardrails
+				// keys off this condition, not Ready, so a server can fail
+				// closed here without depending on why Ready itself is
+				// false (which may be unrelated - see resolveGuardrails).
 				mcpExt := createTestMCPGatewayExtension(extName, "default", gatewayName, "default")
 				mcpExt.Annotations = map[string]string{labelGuardrailsReference: guardrailsSecretName}
 				Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
@@ -1593,7 +1597,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				Eventually(func(g Gomega) {
 					ext := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
-					ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound,
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound,
 						fmt.Sprintf("guardrails secret %s not found", guardrailsSecretName))
 					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
@@ -1634,6 +1638,8 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 					ext := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
 					ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionTrue, mcpv1.ConditionReasonGuardrailsResolved,
+						fmt.Sprintf("guardrails secret %s resolved", guardrailsSecretName))
 					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
 
@@ -1659,7 +1665,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				Eventually(func(g Gomega) {
 					ext := &mcpv1.MCPGatewayExtension{}
 					g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: extName, Namespace: "default"}, ext)).To(Succeed())
-					ext.SetReadyCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound,
+					ext.SetGuardrailsResolvedCondition(metav1.ConditionFalse, mcpv1.GuardrailsSecretNotFound,
 						fmt.Sprintf("guardrails secret %s not found", guardrailsSecretName))
 					g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
 				}, testTimeout, testRetryInterval).Should(Succeed())
