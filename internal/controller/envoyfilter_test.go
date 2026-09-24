@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	istiov1alpha3 "istio.io/api/networking/v1alpha3"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -206,6 +208,93 @@ func TestEnvoyFilterNeedsUpdate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBuildEnvoyFilter_ExtProcHasNoMaxRequestBytes guards against
+// reintroducing "max_request_bytes" into the ext_proc typed_config: that
+// field does not exist on envoy.extensions.filters.http.ext_proc.v3.
+// ExternalProcessor, so Istio silently drops it and it configures nothing.
+func TestBuildEnvoyFilter_ExtProcHasNoMaxRequestBytes(t *testing.T) {
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "gw-ns"},
+	}
+	listenerCfg := &ListenerConfig{Port: 443}
+	mcpExt := &mcpv1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{Name: "ext", Namespace: "default"},
+	}
+
+	r := &MCPGatewayExtensionReconciler{}
+	ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerCfg)
+	if err != nil {
+		t.Fatalf("buildEnvoyFilter: %v", err)
+	}
+	patch := ef.Spec.ConfigPatches[0]
+	typedCfg, ok := patch.Patch.Value.Fields["typed_config"]
+	if !ok {
+		t.Fatal("typed_config missing from patch value")
+	}
+	if _, ok := typedCfg.GetStructValue().Fields["max_request_bytes"]; ok {
+		t.Fatal("max_request_bytes must not be set on ext_proc typed_config: not a real ExternalProcessor field")
+	}
+}
+
+// TestBuildEnvoyFilter_ListenerBufferLimit verifies the listener's
+// per_connection_buffer_limit_bytes is merged to match maxBodyBytes - the
+// real Envoy knob for BUFFERED mode body buffering.
+func TestBuildEnvoyFilter_ListenerBufferLimit(t *testing.T) {
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "gw-ns"},
+	}
+	listenerCfg := &ListenerConfig{Port: 443}
+
+	extractBufferLimit := func(t *testing.T, mcpExt *mcpv1.MCPGatewayExtension) float64 {
+		t.Helper()
+		r := &MCPGatewayExtensionReconciler{}
+		ef, err := r.buildEnvoyFilter(mcpExt, gateway, listenerCfg)
+		if err != nil {
+			t.Fatalf("buildEnvoyFilter: %v", err)
+		}
+		if len(ef.Spec.ConfigPatches) < 2 {
+			t.Fatalf("expected a listener buffer limit patch, got %d config patches", len(ef.Spec.ConfigPatches))
+		}
+		patch := ef.Spec.ConfigPatches[1]
+		if patch.ApplyTo != istiov1alpha3.EnvoyFilter_LISTENER {
+			t.Fatalf("ApplyTo = %v, want LISTENER", patch.ApplyTo)
+		}
+		if patch.Patch.Operation != istiov1alpha3.EnvoyFilter_Patch_MERGE {
+			t.Fatalf("Operation = %v, want MERGE", patch.Patch.Operation)
+		}
+		v, ok := patch.Patch.Value.Fields["per_connection_buffer_limit_bytes"]
+		if !ok {
+			t.Fatal("per_connection_buffer_limit_bytes missing from listener patch value")
+		}
+		return v.GetNumberValue()
+	}
+
+	t.Run("defaults to DefaultMaxBodyBytes when spec.maxBodyBytes is unset", func(t *testing.T) {
+		mcpExt := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext", Namespace: "default"},
+		}
+		got := extractBufferLimit(t, mcpExt)
+		want := float64(config.DefaultMaxBodyBytes)
+		if got != want {
+			t.Fatalf("per_connection_buffer_limit_bytes = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("uses spec.maxBodyBytes when set", func(t *testing.T) {
+		mcpExt := &mcpv1.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext", Namespace: "default"},
+			Spec: mcpv1.MCPGatewayExtensionSpec{
+				MaxBodyBytes: ptr.To(int32(4 << 20)), // 4 MiB
+			},
+		}
+		got := extractBufferLimit(t, mcpExt)
+		want := float64(4 << 20)
+		if got != want {
+			t.Fatalf("per_connection_buffer_limit_bytes = %v, want %v", got, want)
+		}
+	})
 }
 
 func TestEnvoyFilterLabels_IstioRevInheritance(t *testing.T) {

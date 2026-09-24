@@ -127,6 +127,13 @@ func responseDecisionToResponse(d *routing.ResponseDecision) []*extProcV3.Proces
 	responses := rb.WithResponseHeaderResponse(headers).Build()
 
 	if d.StreamBody && len(responses) > 0 {
+		// always STREAMED, never BUFFERED - Envoy's BUFFERED mode withholds the
+		// entire response until it ends, which stalls an in-band elicitation/create
+		// round-trip (the upstream waits on the client's reply, but Envoy never
+		// forwards the event that asks for it). Guardrails buffering is instead
+		// done at the application level via guardrailsResponseBuffer, which
+		// withholds only the terminal tools/call result and forwards earlier
+		// control events (elicitation/create, progress) as they arrive.
 		responses[0].ModeOverride = &extprochttp.ProcessingMode{
 			RequestHeaderMode:   extprochttp.ProcessingMode_SEND,
 			ResponseHeaderMode:  extprochttp.ProcessingMode_SEND,
@@ -166,9 +173,12 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		endOfStream         = false
 		mcpRequest          *routing.MCPRequest
 		ctx                 = stream.Context()
-		isA2A               = false              // true for /a2a traffic when A2A passthrough is enabled
-		rewriter            *elicitationRewriter // nil until a tool call response arrives
-		resourceRewriter    *resourceURIRewriter // nil until a tool call response with resources arrives
+		isA2A               = false                   // true for /a2a traffic when A2A passthrough is enabled
+		rewriter            *elicitationRewriter      // nil until a tool call response arrives
+		resourceRewriter    *resourceURIRewriter      // nil until a tool call response with resources arrives
+		guardrailsActive    = false                   // true when response body must be checked by guardrails
+		guardrailsBuf       *guardrailsResponseBuffer // nil until a tool call response needing guardrails arrives
+		responseIsJSON      bool                      // response Content-Type is application/json, not text/event-stream; always assigned before use
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -498,6 +508,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
+			responseIsJSON = isJSONContentType(getSingleValueHeader(r.ResponseHeaders.Headers, "content-type"))
 			span.SetAttributes(
 				attribute.String("http.status_code", statusCode),
 				attribute.String("mcp.response.protocol_version", protocolVersion),
@@ -542,11 +553,17 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			responses := responseDecisionToResponse(respDecision)
 
 			if respDecision.StreamBody {
-				rewriter = &elicitationRewriter{
-					idMap:      s.ElicitationMap,
-					req:        mcpRequest,
-					logger:     s.Logger,
-					gatewayIDs: make([]string, 0),
+				// set guardrailsActive before deciding whether to create the
+				// elicitation rewriter. guardrails-only tool calls (no elicitation,
+				// no prefix) do not need it.
+				guardrailsActive = respDecision.BufferResponseBody
+				if !guardrailsActive || mcpRequest.ClientElicitation {
+					rewriter = &elicitationRewriter{
+						idMap:      s.ElicitationMap,
+						req:        mcpRequest,
+						logger:     s.Logger,
+						gatewayIDs: make([]string, 0),
+					}
 				}
 				// also construct resourceURIRewriter for tool calls with resources on 200 responses
 				if mcpRequest.ServerPrefix != "" && statusCode == "200" {
@@ -554,6 +571,34 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 						prefix: mcpRequest.ServerPrefix,
 						logger: s.Logger,
 					}
+				}
+				if guardrailsActive {
+					buildToolError, buildToolResult := routing.BuildSSEToolError, routing.BuildSSEToolResult
+					if responseIsJSON {
+						buildToolError, buildToolResult = routing.BuildJSONToolError, routing.BuildJSONToolResult
+					}
+					toolName := mcpRequest.ToolName()
+					configIDs := mcpRequest.GuardrailsConfigIDs
+					reqID := mcpRequest.ID
+					// SSE responses hold back only the final result event and let
+					// earlier events through right away; JSON responses are held
+					// in full. withLimit caps how much we buffer here, separate
+					// from the request size check above.
+					oversizedBody := []byte(buildToolError(reqID, "response body exceeds configured size limit"))
+					guardrailsBuf = newGuardrailsResponseBuffer(!responseIsJSON, reqID, func(checkCtx context.Context, unit []byte) []byte {
+						text := extractToolResponseText(unit)
+						return routing.CheckToolResponseGuardrails(
+							checkCtx,
+							s.RoutingConfig.Load(),
+							toolName,
+							configIDs,
+							text,
+							reqID,
+							s.Logger,
+							buildToolError,
+							buildToolResult,
+						)
+					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
 				}
 			}
 
@@ -565,13 +610,28 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					return err
 				}
 			}
-			if rewriter != nil {
-				continue // tool call: response body is streamed
+			if rewriter != nil || guardrailsActive {
+				continue // wait for response body (streamed or buffered)
 			}
 			return nil // non-tool-call: response body is not streamed
 		case *extProcV3.ProcessingRequest_ResponseBody:
 			body := r.ResponseBody.GetBody()
 			endOfStream := r.ResponseBody.GetEndOfStream()
+
+			// guardrails run first, ahead of the elicitation/resource rewriters:
+			// for SSE, guardrailsBuf forwards earlier control events (elicitation/
+			// create, progress) immediately and withholds only the terminal
+			// tools/call result until it is checked; for JSON, the single-document
+			// body is withheld in full until Flush. Feeding the (possibly replaced)
+			// terminal event through the rewriters below is safe even when
+			// replaced: neither rewriter matches on an isError/redacted result,
+			// so they pass it through unchanged.
+			if guardrailsBuf != nil {
+				body = guardrailsBuf.Process(ctx, body)
+				if endOfStream {
+					body = append(body, guardrailsBuf.Flush(ctx)...)
+				}
+			}
 
 			if rewriter != nil {
 				body = rewriter.Process(ctx, body)
