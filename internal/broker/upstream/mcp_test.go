@@ -1165,9 +1165,11 @@ func TestOAuth2_TokenEndpointRedirectRejected(t *testing.T) {
 	require.Empty(t, upSeen(), "no token means no upstream request")
 }
 
-// a revoked token is still unexpired, so the cached source would keep serving it
-// until expiry and every reconnect would fail the same way.
-func TestOAuth2_RejectedTokenDiscardedOnReconnect(t *testing.T) {
+// a revoked token is still unexpired, so the cached source would keep serving
+// it until expiry. recovery must not need a reconnect: the manager's only
+// probe against a connected stateless upstream is tools/list, which reuses the
+// client it was handed.
+func TestOAuth2_RejectedTokenReplacedWithoutReconnect(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 
 	var mu sync.Mutex
@@ -1188,9 +1190,10 @@ func TestOAuth2_RejectedTokenDiscardedOnReconnect(t *testing.T) {
 
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
+	// one client for both requests: the 401 must be recovered from in place
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
 	for range 2 {
-		c, err := up.buildHTTPClient()
-		require.NoError(t, err)
 		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 	}
 
