@@ -80,6 +80,11 @@ const (
 	A2APassthroughListenerName = "a2a-passthrough"
 )
 
+// nemo-guardrails listener on the shared mcp-gateway (isolated guardrails tests)
+const (
+	NemoGuardrailsListenerName = "nemo-guardrails"
+)
+
 const defaultE2EDomain = "127-0-0-1.sslip.io"
 
 // e2e environment configuration
@@ -187,6 +192,22 @@ func a2aPassthroughServerHost(subdomain string) string {
 	return subdomain + ".a2a-passthrough." + e2eDomain
 }
 
+// nemoGuardrailsPublicHostDefault returns the default public host for NeMo guardrails tests.
+func nemoGuardrailsPublicHostDefault() string {
+	if e2eDomain == defaultE2EDomain {
+		return "mcp.nemo-guardrails.127-0-0-1.sslip.io"
+	}
+	return "mcp.nemo-guardrails." + e2eDomain
+}
+
+// nemoGuardrailsServerHostDefault returns the default server hostname for NeMo guardrails tests.
+func nemoGuardrailsServerHostDefault() string {
+	if e2eDomain == defaultE2EDomain {
+		return "server.nemo-guardrails.127-0-0-1.sslip.io"
+	}
+	return "server.nemo-guardrails." + e2eDomain
+}
+
 // public hosts - derived from E2E_DOMAIN
 var (
 	gatewayPublicHost             = goenv.GetDefault("GATEWAY_PUBLIC_HOST", gatewayPublicHostDefault())
@@ -200,6 +221,8 @@ var (
 	Protocol2026PublicHost        = goenv.GetDefault("PROTOCOL_2026_PUBLIC_HOST", protocol2026PublicHostDefault())
 	ResourcesFederationPublicHost = goenv.GetDefault("RESOURCES_FEDERATION_PUBLIC_HOST", resourcesFederationPublicHostDefault())
 	A2APassthroughPublicHost      = goenv.GetDefault("A2A_PASSTHROUGH_PUBLIC_HOST", a2aPassthroughPublicHostDefault())
+	NemoGuardrailsPublicHost      = goenv.GetDefault("NEMO_GUARDRAILS_PUBLIC_HOST", nemoGuardrailsPublicHostDefault())
+	NemoGuardrailsServerHost      = goenv.GetDefault("NEMO_GUARDRAILS_SERVER_HOST", nemoGuardrailsServerHostDefault())
 )
 
 // gateway URLs - on Kind use localhost port mappings, on real clusters derive from public hosts
@@ -214,6 +237,9 @@ var (
 	Protocol2026GatewayURL        = goenv.GetDefault("PROTOCOL_2026_GATEWAY_URL", gatewayURLDefault(Protocol2026PublicHost, "http://mcp.protocol-2026.127-0-0-1.sslip.io:8011/mcp"))
 	ResourcesFederationGatewayURL = goenv.GetDefault("RESOURCES_FEDERATION_GATEWAY_URL", gatewayURLDefault(ResourcesFederationPublicHost, "http://mcp.resources-federation.127-0-0-1.sslip.io:8012/mcp"))
 	A2APassthroughGatewayURL      = goenv.GetDefault("A2A_PASSTHROUGH_GATEWAY_URL", gatewayURLDefault(A2APassthroughPublicHost, "http://mcp.a2a-passthrough.127-0-0-1.sslip.io:8013/mcp"))
+	// nemo-guardrails listener shares gateway port 8080 (like tool-discovery), so it
+	// reuses the same nodeport 8001 instead of needing a new one.
+	NemoGuardrailsGatewayURL = goenv.GetDefault("NEMO_GUARDRAILS_GATEWAY_URL", gatewayURLDefault(NemoGuardrailsPublicHost, "http://mcp.nemo-guardrails.127-0-0-1.sslip.io:8001/mcp"))
 )
 
 // gatewayURLDefault returns the Kind-specific localhost URL when using the default domain,

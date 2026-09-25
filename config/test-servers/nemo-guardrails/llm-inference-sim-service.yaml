@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-d-inference-sim
+  labels:
+    app: llm-d-inference-sim
+spec:
+  selector:
+    app: llm-d-inference-sim
+  ports:
+    - name: http
+      port: 8032
+      targetPort: 8032

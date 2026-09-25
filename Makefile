@@ -442,6 +442,15 @@ deploy-tls-test-server: load-tls-server cert-manager-install ## Deploy TLS test 
 	@$(KUBECTL) wait --for=condition=available --timeout=120s deployment/mcp-tls-server -n mcp-test
 	@echo "TLS test server ready"
 
+# NeMo guardrails + judge-model simulator, only used by [Full,NemoGuardrails] e2e specs
+.PHONY: deploy-nemo-guardrails-test-servers
+deploy-nemo-guardrails-test-servers: ## Deploy NeMo guardrails and llm-d-inference-sim test servers
+	$(KUBECTL) apply -f config/test-servers/namespace.yaml
+	$(KUBECTL) apply -k config/test-servers/nemo-guardrails/
+	@$(KUBECTL) wait --for=condition=available --timeout=300s deployment/llm-d-inference-sim -n mcp-test
+	@$(KUBECTL) wait --for=condition=available --timeout=300s deployment/nemo-guardrails-custom -n mcp-test
+	@echo "NeMo guardrails test servers ready"
+
 # Deploy everything server only (for local dev)
 deploy-everything-server: kind-load-everything-server ## Deploy only the everything server for local dev
 	@echo "Deploying everything server..."
