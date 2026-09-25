@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 // Transport-level timeouts for upstream HTTP clients. We bound connection
@@ -27,6 +31,11 @@ var (
 	defaultResponseHeaderTimeout = 30 * time.Second
 	defaultExpectContinueTimeout = 1 * time.Second
 )
+
+// tokenRequestTimeout bounds a single token-endpoint round trip. the source is
+// built per Connect, so a wedged AS fails the connect into the manager's
+// backoff rather than blocking the health tick.
+const tokenRequestTimeout = 10 * time.Second
 
 // cache scope values for upstream list response hints
 const (
@@ -80,6 +89,12 @@ type MCPServer struct {
 	// to capture the upstream's SupportedVersions.
 	dc *discoverCapture
 
+	// client-credentials token source for OAuth2 upstreams, built on first use
+	// so its cached token outlives a reconnect, and dropped by
+	// invalidateTokenSource when the upstream rejects the token
+	tokenMu  sync.Mutex
+	tokenSrc oauth2.TokenSource
+
 	// supportedVersions lists protocol versions this upstream supports.
 	supportedVersions []string
 }
@@ -102,18 +117,18 @@ func NewUpstreamMCP(config *config.MCPServer, gatewayCACertPEM string, logger *s
 		"gateway-server-id": string(up.ID()),
 		"x-client-id":       "broker",
 	}
-	if up.Credential != "" {
+	// a token source owns Authorization; the two are mutually exclusive in the
+	// CRD, but branch on OAuth2 first so a hand-written config cannot set both
+	if up.OAuth2 == nil && up.Credential != "" {
 		up.headers["Authorization"] = up.Credential
 	}
 	return up
 }
 
-// buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
-// server, with header injection via a custom round tripper. the trust pool is
+// newTransport builds a round tripper for this upstream. the trust pool is
 // built from system roots, plus the gateway-level CA bundle (if set), plus the
-// per-server CACert (if set). the discoverCapture is stored on up.dc to
-// intercept the SDK's server/discover response during Connect.
-func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
+// per-server CACert (if set).
+func (up *MCPServer) newTransport() (*http.Transport, error) {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = defaultTLSHandshakeTimeout
 	base.ExpectContinueTimeout = defaultExpectContinueTimeout
@@ -141,14 +156,166 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 			RootCAs:    rootCAs,
 		}
 	}
+	return base, nil
+}
+
+// buildHTTPClient constructs the HTTP client used to talk to this upstream MCP
+// server, with header injection via a custom round tripper. the discoverCapture
+// is stored on up.dc to intercept the SDK's server/discover response during
+// Connect.
+func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
+	base, err := up.newTransport()
+	if err != nil {
+		return nil, err
+	}
+
+	// the token source sits below the header injector so oauth2.Transport sets
+	// Authorization last and wins over anything in up.headers
+	var inner http.RoundTripper = base
+	if up.OAuth2 != nil {
+		// resolve once so a bad token URL fails the connect rather than the
+		// first request. the transport holds the indirection, not this source
+		if _, err := up.tokenSource(); err != nil {
+			return nil, err
+		}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up}, Base: base}, up: up}
+	}
 
 	up.dc = &discoverCapture{
 		base: &toolHintsTee{
-			base: &transport.HeaderRoundTripper{Base: base, Headers: up.headers},
+			base: &transport.HeaderRoundTripper{Base: inner, Headers: up.headers},
 			sink: up.storeToolHints,
 		},
 	}
 	return &http.Client{Transport: up.dc}, nil
+}
+
+// tokenInvalidator drops the cached token source when the upstream rejects the
+// bearer token it carried. it sits above oauth2.Transport so it only sees
+// responses to requests that actually presented a token.
+type tokenInvalidator struct {
+	base http.RoundTripper
+	up   *MCPServer
+}
+
+func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		t.up.logger.Debug("upstream rejected access token, discarding cached token source",
+			"upstream mcp server", t.up.ID())
+		t.up.invalidateTokenSource()
+	}
+	return resp, err
+}
+
+// dynamicTokenSource resolves the upstream's source per request instead of
+// capturing it when the transport is built. an oauth2.Transport holding the
+// source directly would keep serving a token that invalidateTokenSource
+// already dropped, since nothing re-reads up.tokenSrc until the next Connect
+// and Connect is a no-op while the session lives.
+type dynamicTokenSource struct {
+	up *MCPServer
+}
+
+func (d dynamicTokenSource) Token() (*oauth2.Token, error) {
+	ts, err := d.up.tokenSource()
+	if err != nil {
+		return nil, err
+	}
+	return ts.Token()
+}
+
+// sanitizedTokenSource replaces the oauth2 package's token error, which quotes
+// the AS response body, with one naming the upstream only — the error becomes
+// the /status Message. the detail is logged instead of dropped. it delegates
+// caching to the wrapped ReuseTokenSource, so refresh still happens.
+type sanitizedTokenSource struct {
+	src    oauth2.TokenSource
+	id     config.UpstreamMCPID
+	logger *slog.Logger
+}
+
+func (s *sanitizedTokenSource) Token() (*oauth2.Token, error) {
+	tok, err := s.src.Token()
+	if err != nil {
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) {
+			// ErrorCode is the parsed RFC 6749 "error" field, not the body: it
+			// separates invalid_client from invalid_scope, and is empty in the
+			// mislabelled-2xx case where the body would hold a token
+			s.logger.Error("token request failed", "upstream mcp server", s.id,
+				"status", re.Response.Status, "errorCode", re.ErrorCode)
+		} else {
+			s.logger.Error("token request failed", "upstream mcp server", s.id, "error", err)
+		}
+		return nil, fmt.Errorf("failed to obtain access token for upstream %s", s.id)
+	}
+	return tok, nil
+}
+
+// tokenSource returns this upstream's client-credentials source, building it on
+// first use. it is cached so a reconnect reuses a still-valid token: Connect
+// rebuilds the transport chain, and a source rebuilt alongside it would re-mint
+// on every reconnect. a credential or CA change replaces the whole MCPServer,
+// so config cannot make the cache stale; revocation can, which is what
+// invalidateTokenSource handles.
+func (up *MCPServer) tokenSource() (oauth2.TokenSource, error) {
+	up.tokenMu.Lock()
+	defer up.tokenMu.Unlock()
+	if up.tokenSrc != nil {
+		return up.tokenSrc, nil
+	}
+	ts, err := up.newTokenSource()
+	if err != nil {
+		return nil, err
+	}
+	up.tokenSrc = ts
+	return ts, nil
+}
+
+// invalidateTokenSource drops the cached source so the next transport build
+// mints a fresh token. a revoked token is still unexpired, so the underlying
+// ReuseTokenSource would otherwise serve it until expiry and every reconnect
+// would fail the same way.
+func (up *MCPServer) invalidateTokenSource() {
+	up.tokenMu.Lock()
+	up.tokenSrc = nil
+	up.tokenMu.Unlock()
+}
+
+// newTokenSource builds a client-credentials token source for this upstream.
+// the AS is reached through a transport carrying the same trust pool as the
+// upstream — so a private CA in the gateway bundle covers both — and
+// deliberately not through the header chain: the AS is not an MCP server and
+// must not see broker identity headers. the ReuseTokenSource underneath
+// re-requests near expiry; wrapping it in another one would disable refresh.
+func (up *MCPServer) newTokenSource() (oauth2.TokenSource, error) {
+	// CEL guards the CRD, but the broker reads a mounted file
+	if !strings.HasPrefix(up.OAuth2.TokenURL, "https://") {
+		return nil, fmt.Errorf("token URL for upstream %s must use https", up.Name)
+	}
+	base, err := up.newTransport()
+	if err != nil {
+		return nil, err
+	}
+	cc := &clientcredentials.Config{
+		ClientID:     up.OAuth2.ClientID,
+		ClientSecret: up.OAuth2.ClientSecret,
+		TokenURL:     up.OAuth2.TokenURL,
+		Scopes:       up.OAuth2.Scopes,
+	}
+	// the https check above only covers the first hop. a 307 from the token
+	// endpoint would re-POST the client secret wherever it points, plaintext
+	// included, so no redirect is followed at all — token endpoints do not
+	// legitimately redirect a client-credentials POST
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{
+		Transport: base,
+		Timeout:   tokenRequestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("token endpoint for upstream %s returned a redirect", up.Name)
+		},
+	})
+	return &sanitizedTokenSource{src: cc.TokenSource(ctx), id: up.ID(), logger: up.logger}, nil
 }
 
 // storeToolHints replaces the hint set with the latest tools/list harvest.
@@ -210,6 +377,7 @@ func (up *MCPServer) GetConfig() config.MCPServer {
 		Credential:          up.Credential,
 		CACert:              up.CACert,
 		TokenURLElicitation: up.TokenURLElicitation,
+		OAuth2:              up.OAuth2,
 		UserSpecificList:    up.UserSpecificList,
 		Category:            cat,
 		Hint:                up.Hint,

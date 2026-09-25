@@ -11,7 +11,7 @@ Test servers in `config/test-servers/`:
 - **Everything Server**: TypeScript SDK (prompts, tools, resources, sampling)
 - **Conformance Server**: TypeScript SDK conformance test server
 - **Custom Response Server**: Tests custom response handling
-- **TLS Server**: Go SDK with native TLS support (tools: echo_tls, tls_info). Requires cert-manager; deployed via `make deploy-tls-test-server`
+- **TLS Server**: Go SDK with native TLS support (tools: echo_tls, tls_info). Requires cert-manager; deployed via `make deploy-tls-test-server`. With `--oauth-clients id:secret[,...]` it also serves an RFC 6749 client credentials `POST /token` on the HTTPS listener and a token-guarded plain-HTTP MCP endpoint on `:9090` (tool: whoami, its description names the client_id the token was issued to)
 - **User-Specific Server**: Go SDK, returns different tools per user based on Authorization header (userSpecificList feature testing)
 - **Stateless Server**: Go SDK with `Stateless: true` for 2026-07-28 protocol testing (tools: hello_world, headers; prompts: greeting)
 - **llm-d-inference-sim**: OpenAI-compatible response simulator (not real inference) used as the judge-model backend for nemo-guardrails-custom. Optional, in `nemo-guardrails/`; deployed via `make deploy-nemo-guardrails-test-servers`

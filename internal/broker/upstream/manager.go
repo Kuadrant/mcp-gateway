@@ -66,6 +66,29 @@ type ServerValidationStatus struct {
 	UsesStatelessProtocol bool                `json:"usesStatelessProtocol"`
 	TickerInterval        string              `json:"tickerInterval"`
 	ConsecutiveFailures   int                 `json:"consecutiveFailures"`
+	// AuthMethod names how the broker authenticates to the upstream:
+	// "static", "oauth2ClientCredentials", or empty for none.
+	AuthMethod string `json:"authMethod,omitempty"`
+}
+
+// auth method names reported on status. only the name is ever reported —
+// the config behind it holds the credential.
+const (
+	authMethodStatic = "static"
+	authMethodOAuth2 = "oauth2ClientCredentials"
+)
+
+// deriveAuthMethod derives the status name from an upstream's config. oauth2
+// wins: a token source owns Authorization when both are somehow set.
+func deriveAuthMethod(cfg config.MCPServer) string {
+	switch {
+	case cfg.OAuth2 != nil:
+		return authMethodOAuth2
+	case cfg.Credential != "":
+		return authMethodStatic
+	default:
+		return ""
+	}
 }
 
 // ProtocolValidation reports the MCP protocol version negotiated with the upstream.
@@ -323,7 +346,10 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 	}
 
 	return &MCPManager{
-		mcp:                upstream,
+		mcp: upstream,
+		// set once at construction: a credential change replaces the whole
+		// manager, and not every healthy path routes through setStatus
+		status:             ServerValidationStatus{AuthMethod: deriveAuthMethod(upstream.GetConfig())},
 		gatewayServer:      gatewayServer,
 		promptsServer:      promptsServer,
 		tickerInterval:     tickerInterval,

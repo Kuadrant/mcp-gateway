@@ -245,6 +245,7 @@ type MCPServer struct {
 	Hint                string                     `json:"hint,omitempty"                yaml:"hint,omitempty"`
 	Tags                []string                   `json:"tags,omitempty"                yaml:"tags,omitempty"`
 	GuardrailsConfigIDs []string                   `json:"guardrailsConfigIDs,omitempty" yaml:"guardrailsConfigIDs,omitempty"`
+	OAuth2              *OAuth2ClientCredentials   `json:"oauth2,omitempty"              yaml:"oauth2,omitempty"`
 	// SupportedProtocolVersions, when non-empty, overrides the protocol versions
 	// the broker treats this upstream as supporting instead of those learned
 	// from server/discover.
@@ -254,6 +255,16 @@ type MCPServer struct {
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
 type TokenURLElicitationConfig struct {
 	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// OAuth2ClientCredentials holds the resolved client credentials grant the broker
+// uses to mint its own access tokens for an upstream. Mutually exclusive with
+// Credential. Broker-only: never surfaced to the router or to clients.
+type OAuth2ClientCredentials struct {
+	TokenURL     string   `json:"tokenURL"               yaml:"tokenURL"`
+	ClientID     string   `json:"clientID"               yaml:"clientID"`
+	ClientSecret string   `json:"clientSecret"           yaml:"clientSecret"`
+	Scopes       []string `json:"scopes,omitempty"       yaml:"scopes,omitempty"`
 }
 
 // ID returns a unique id for the a registered server
@@ -281,7 +292,8 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		existingConfig.UserSpecificList != mcpServer.UserSpecificList ||
 		existingConfig.Hint != mcpServer.Hint ||
 		guardrailsConfigChanged(existingConfig.GuardrailsConfigIDs, mcpServer.GuardrailsConfigIDs) ||
-		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) {
+		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) ||
+		oauth2ClientCredentialsChanged(mcpServer.OAuth2, existingConfig.OAuth2) {
 		return true
 	}
 	if !slices.Equal(existingConfig.Category, mcpServer.Category) {
@@ -323,6 +335,22 @@ func tokenURLElicitationChanged(a, b *TokenURLElicitationConfig) bool {
 		return false
 	}
 	return a.URL != b.URL
+}
+
+// oauth2ClientCredentialsChanged reports whether the broker needs a new token
+// source. A rotated client secret must land here: the controller rewrites the
+// config Secret and the manager is rebuilt with a fresh, empty token cache.
+func oauth2ClientCredentialsChanged(a, b *OAuth2ClientCredentials) bool {
+	if (a == nil) != (b == nil) {
+		return true
+	}
+	if a == nil {
+		return false
+	}
+	return a.TokenURL != b.TokenURL ||
+		a.ClientID != b.ClientID ||
+		a.ClientSecret != b.ClientSecret ||
+		!slices.Equal(a.Scopes, b.Scopes)
 }
 
 // guardrailsConfigChanged reports whether a server's per-server guardrails

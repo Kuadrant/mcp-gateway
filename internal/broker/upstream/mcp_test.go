@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,11 +11,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -29,6 +33,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GetConfig hand-copies a fixed field list and broker.go compares the result
+// against the freshly loaded config via ConfigChanged. a field missing from the
+// copy makes every reload see a phantom diff and rebuild every manager, so the
+// fixture carries every field GetConfig is expected to round trip.
 func TestNewUpstreamMCP(t *testing.T) {
 	testServer := config.MCPServer{
 		Name:                "test-server",
@@ -37,6 +45,12 @@ func TestNewUpstreamMCP(t *testing.T) {
 		State:               string(mcpv1.ServerStateEnabled),
 		Hostname:            "dummy",
 		GuardrailsConfigIDs: []string{"pii"},
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     "https://as.example.com/token",
+			ClientID:     "broker",
+			ClientSecret: "secret1",
+			Scopes:       []string{"mcp.read"},
+		},
 	}
 	up := NewUpstreamMCP(&testServer, "", nil)
 	require.NotNil(t, up)
@@ -844,6 +858,457 @@ func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
 	meta := up.ToolsCacheMetadata()
 	require.Equal(t, 0, meta.TTLMs)
 	require.Equal(t, "public", meta.CacheScope)
+}
+
+// the static credentialRef value must reach the upstream verbatim as
+// Authorization on every broker request. guards the header path against
+// anything later inserted into the transport chain.
+func TestStaticCredential_SentToUpstream(t *testing.T) {
+	const credential = "Bearer static-test-token" // #nosec G101 -- test fixture
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "t1",
+		Description: "test tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+
+	var mu sync.Mutex
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Credential: credential}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, seen, "upstream saw no requests")
+	for _, got := range seen {
+		require.Equal(t, credential, got, "every broker request must carry the configured credential")
+	}
+}
+
+const testClientSecret = "cc-client-secret" // #nosec G101 -- test fixture
+
+// tokenRequest records one /token exchange as the authorization server saw it.
+type tokenRequest struct {
+	grantType     string
+	scope         string
+	clientID      string
+	clientSecret  string
+	brokerHeaders []string // broker header values that must never reach the AS
+}
+
+// newTestAuthServer starts an https authorization server behind a private CA
+// that issues sequential opaque tokens with the given expires_in. returns the
+// server, its CA PEM for the broker trust pool, and an accessor for the
+// requests it received.
+func newTestAuthServer(t *testing.T, expiresIn int) (*httptest.Server, string, func() []tokenRequest) {
+	t.Helper()
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	serverCert := generateServerCert(t, caCert, caKey)
+
+	var mu sync.Mutex
+	var reqs []tokenRequest
+	issued := 0
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		tr := tokenRequest{
+			grantType:    r.PostForm.Get("grant_type"),
+			scope:        r.PostForm.Get("scope"),
+			clientID:     r.PostForm.Get("client_id"),
+			clientSecret: r.PostForm.Get("client_secret"),
+			brokerHeaders: []string{
+				r.Header.Get("Gateway-Server-Id"),
+				r.Header.Get("X-Client-Id"),
+			},
+		}
+		if id, secret, ok := r.BasicAuth(); ok {
+			tr.clientID, tr.clientSecret = id, secret
+		}
+		mu.Lock()
+		issued++
+		n := issued
+		reqs = append(reqs, tr)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": fmt.Sprintf("as-token-%d", n),
+			"token_type":   "Bearer",
+			"expires_in":   expiresIn,
+		})
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverCert}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	return srv, string(caPEM), func() []tokenRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]tokenRequest(nil), reqs...)
+	}
+}
+
+// recordingUpstream returns a plain http upstream that records the
+// Authorization header of every request it serves.
+func recordingUpstream(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+// bearerGuardedMCPUpstream serves a one-tool mcp server that 401s anything
+// not presenting the given bearer token.
+func bearerGuardedMCPUpstream(t *testing.T, want string) *httptest.Server {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "t1",
+		Description: "test tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// newOAuth2Upstream builds an upstream whose broker credentials come from the
+// client credentials grant at tokenURL. gatewayCA seeds the trust pool used for
+// both the AS and the upstream. scopes may be omitted.
+func newOAuth2Upstream(upstreamURL, tokenURL, gatewayCA string, scopes ...string) *MCPServer {
+	return NewUpstreamMCP(&config.MCPServer{
+		Name: "oauth-up",
+		URL:  upstreamURL,
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     tokenURL,
+			ClientID:     "broker",
+			ClientSecret: testClientSecret,
+			Scopes:       scopes,
+		},
+	}, gatewayCA, nil)
+}
+
+// logBuffer collects log output for assertions. the transport retries the
+// token request, so writes can arrive from more than one goroutine.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func getThrough(t *testing.T, c *http.Client, url string) error {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	return nil
+}
+
+func TestOAuth2_UpstreamCarriesMintedToken(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM, "mcp.read", "mcp.write")
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	require.Equal(t, []string{"Bearer as-token-1"}, upSeen())
+
+	reqs := asSeen()
+	require.Len(t, reqs, 1)
+	require.Equal(t, "client_credentials", reqs[0].grantType)
+	require.Equal(t, "mcp.read mcp.write", reqs[0].scope)
+	require.Equal(t, "broker", reqs[0].clientID)
+	require.Equal(t, testClientSecret, reqs[0].clientSecret)
+	// the AS is not an upstream mcp server: it must not see broker identity headers
+	require.Equal(t, []string{"", ""}, reqs[0].brokerHeaders)
+}
+
+func TestOAuth2_TokenReusedWithinLifetime(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	require.Len(t, asSeen(), 1, "a live token must not be re-requested")
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-1"}, upSeen())
+}
+
+// expires_in of 1s is inside x/oauth2's ~10s expiry skew, so the cached token
+// is never valid and every request re-mints. guards against the token source
+// being double-wrapped, which would silently disable refresh.
+func TestOAuth2_TokenRefreshedOnExpiry(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 1)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	require.Len(t, asSeen(), 2, "an expired token must be re-requested")
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-2"}, upSeen())
+}
+
+// Connect rebuilds the transport chain on every reconnect. the token source is
+// cached on the upstream instead, so a flapping upstream does not re-mint a
+// token that is still live.
+func TestOAuth2_TokenSurvivesReconnect(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	for range 2 {
+		c, err := up.buildHTTPClient()
+		require.NoError(t, err)
+		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	}
+
+	require.Len(t, asSeen(), 1, "rebuilding the client must not re-mint a live token")
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-1"}, upSeen())
+}
+
+func TestOAuth2_NonHTTPSTokenURLRejected(t *testing.T) {
+	upSrv, _ := recordingUpstream(t)
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", "http://as.example.com/token", "")
+
+	_, err := up.buildHTTPClient()
+	require.Error(t, err, "a plaintext token endpoint would expose the client secret")
+	require.NotContains(t, err.Error(), testClientSecret)
+}
+
+// the https check covers the first hop only. following a 307 would re-POST the
+// client secret wherever the AS points, plaintext included.
+func TestOAuth2_TokenEndpointRedirectRejected(t *testing.T) {
+	var mu sync.Mutex
+	var secretsLeaked int
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		_, secret, _ := r.BasicAuth()
+		if secret == testClientSecret || r.PostForm.Get("client_secret") == testClientSecret {
+			mu.Lock()
+			secretsLeaked++
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "leaked-token", "token_type": "Bearer", "expires_in": 3600,
+		})
+	}))
+	defer sink.Close()
+
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	as := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, sink.URL+"/token", http.StatusTemporaryRedirect)
+	}))
+	as.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{generateServerCert(t, caCert, caKey)}}
+	as.StartTLS()
+	defer as.Close()
+
+	upSrv, upSeen := recordingUpstream(t)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", string(caPEM))
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.Error(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Zero(t, secretsLeaked, "the client secret must not follow a redirect off the verified https endpoint")
+	require.Empty(t, upSeen(), "no token means no upstream request")
+}
+
+// a revoked token is still unexpired, so the cached source would keep serving
+// it until expiry. recovery must not need a reconnect: the manager's only
+// probe against a connected stateless upstream is tools/list, which reuses the
+// client it was handed.
+func TestOAuth2_RejectedTokenReplacedWithoutReconnect(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+
+	var mu sync.Mutex
+	var seen []string
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seen = append(seen, auth)
+		mu.Unlock()
+		// the first token is revoked upstream while still inside its lifetime
+		if auth == "Bearer as-token-1" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upSrv.Close()
+
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	// one client for both requests: the 401 must be recovered from in place
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	}
+
+	require.Len(t, asSeen(), 2, "a rejected token must be re-minted, not reused until expiry")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-2"}, seen)
+}
+
+func TestOAuth2_ConnectAndListToolsWithMintedToken(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
+
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", caPEM)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	tools, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Len(t, tools.Tools, 1)
+	require.Len(t, asSeen(), 1, "one token covers the whole connect + list exchange")
+}
+
+func TestOAuth2_TokenEndpointFailureFailsConnect(t *testing.T) {
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	serverCert := generateServerCert(t, caCert, caKey)
+
+	const asResponseBody = "internal-as-detail"
+	as := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, asResponseBody, http.StatusInternalServerError)
+	}))
+	as.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverCert}}
+	as.StartTLS()
+	defer as.Close()
+
+	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
+
+	var logs logBuffer
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", string(caPEM))
+	up.logger = slog.New(slog.NewTextHandler(&logs, nil))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	err := up.Connect(ctx, func() {})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), testClientSecret, "the client secret must never reach an error surface")
+	// the error becomes the status Message, so it names the upstream only
+	require.Contains(t, err.Error(), "failed to obtain access token for upstream "+string(up.ID()))
+	require.NotContains(t, err.Error(), asResponseBody, "the AS response body must not be echoed")
+
+	// the log is the other half: oauth2's RetrieveError quotes the AS body, and
+	// it raises one for a mislabelled 2xx too, where that body holds a token
+	logged := logs.String()
+	require.NotContains(t, logged, asResponseBody, "the AS response body must not be logged")
+	require.NotContains(t, logged, testClientSecret, "the client secret must never reach the log")
+	require.Contains(t, logged, "500 Internal Server Error", "the status is what makes the failure triageable")
+}
+
+// the token endpoint is reached through the same trust pool as the upstream, so
+// a private CA in the gateway bundle covers both and nothing else does. the
+// trusted case is proven by every other oauth2 test here.
+func TestOAuth2_TokenEndpointOnPrivateCARequiresGatewayBundle(t *testing.T) {
+	as, _, _ := newTestAuthServer(t, 3600)
+	upSrv, _ := recordingUpstream(t)
+
+	untrusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", "").buildHTTPClient()
+	require.NoError(t, err)
+	require.Error(t, getThrough(t, untrusted, upSrv.URL+"/mcp"),
+		"an AS on a private CA must not be trusted without the gateway bundle")
+}
+
+// the token source sits below the header injector so it sets Authorization
+// last. a config carrying both credentials must reach the upstream with the
+// minted token, never the static one.
+func TestOAuth2_MintedTokenOverridesStaticCredential(t *testing.T) {
+	as, caPEM, _ := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+
+	up := NewUpstreamMCP(&config.MCPServer{
+		Name:       "oauth-up",
+		URL:        upSrv.URL + "/mcp",
+		Credential: "Bearer should-be-ignored",
+		OAuth2: &config.OAuth2ClientCredentials{
+			TokenURL:     as.URL + "/token",
+			ClientID:     "broker",
+			ClientSecret: testClientSecret,
+		},
+	}, caPEM, nil)
+
+	c, err := up.buildHTTPClient()
+	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+
+	require.Equal(t, []string{"Bearer as-token-1"}, upSeen())
 }
 
 func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {

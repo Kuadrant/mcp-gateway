@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
@@ -38,6 +40,50 @@ func TestSetupLoggerLevelMapping(t *testing.T) {
 				t.Errorf("log-level=%d: got %v, want %v", tc.level, got, tc.want)
 			}
 		})
+	}
+}
+
+// the broker decodes the config file with viper/mapstructure, which matches on
+// Go field names rather than the json/yaml struct tags the controller writes
+// with. a mismatch here would silently leave OAuth2 nil and fall back to
+// unauthenticated upstream calls.
+func TestParseConfigFile_DecodesOAuth2Block(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(`servers:
+  - name: oauth-server
+    url: https://oauth-server.local/mcp
+    state: Enabled
+    oauth2:
+      tokenURL: https://as.example.com/token
+      clientID: broker
+      clientSecret: secret1
+      scopes:
+        - mcp.read
+        - mcp.write
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{logger: slog.New(slog.NewTextHandler(os.Stdout, nil))}
+	snapshot, err := a.parseConfigFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(snapshot.servers))
+	}
+	got := snapshot.servers[0].OAuth2
+	if got == nil {
+		t.Fatal("oauth2 block did not survive viper decoding")
+	}
+	want := config.OAuth2ClientCredentials{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "broker",
+		ClientSecret: "secret1",
+		Scopes:       []string{"mcp.read", "mcp.write"},
+	}
+	if !reflect.DeepEqual(*got, want) {
+		t.Fatalf("oauth2 = %+v, want %+v", *got, want)
 	}
 }
 

@@ -38,6 +38,7 @@ cenkalti
 cespare
 ciinfo
 clientcmd
+clientcredentials
 clientelicitation
 clientgoscheme
 clientregistration

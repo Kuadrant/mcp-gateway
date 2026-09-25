@@ -43,6 +43,10 @@ const (
 	// maxCACertSize is the maximum allowed size for CA certificate PEM data (64 KiB)
 	// single CA cert; see maxCACertBundleSize for multi-cert bundles
 	maxCACertSize = 64 * 1024
+	// oauth2ClientIDKey and oauth2ClientSecretKey are the fixed keys read from the secret
+	// referenced by oauth2ClientCredentials.secretRef
+	oauth2ClientIDKey     = "clientID"
+	oauth2ClientSecretKey = "clientSecret"
 	// HTTPRouteIndex used to find MCPServerRegistrations
 	HTTPRouteIndex = "spec.targetRef.httproute"
 	// ProgrammedHTTPRouteIndex used to find programmed httproutes
@@ -650,22 +654,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 
 	// add credential env var if configured
 	if mcpsr.Spec.CredentialRef != nil {
-		secret := &corev1.Secret{}
-		err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
-			Name:      mcpsr.Spec.CredentialRef.Name,
-			Namespace: mcpsr.Namespace,
-		}, secret)
+		secret, err := r.getManagedSecret(ctx, mcpsr.Spec.CredentialRef.Name, mcpsr.Namespace, "credential")
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("credential secret %s not found", mcpsr.Spec.CredentialRef.Name)
-			}
-			return nil, fmt.Errorf("failed to get credential secret: %w", err)
-		}
-
-		// check for required label
-		if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-			return nil, fmt.Errorf("credential secret %s is missing required label %s=%s",
-				mcpsr.Spec.CredentialRef.Name, ManagedSecretLabel, ManagedSecretValue)
+			return nil, err
 		}
 
 		val, ok := secret.Data[mcpsr.Spec.CredentialRef.Key]
@@ -677,21 +668,9 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 	}
 
 	if mcpsr.Spec.CACertSecretRef != nil {
-		caSecret := &corev1.Secret{}
-		err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
-			Name:      mcpsr.Spec.CACertSecretRef.Name,
-			Namespace: mcpsr.Namespace,
-		}, caSecret)
+		caSecret, err := r.getManagedSecret(ctx, mcpsr.Spec.CACertSecretRef.Name, mcpsr.Namespace, "CA certificate")
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("CA certificate secret %s not found", mcpsr.Spec.CACertSecretRef.Name)
-			}
-			return nil, fmt.Errorf("failed to get CA certificate secret: %w", err)
-		}
-
-		if caSecret.Labels == nil || caSecret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-			return nil, fmt.Errorf("CA certificate secret %s is missing required label %s=%s",
-				mcpsr.Spec.CACertSecretRef.Name, ManagedSecretLabel, ManagedSecretValue)
+			return nil, err
 		}
 
 		key := mcpsr.Spec.CACertSecretRef.Key
@@ -711,7 +690,64 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		serverConfig.CACert = string(val)
 	}
 
+	if mcpsr.Spec.OAuth2ClientCredentials != nil {
+		oauth2Creds, err := r.resolveOAuth2ClientCredentials(ctx, mcpsr)
+		if err != nil {
+			return nil, err
+		}
+		serverConfig.OAuth2 = oauth2Creds
+	}
+
 	return &serverConfig, nil
+}
+
+// getManagedSecret reads a secret from the registration's namespace and enforces the
+// managed-secret label. desc names the reference in errors, which surface verbatim as the
+// Ready condition message, so they name the secret only, never a value.
+func (r *MCPReconciler) getManagedSecret(ctx context.Context, name, namespace, desc string) (*corev1.Secret, error) {
+	secret := &corev1.Secret{}
+	if err := r.DirectAPIReader.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("%s secret %s not found", desc, name)
+		}
+		return nil, fmt.Errorf("failed to get %s secret: %w", desc, err)
+	}
+	if secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
+		return nil, fmt.Errorf("%s secret %s is missing required label %s=%s",
+			desc, name, ManagedSecretLabel, ManagedSecretValue)
+	}
+	return secret, nil
+}
+
+// resolveOAuth2ClientCredentials reads the client credentials the broker uses to mint its own
+// access tokens for this upstream. errors surface verbatim as the Ready condition message, so
+// they name the secret and the offending key only, never a value.
+// mcpsr.Spec.OAuth2ClientCredentials must be non-nil.
+func (r *MCPReconciler) resolveOAuth2ClientCredentials(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) (*config.OAuth2ClientCredentials, error) {
+	cc := mcpsr.Spec.OAuth2ClientCredentials
+
+	secret, err := r.getManagedSecret(ctx, cc.SecretRef.Name, mcpsr.Namespace, "oauth2 client credentials")
+	if err != nil {
+		return nil, err
+	}
+
+	// an empty value would reach the AS as an empty credential and surface only as the
+	// broker's sanitized "failed to obtain access token", which does not name the cause
+	clientID, ok := secret.Data[oauth2ClientIDKey]
+	if !ok || len(clientID) == 0 {
+		return nil, fmt.Errorf("oauth2 client credentials secret %s missing or empty key %s", cc.SecretRef.Name, oauth2ClientIDKey)
+	}
+	clientSecret, ok := secret.Data[oauth2ClientSecretKey]
+	if !ok || len(clientSecret) == 0 {
+		return nil, fmt.Errorf("oauth2 client credentials secret %s missing or empty key %s", cc.SecretRef.Name, oauth2ClientSecretKey)
+	}
+
+	return &config.OAuth2ClientCredentials{
+		TokenURL:     cc.TokenURL,
+		ClientID:     string(clientID),
+		ClientSecret: string(clientSecret),
+		Scopes:       append([]string(nil), cc.Scopes...),
+	}, nil
 }
 
 func (r *MCPReconciler) buildServerInfoFromHTTPRoute(ctx context.Context, httpRoute *gatewayv1.HTTPRoute, path string) (*ServerInfo, error) {
@@ -1075,10 +1111,11 @@ func validateCACertPEM(data []byte) error {
 }
 
 // mcpsrReferencesSecret checks whether a MCPServerRegistration references the named secret
-// via either credentialRef or caCertSecretRef.
+// via credentialRef, caCertSecretRef, or oauth2ClientCredentials.secretRef.
 func mcpsrReferencesSecret(spec mcpv1.MCPServerRegistrationSpec, secretName string) bool {
 	return (spec.CredentialRef != nil && spec.CredentialRef.Name == secretName) ||
-		(spec.CACertSecretRef != nil && spec.CACertSecretRef.Name == secretName)
+		(spec.CACertSecretRef != nil && spec.CACertSecretRef.Name == secretName) ||
+		(spec.OAuth2ClientCredentials != nil && spec.OAuth2ClientCredentials.SecretRef.Name == secretName)
 }
 
 // findMCPServerRegistrationsForSecret finds MCPServerRegistrations referencing the given secret

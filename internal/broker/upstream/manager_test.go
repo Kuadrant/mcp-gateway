@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -463,6 +464,72 @@ func TestMCPManager_setStatus(t *testing.T) {
 	}
 }
 
+// TestMCPManager_setStatus_AuthMethod verifies status names how the broker
+// authenticates to the upstream, for each of the three configurations, and that
+// the serialised /status payload never carries the credential behind the name.
+func TestMCPManager_setStatus_AuthMethod(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	const (
+		staticCredential = "Bearer static-token"
+		clientSecret     = "super-secret-value"
+	)
+	oauth2Config := func() *config.OAuth2ClientCredentials {
+		return &config.OAuth2ClientCredentials{
+			TokenURL:     "https://as.example.com/token",
+			ClientID:     "broker",
+			ClientSecret: clientSecret,
+		}
+	}
+
+	testCases := []struct {
+		name     string
+		mutate   func(*config.MCPServer)
+		expected string
+	}{
+		{
+			name:     "no credentials",
+			mutate:   func(*config.MCPServer) {},
+			expected: "",
+		},
+		{
+			name:     "static credential",
+			mutate:   func(c *config.MCPServer) { c.Credential = staticCredential },
+			expected: "static",
+		},
+		{
+			name:     "oauth2 client credentials",
+			mutate:   func(c *config.MCPServer) { c.OAuth2 = oauth2Config() },
+			expected: "oauth2ClientCredentials",
+		},
+		{
+			name: "oauth2 wins over a static credential",
+			mutate: func(c *config.MCPServer) {
+				c.Credential = staticCredential
+				c.OAuth2 = oauth2Config()
+			},
+			expected: "oauth2ClientCredentials",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := newMockMCP("test-server", "test_")
+			tc.mutate(mock.cfg)
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.setStatus(nil, 1, 0, nil, nil)
+			assert.Equal(t, tc.expected, manager.status.AuthMethod)
+
+			payload, err := json.Marshal(manager.GetStatus())
+			require.NoError(t, err)
+			assert.NotContains(t, string(payload), staticCredential)
+			assert.NotContains(t, string(payload), clientSecret)
+		})
+	}
+}
+
 // TestMCPManager_setStatus_ProtocolVersions verifies the negotiated protocol version
 // reported by an upstream is surfaced on the status across valid versions.
 func TestMCPManager_setStatus_ProtocolVersions(t *testing.T) {
@@ -746,6 +813,11 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("user-specific-server", "us_")
 	mock.cfg.UserSpecificList = true
+	mock.cfg.OAuth2 = &config.OAuth2ClientCredentials{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "broker",
+		ClientSecret: "super-secret-value",
+	}
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasToolsCap = false
 	gateway := newMockToolsAdderDeleter()
@@ -758,6 +830,8 @@ func TestMCPManager_manage_UserSpecificList_SkipsToolCaching(t *testing.T) {
 	assert.True(t, status.Ready, "server should be healthy")
 	assert.Equal(t, 0, status.TotalTools, "no tools should be cached")
 	assert.Contains(t, status.Message, "userSpecificList")
+	// this path returns before setStatus, so the field has to survive without it
+	assert.Equal(t, authMethodOAuth2, status.AuthMethod)
 
 	// no tools added to gateway
 	assert.Empty(t, gateway.tools, "tools should not be added to gateway for userSpecificList servers")
