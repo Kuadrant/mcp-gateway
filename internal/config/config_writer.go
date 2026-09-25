@@ -300,6 +300,28 @@ func (srw *SecretReaderWriter) WriteGatewayConfig(ctx context.Context, gwCfg *Ga
 	})
 }
 
+// GatewayGuardrailsResolved reports whether WriteGatewayConfig has stored a
+// resolved globalGuardrails config in the config secret. A missing secret is
+// reported as unresolved.
+func (srw *SecretReaderWriter) GatewayGuardrailsResolved(ctx context.Context, namespaceName types.NamespacedName) (bool, error) {
+	configSecret := &corev1.Secret{}
+	if err := srw.Client.Get(ctx, namespaceName, configSecret); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read config secret: %w", err)
+	}
+	raw := configSecret.Data[configFileName]
+	if s, ok := configSecret.StringData[configFileName]; ok {
+		raw = []byte(s)
+	}
+	cfg := &BrokerConfig{}
+	if err := yaml.Unmarshal(raw, cfg); err != nil {
+		return false, fmt.Errorf("failed to unmarshal broker config: %w", err)
+	}
+	return cfg.GlobalGuardrails != nil, nil
+}
+
 // globalGuardrailsEqual reports whether two possibly-nil GuardrailsConfig
 // values are equivalent, to avoid a no-op Secret update.
 func globalGuardrailsEqual(a, b *GuardrailsConfig) bool {

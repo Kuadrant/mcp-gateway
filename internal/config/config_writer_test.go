@@ -154,6 +154,33 @@ func TestUpsertMCPServerRejectsInvalidGlobalGuardrails(t *testing.T) {
 	}
 }
 
+func TestGatewayGuardrailsResolved(t *testing.T) {
+	srw := newTestSecretReaderWriter(t)
+	ctx := context.Background()
+	namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
+
+	assertResolved := func(want bool) {
+		t.Helper()
+		got, err := srw.GatewayGuardrailsResolved(ctx, namespaceName)
+		if err != nil {
+			t.Fatalf("GatewayGuardrailsResolved: %v", err)
+		}
+		if got != want {
+			t.Fatalf("GatewayGuardrailsResolved = %v, want %v", got, want)
+		}
+	}
+
+	assertResolved(false)
+	if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{}, namespaceName); err != nil {
+		t.Fatalf("WriteGatewayConfig: %v", err)
+	}
+	assertResolved(false)
+	if err := srw.WriteGatewayConfig(ctx, &GatewayConfig{Guardrails: &GuardrailsConfig{URL: "https://rails.internal", Model: "test-model"}}, namespaceName); err != nil {
+		t.Fatalf("WriteGatewayConfig: %v", err)
+	}
+	assertResolved(true)
+}
+
 func TestRemoveMCPServer_RemovesFromConfig(t *testing.T) {
 	srw := newTestSecretReaderWriter(t)
 	ctx := context.Background()

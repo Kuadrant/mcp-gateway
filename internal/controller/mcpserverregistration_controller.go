@@ -69,7 +69,12 @@ const (
 	// guardrailsNotAppliedRequeueTime polls for the gateway config write, which
 	// may land without an MCPGatewayExtension change event
 	guardrailsNotAppliedRequeueTime = 10 * time.Second
+	// guardrailsUnresolvedRequeueTime polls for the gateway config write, which
+	// may land without an MCPGatewayExtension change event
+	guardrailsUnresolvedRequeueTime = 10 * time.Second
 )
+
+var errGatewayGuardrailsUnresolved = errors.New("guardrails configuration not yet resolved")
 
 // ServerInfo holds server information
 type ServerInfo struct {
@@ -87,6 +92,9 @@ type MCPServerConfigReaderWriter interface {
 	UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error
 	// RemoveMCPServer removes a server from all config secrets cluster-wide
 	RemoveMCPServer(ctx context.Context, serverName string) error
+	// GatewayGuardrailsResolved reports whether gateway-level guardrails have
+	// been written to the config secret
+	GatewayGuardrailsResolved(ctx context.Context, namespaceName types.NamespacedName) (bool, error)
 }
 
 // MCPReconciler reconciles both MCPServerRegistration and MCPVirtualServer resources
@@ -258,6 +266,12 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if err := requireGatewayGuardrails(validExts, parseGuardrailsConfigIDs(mcpsr.Annotations)); err != nil {
 		return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{})
 	}
+	if err := r.requireResolvedGatewayGuardrails(ctx, validExts); err != nil {
+		if errors.Is(err, errGatewayGuardrailsUnresolved) {
+			return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsUnresolvedRequeueTime})
+		}
+		return ctrl.Result{}, err
+	}
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
@@ -335,6 +349,26 @@ func (r *MCPReconciler) rejectForGuardrails(ctx context.Context, mcpsr *mcpv1.MC
 		return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 	}
 	return result, nil
+}
+
+// requireResolvedGatewayGuardrails returns errGatewayGuardrailsUnresolved when
+// an extension sets guardrails-ref but its config has no resolved gateway
+// guardrails, e.g. because an earlier extension validation failed before
+// WriteGatewayConfig. Without this, servers would be published unchecked.
+func (r *MCPReconciler) requireResolvedGatewayGuardrails(ctx context.Context, exts []*mcpv1.MCPGatewayExtension) error {
+	for _, ext := range exts {
+		if ext.Annotations[labelGuardrailsReference] == "" {
+			continue
+		}
+		resolved, err := r.ConfigReaderWriter.GatewayGuardrailsResolved(ctx, config.NamespaceName(ext.Namespace))
+		if err != nil {
+			return err
+		}
+		if !resolved {
+			return fmt.Errorf("MCPGatewayExtension %s/%s: %w", ext.Namespace, ext.Name, errGatewayGuardrailsUnresolved)
+		}
+	}
+	return nil
 }
 
 // parseGuardrailsConfigIDs splits ManagedGuardrailsAnnotation into trimmed,
