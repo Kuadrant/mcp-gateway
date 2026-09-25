@@ -3,7 +3,8 @@
 package e2e
 
 import (
-	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -53,11 +54,6 @@ func createNemoGuardrailsSecret(namespace string) *corev1.Secret {
 	}
 }
 
-// toolCaller lets one helper cover both the stateful and stateless SDK clients.
-type toolCaller interface {
-	CallTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error)
-}
-
 // simCompletions sums the sim's vllm:request_success_total, read through the API
 // server proxy. every NeMo check calls the sim, so a rise means the check ran.
 func simCompletions() (int, error) {
@@ -84,14 +80,31 @@ func simCompletions() (int, error) {
 // callGuardedToolAndExpectVerdict accepts an allowed result or a block, as a
 // JSON-RPC error or an isError result. the sim's verdict is meaningless; the
 // assertion is that its completion count rose, so a skipped check can't pass.
-func callGuardedToolAndExpectVerdict(c toolCaller, toolName string) {
+func callGuardedToolAndExpectVerdict(c *mcp.ClientSession, toolName string) {
 	before, err := simCompletions()
 	Expect(err).NotTo(HaveOccurred())
 
-	res, err := c.CallTool(ctx, &mcp.CallToolParams{
-		Name:      toolName,
-		Arguments: map[string]string{"name": "e2e"},
-	})
+	var res *mcp.CallToolResult
+	if c.InitializeResult().ProtocolVersion == "2025-11-25" {
+		// the SDK drops SSE error bodies on HTTP 403.
+		status, body, _, callErr := mcpCallToolRaw(NemoGuardrailsGatewayURL, c.ID(), toolName, map[string]any{"name": "e2e"}, nil)
+		Expect(callErr).NotTo(HaveOccurred())
+		Expect(status).To(BeElementOf(http.StatusOK, http.StatusForbidden), "tools/call body: %s", body)
+		if status == http.StatusForbidden {
+			rpcErr, parseErr := parseSSEError(body)
+			Expect(parseErr).NotTo(HaveOccurred())
+			err = errors.New(rpcErr.Message)
+		} else {
+			result, parseErr := parseSSEResult([]byte(body))
+			Expect(parseErr).NotTo(HaveOccurred())
+			err = json.Unmarshal(result, &res)
+		}
+	} else {
+		res, err = c.CallTool(ctx, &mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: map[string]string{"name": "e2e"},
+		})
+	}
 	if err != nil {
 		Expect(err.Error()).To(ContainSubstring("blocked by guardrails"), "unexpected error: %v", err)
 	} else {
@@ -126,25 +139,7 @@ var _ = Describe("NeMo Guardrails", Ordered, func() {
 			g.Expect(WaitForDeploymentReady(ctx, TestServerNameSpace, "nemo-guardrails-custom")).To(Succeed())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed(), "nemo-guardrails-custom "+notDeployed)
 
-		By("creating nemo-guardrails namespace")
-		ns := &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   nemoGuardrailsNamespace,
-				Labels: map[string]string{"e2e": "test"},
-			},
-		}
-		_ = k8sClient.Delete(ctx, ns)
-		Eventually(func(g Gomega) {
-			err := k8sClient.Create(ctx, ns)
-			g.Expect(client.IgnoreAlreadyExists(err)).NotTo(HaveOccurred())
-		}, TestTimeoutShort, TestRetryInterval).Should(Succeed())
-
-		By("creating the guardrails config Secret")
-		secret := createNemoGuardrailsSecret(nemoGuardrailsNamespace)
-		_ = k8sClient.Delete(ctx, secret)
-		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-
-		By("creating MCPGatewayExtension targeting the nemo-guardrails listener, with guardrails-ref set")
+		By("cleaning up the previous nemo-guardrails test environment")
 		nemoExt = NewMCPGatewayExtensionSetup(k8sClient).
 			WithName(nemoGuardrailsExtName).
 			InNamespace(nemoGuardrailsNamespace).
@@ -153,7 +148,24 @@ var _ = Describe("NeMo Guardrails", Ordered, func() {
 			WithPublicHost(NemoGuardrailsPublicHost).
 			Build()
 		nemoExt.GetExtension().Annotations = map[string]string{guardrailsRefAnnotation: nemoGuardrailsSecretName}
-		nemoExt.Clean(ctx).Register(ctx)
+		nemoExt.Clean(ctx)
+
+		By("creating nemo-guardrails namespace")
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   nemoGuardrailsNamespace,
+				Labels: map[string]string{"e2e": "test"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+		nemoExt.createdNamespace = true
+
+		By("creating the guardrails config Secret")
+		secret := createNemoGuardrailsSecret(nemoGuardrailsNamespace)
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+		By("creating MCPGatewayExtension targeting the nemo-guardrails listener, with guardrails-ref set")
+		nemoExt.Register(ctx)
 
 		By("waiting for the MCPGatewayExtension to resolve guardrails and become ready")
 		Eventually(func(g Gomega) {
