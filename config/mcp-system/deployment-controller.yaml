@@ -21,7 +21,7 @@ spec:
       serviceAccountName: mcp-controller
       containers:
         - name: mcp-controller
-          image: ghcr.io/kuadrant/mcp-controller:v1.0.0
+          image: ghcr.io/kuadrant/mcp-controller:v1.0.1
           imagePullPolicy: IfNotPresent
           command:
             - ./mcp_controller
