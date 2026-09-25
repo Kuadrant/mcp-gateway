@@ -3,7 +3,6 @@ package upstream
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
+	"github.com/Kuadrant/mcp-gateway/internal/tlsutil"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -122,19 +122,9 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	base.ResponseHeaderTimeout = defaultResponseHeaderTimeout
 
 	if up.gatewayCACertPEM != "" || up.CACert != "" {
-		rootCAs, err := x509.SystemCertPool()
+		rootCAs, err := tlsutil.BuildCertPool(up.gatewayCACertPEM, up.CACert)
 		if err != nil {
-			rootCAs = x509.NewCertPool()
-		}
-		if up.gatewayCACertPEM != "" {
-			if !rootCAs.AppendCertsFromPEM([]byte(up.gatewayCACertPEM)) {
-				return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
-			}
-		}
-		if up.CACert != "" {
-			if !rootCAs.AppendCertsFromPEM([]byte(up.CACert)) {
-				return nil, fmt.Errorf("failed to parse CA certificate PEM for upstream %s", up.Name)
-			}
+			return nil, fmt.Errorf("upstream %s: %w", up.Name, err)
 		}
 		base.TLSClientConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,

@@ -271,7 +271,8 @@ func TestBuildHTTPClient_WithInvalidPEM(t *testing.T) {
 	}, "", nil)
 	_, err := up.buildHTTPClient()
 	require.Error(t, err, "should error on invalid PEM")
-	require.Contains(t, err.Error(), "failed to parse CA certificate")
+	require.Contains(t, err.Error(), "failed to parse per-server CA certificate")
+	require.Contains(t, err.Error(), "bad-ca", "error should name the upstream")
 }
 
 func TestBuildHTTPClient_TLSConnection(t *testing.T) {
