@@ -422,12 +422,17 @@ func TestParseGuardrailsConfigIDs(t *testing.T) {
 			annotations: map[string]string{ManagedGuardrailsAnnotation: " a, ,b "},
 			want:        []string{"a", "b"},
 		},
+		{
+			name:        "present but no usable IDs",
+			annotations: map[string]string{ManagedGuardrailsAnnotation: " , "},
+			want:        []string{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseGuardrailsConfigIDs(tt.annotations)
-			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
-				t.Fatalf("parseGuardrailsConfigIDs = %v, want %v", got, tt.want)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") || (got == nil) != (tt.want == nil) {
+				t.Fatalf("parseGuardrailsConfigIDs = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -451,6 +456,17 @@ func TestRequireGatewayGuardrails(t *testing.T) {
 		}}, nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("error when annotation is present but has no IDs", func(t *testing.T) {
+		err := requireGatewayGuardrails([]*mcpv1.MCPGatewayExtension{{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gw", Namespace: "ns",
+				Annotations: map[string]string{labelGuardrailsReference: "rails"},
+			},
+		}}, []string{})
+		if err == nil {
+			t.Fatal("expected error")
 		}
 	})
 	t.Run("error when an extension has no guardrails-ref", func(t *testing.T) {
@@ -506,4 +522,5 @@ func TestRequireGatewayGuardrails(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+
 }

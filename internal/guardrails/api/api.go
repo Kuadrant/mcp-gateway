@@ -5,7 +5,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
 	"slices"
+	"strings"
 )
 
 // Config holds the resolved guardrails server config parsed from
@@ -22,6 +26,52 @@ const (
 	FailModeDeny  = "deny"
 	FailModeAllow = "allow"
 )
+
+// Validate checks the resolved guardrails configuration before it is published
+// to the broker or used to construct an outbound checker. Literal local and
+// private destinations are rejected; DNS names remain supported for in-cluster
+// guardrails services.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("guardrails config is nil")
+	}
+	if c.URL == "" {
+		return fmt.Errorf("url is required")
+	}
+
+	parsed, err := url.Parse(c.URL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Hostname() == "" {
+		return fmt.Errorf("url %q is not a valid absolute URL", c.URL)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("url scheme must be http or https, got %q", parsed.Scheme)
+	}
+
+	host := parsed.Hostname()
+	normalizedHost := strings.TrimSuffix(strings.ToLower(host), ".")
+	if normalizedHost == "localhost" || strings.HasSuffix(normalizedHost, ".localhost") {
+		return fmt.Errorf("url must not target a private or loopback address")
+	}
+	ipHost := strings.TrimSuffix(host, ".")
+	if zone := strings.LastIndexByte(ipHost, '%'); zone >= 0 {
+		ipHost = ipHost[:zone]
+	}
+	if ip := net.ParseIP(ipHost); ip != nil &&
+		(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
+		return fmt.Errorf("url must not target a private or loopback address")
+	}
+
+	if c.Model == "" {
+		return fmt.Errorf("model is required")
+	}
+	switch c.FailMode {
+	case "", FailModeDeny, FailModeAllow:
+		return nil
+	default:
+		return fmt.Errorf("failMode must be %q or %q, got %q", FailModeDeny, FailModeAllow, c.FailMode)
+	}
+}
 
 // Equal reports whether c and other represent the same guardrails config.
 // nil equals nil; empty FailMode is treated as FailModeDeny.

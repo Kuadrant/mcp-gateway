@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -63,6 +65,10 @@ const (
 
 	// ManagedGuardrailsAnnotation is the annotation for the guardrails config IDs
 	ManagedGuardrailsAnnotation = "mcp.kuadrant.io/guardrails-config-ids"
+
+	// guardrailsNotAppliedRequeueTime polls for the gateway config write, which
+	// may land without an MCPGatewayExtension change event
+	guardrailsNotAppliedRequeueTime = 10 * time.Second
 )
 
 // ServerInfo holds server information
@@ -250,16 +256,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 
 	if err := requireGatewayGuardrails(validExts, parseGuardrailsConfigIDs(mcpsr.Annotations)); err != nil {
-		if rmErr := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); rmErr != nil {
-			return ctrl.Result{}, rmErr
-		}
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonGatewayGuardrailsNotConfigured, err.Error()); err != nil {
-			if apierrors.IsConflict(err) {
-				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{})
 	}
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
@@ -275,6 +272,9 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
+			if errors.Is(err, config.ErrGatewayGuardrailsNotApplied) {
+				return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsNotAppliedRequeueTime})
+			}
 			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -322,14 +322,27 @@ func mcpServerName(mcp *mcpv1.MCPServerRegistration) string {
 	)
 }
 
-// parseGuardrailsConfigIDs splits ManagedGuardrailsAnnotation into trimmed,
-// non-empty config IDs. Returns nil when unset.
-func parseGuardrailsConfigIDs(annotations map[string]string) []string {
-	if annotations == nil {
-		return nil
+// rejectForGuardrails withdraws the server from every config and marks the
+// registration GatewayGuardrailsNotConfigured, returning result on success.
+func (r *MCPReconciler) rejectForGuardrails(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, cause error, result ctrl.Result) (ctrl.Result, error) {
+	if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
+		return ctrl.Result{}, err
 	}
-	raw := annotations[ManagedGuardrailsAnnotation]
-	if raw == "" {
+	if err := r.updateStatus(ctx, mcpsr, false, conditionReasonGatewayGuardrailsNotConfigured, cause.Error()); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+	}
+	return result, nil
+}
+
+// parseGuardrailsConfigIDs splits ManagedGuardrailsAnnotation into trimmed,
+// non-empty config IDs. Returns nil when unset and a non-nil empty slice when
+// set but containing no usable IDs.
+func parseGuardrailsConfigIDs(annotations map[string]string) []string {
+	raw, ok := annotations[ManagedGuardrailsAnnotation]
+	if !ok {
 		return nil
 	}
 	parts := strings.Split(raw, ",")
@@ -352,6 +365,9 @@ func parseGuardrailsConfigIDs(annotations map[string]string) []string {
 // secret, etc.) that must not block a registration that only depends on
 // guardrails being resolved.
 func requireGatewayGuardrails(exts []*mcpv1.MCPGatewayExtension, perServerIDs []string) error {
+	if perServerIDs != nil && len(perServerIDs) == 0 {
+		return fmt.Errorf("%s annotation contains no config IDs", ManagedGuardrailsAnnotation)
+	}
 	for _, ext := range exts {
 		if cond := meta.FindStatusCondition(ext.Status.Conditions, mcpv1.ConditionTypeGuardrailsResolved); cond != nil &&
 			cond.Status == metav1.ConditionFalse {
@@ -380,7 +396,9 @@ func mcpServerRegistrationPredicate() predicate.Predicate {
 			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
 				return true
 			}
-			return e.ObjectOld.GetAnnotations()[ManagedGuardrailsAnnotation] != e.ObjectNew.GetAnnotations()[ManagedGuardrailsAnnotation]
+			oldIDs, oldOK := e.ObjectOld.GetAnnotations()[ManagedGuardrailsAnnotation]
+			newIDs, newOK := e.ObjectNew.GetAnnotations()[ManagedGuardrailsAnnotation]
+			return oldOK != newOK || oldIDs != newIDs
 		},
 	}
 }
