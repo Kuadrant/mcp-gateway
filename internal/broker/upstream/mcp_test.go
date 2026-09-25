@@ -846,6 +846,37 @@ func TestCacheMetadata_PopulatedFromListTools(t *testing.T) {
 	require.Equal(t, "public", meta.CacheScope)
 }
 
+// TestCacheMetadata_OverrideWinsOverAdvertised proves the CacheScopeOverride is
+// applied through ListTools: the upstream advertises "public" (SDK default),
+// but a "private" override takes effect on the captured metadata. This is the
+// path an operator uses to force a private-scope server's catalog to "public"
+// so it federates without a prefix.
+func TestCacheMetadata_OverrideWinsOverAdvertised(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, nil)
+	srv.AddTool(&mcp.Tool{
+		Name:        "t1",
+		Description: "test tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, CacheScopeOverride: CacheScopePrivate}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+
+	// upstream advertised "public", override forces "private"
+	require.Equal(t, CacheScopePrivate, up.ToolsCacheMetadata().CacheScope)
+}
+
 func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {
 	up := NewUpstreamMCP(&config.MCPServer{Name: "indep"}, "", nil)
 

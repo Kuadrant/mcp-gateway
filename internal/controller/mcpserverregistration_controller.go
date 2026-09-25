@@ -639,6 +639,7 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 		UserSpecificList:          userSpecificListEnabled,
 		Tags:                      append([]string(nil), mcpsr.Spec.Tags...),
 		SupportedProtocolVersions: append([]string(nil), mcpsr.Spec.SupportedProtocolVersions...),
+		CacheScopeOverride:        strings.ToLower(string(mcpsr.Spec.CacheScope)),
 		GuardrailsConfigIDs:       parseGuardrailsConfigIDs(mcpsr.Annotations),
 	}
 

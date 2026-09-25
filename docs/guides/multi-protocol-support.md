@@ -57,6 +57,44 @@ cross-version compatibility — it only forces classification against the versio
 you list. Prefer fixing the upstream's `server/discover` advertisement where you
 can, and use this field only when you cannot.
 
+### Overriding an upstream's cache scope
+
+A private-scope upstream returns per-user list results, so its tool names are
+not in the shared routing table and cannot be routed by the router's prefix
+fallback. The gateway therefore excludes a private-scope server's tools from
+`tools/list` when it has no `prefix`. Under the `2026-07-28` cache-metadata
+semantics an unspecified `cacheScope` defaults to `private`, so a server that
+never opts into caching still presents as private — even when its tool catalog
+is actually static and identical for every user.
+
+Set `spec.cacheScope: Public` on the `MCPServerRegistration` to declare such a
+catalog shared. The gateway then treats the upstream's cacheable list results as
+public, so its tools land in the shared routing table and federate without a
+`prefix`. This is useful for servers that default to `private` for a catalog
+that is genuinely shared, and for servers that already self-prefix their tool
+names (where adding a routing `prefix` would double it). Leave the field unset
+to use the scope from the upstream's list responses.
+
+```yaml
+apiVersion: mcp.kuadrant.io/v1
+kind: MCPServerRegistration
+metadata:
+  name: example
+spec:
+  targetRef: { ... }
+  # This upstream's tool catalog is static and identical for every user, but it
+  # advertises (or defaults to) private; declare it public so its tools federate
+  # without a prefix.
+  cacheScope: Public
+```
+
+Only set `Public` for a catalog that really is shared across users: the gateway
+will place its tools in the shared routing table, so marking a genuinely
+per-user catalog public will make its tool calls unroutable. This is a
+last-resort override for servers that report a private scope for an
+actually-shared catalog; it does not change how the upstream itself caches
+results.
+
 ## Which tools each client sees
 
 `tools/list` returns only tools from protocol-compatible backends:

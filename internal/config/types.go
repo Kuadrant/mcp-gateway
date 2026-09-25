@@ -249,6 +249,10 @@ type MCPServer struct {
 	// the broker treats this upstream as supporting instead of those learned
 	// from server/discover.
 	SupportedProtocolVersions []string `json:"supportedProtocolVersions,omitempty" yaml:"supportedProtocolVersions,omitempty"`
+	// CacheScopeOverride, when non-empty ("public"/"private"), overrides the
+	// cache scope the broker treats this upstream's cacheable list results as
+	// advertising, instead of the scope from the upstream's list responses.
+	CacheScopeOverride string `json:"cacheScopeOverride,omitempty" yaml:"cacheScopeOverride,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
@@ -279,6 +283,7 @@ func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 		existingConfig.CACert != mcpServer.CACert ||
 		normalizeState(existingConfig.State) != normalizeState(mcpServer.State) ||
 		existingConfig.UserSpecificList != mcpServer.UserSpecificList ||
+		existingConfig.CacheScopeOverride != mcpServer.CacheScopeOverride ||
 		existingConfig.Hint != mcpServer.Hint ||
 		guardrailsConfigChanged(existingConfig.GuardrailsConfigIDs, mcpServer.GuardrailsConfigIDs) ||
 		tokenURLElicitationChanged(mcpServer.TokenURLElicitation, existingConfig.TokenURLElicitation) {

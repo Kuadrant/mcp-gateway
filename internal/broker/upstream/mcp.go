@@ -507,6 +507,17 @@ func resolveSupportedVersions(override, captured []string, negotiated string) []
 	return versions
 }
 
+// resolveCacheScope determines the cache scope the broker treats an upstream's
+// cacheable list results as advertising. A non-empty operator override wins;
+// otherwise the scope advertised on the upstream's list response is used
+// unchanged.
+func resolveCacheScope(override, advertised string) string {
+	if override != "" {
+		return override
+	}
+	return advertised
+}
+
 // SupportedVersions returns the list of protocol versions this upstream supports.
 // Returns nil if not yet connected (init is nil).
 func (up *MCPServer) SupportedVersions() []string {
@@ -591,7 +602,7 @@ func (up *MCPServer) ListPrompts(ctx context.Context) (*mcp.ListPromptsResult, e
 	// partial update: preserve UserSpecificList set at construction
 	up.clientMu.Lock()
 	up.promptsCacheMeta.TTLMs = result.TTLMs
-	up.promptsCacheMeta.CacheScope = result.CacheScope
+	up.promptsCacheMeta.CacheScope = resolveCacheScope(up.CacheScopeOverride, result.CacheScope)
 	up.clientMu.Unlock()
 	return result, nil
 }
@@ -609,7 +620,7 @@ func (up *MCPServer) ListTools(ctx context.Context) (*mcp.ListToolsResult, error
 	// partial update: preserve UserSpecificList set at construction
 	up.clientMu.Lock()
 	up.toolsCacheMeta.TTLMs = result.TTLMs
-	up.toolsCacheMeta.CacheScope = result.CacheScope
+	up.toolsCacheMeta.CacheScope = resolveCacheScope(up.CacheScopeOverride, result.CacheScope)
 	up.clientMu.Unlock()
 	return result, nil
 }

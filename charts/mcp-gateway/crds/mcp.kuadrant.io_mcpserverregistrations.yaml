@@ -90,6 +90,21 @@ spec:
                 required:
                 - name
                 type: object
+              cacheScope:
+                description: |-
+                  cacheScope overrides the cache scope the broker treats this upstream's
+                  cacheable list results as advertising. By default the broker uses the
+                  scope from the upstream's list responses (an unspecified scope defaults to
+                  Private). A private-scope server with no prefix has its tools excluded from
+                  tools/list because per-user catalogs are unroutable without a prefix. Set
+                  Public to have the broker treat the catalog as shared so its tools federate
+                  without a prefix. This is a last-resort override for servers that report a
+                  private scope for a catalog that is actually shared; it does not change how
+                  the upstream itself caches results.
+                enum:
+                - Public
+                - Private
+                type: string
               category:
                 default:
                 - uncategorised

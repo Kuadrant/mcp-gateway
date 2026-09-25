@@ -27,6 +27,18 @@ const (
 	UserSpecificListDisabled UserSpecificListPolicy = "Disabled"
 )
 
+// CacheScopePolicy overrides the cache scope the broker treats this server's
+// cacheable list results as advertising.
+// +kubebuilder:validation:Enum=Public;Private
+type CacheScopePolicy string
+
+const (
+	// CacheScopePublic treats the server's catalog as shared across users
+	CacheScopePublic CacheScopePolicy = "Public"
+	// CacheScopePrivate treats the server's catalog as per-user
+	CacheScopePrivate CacheScopePolicy = "Private"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:storageversion
@@ -161,6 +173,18 @@ type MCPServerRegistrationSpec struct {
 	// +kubebuilder:validation:MaxItems=10
 	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 	SupportedProtocolVersions []string `json:"supportedProtocolVersions,omitempty"`
+
+	// cacheScope overrides the cache scope the broker treats this upstream's
+	// cacheable list results as advertising. By default the broker uses the
+	// scope from the upstream's list responses (an unspecified scope defaults to
+	// Private). A private-scope server with no prefix has its tools excluded from
+	// tools/list because per-user catalogs are unroutable without a prefix. Set
+	// Public to have the broker treat the catalog as shared so its tools federate
+	// without a prefix. This is a last-resort override for servers that report a
+	// private scope for a catalog that is actually shared; it does not change how
+	// the upstream itself caches results.
+	// +optional
+	CacheScope CacheScopePolicy `json:"cacheScope,omitempty"`
 }
 
 // TokenURLElicitationConfig configures per-user token collection via URL elicitation.
