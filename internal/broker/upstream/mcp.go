@@ -173,11 +173,12 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	// Authorization last and wins over anything in up.headers
 	var inner http.RoundTripper = base
 	if up.OAuth2 != nil {
-		ts, err := up.tokenSource()
-		if err != nil {
+		// resolve once so a bad token URL fails the connect rather than the
+		// first request. the transport holds the indirection, not this source
+		if _, err := up.tokenSource(); err != nil {
 			return nil, err
 		}
-		inner = &tokenInvalidator{base: &oauth2.Transport{Source: ts, Base: base}, up: up}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up}, Base: base}, up: up}
 	}
 
 	up.dc = &discoverCapture{
@@ -205,6 +206,23 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 		t.up.invalidateTokenSource()
 	}
 	return resp, err
+}
+
+// dynamicTokenSource resolves the upstream's source per request instead of
+// capturing it when the transport is built. an oauth2.Transport holding the
+// source directly would keep serving a token that invalidateTokenSource
+// already dropped, since nothing re-reads up.tokenSrc until the next Connect
+// and Connect is a no-op while the session lives.
+type dynamicTokenSource struct {
+	up *MCPServer
+}
+
+func (d dynamicTokenSource) Token() (*oauth2.Token, error) {
+	ts, err := d.up.tokenSource()
+	if err != nil {
+		return nil, err
+	}
+	return ts.Token()
 }
 
 // sanitizedTokenSource replaces the oauth2 package's token error, which quotes
