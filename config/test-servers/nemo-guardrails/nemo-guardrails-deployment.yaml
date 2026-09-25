@@ -1,0 +1,47 @@
+# Standalone NeMo Guardrails server (config_id "phi3-judge") for e2e tests.
+# Judge model is llm-d-inference-sim (llm-inference-sim-deployment.yaml)
+# instead of a real LLM - no KServe, no TLS, no auth needed to run it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nemo-guardrails-custom
+  labels:
+    app: nemo-guardrails-custom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nemo-guardrails-custom
+  template:
+    metadata:
+      labels:
+        app: nemo-guardrails-custom
+    spec:
+      containers:
+        - name: nemo-guardrails
+          # pinned: the gateway parses /v1/checks status values (passed/modified/blocked),
+          # so a server update that renames them breaks every check. bump deliberately.
+          image: quay.io/trustyai/nemo-guardrails-server@sha256:bf08994e25d84f03b5182f5505cb8358e99e2d5a8879a64728322fd569b6c327
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          env:
+            - name: CONFIG_ID
+              value: phi3-judge
+            - name: SIM_API_KEY
+              value: "not-required"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: phi3-judge-config-volume
+              mountPath: /app/config/phi3-judge
+      volumes:
+        - name: phi3-judge-config-volume
+          configMap:
+            name: nemo-phi3-as-judge-model-config

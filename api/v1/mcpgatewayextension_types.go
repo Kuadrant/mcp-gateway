@@ -69,6 +69,14 @@ const (
 	// GuardrailsSecretNotFound is the reason seen when the guardrails secret referenced
 	// by the guardrails-ref annotation is not found
 	GuardrailsSecretNotFound = "GuardrailsSecretNotFound"
+	// GuardrailsSecretInvalid is the reason seen when the guardrails secret referenced
+	// by the guardrails-ref annotation exists but is malformed.
+	GuardrailsSecretInvalid = "GuardrailsSecretInvalid"
+	// ConditionTypeGuardrailsResolved signals whether the guardrails secret referenced
+	// by the guardrails-ref annotation resolved. Absent when the annotation is unset.
+	ConditionTypeGuardrailsResolved = "GuardrailsResolved"
+	// ConditionReasonGuardrailsResolved is the reason when the guardrails secret resolved
+	ConditionReasonGuardrailsResolved = "GuardrailsSecretResolved"
 )
 
 // MCPGatewayExtensionSpec defines the desired state of MCPGatewayExtension.
@@ -334,6 +342,18 @@ type MCPGatewayExtensionTargetReference struct {
 func (m *MCPGatewayExtension) SetReadyCondition(status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&m.Status.Conditions, metav1.Condition{
 		Type:               ConditionTypeReady,
+		Status:             status,
+		ObservedGeneration: m.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+}
+
+// SetGuardrailsResolvedCondition sets the GuardrailsResolved condition and
+// reports whether it changed.
+func (m *MCPGatewayExtension) SetGuardrailsResolvedCondition(status metav1.ConditionStatus, reason, message string) bool {
+	return meta.SetStatusCondition(&m.Status.Conditions, metav1.Condition{
+		Type:               ConditionTypeGuardrailsResolved,
 		Status:             status,
 		ObservedGeneration: m.Generation,
 		Reason:             reason,

@@ -108,6 +108,24 @@ func TestNewUpstreamMCP_WithCACert(t *testing.T) {
 	require.Equal(t, testServer.CACert, cfg.CACert)
 }
 
+func TestNewUpstreamMCP_WithGuardrailsConfigIDs(t *testing.T) {
+	testServer := config.MCPServer{
+		Name:                "test-server",
+		URL:                 "http://localhost:8088/mcp",
+		Prefix:              "",
+		State:               string(mcpv1.ServerStateEnabled),
+		Hostname:            "dummy",
+		GuardrailsConfigIDs: []string{"phi3-judge-everything"},
+	}
+	up := NewUpstreamMCP(&testServer, "", nil)
+	require.NotNil(t, up)
+	cfg := up.GetConfig()
+
+	// preserve per-server guardrails IDs in the config snapshot.
+	require.Equal(t, testServer.GuardrailsConfigIDs, cfg.GuardrailsConfigIDs)
+	require.Equal(t, testServer, cfg)
+}
+
 func generateSelfSignedCA(t *testing.T) (certPEM []byte, key *ecdsa.PrivateKey, cert *x509.Certificate) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

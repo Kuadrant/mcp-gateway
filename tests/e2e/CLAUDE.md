@@ -14,7 +14,8 @@ the PR gate until it graduates. For a quick local happy-path run use `make test-
 
 Tags currently in use: `[Happy]`, `[Full]`, `[multi-gateway]`, `[Auth]`, `[CACertBundle]`,
 `[Elicitation]`, `[Negative]`, `[URLElicitation]`, `[UserSpecificList]`,
-`[Security]`, `[Protocol2026]`, `[DualProtocol]`, `[A2A]`. Tags can combine, e.g. `[Happy,Protocol2026]`.
+`[Security]`, `[Protocol2026]`, `[DualProtocol]`, `[A2A]`, `[NemoGuardrails]`. Tags can combine,
+e.g. `[Happy,Protocol2026]`.
 
 ## E2E Test Reliability
 - Tests use broker `/status` endpoint for reliable server registration checks (not log parsing)
