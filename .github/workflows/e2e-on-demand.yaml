@@ -153,6 +153,10 @@ jobs:
         if: needs.check-permission.outputs.suite == 'happy'
         run: make test-e2e-happy E2E_PROCS=4
 
+      - name: Deploy NeMo guardrails test servers
+        if: needs.check-permission.outputs.suite == 'full'
+        run: make deploy-nemo-guardrails-test-servers
+
       - name: Run E2E tests (full)
         if: needs.check-permission.outputs.suite == 'full'
         run: make test-e2e-ci-full E2E_PROCS=4

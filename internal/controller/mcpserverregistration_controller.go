@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -56,10 +59,22 @@ const (
 	// conditionReasonPrefixConflict is the reason used when another active MCPServerRegistration
 	// feeding the same MCPGatewayExtension already uses this prefix
 	conditionReasonPrefixConflict = "PrefixConflict"
+	// conditionReasonGatewayGuardrailsNotConfigured is used when the gateway
+	// can't enforce the rails this registration requires
+	conditionReasonGatewayGuardrailsNotConfigured = "GatewayGuardrailsNotConfigured"
 
 	// ManagedGuardrailsAnnotation is the annotation for the guardrails config IDs
 	ManagedGuardrailsAnnotation = "mcp.kuadrant.io/guardrails-config-ids"
+
+	// guardrailsNotAppliedRequeueTime polls for the gateway config write, which
+	// may land without an MCPGatewayExtension change event
+	guardrailsNotAppliedRequeueTime = 10 * time.Second
+	// guardrailsUnresolvedRequeueTime polls for the gateway config write, which
+	// may land without an MCPGatewayExtension change event
+	guardrailsUnresolvedRequeueTime = 10 * time.Second
 )
+
+var errGatewayGuardrailsUnresolved = errors.New("guardrails configuration not yet resolved")
 
 // ServerInfo holds server information
 type ServerInfo struct {
@@ -77,6 +92,9 @@ type MCPServerConfigReaderWriter interface {
 	UpsertMCPServer(ctx context.Context, server config.MCPServer, namespaceName types.NamespacedName) error
 	// RemoveMCPServer removes a server from all config secrets cluster-wide
 	RemoveMCPServer(ctx context.Context, serverName string) error
+	// GatewayGuardrailsResolved reports whether gateway-level guardrails have
+	// been written to the config secret
+	GatewayGuardrailsResolved(ctx context.Context, namespaceName types.NamespacedName) (bool, error)
 }
 
 // MCPReconciler reconciles both MCPServerRegistration and MCPVirtualServer resources
@@ -189,6 +207,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
+	var validExts []*mcpv1.MCPGatewayExtension
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -220,6 +239,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
+			validExts = append(validExts, vext)
 		}
 	}
 
@@ -243,6 +263,16 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return ctrl.Result{}, nil
 	}
 
+	if err := requireGatewayGuardrails(validExts, parseGuardrailsConfigIDs(mcpsr.Annotations)); err != nil {
+		return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{})
+	}
+	if err := r.requireResolvedGatewayGuardrails(ctx, validExts); err != nil {
+		if errors.Is(err, errGatewayGuardrailsUnresolved) {
+			return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsUnresolvedRequeueTime})
+		}
+		return ctrl.Result{}, err
+	}
+
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
 		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
@@ -256,6 +286,9 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 	for _, configNs := range validNamespaces {
 		if err := r.ConfigReaderWriter.UpsertMCPServer(ctx, *mcpServerconfig, config.NamespaceName(configNs)); err != nil {
+			if errors.Is(err, config.ErrGatewayGuardrailsNotApplied) {
+				return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsNotAppliedRequeueTime})
+			}
 			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -301,6 +334,107 @@ func mcpServerName(mcp *mcpv1.MCPServerRegistration) string {
 		mcp.Namespace,
 		mcp.Name,
 	)
+}
+
+// rejectForGuardrails withdraws the server from every config and marks the
+// registration GatewayGuardrailsNotConfigured, returning result on success.
+func (r *MCPReconciler) rejectForGuardrails(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, cause error, result ctrl.Result) (ctrl.Result, error) {
+	if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.updateStatus(ctx, mcpsr, false, conditionReasonGatewayGuardrailsNotConfigured, cause.Error()); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
+	}
+	return result, nil
+}
+
+// requireResolvedGatewayGuardrails returns errGatewayGuardrailsUnresolved when
+// an extension sets guardrails-ref but its config has no resolved gateway
+// guardrails, e.g. because an earlier extension validation failed before
+// WriteGatewayConfig. Without this, servers would be published unchecked.
+func (r *MCPReconciler) requireResolvedGatewayGuardrails(ctx context.Context, exts []*mcpv1.MCPGatewayExtension) error {
+	for _, ext := range exts {
+		if ext.Annotations[labelGuardrailsReference] == "" {
+			continue
+		}
+		resolved, err := r.ConfigReaderWriter.GatewayGuardrailsResolved(ctx, config.NamespaceName(ext.Namespace))
+		if err != nil {
+			return err
+		}
+		if !resolved {
+			return fmt.Errorf("MCPGatewayExtension %s/%s: %w", ext.Namespace, ext.Name, errGatewayGuardrailsUnresolved)
+		}
+	}
+	return nil
+}
+
+// parseGuardrailsConfigIDs splits ManagedGuardrailsAnnotation into trimmed,
+// non-empty config IDs. Returns nil when unset and a non-nil empty slice when
+// set but containing no usable IDs.
+func parseGuardrailsConfigIDs(annotations map[string]string) []string {
+	raw, ok := annotations[ManagedGuardrailsAnnotation]
+	if !ok {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// requireGatewayGuardrails fails closed when the gateway can't run the rails
+// this registration needs: an unresolved guardrails secret evicts everything
+// on that gateway; per-server IDs additionally require guardrails-ref, since
+// they only extend a gateway-level policy. Checks the dedicated
+// GuardrailsResolved condition rather than Ready, since Ready can be false
+// for reasons unrelated to guardrails (a bad CA bundle, trusted headers
+// secret, etc.) that must not block a registration that only depends on
+// guardrails being resolved.
+func requireGatewayGuardrails(exts []*mcpv1.MCPGatewayExtension, perServerIDs []string) error {
+	if perServerIDs != nil && len(perServerIDs) == 0 {
+		return fmt.Errorf("%s annotation contains no config IDs", ManagedGuardrailsAnnotation)
+	}
+	for _, ext := range exts {
+		if cond := meta.FindStatusCondition(ext.Status.Conditions, mcpv1.ConditionTypeGuardrailsResolved); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return fmt.Errorf("MCPGatewayExtension %s/%s guardrails unresolved: %s",
+				ext.Namespace, ext.Name, cond.Message)
+		}
+		if len(perServerIDs) > 0 && ext.Annotations[labelGuardrailsReference] == "" {
+			return fmt.Errorf("MCPGatewayExtension %s/%s has no %s annotation required by %s",
+				ext.Namespace, ext.Name, labelGuardrailsReference, ManagedGuardrailsAnnotation)
+		}
+	}
+	return nil
+}
+
+// mcpServerRegistrationPredicate reconciles on generation changes plus the
+// guardrails annotation, which doesn't bump generation.
+func mcpServerRegistrationPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			oldIDs, oldOK := e.ObjectOld.GetAnnotations()[ManagedGuardrailsAnnotation]
+			newIDs, newOK := e.ObjectNew.GetAnnotations()[ManagedGuardrailsAnnotation]
+			return oldOK != newOK || oldIDs != newIDs
+		},
+	}
 }
 
 // findValidGatewaysForMCPServer returns the gateways the httproute targeted by the MCPServerRegistration is the child of
@@ -495,17 +629,17 @@ func (r *MCPReconciler) buildMCPServerConfig(ctx context.Context, targetRoute *g
 	userSpecificListEnabled := mcpsr.Spec.UserSpecificList == mcpv1.UserSpecificListEnabled
 
 	serverConfig := config.MCPServer{
-		Name:             serverName,
-		URL:              endpoint,
-		Hostname:         serverInfo.Hostname,
-		Prefix:           mcpsr.Spec.Prefix,
-		State:            string(mcpsr.Spec.State),
-		Category:         append([]string(nil), mcpsr.Spec.Category...),
-		Hint:             mcpsr.Spec.Hint,
-		UserSpecificList: userSpecificListEnabled,
-		Tags:             append([]string(nil), mcpsr.Spec.Tags...),
-
+		Name:                      serverName,
+		URL:                       endpoint,
+		Hostname:                  serverInfo.Hostname,
+		Prefix:                    mcpsr.Spec.Prefix,
+		State:                     string(mcpsr.Spec.State),
+		Category:                  append([]string(nil), mcpsr.Spec.Category...),
+		Hint:                      mcpsr.Spec.Hint,
+		UserSpecificList:          userSpecificListEnabled,
+		Tags:                      append([]string(nil), mcpsr.Spec.Tags...),
 		SupportedProtocolVersions: append([]string(nil), mcpsr.Spec.SupportedProtocolVersions...),
+		GuardrailsConfigIDs:       parseGuardrailsConfigIDs(mcpsr.Annotations),
 	}
 
 	if mcpsr.Spec.TokenURLElicitation != nil {
@@ -805,7 +939,7 @@ func (r *MCPReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) 
 	}
 
 	controller := ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1.MCPServerRegistration{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&mcpv1.MCPServerRegistration{}, builder.WithPredicates(mcpServerRegistrationPredicate())).
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServerRegistrationsForHTTPRoute),

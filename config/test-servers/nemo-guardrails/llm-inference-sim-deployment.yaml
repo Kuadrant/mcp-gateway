@@ -1,0 +1,58 @@
+# Stand-in for a real judge LLM so nemo-guardrails-custom has a backend to
+# call in CI without needing KServe/GPUs. Same image/args opendatahub-tests
+# uses for its llm_d_inference_sim_isvc fixture, run as a plain
+# Deployment/Service instead of a KServe InferenceService - the container is
+# a standalone OpenAI-compatible server, KServe is not required to run it.
+# Responses are simulated, not real inference - e2e tests only assert that
+# guardrails checks round-trip end-to-end, not that verdicts are correct.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-d-inference-sim
+  labels:
+    app: llm-d-inference-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-d-inference-sim
+  template:
+    metadata:
+      labels:
+        app: llm-d-inference-sim
+    spec:
+      containers:
+        - name: llm-d-inference-sim
+          image: quay.io/trustyai_testing/llm-d-inference-sim-dataset-builtin@sha256:79e525cfd57a0d72b7e71d5f1e2dd398eca9315cfbd061d9d3e535b1ae736239
+          args:
+            - --model
+            - Qwen2.5-1.5B-Instruct
+            - --port
+            - "8032"
+            - --max-model-len
+            - "8192"
+            - --tokenizers-cache-dir
+            - /data/tokenizers_cache
+          ports:
+            - containerPort: 8032
+              protocol: TCP
+          volumeMounts:
+            - name: tokenizers-cache
+              mountPath: /data/tokenizers_cache
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8032
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8032
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: tokenizers-cache
+          emptyDir: {}

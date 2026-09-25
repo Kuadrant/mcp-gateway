@@ -2,7 +2,6 @@ package guardrails
 
 import (
 	"fmt"
-	"net/url"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
@@ -33,27 +32,11 @@ func EnsureNeMoConfigData(secretType corev1.SecretType, data map[string][]byte) 
 		return nil, fmt.Errorf("failed to parse %s: %w", configDataKey, err)
 	}
 
-	if cfg.URL == "" {
-		return nil, fmt.Errorf("%s: url is required", configDataKey)
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", configDataKey, err)
 	}
-	parsed, err := url.Parse(cfg.URL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("%s: url %q is not a valid absolute URL", configDataKey, cfg.URL)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("%s: url scheme must be http or https, got %q", configDataKey, parsed.Scheme)
-	}
-
-	if cfg.Model == "" {
-		return nil, fmt.Errorf("%s: model is required", configDataKey)
-	}
-
-	switch cfg.FailMode {
-	case "":
+	if cfg.FailMode == "" {
 		cfg.FailMode = FailModeDeny
-	case FailModeDeny, FailModeAllow:
-	default:
-		return nil, fmt.Errorf("%s: failMode must be %q or %q, got %q", configDataKey, FailModeDeny, FailModeAllow, cfg.FailMode)
 	}
 
 	return cfg, nil

@@ -28,6 +28,7 @@ package config
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -66,6 +67,11 @@ const (
 	// emptyConfigFile is the initial content for a newly created config secret.
 	emptyConfigFile = "servers: []\nvirtualServers: []\n"
 )
+
+// ErrGatewayGuardrailsNotApplied is returned by UpsertMCPServer when a server
+// has per-server guardrails config IDs but the target config has no valid global
+// guardrails, so the router would have no checker to enforce them.
+var ErrGatewayGuardrailsNotApplied = stderrors.New("gateway guardrails config not applied")
 
 // WriteVirtualServerConfig updates the virtualServers section of the config secret.
 // It uses a read-modify-write pattern to preserve the servers section while updating
@@ -156,13 +162,24 @@ func (srw *SecretReaderWriter) readOrCreateConfigSecret(ctx context.Context, nam
 // UpsertMCPServer updates or inserts a single MCPServer in the config secret.
 // If a server with the same Name already exists, it is replaced. Otherwise, the
 // server is appended to the list. This uses a read-modify-write pattern with
-// automatic retry on conflict errors.
+// automatic retry on conflict errors. Returns ErrGatewayGuardrailsNotApplied if
+// the server has guardrails config IDs but the config has no valid global
+// guardrails.
 func (srw *SecretReaderWriter) UpsertMCPServer(ctx context.Context, server MCPServer, namespaceName types.NamespacedName) error {
 	srw.Logger.Info("SecretReaderWriter UpsertMCPServer", "secret", namespaceName, "name", server.Name)
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		existingConfig, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
 		if err != nil {
 			return fmt.Errorf("upsert mcpserver failed to read config secret: %w", err)
+		}
+
+		if len(server.GuardrailsConfigIDs) > 0 {
+			if existingConfig.GlobalGuardrails == nil {
+				return fmt.Errorf("%w in %s", ErrGatewayGuardrailsNotApplied, namespaceName)
+			}
+			if err := existingConfig.GlobalGuardrails.Validate(); err != nil {
+				return fmt.Errorf("%w in %s: %w", ErrGatewayGuardrailsNotApplied, namespaceName, err)
+			}
 		}
 
 		// find and replace existing server, or append if not found
@@ -281,6 +298,28 @@ func (srw *SecretReaderWriter) WriteGatewayConfig(ctx context.Context, gwCfg *Ga
 		backingSecret.StringData[configFileName] = string(updated)
 		return srw.Client.Update(ctx, backingSecret)
 	})
+}
+
+// GatewayGuardrailsResolved reports whether WriteGatewayConfig has stored a
+// resolved globalGuardrails config in the config secret. A missing secret is
+// reported as unresolved.
+func (srw *SecretReaderWriter) GatewayGuardrailsResolved(ctx context.Context, namespaceName types.NamespacedName) (bool, error) {
+	configSecret := &corev1.Secret{}
+	if err := srw.Client.Get(ctx, namespaceName, configSecret); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read config secret: %w", err)
+	}
+	raw := configSecret.Data[configFileName]
+	if s, ok := configSecret.StringData[configFileName]; ok {
+		raw = []byte(s)
+	}
+	cfg := &BrokerConfig{}
+	if err := yaml.Unmarshal(raw, cfg); err != nil {
+		return false, fmt.Errorf("failed to unmarshal broker config: %w", err)
+	}
+	return cfg.GlobalGuardrails != nil, nil
 }
 
 // globalGuardrailsEqual reports whether two possibly-nil GuardrailsConfig

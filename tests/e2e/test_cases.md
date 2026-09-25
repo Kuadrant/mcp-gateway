@@ -553,6 +553,25 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 - A GET on an `/a2a` route is passed through to the agent (the agent's POST-only `/a2a` handler answers 405, proving the request traversed the router rather than being rejected). With the flag on, MCP `tools/list` on the same gateway still returns the registered server's tools — enabling A2A does not affect the MCP path.
 
+## NeMo Guardrails
+
+Optional infra in `config/test-servers/nemo-guardrails/` (`llm-d-inference-sim` + `nemo-guardrails-custom`), deployed with `make deploy-nemo-guardrails-test-servers`; the nightly and `/test-e2e full` workflows run it first. The sim isn't a real judge, so verdicts aren't asserted: each allowed-or-blocked case checks that `vllm:request_success_total` rose. Every case runs once per router. A block is a JSON-RPC error or an `isError` result, both saying "blocked by guardrails".
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: tools/call round-trips through the gateway-level NeMo guardrails check
+
+- A server with no per-server override is checked against the gateway-level config IDs. The call returns a normal result or a block, and the sim served a completion for it.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: tools/call still round-trips with a per-server guardrails-config-ids annotation set
+
+- Same setup plus a `guardrails-config-ids` annotation that reuses the gateway-level ID, so this can't tell a merged ID from a dropped one. The call still completes and reaches the sim.
+- **Nightly / on-demand only** (`[Full]` tag).
+
+### [Full,NemoGuardrails] 2025-11-25/2026-07-28 router: a per-server config ID NeMo rejects fails the call closed
+
+- `guardrails-config-ids: e2e-unknown-config` makes NeMo return 422, so with `failMode: deny` the call must be HTTP 503 "guardrails check unavailable". That only happens if the per-server ID reached the router. Raw HTTP, since the SDK drops a 503 body.
+- **Nightly / on-demand only** (`[Full]` tag).
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

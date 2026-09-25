@@ -121,6 +121,9 @@ jobs:
       - name: Setup CI environment
         run: make ci-setup GATEWAY_IMAGE_SOURCE=prebuilt TEST_SERVER_IMAGE_SOURCE=${{ steps.ci-node.outputs.test-server-source }}
 
+      - name: Deploy NeMo guardrails test servers
+        run: make deploy-nemo-guardrails-test-servers
+
       - name: Run full E2E suite
         run: make test-e2e-ci-full E2E_PROCS=4
 
