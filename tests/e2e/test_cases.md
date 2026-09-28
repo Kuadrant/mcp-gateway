@@ -209,9 +209,9 @@
 - When an MCPServerRegistration has `oauth2ClientCredentials` pointing at the tls-server fixture's `/token` endpoint and a Secret holding a valid `clientID`/`clientSecret`, the broker should mint an access token and use it for tool discovery against the fixture's protected `:9090` listener, which 401s without one. The registration should become Ready and the federated `oauth_cc_whoami` description should name `e2e-client` — the client the presented token was issued to. The tool is never called: a client's tools/call carries no broker token.
 - **Runs on PR CI** — cert-manager and the TLS test server are deployed by `make ci-setup`.
 
-### [Auth] reports the auth method on /status without leaking the credential
+### [Auth] exposes no credential material on /status or in the logs
 
-- When a server is registered with `oauth2ClientCredentials`, the broker's `/status` endpoint should report `authMethod: oauth2ClientCredentials` for that server. Neither the `/status` body nor the broker logs should contain the client secret or an access token.
+- When a server is registered with `oauth2ClientCredentials` and the broker reports it ready on `/status`, neither the `/status` body nor the broker logs should contain the client secret or an access token.
 - **Runs on PR CI** — same dependencies as the happy path test above.
 
 ### [Auth] federates no tools when the client secret is wrong
