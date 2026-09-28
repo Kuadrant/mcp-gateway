@@ -122,7 +122,7 @@ func callGuardedToolAndExpectVerdict(c *mcp.ClientSession, toolName string) {
 }
 
 // one dual-protocol backend, exercised by both routers.
-var _ = Describe("NeMo Guardrails", Ordered, func() {
+var _ = Describe("NeMo Guardrails", Ordered, Serial, func() {
 	var (
 		testResources []client.Object
 		nemoExt       *MCPGatewayExtensionSetup
