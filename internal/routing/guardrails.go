@@ -127,7 +127,7 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 // response must be blocked or has been modified, or nil to pass through the
 // original. buildToolError formats an isError tool result; buildToolResult
 // formats a successful tool result (used when StatusModified redacts content).
-func (g *guardrailsCheck) checkToolCallResponse(ctx context.Context, toolName string, textContent []byte, requestID any, buildToolError guardrailsToolErrorBuilder, buildToolResult guardrailsToolErrorBuilder) []byte {
+func (g *guardrailsCheck) checkToolCallResponse(ctx context.Context, toolName string, textContent []byte, requestID any, buildToolError func(any, string) string, buildToolResult func(any, string) string) []byte {
 	if len(textContent) == 0 {
 		return nil
 	}
