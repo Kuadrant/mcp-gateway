@@ -76,10 +76,10 @@ var _ = Describe("OAuth2 Client Credentials", func() {
 			}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 		})
 
-		It("[Auth] reports the auth method on /status without leaking the credential", func() {
+		It("[Auth] exposes no credential material on /status or in the logs", func() {
 			serverName := registeredServer.Namespace + "/" + registeredServer.Name
 
-			By("Verifying /status reports oauth2ClientCredentials for this server")
+			By("Verifying /status reports this server as ready")
 			var rawStatus []byte
 			Eventually(func(g Gomega) {
 				status, raw, err := GetBrokerStatus(ctx)
@@ -87,7 +87,7 @@ var _ = Describe("OAuth2 Client Credentials", func() {
 				rawStatus = raw
 				g.Expect(status.Servers).To(ContainElement(SatisfyAll(
 					HaveField("Name", serverName),
-					HaveField("AuthMethod", "oauth2ClientCredentials"),
+					HaveField("Ready", true),
 				)))
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
