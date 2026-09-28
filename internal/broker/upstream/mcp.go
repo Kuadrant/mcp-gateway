@@ -61,9 +61,11 @@ type MCPServer struct {
 
 	// toolHints preserves raw annotation fidelity from the last tools/list
 	// exchange, keyed by served (prefixed) tool name. populated by the
-	// transport-level tee, replaced wholesale per listing.
-	hintsMu   sync.RWMutex
-	toolHints map[string]ToolHints
+	// transport-level tee, replaced wholesale per listing. during a
+	// paginated walk, pages accumulate in pendingToolHints instead.
+	hintsMu          sync.RWMutex
+	toolHints        map[string]ToolHints
+	pendingToolHints map[string]ToolHints
 
 	// cache metadata from the last tools/list and prompts/list responses,
 	// guarded by clientMu
@@ -151,15 +153,62 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	return &http.Client{Transport: up.dc}, nil
 }
 
-// storeToolHints replaces the hint set with the latest tools/list harvest.
+// storeToolHints merges a page's hint harvest into the pending set for the
+// current tools/list walk. The transport tee calls it once per response, so
+// a later page that omits earlier tools must not drop their hints.
 func (up *MCPServer) storeToolHints(raw map[string]ToolHints) {
 	prefixed := make(map[string]ToolHints, len(raw))
 	for name, h := range raw {
 		prefixed[prefixedName(up.Prefix, name)] = h
 	}
 	up.hintsMu.Lock()
+	defer up.hintsMu.Unlock()
+	if up.pendingToolHints != nil {
+		for name, h := range prefixed {
+			up.pendingToolHints[name] = h
+		}
+		return
+	}
 	up.toolHints = prefixed
+}
+
+// beginToolHints opens a paginated tools/list walk: page harvests accumulate
+// in a pending set until the walk ends.
+func (up *MCPServer) beginToolHints() {
+	up.hintsMu.Lock()
+	up.pendingToolHints = make(map[string]ToolHints)
 	up.hintsMu.Unlock()
+}
+
+// commitToolHints installs the accumulated walk harvest as the hint set.
+func (up *MCPServer) commitToolHints() {
+	up.hintsMu.Lock()
+	if up.pendingToolHints != nil {
+		up.toolHints = up.pendingToolHints
+		up.pendingToolHints = nil
+	}
+	up.hintsMu.Unlock()
+}
+
+// abandonToolHints drops a failed walk's pending set, keeping the hint set
+// from the last complete listing.
+func (up *MCPServer) abandonToolHints() {
+	up.hintsMu.Lock()
+	up.pendingToolHints = nil
+	up.hintsMu.Unlock()
+}
+
+// minTTLMs combines two pages' TTL hints the way AggregateCache combines
+// upstreams: min of non-zero values, and 0 wins (uncacheable page makes the
+// whole listing uncacheable).
+func minTTLMs(a, b int) int {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // GetToolHints returns the raw annotation hints for a served (prefixed)
@@ -588,8 +637,10 @@ const maxListPages = 100
 const listFetchTimeout = 30 * time.Second
 
 // listAllPrompts fetches every prompt page, following NextCursor. The
-// returned result carries all prompts plus the TTLMs/CacheScope of the
-// final page; nil prompts are preserved.
+// returned result carries all prompts plus the shortest TTLMs (an
+// uncacheable page makes the whole listing uncacheable, like
+// AggregateCache) and the final page's CacheScope; nil prompts are
+// preserved.
 func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSession) (*mcp.ListPromptsResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
 	defer cancel()
@@ -607,7 +658,7 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 		}
 		result.Prompts = append(result.Prompts, res.Prompts...)
 		result.NextCursor = res.NextCursor
-		result.TTLMs = res.TTLMs
+		result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
 		result.CacheScope = res.CacheScope
 		if res.NextCursor == "" {
 			return &result, nil
@@ -619,23 +670,28 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSession) (*mcp.ListToolsResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
 	defer cancel()
+	up.beginToolHints()
 	var result mcp.ListToolsResult
 	for page := 0; ; page++ {
 		if page >= maxListPages {
+			up.abandonToolHints()
 			return nil, fmt.Errorf("tools/list from upstream %q exceeded %d pages", up.Name, maxListPages)
 		}
 		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
 		if err != nil {
+			up.abandonToolHints()
 			return nil, err
 		}
 		if res == nil {
+			up.commitToolHints()
 			return &result, nil
 		}
 		result.Tools = append(result.Tools, res.Tools...)
 		result.NextCursor = res.NextCursor
-		result.TTLMs = res.TTLMs
+		result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
 		result.CacheScope = res.CacheScope
 		if res.NextCursor == "" {
+			up.commitToolHints()
 			return &result, nil
 		}
 	}

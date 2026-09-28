@@ -125,3 +125,36 @@ func TestToolHintsTee_EndToEnd(t *testing.T) {
 		})
 	}
 }
+
+func TestToolHintsTee_AccumulatesAcrossPages(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		tool := &mcp.Tool{
+			Name:        name,
+			InputSchema: map[string]any{"type": "object"},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}
+		srv.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	result, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Tools, 3, "all tools across the pages must be listed")
+
+	require.Eventually(t, func() bool {
+		_, okA := up.GetToolHints("up_alpha")
+		_, okB := up.GetToolHints("up_beta")
+		_, okG := up.GetToolHints("up_gamma")
+		return okA && okB && okG
+	}, 5*time.Second, 10*time.Millisecond, "hints from every page must survive the walk, not just the last page")
+}
