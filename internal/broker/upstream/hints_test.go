@@ -158,3 +158,11 @@ func TestToolHintsTee_AccumulatesAcrossPages(t *testing.T) {
 		return okA && okB && okG
 	}, 5*time.Second, 10*time.Millisecond, "hints from every page must survive the walk, not just the last page")
 }
+
+func TestMinTTLMs(t *testing.T) {
+	require.Equal(t, 0, minTTLMs(0, 5000), "zero wins: uncacheable page")
+	require.Equal(t, 0, minTTLMs(5000, 0), "zero wins: uncacheable page")
+	require.Equal(t, 3000, minTTLMs(5000, 3000), "shorter page TTL wins")
+	require.Equal(t, 3000, minTTLMs(3000, 5000), "shorter page TTL wins")
+	require.Equal(t, 3000, minTTLMs(3000, 3000), "equal TTLs")
+}

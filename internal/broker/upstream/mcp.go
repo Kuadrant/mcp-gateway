@@ -62,10 +62,13 @@ type MCPServer struct {
 	// toolHints preserves raw annotation fidelity from the last tools/list
 	// exchange, keyed by served (prefixed) tool name. populated by the
 	// transport-level tee, replaced wholesale per listing. during a
-	// paginated walk, pages accumulate in pendingToolHints instead.
+	// paginated walk, pages accumulate in pendingToolHints instead, and
+	// walkMu serializes concurrent ListTools calls so one walk cannot
+	// commit or abandon another walk's pending hints.
 	hintsMu          sync.RWMutex
 	toolHints        map[string]ToolHints
 	pendingToolHints map[string]ToolHints
+	walkMu           sync.Mutex
 
 	// cache metadata from the last tools/list and prompts/list responses,
 	// guarded by clientMu
@@ -658,7 +661,11 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 		}
 		result.Prompts = append(result.Prompts, res.Prompts...)
 		result.NextCursor = res.NextCursor
-		result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
+		if page == 0 {
+			result.TTLMs = res.TTLMs
+		} else {
+			result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
+		}
 		result.CacheScope = res.CacheScope
 		if res.NextCursor == "" {
 			return &result, nil
@@ -670,6 +677,8 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSession) (*mcp.ListToolsResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
 	defer cancel()
+	up.walkMu.Lock()
+	defer up.walkMu.Unlock()
 	up.beginToolHints()
 	var result mcp.ListToolsResult
 	for page := 0; ; page++ {
@@ -688,7 +697,11 @@ func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSessio
 		}
 		result.Tools = append(result.Tools, res.Tools...)
 		result.NextCursor = res.NextCursor
-		result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
+		if page == 0 {
+			result.TTLMs = res.TTLMs
+		} else {
+			result.TTLMs = minTTLMs(result.TTLMs, res.TTLMs)
+		}
 		result.CacheScope = res.CacheScope
 		if res.NextCursor == "" {
 			up.commitToolHints()
