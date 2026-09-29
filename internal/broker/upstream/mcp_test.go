@@ -1307,6 +1307,47 @@ func TestOAuth2_RejectedTokenReplacedWithoutReconnect(t *testing.T) {
 	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-2"}, seen)
 }
 
+func TestOAuth2_StatelessUpstreamReconnectsAfterRejectedToken(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{
+		SupportedProtocolVersions: []string{protocol.Version2026},
+	})
+	srv.AddTool(&mcp.Tool{
+		Name: "t1", InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Method") == "tools/list" && r.Header.Get("Authorization") == "Bearer as-token-1" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer upSrv.Close()
+
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", caPEM)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
+	require.True(t, up.UsesStatelessProtocol())
+	require.Empty(t, up.currentSession().ID())
+	firstSession := up.currentSession()
+
+	_, err := up.ListTools(ctx)
+	require.Error(t, err, "the first token is rejected after initialize")
+	require.NoError(t, up.Connect(ctx, func() {}), "the next manager tick must reconnect")
+	require.NotSame(t, firstSession, up.currentSession(), "the retry must create a fresh SDK session")
+	tools, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Len(t, tools.Tools, 1)
+	require.Len(t, asSeen(), 2, "the retry must mint a fresh token")
+}
+
 func TestOAuth2_ConnectAndListToolsWithMintedToken(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
