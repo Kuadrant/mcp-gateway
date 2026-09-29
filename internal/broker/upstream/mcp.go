@@ -201,19 +201,23 @@ func (up *MCPServer) beginToolHints() {
 	up.hintsMu.Unlock()
 }
 
-// commitToolHints installs the walk harvest as the hint set, overlaid on
-// the previous listing: pages the SDK served from its per-page TTL cache
-// produced no HTTP round trip, so their hints survive from the previous
-// walk instead of being erased by an empty pending set.
-func (up *MCPServer) commitToolHints() {
+// commitToolHints installs the walk harvest as the hint set. listed is the
+// set of served tool names the completed walk produced: previous hints are
+// kept only for those tools (a page served from the SDK's per-page TTL
+// cache produced no HTTP round trip, so its hint survives from the previous
+// walk), while tools the fresh listing dropped lose their hints instead of
+// lingering forever.
+func (up *MCPServer) commitToolHints(listed map[string]struct{}) {
 	up.hintsMu.Lock()
 	if up.pendingToolHints != nil {
-		merged := make(map[string]ToolHints, len(up.prevToolHints)+len(up.pendingToolHints))
-		for name, h := range up.prevToolHints {
-			merged[name] = h
-		}
+		merged := make(map[string]ToolHints, len(up.pendingToolHints)+len(listed))
 		for name, h := range up.pendingToolHints {
 			merged[name] = h
+		}
+		for name := range listed {
+			if h, ok := up.prevToolHints[name]; ok {
+				merged[name] = h
+			}
 		}
 		up.toolHints = merged
 		up.pendingToolHints = nil
@@ -267,6 +271,18 @@ func (up *MCPServer) GetToolHints(served string) (ToolHints, bool) {
 	defer up.hintsMu.RUnlock()
 	h, ok := up.toolHints[served]
 	return h, ok
+}
+
+// servedNames returns the served (prefixed) tool names of a completed
+// listing.
+func (up *MCPServer) servedNames(result *mcp.ListToolsResult) map[string]struct{} {
+	names := make(map[string]struct{}, len(result.Tools))
+	for _, t := range result.Tools {
+		if t != nil {
+			names[prefixedName(up.Prefix, t.Name)] = struct{}{}
+		}
+	}
+	return names
 }
 
 // SetToolHintsForTesting seeds hints directly, keyed by served name.
@@ -743,7 +759,7 @@ func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSessio
 			return nil, err
 		}
 		if res == nil {
-			up.commitToolHints()
+			up.commitToolHints(up.servedNames(&result))
 			return &result, nil
 		}
 		result.Tools = append(result.Tools, res.Tools...)
@@ -756,7 +772,7 @@ func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSessio
 			result.CacheScope = mergeCacheScopes(result.CacheScope, res.CacheScope)
 		}
 		if res.NextCursor == "" {
-			up.commitToolHints()
+			up.commitToolHints(up.servedNames(&result))
 			return &result, nil
 		}
 	}

@@ -259,10 +259,10 @@ func TestListAllTools_HintsSurviveCacheHitWalk(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond, "first walk must harvest the hints")
 
 	// simulate the SDK serving the second walk from cache: no HTTP, no tee
-	// harvest, but the walk still begins/commits. commit must overlay the
-	// (empty) pending set on the previous listing, not replace it.
+	// harvest, but the walk still begins/commits. commit must keep hints
+	// for every tool the fresh listing served.
 	up.beginToolHints()
-	up.commitToolHints()
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}, "up_beta": {}})
 
 	_, okA := up.GetToolHints("up_alpha")
 	_, okB := up.GetToolHints("up_beta")
@@ -278,7 +278,7 @@ func TestListAllTools_FailedWalkLeavesNoPartialHints(t *testing.T) {
 	// a completed first listing observed one tool
 	up.beginToolHints()
 	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
-	up.commitToolHints()
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
 	_, ok := up.GetToolHints("up_alpha")
 	require.True(t, ok, "first listing must observe the hint")
 
@@ -294,4 +294,14 @@ func TestListAllTools_FailedWalkLeavesNoPartialHints(t *testing.T) {
 	require.False(t, okBeta, "failed walk must not leave partial hints in the live set")
 	_, ok = up.GetToolHints("up_alpha")
 	require.True(t, ok, "failed walk must restore the previous listing's hints")
+
+	// a completed listing that drops a tool must drop its hint too: the
+	// overlay keeps previous hints only for tools the fresh listing served
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints(map[string]struct{}{"up_beta": {}})
+	_, ok = up.GetToolHints("up_alpha")
+	require.False(t, ok, "hint for a tool absent from the completed listing must be dropped")
+	_, okBeta = up.GetToolHints("up_beta")
+	require.True(t, okBeta, "hint for a served tool must be kept")
 }
