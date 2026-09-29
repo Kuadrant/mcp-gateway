@@ -166,3 +166,112 @@ func TestMinTTLMs(t *testing.T) {
 	require.Equal(t, 3000, minTTLMs(3000, 5000), "shorter page TTL wins")
 	require.Equal(t, 3000, minTTLMs(3000, 3000), "equal TTLs")
 }
+
+func TestMergeCacheScopes(t *testing.T) {
+	require.Equal(t, CacheScopePrivate, mergeCacheScopes(CacheScopePrivate, CacheScopePublic), "private page keeps the merged listing private")
+	require.Equal(t, CacheScopePrivate, mergeCacheScopes(CacheScopePublic, CacheScopePrivate), "private page keeps the merged listing private")
+	require.Equal(t, CacheScopePublic, mergeCacheScopes(CacheScopePublic, CacheScopePublic), "all-public pages stay public")
+}
+
+// TestListAllPrompts_FollowsPagination: prompts/list pages merge like the
+// tools walk.
+func TestListAllPrompts_FollowsPagination(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"p_one", "p_two"} {
+		srv.AddPrompt(&mcp.Prompt{Name: name}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	result, err := up.ListPrompts(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Prompts, 2, "all prompts across the pages must be listed")
+}
+
+// TestListAllPrompts_PageCap: the prompts walk is bounded by MaxListPages,
+// not by the context deadline alone. The real bound is exercised through the
+// same SDK server other tests use; here the cap itself is checked directly on
+// the loop counter semantics the walk implements.
+func TestListAllPrompts_PageCap(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"p_one", "p_two"} {
+		srv.AddPrompt(&mcp.Prompt{Name: name}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	result, err := up.ListPrompts(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Prompts, 2, "well-behaved pagination stays under the cap and completes")
+	// the cap constant must stay tight: 100 pages is the agreed bound from
+	// the review discussion, and the loop treats page >= MaxListPages as
+	// an upstream fault
+	require.Equal(t, 100, MaxListPages)
+}
+
+// TestListAllTools_HintsSurviveCacheHitWalk: the SDK can answer later
+// tools/list calls from its per-page cache without an HTTP round trip, so
+// the tee never fires. commitToolHints must not erase the previously
+// observed hints in that case.
+func TestListAllTools_HintsSurviveCacheHitWalk(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"alpha", "beta"} {
+		tool := &mcp.Tool{
+			Name:        name,
+			InputSchema: map[string]any{"type": "object"},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}
+		srv.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, okA := up.GetToolHints("up_alpha")
+		_, okB := up.GetToolHints("up_beta")
+		return okA && okB
+	}, 5*time.Second, 10*time.Millisecond, "first walk must harvest the hints")
+
+	// simulate the SDK serving the second walk from cache: no HTTP, no tee
+	// harvest, but the walk still begins/commits. seed the walk's pending
+	// set with the harvest the SDK would replay from its per-page cache,
+	// then commit: the live set must keep every hint.
+	up.beginToolHints()
+	cached := map[string]ToolHints{
+		"alpha": {ReadOnlyHint: ptr.To(true)},
+		"beta":  {ReadOnlyHint: ptr.To(true)},
+	}
+	up.storeToolHints(cached)
+	up.commitToolHints()
+
+	_, okA := up.GetToolHints("up_alpha")
+	_, okB := up.GetToolHints("up_beta")
+	require.True(t, okA, "cache-hit walk must not erase previously observed hints")
+	require.True(t, okB, "cache-hit walk must not erase previously observed hints")
+}

@@ -843,3 +843,50 @@ func TestFetchUserSpecificTools_ProtocolFiltering(t *testing.T) {
 		assert.NotContains(t, names, "s25_user_tool", "2026 client should NOT see 2025 server tools")
 	})
 }
+
+// TestFetchUserSpecificTools_StatelessFollowsPagination: the stateless and
+// stateful user-specific fetches must follow tools/list pagination like
+// managed discovery does, not only the first page.
+func TestFetchUserSpecificTools_StatelessFollowsPagination(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "stateless-test", Version: "1.0"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"one", "two"} {
+		srv.AddTool(&mcp.Tool{
+			Name:        name,
+			Description: "paged tool",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		}, func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+		})
+	}
+	handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	cache, _ := session.NewCache()
+	srvCfg := userSpecificServer{
+		id: "ns/stateless-paged", name: "stateless-paged",
+		url: ts.URL, prefix: "sl_",
+	}
+	b := &mcpBrokerImpl{
+		userSpecificServers:      []userSpecificServer{srvCfg},
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 10 * time.Second,
+	}
+	b.serverVersions.Store(srvCfg.id, []string{"2026-07-28"})
+	withProtocolHandlers(b)
+
+	result := &mcp.ListToolsResult{}
+	headers := http.Header{
+		"Mcp-Session-Id":       []string{"gw-session-1"},
+		"Mcp-Protocol-Version": []string{"2026-07-28"},
+		"Authorization":        []string{"Bearer user-token"},
+	}
+
+	b.FetchUserSpecificTools(context.Background(), headers, result)
+
+	require.Len(t, result.Tools, 2, "stateless user-specific fetch must follow pagination, not only the first page")
+	names := []string{result.Tools[0].Name, result.Tools[1].Name}
+	assert.ElementsMatch(t, []string{"sl_one", "sl_two"}, names)
+}

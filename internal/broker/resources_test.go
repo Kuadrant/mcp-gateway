@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -226,30 +225,6 @@ func TestFetchResourcesFromServer_NilResultWithMock(t *testing.T) {
 
 	require.NoError(t, err, "nil result should not cause error")
 	assert.Nil(t, resources, "nil result should return nil resource slice")
-}
-
-// recordingHandler is a minimal slog.Handler that records whether any log
-// record's message contains a given substring, just enough to assert a log
-// line fired without pulling in a full logging test framework.
-type recordingHandler struct {
-	messages []string
-}
-
-func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
-	h.messages = append(h.messages, r.Message)
-	return nil
-}
-func (h *recordingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
-func (h *recordingHandler) WithGroup(_ string) slog.Handler      { return h }
-
-func (h *recordingHandler) hasMessage(substr string) bool {
-	for _, m := range h.messages {
-		if strings.Contains(m, substr) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestFetchResources_AllUpstreamsSkipped verifies that when all upstreams are
