@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -196,8 +197,10 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	}
 
 	toolsResult, err := broker.listAllUserTools(fetchCtx, session)
-	if err != nil {
-		// stale session; evict and retry once
+	if err != nil && !errors.Is(err, upstream.ErrPageLimitExceeded) {
+		// stale session; evict and retry once. page-limit errors are a
+		// property of the upstream listing, not the session: a reconnect
+		// would only repeat the same capped walk
 		broker.evictUserSession(gatewaySessionID, srv.name)
 		session, err = broker.getOrCreateUserSession(fetchCtx, srv, userHeaders, gatewaySessionID)
 		if err != nil {

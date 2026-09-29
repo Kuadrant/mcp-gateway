@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -59,6 +60,10 @@ type MCPServer struct {
 	watcher       *notificationWatcher
 	watcherCancel context.CancelFunc
 
+	// prevToolHints snapshots the live hint set when a paginated walk
+	// opens; abandonToolHints restores it so a failed walk leaves no
+	// partial hints behind.
+	prevToolHints map[string]ToolHints
 	// toolHints preserves raw annotation fidelity from the last tools/list
 	// exchange, keyed by served (prefixed) tool name. populated by the
 	// transport-level tee, replaced wholesale per listing. during a
@@ -189,24 +194,47 @@ func (up *MCPServer) storeToolHints(raw map[string]ToolHints) {
 func (up *MCPServer) beginToolHints() {
 	up.hintsMu.Lock()
 	up.pendingToolHints = make(map[string]ToolHints)
-	up.hintsMu.Unlock()
-}
-
-// commitToolHints installs the accumulated walk harvest as the hint set.
-func (up *MCPServer) commitToolHints() {
-	up.hintsMu.Lock()
-	if up.pendingToolHints != nil {
-		up.toolHints = up.pendingToolHints
-		up.pendingToolHints = nil
+	up.prevToolHints = make(map[string]ToolHints, len(up.toolHints))
+	for name, h := range up.toolHints {
+		up.prevToolHints[name] = h
 	}
 	up.hintsMu.Unlock()
 }
 
-// abandonToolHints drops a failed walk's pending set, keeping the hint set
-// from the last complete listing.
+// commitToolHints installs the walk harvest as the hint set, overlaid on
+// the previous listing: pages the SDK served from its per-page TTL cache
+// produced no HTTP round trip, so their hints survive from the previous
+// walk instead of being erased by an empty pending set.
+func (up *MCPServer) commitToolHints() {
+	up.hintsMu.Lock()
+	if up.pendingToolHints != nil {
+		merged := make(map[string]ToolHints, len(up.prevToolHints)+len(up.pendingToolHints))
+		for name, h := range up.prevToolHints {
+			merged[name] = h
+		}
+		for name, h := range up.pendingToolHints {
+			merged[name] = h
+		}
+		up.toolHints = merged
+		up.pendingToolHints = nil
+		up.prevToolHints = nil
+	}
+	up.hintsMu.Unlock()
+}
+
+// abandonToolHints drops a failed walk's pending set and restores the
+// snapshot taken when the walk opened, so a failed walk leaves no partial
+// hints behind.
 func (up *MCPServer) abandonToolHints() {
 	up.hintsMu.Lock()
-	up.pendingToolHints = nil
+	if up.pendingToolHints != nil {
+		up.toolHints = up.prevToolHints
+		if up.toolHints == nil {
+			up.toolHints = make(map[string]ToolHints)
+		}
+		up.pendingToolHints = nil
+		up.prevToolHints = nil
+	}
 	up.hintsMu.Unlock()
 }
 
@@ -653,6 +681,10 @@ func (up *MCPServer) SupportsPromptsListChanged() bool {
 // cursor walk.
 const MaxListPages = 100
 
+// ErrPageLimitExceeded is returned when a list walk hits MaxListPages.
+// Callers can test for it to avoid retrying what a reconnect cannot fix.
+var ErrPageLimitExceeded = errors.New("list pages exceeded")
+
 // listFetchTimeout bounds one full list walk (all pages), so upstream
 // pagination cannot extend discovery past a fixed deadline.
 const listFetchTimeout = 30 * time.Second
@@ -668,7 +700,7 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 	var result mcp.ListPromptsResult
 	for page := 0; ; page++ {
 		if page >= MaxListPages {
-			return nil, fmt.Errorf("prompts/list from upstream %q exceeded %d pages", up.Name, MaxListPages)
+			return nil, fmt.Errorf("%w: prompts/list from upstream %q exceeded %d pages", ErrPageLimitExceeded, up.Name, MaxListPages)
 		}
 		res, err := session.ListPrompts(ctx, &mcp.ListPromptsParams{Cursor: result.NextCursor})
 		if err != nil {
@@ -703,7 +735,7 @@ func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSessio
 	for page := 0; ; page++ {
 		if page >= MaxListPages {
 			up.abandonToolHints()
-			return nil, fmt.Errorf("tools/list from upstream %q exceeded %d pages", up.Name, MaxListPages)
+			return nil, fmt.Errorf("%w: tools/list from upstream %q exceeded %d pages", ErrPageLimitExceeded, up.Name, MaxListPages)
 		}
 		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
 		if err != nil {
@@ -737,7 +769,7 @@ func (up *MCPServer) listAllResources(ctx context.Context, session *mcp.ClientSe
 	var result mcp.ListResourcesResult
 	for page := 0; ; page++ {
 		if page >= MaxListPages {
-			return nil, fmt.Errorf("resources/list from upstream %q exceeded %d pages", up.Name, MaxListPages)
+			return nil, fmt.Errorf("%w: resources/list from upstream %q exceeded %d pages", ErrPageLimitExceeded, up.Name, MaxListPages)
 		}
 		res, err := session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: result.NextCursor})
 		if err != nil {

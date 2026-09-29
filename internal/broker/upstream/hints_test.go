@@ -259,19 +259,39 @@ func TestListAllTools_HintsSurviveCacheHitWalk(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond, "first walk must harvest the hints")
 
 	// simulate the SDK serving the second walk from cache: no HTTP, no tee
-	// harvest, but the walk still begins/commits. seed the walk's pending
-	// set with the harvest the SDK would replay from its per-page cache,
-	// then commit: the live set must keep every hint.
+	// harvest, but the walk still begins/commits. commit must overlay the
+	// (empty) pending set on the previous listing, not replace it.
 	up.beginToolHints()
-	cached := map[string]ToolHints{
-		"alpha": {ReadOnlyHint: ptr.To(true)},
-		"beta":  {ReadOnlyHint: ptr.To(true)},
-	}
-	up.storeToolHints(cached)
 	up.commitToolHints()
 
 	_, okA := up.GetToolHints("up_alpha")
 	_, okB := up.GetToolHints("up_beta")
 	require.True(t, okA, "cache-hit walk must not erase previously observed hints")
 	require.True(t, okB, "cache-hit walk must not erase previously observed hints")
+}
+
+// TestListAllTools_FailedWalkLeavesNoPartialHints: a walk that ends mid-way
+// must not leave the pages it did observe in the live set.
+func TestListAllTools_FailedWalkLeavesNoPartialHints(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// a completed first listing observed one tool
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints()
+	_, ok := up.GetToolHints("up_alpha")
+	require.True(t, ok, "first listing must observe the hint")
+
+	// a second walk observes a page, then fails: the partial harvest must
+	// be dropped and the first listing's hints restored
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(true)}})
+	_, okBeta := up.GetToolHints("up_beta")
+	require.True(t, okBeta, "in-walk live update must be visible while the walk is open")
+	up.abandonToolHints()
+
+	_, okBeta = up.GetToolHints("up_beta")
+	require.False(t, okBeta, "failed walk must not leave partial hints in the live set")
+	_, ok = up.GetToolHints("up_alpha")
+	require.True(t, ok, "failed walk must restore the previous listing's hints")
 }
