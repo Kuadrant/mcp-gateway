@@ -96,6 +96,9 @@ type MCPServer struct {
 	tokenMu  sync.Mutex
 	tokenSrc oauth2.TokenSource
 	tokenCtx context.Context
+	// tokenRejected stays set even if another request mints a new token before
+	// the manager retries Connect; the SDK session must still be replaced.
+	tokenRejected bool
 
 	// supportedVersions lists protocol versions this upstream supports.
 	supportedVersions []string
@@ -219,7 +222,7 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 // capturing it when the transport is built. an oauth2.Transport holding the
 // source directly would keep serving a token that invalidateTokenSource
 // already dropped, since nothing re-reads up.tokenSrc until the next Connect
-// and Connect is a no-op while the session lives.
+// and Connect normally reuses a live session.
 type dynamicTokenSource struct {
 	up  *MCPServer
 	ctx context.Context
@@ -290,6 +293,7 @@ func (up *MCPServer) invalidateTokenSource() {
 	up.tokenMu.Lock()
 	up.tokenSrc = nil
 	up.tokenCtx = nil
+	up.tokenRejected = true
 	up.tokenMu.Unlock()
 }
 
@@ -432,11 +436,22 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // official SDK's Client+ClientSession pattern.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.clientMu.RLock()
-	if up.session != nil {
-		up.clientMu.RUnlock()
-		return nil
-	}
+	connected := up.session != nil
 	up.clientMu.RUnlock()
+	if connected {
+		up.tokenMu.Lock()
+		rejected := up.tokenRejected
+		up.tokenMu.Unlock()
+		if !rejected {
+			return nil
+		}
+		if err := up.Disconnect(); err != nil {
+			return fmt.Errorf("failed to disconnect rejected upstream session: %w", err)
+		}
+	}
+	up.tokenMu.Lock()
+	up.tokenRejected = false
+	up.tokenMu.Unlock()
 
 	httpC, err := up.buildHTTPClient(ctx)
 	if err != nil {
