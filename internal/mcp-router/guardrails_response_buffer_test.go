@@ -168,13 +168,12 @@ func TestGuardrailsResponseBuffer_SSE_UnconsumedAfterTerminalEventInSameChunkDro
 	require.NotContains(t, string(out), "smuggled", "a second response-shaped event in the same chunk must not reach the client unchecked")
 }
 
-func TestGuardrailsResponseBuffer_SSE_FlushResolvesUndispatchedTrailer(t *testing.T) {
-	// a malformed upstream that never sends the terminating blank line for
-	// the final event must still have its buffered content resolved at
-	// end-of-stream, rather than being silently dropped.
-	var checkedBody []byte
-	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
-		checkedBody = body
+func TestGuardrailsResponseBuffer_SSE_FlushDropsUndispatchedTrailer(t *testing.T) {
+	// an SSE event without the terminating blank line is incomplete at
+	// end-of-stream and must not reach guardrails or the client.
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
 		return nil
 	})
 
@@ -183,8 +182,9 @@ func TestGuardrailsResponseBuffer_SSE_FlushResolvesUndispatchedTrailer(t *testin
 	require.Empty(t, out, "no blank line yet - nothing forwarded")
 
 	out = buf.Flush(context.Background())
-	require.Equal(t, string(event), string(out))
-	require.Equal(t, string(event), string(checkedBody))
+	require.Empty(t, out)
+	require.Zero(t, checked, "incomplete SSE must not reach guardrails")
+	require.True(t, buf.done)
 }
 
 func TestGuardrailsResponseBuffer_JSON_WithheldUntilFlush(t *testing.T) {
@@ -341,50 +341,36 @@ func TestGuardrailsResponseBuffer_SSE_PartialLineCountsTowardEventLimit(t *testi
 	require.True(t, buf.done)
 }
 
-func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_WithheldInFull(t *testing.T) {
-	// content-type can be missing or non-standard (e.g.
-	// application/problem+json), which the caller conservatively treats as
-	// SSE. If the actual body is a bare JSON-RPC document with no SSE
-	// framing, per-event parsing would never find a "data:" line and could
-	// forward chunks unchecked whenever they happen to contain a blank line.
-	// The buffer must detect this from the body itself and fall back to
-	// whole-body withholding.
-	var checkedBody []byte
-	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
-		checkedBody = body
-		return nil
-	})
-
-	body := []byte("{\n\n\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}")
-	out := buf.Process(context.Background(), body)
-	require.Empty(t, out, "raw JSON body must be withheld in full, not forwarded piecemeal at the embedded blank line")
-	require.Nil(t, checkedBody, "not checked until Flush")
-
-	out = buf.Flush(context.Background())
-	require.Equal(t, string(body), string(out))
-	require.Equal(t, string(body), string(checkedBody))
-}
-
-func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DetectedAcrossChunks(t *testing.T) {
-	// leading whitespace before the body arrives in its own chunk (with no
-	// newline yet, so the SSE per-event loop cannot misread it as a blank
-	// line) must not prevent raw-JSON detection once the '{' itself arrives.
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_Dropped(t *testing.T) {
 	var checked int
 	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
 		checked++
 		return nil
 	})
 
-	out := buf.Process(context.Background(), []byte("   "))
-	require.Empty(t, out)
+	body := []byte("{\n\n\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}")
+	require.Nil(t, buf.Process(context.Background(), body))
+	require.True(t, buf.done)
+	require.Equal(t, 0, checked)
+	require.Nil(t, buf.Flush(context.Background()))
+}
+
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DroppedAcrossChunks(t *testing.T) {
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return nil
+	})
+
+	require.Nil(t, buf.Process(context.Background(), []byte(" \n")))
+	require.False(t, buf.done)
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`)
-	out = buf.Process(context.Background(), body)
-	require.Empty(t, out, "still withheld as raw JSON, not parsed as an SSE event")
-
-	out = buf.Flush(context.Background())
-	require.Equal(t, 1, checked)
-	require.Equal(t, "   "+string(body), string(out))
+	require.Nil(t, buf.Process(context.Background(), body))
+	require.True(t, buf.done)
+	require.Equal(t, 0, checked)
+	require.Nil(t, buf.Flush(context.Background()))
+	require.Nil(t, buf.Process(context.Background(), []byte("event: message\ndata: {}\n\n")))
 }
 
 func TestIDsEqual(t *testing.T) {

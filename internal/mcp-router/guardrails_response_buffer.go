@@ -56,14 +56,20 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 		return nil
 	}
 
-	g.detectRawJSON(chunk)
+	rawJSON, waitingForFraming := g.detectRawJSON(chunk)
+	if rawJSON {
+		return g.drop()
+	}
 	g.unconsumed = append(g.unconsumed, chunk...)
+	if waitingForFraming {
+		if g.overLimit() {
+			return g.reject()
+		}
+		return nil
+	}
 
 	if !g.sse {
-		// application/json, or an SSE-declared response whose body is
-		// actually a bare JSON-RPC document (see detectRawJSON): nothing is
-		// safe to forward before the full body is known - hold everything
-		// until Flush.
+		// application/json responses are held in full until Flush.
 		if g.overLimit() {
 			return g.reject()
 		}
@@ -114,15 +120,19 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 	return output
 }
 
-// Flush returns any bytes still withheld when the stream ends. Safe to call
-// multiple times; subsequent calls are no-ops. Once done, nothing further is
-// forwarded - see Process's doc comment.
+// Flush returns bytes still withheld when the stream ends. Safe to call
+// multiple times; subsequent calls are no-ops. An SSE stream that ends with
+// buffered event bytes has no complete event delimiter, so those bytes are
+// discarded rather than passed to guardrails.
 func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	if g.done {
 		return nil
 	}
 	if g.overLimit() {
 		return g.reject()
+	}
+	if g.sse && (len(g.eventBytes) > 0 || len(g.unconsumed) > 0) {
+		return g.drop()
 	}
 	g.done = true
 	remaining := append(g.eventBytes, g.unconsumed...)
@@ -134,22 +144,28 @@ func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	return g.resolve(ctx, remaining)
 }
 
-// detectRawJSON checks if a response marked as SSE is actually plain JSON
-// (starts with '{' instead of SSE syntax) and switches modes if so. It only
-// looks at the newest chunk, not everything received so far, so it stays
-// fast even if data arrives one byte at a time.
-func (g *guardrailsResponseBuffer) detectRawJSON(chunk []byte) {
+// detectRawJSON reports whether the first non-whitespace byte of an
+// SSE-declared response is a bare JSON object. Whitespace-only chunks are held
+// until the response framing is known so no bytes from a later JSON body leak.
+func (g *guardrailsResponseBuffer) detectRawJSON(chunk []byte) (rawJSON, waitingForFraming bool) {
 	if !g.sse || g.sseDetected {
-		return
+		return false, false
 	}
 	trimmed := bytes.TrimLeft(chunk, " \t\r\n")
 	if len(trimmed) == 0 {
-		return // still all whitespace so far
+		return false, true
 	}
 	g.sseDetected = true
-	if trimmed[0] == '{' {
-		g.sse = false
-	}
+	return trimmed[0] == '{', false
+}
+
+// drop discards all buffered bytes and marks the response complete without
+// forwarding a replacement.
+func (g *guardrailsResponseBuffer) drop() []byte {
+	g.done = true
+	g.unconsumed = nil
+	g.eventBytes = nil
+	return nil
 }
 
 // overLimit reports whether currently buffered bytes exceed maxBytes.
