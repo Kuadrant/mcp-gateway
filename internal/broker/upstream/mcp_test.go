@@ -198,7 +198,7 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 		Name: "no-ca",
 		URL:  "http://localhost:8080/mcp",
 	}, "", nil)
-	client, err := up.buildHTTPClient()
+	client, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, client, "should always return a client with timeouts set")
 
@@ -272,7 +272,7 @@ func TestBuildHTTPClient_WithValidCACert(t *testing.T) {
 		URL:    "https://localhost:8443/mcp",
 		CACert: string(caPEM),
 	}, "", nil)
-	client, err := up.buildHTTPClient()
+	client, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, client, "should return custom client when CACert configured")
 }
@@ -283,7 +283,7 @@ func TestBuildHTTPClient_WithInvalidPEM(t *testing.T) {
 		URL:    "https://localhost:8443/mcp",
 		CACert: "not-valid-pem-data",
 	}, "", nil)
-	_, err := up.buildHTTPClient()
+	_, err := up.buildHTTPClient(t.Context())
 	require.Error(t, err, "should error on invalid PEM")
 	require.Contains(t, err.Error(), "failed to parse CA certificate")
 }
@@ -304,7 +304,7 @@ func TestBuildHTTPClient_TLSConnection(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(caPEM),
 	}, "", nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -331,7 +331,7 @@ func TestBuildHTTPClient_TLSConnectionFailsWithoutCA(t *testing.T) {
 		Name: "no-ca-test",
 		URL:  srv.URL + "/mcp",
 	}, "", nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, httpClient, "client is always returned, only TLS pool varies")
 
@@ -359,7 +359,7 @@ func TestBuildHTTPClient_WrongCACertFailsTLS(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(wrongCaPEM),
 	}, "", nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -388,7 +388,7 @@ func TestBuildHTTPClient_MultiCertBundle(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(bundle),
 	}, "", nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, httpClient)
 
@@ -419,7 +419,7 @@ func TestResponseHeaderTimeoutDoesNotKillEstablishedSSE(t *testing.T) {
 	defer srv.Close()
 
 	up := NewUpstreamMCP(&config.MCPServer{Name: "sse-alive", URL: srv.URL}, "", nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -573,7 +573,7 @@ func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
 		Name: "gw-ca-test",
 		URL:  srv.URL + "/mcp",
 	}, string(caPEM), nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
@@ -601,7 +601,7 @@ func TestBuildHTTPClient_GatewayCAPlusPerServerCA(t *testing.T) {
 		URL:    srv.URL + "/mcp",
 		CACert: string(serverCAPEM),
 	}, string(gwCAPEM), nil)
-	httpClient, err := up.buildHTTPClient()
+	httpClient, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
@@ -617,7 +617,7 @@ func TestBuildHTTPClient_InvalidGatewayCACert(t *testing.T) {
 		Name: "bad-gw-ca",
 		URL:  "https://localhost:8443/mcp",
 	}, "not-valid-pem", nil)
-	_, err := up.buildHTTPClient()
+	_, err := up.buildHTTPClient(t.Context())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "gateway CA certificate bundle")
 }
@@ -1064,7 +1064,7 @@ func TestOAuth2_UpstreamCarriesMintedToken(t *testing.T) {
 
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM, "mcp.read", "mcp.write")
 
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 
@@ -1080,13 +1080,82 @@ func TestOAuth2_UpstreamCarriesMintedToken(t *testing.T) {
 	require.Equal(t, []string{"", ""}, reqs[0].brokerHeaders)
 }
 
+func TestOAuth2_UpstreamRedirectDoesNotForwardToken(t *testing.T) {
+	as, caPEM, _ := newTestAuthServer(t, 3600)
+	sink, sinkSeen := recordingUpstream(t)
+	firstHop := make(chan string, 1)
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstHop <- r.Header.Get("Authorization")
+		http.Redirect(w, r, sink.URL+"/mcp", http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	redirectPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: redirect.Certificate().Raw})
+	up := newOAuth2Upstream(redirect.URL+"/mcp", as.URL+"/token", caPEM+string(redirectPEM))
+	c, err := up.buildHTTPClient(t.Context())
+	require.NoError(t, err)
+	require.Error(t, getThrough(t, c, redirect.URL+"/mcp"))
+	require.Equal(t, "Bearer as-token-1", <-firstHop)
+	require.Empty(t, sinkSeen(), "a redirected request must not carry the bearer token to a plaintext endpoint")
+}
+
+func TestOAuth2_ConnectCancellationStopsTokenRequest(t *testing.T) {
+	caPEM, caKey, caCert := generateSelfSignedCA(t)
+	started := make(chan struct{}, 1)
+	requestCanceled := make(chan struct{}, 1)
+	release := make(chan struct{})
+	as := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+			requestCanceled <- struct{}{}
+		case <-release:
+			http.Error(w, "released", http.StatusInternalServerError)
+		}
+	}))
+	as.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{generateServerCert(t, caCert, caKey)}}
+	as.StartTLS()
+	defer as.Close()
+	defer close(release)
+
+	upSrv := bearerGuardedMCPUpstream(t, "Bearer as-token-1")
+	up := newOAuth2Upstream(upSrv.URL, as.URL+"/token", string(caPEM))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- up.Connect(ctx, func() {}) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "token request did not start")
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		require.FailNow(t, "Connect continued token acquisition after cancellation")
+	}
+	require.Error(t, err)
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		require.FailNow(t, "token endpoint request continued after cancellation")
+	}
+}
+
 func TestOAuth2_TokenReusedWithinLifetime(t *testing.T) {
 	as, caPEM, asSeen := newTestAuthServer(t, 3600)
 	upSrv, upSeen := recordingUpstream(t)
 
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
@@ -1104,7 +1173,7 @@ func TestOAuth2_TokenRefreshedOnExpiry(t *testing.T) {
 
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
@@ -1123,7 +1192,7 @@ func TestOAuth2_TokenSurvivesReconnect(t *testing.T) {
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
 	for range 2 {
-		c, err := up.buildHTTPClient()
+		c, err := up.buildHTTPClient(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 	}
@@ -1132,12 +1201,29 @@ func TestOAuth2_TokenSurvivesReconnect(t *testing.T) {
 	require.Equal(t, []string{"Bearer as-token-1", "Bearer as-token-1"}, upSeen())
 }
 
+func TestOAuth2_CanceledTokenSourceReplacedOnReconnect(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	upSrv, upSeen := recordingUpstream(t)
+	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	_, err := up.buildHTTPClient(ctx)
+	require.NoError(t, err)
+	cancel()
+
+	c, err := up.buildHTTPClient(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
+	require.Len(t, asSeen(), 1)
+	require.Equal(t, []string{"Bearer as-token-1"}, upSeen())
+}
+
 func TestOAuth2_NonHTTPSTokenURLRejected(t *testing.T) {
 	upSrv, _ := recordingUpstream(t)
 
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", "http://as.example.com/token", "")
 
-	_, err := up.buildHTTPClient()
+	_, err := up.buildHTTPClient(t.Context())
 	require.Error(t, err, "a plaintext token endpoint would expose the client secret")
 	require.NotContains(t, err.Error(), testClientSecret)
 }
@@ -1173,7 +1259,7 @@ func TestOAuth2_TokenEndpointRedirectRejected(t *testing.T) {
 	upSrv, upSeen := recordingUpstream(t)
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", string(caPEM))
 
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.Error(t, getThrough(t, c, upSrv.URL+"/mcp"))
 
@@ -1209,7 +1295,7 @@ func TestOAuth2_RejectedTokenReplacedWithoutReconnect(t *testing.T) {
 	up := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", caPEM)
 
 	// one client for both requests: the 401 must be recovered from in place
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	for range 2 {
 		require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
@@ -1280,7 +1366,7 @@ func TestOAuth2_TokenEndpointOnPrivateCARequiresGatewayBundle(t *testing.T) {
 	as, _, _ := newTestAuthServer(t, 3600)
 	upSrv, _ := recordingUpstream(t)
 
-	untrusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", "").buildHTTPClient()
+	untrusted, err := newOAuth2Upstream(upSrv.URL+"/mcp", as.URL+"/token", "").buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.Error(t, getThrough(t, untrusted, upSrv.URL+"/mcp"),
 		"an AS on a private CA must not be trusted without the gateway bundle")
@@ -1304,7 +1390,7 @@ func TestOAuth2_MintedTokenOverridesStaticCredential(t *testing.T) {
 		},
 	}, caPEM, nil)
 
-	c, err := up.buildHTTPClient()
+	c, err := up.buildHTTPClient(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, getThrough(t, c, upSrv.URL+"/mcp"))
 

@@ -91,9 +91,11 @@ type MCPServer struct {
 
 	// client-credentials token source for OAuth2 upstreams, built on first use
 	// so its cached token outlives a reconnect, and dropped by
-	// invalidateTokenSource when the upstream rejects the token
+	// invalidateTokenSource when the upstream rejects the token. tokenCtx
+	// tracks cancellation so a later Connect can replace a stopped source.
 	tokenMu  sync.Mutex
 	tokenSrc oauth2.TokenSource
+	tokenCtx context.Context
 
 	// supportedVersions lists protocol versions this upstream supports.
 	supportedVersions []string
@@ -163,7 +165,7 @@ func (up *MCPServer) newTransport() (*http.Transport, error) {
 // server, with header injection via a custom round tripper. the discoverCapture
 // is stored on up.dc to intercept the SDK's server/discover response during
 // Connect.
-func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
+func (up *MCPServer) buildHTTPClient(ctx context.Context) (*http.Client, error) {
 	base, err := up.newTransport()
 	if err != nil {
 		return nil, err
@@ -175,10 +177,10 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 	if up.OAuth2 != nil {
 		// resolve once so a bad token URL fails the connect rather than the
 		// first request. the transport holds the indirection, not this source
-		if _, err := up.tokenSource(); err != nil {
+		if _, err := up.tokenSource(ctx); err != nil {
 			return nil, err
 		}
-		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up}, Base: base}, up: up}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up, ctx: ctx}, Base: base}, up: up}
 	}
 
 	up.dc = &discoverCapture{
@@ -187,7 +189,12 @@ func (up *MCPServer) buildHTTPClient() (*http.Client, error) {
 			sink: up.storeToolHints,
 		},
 	}
-	return &http.Client{Transport: up.dc}, nil
+	return &http.Client{
+		Transport: up.dc,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("upstream %s returned a redirect", up.Name)
+		},
+	}, nil
 }
 
 // tokenInvalidator drops the cached token source when the upstream rejects the
@@ -214,11 +221,12 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 // already dropped, since nothing re-reads up.tokenSrc until the next Connect
 // and Connect is a no-op while the session lives.
 type dynamicTokenSource struct {
-	up *MCPServer
+	up  *MCPServer
+	ctx context.Context
 }
 
 func (d dynamicTokenSource) Token() (*oauth2.Token, error) {
-	ts, err := d.up.tokenSource()
+	ts, err := d.up.tokenSource(d.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -259,17 +267,18 @@ func (s *sanitizedTokenSource) Token() (*oauth2.Token, error) {
 // on every reconnect. a credential or CA change replaces the whole MCPServer,
 // so config cannot make the cache stale; revocation can, which is what
 // invalidateTokenSource handles.
-func (up *MCPServer) tokenSource() (oauth2.TokenSource, error) {
+func (up *MCPServer) tokenSource(ctx context.Context) (oauth2.TokenSource, error) {
 	up.tokenMu.Lock()
 	defer up.tokenMu.Unlock()
-	if up.tokenSrc != nil {
+	if up.tokenSrc != nil && up.tokenCtx.Err() == nil {
 		return up.tokenSrc, nil
 	}
-	ts, err := up.newTokenSource()
+	ts, err := up.newTokenSource(ctx)
 	if err != nil {
 		return nil, err
 	}
 	up.tokenSrc = ts
+	up.tokenCtx = ctx
 	return ts, nil
 }
 
@@ -280,6 +289,7 @@ func (up *MCPServer) tokenSource() (oauth2.TokenSource, error) {
 func (up *MCPServer) invalidateTokenSource() {
 	up.tokenMu.Lock()
 	up.tokenSrc = nil
+	up.tokenCtx = nil
 	up.tokenMu.Unlock()
 }
 
@@ -289,7 +299,7 @@ func (up *MCPServer) invalidateTokenSource() {
 // deliberately not through the header chain: the AS is not an MCP server and
 // must not see broker identity headers. the ReuseTokenSource underneath
 // re-requests near expiry; wrapping it in another one would disable refresh.
-func (up *MCPServer) newTokenSource() (oauth2.TokenSource, error) {
+func (up *MCPServer) newTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
 	// CEL guards the CRD, but the broker reads a mounted file
 	if !strings.HasPrefix(up.OAuth2.TokenURL, "https://") {
 		return nil, fmt.Errorf("token URL for upstream %s must use https", up.Name)
@@ -308,7 +318,7 @@ func (up *MCPServer) newTokenSource() (oauth2.TokenSource, error) {
 	// endpoint would re-POST the client secret wherever it points, plaintext
 	// included, so no redirect is followed at all — token endpoints do not
 	// legitimately redirect a client-credentials POST
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
 		Transport: base,
 		Timeout:   tokenRequestTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -428,7 +438,7 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	}
 	up.clientMu.RUnlock()
 
-	httpC, err := up.buildHTTPClient()
+	httpC, err := up.buildHTTPClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
