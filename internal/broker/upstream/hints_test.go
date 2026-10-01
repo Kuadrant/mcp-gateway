@@ -305,3 +305,27 @@ func TestListAllTools_FailedWalkLeavesNoPartialHints(t *testing.T) {
 	_, okBeta = up.GetToolHints("up_beta")
 	require.True(t, okBeta, "hint for a served tool must be kept")
 }
+
+// TestListAllTools_FreshHintWinsOverPreviousListing: a walk that re-observes
+// a tool over HTTP must install the fresh hint, not the previous listing's
+// value: the previous hint is only a fallback for served tools the walk did
+// not re-observe (per-page cache hits).
+func TestListAllTools_FreshHintWinsOverPreviousListing(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// first listing: alpha is read-only
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
+	h, ok := up.GetToolHints("up_alpha")
+	require.True(t, ok, "first listing must observe the hint")
+	require.Equal(t, ptr.To(true), h.ReadOnlyHint)
+
+	// second listing: the upstream now reports alpha as not read-only
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(false)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
+	h, ok = up.GetToolHints("up_alpha")
+	require.True(t, ok, "served tool must keep a hint")
+	require.Equal(t, ptr.To(false), h.ReadOnlyHint, "fresh walk observation must win over the previous listing")
+}

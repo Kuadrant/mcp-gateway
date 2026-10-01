@@ -206,18 +206,20 @@ func (up *MCPServer) beginToolHints() {
 // kept only for those tools (a page served from the SDK's per-page TTL
 // cache produced no HTTP round trip, so its hint survives from the previous
 // walk), while tools the fresh listing dropped lose their hints instead of
-// lingering forever.
+// lingering forever. Hints this walk observed over HTTP win over the
+// previous listing: the previous value is only a fallback for served tools
+// the walk did not re-observe.
 func (up *MCPServer) commitToolHints(listed map[string]struct{}) {
 	up.hintsMu.Lock()
 	if up.pendingToolHints != nil {
 		merged := make(map[string]ToolHints, len(up.pendingToolHints)+len(listed))
-		for name, h := range up.pendingToolHints {
-			merged[name] = h
-		}
 		for name := range listed {
 			if h, ok := up.prevToolHints[name]; ok {
 				merged[name] = h
 			}
+		}
+		for name, h := range up.pendingToolHints {
+			merged[name] = h
 		}
 		up.toolHints = merged
 		up.pendingToolHints = nil

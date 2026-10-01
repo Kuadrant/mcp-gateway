@@ -890,3 +890,105 @@ func TestFetchUserSpecificTools_StatelessFollowsPagination(t *testing.T) {
 	names := []string{result.Tools[0].Name, result.Tools[1].Name}
 	assert.ElementsMatch(t, []string{"sl_one", "sl_two"}, names)
 }
+
+// newPagedTestMCPServer is a JSON-RPC test upstream whose tools/list always
+// returns one tool plus a nextCursor, so a full walk never terminates before
+// MaxListPages.
+func newPagedTestMCPServer(initCount *atomic.Int32, sessionID string, listCalls *atomic.Int32) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Mcp-Session-Id", sessionID)
+
+		switch method {
+		case "initialize":
+			initCount.Add(1)
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"serverInfo":      map[string]any{"name": "paged-server", "version": "1.0"},
+					"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			listCalls.Add(1)
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"tools": []map[string]any{
+						{
+							"name":        "user_tool",
+							"description": "a user tool",
+							"inputSchema": map[string]any{"type": "object"},
+						},
+					},
+					"nextCursor": "always-more",
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}
+			_ = json.NewEncoder(w).Encode(resp)
+		}
+	}))
+}
+
+// TestFetchUserSpecificTools_PageLimitNotRetriedAsStaleSession: an upstream
+// whose listing never terminates must produce exactly one bounded walk —
+// MaxListPages tools/list calls and one initialize — not a stale-session
+// reconnect that repeats the capped walk.
+func TestFetchUserSpecificTools_PageLimitNotRetriedAsStaleSession(t *testing.T) {
+	var initCount, listCalls atomic.Int32
+	ts := newPagedTestMCPServer(&initCount, "upstream-paged", &listCalls)
+	defer ts.Close()
+
+	cfg := config.MCPServer{
+		Name:             "paged-server",
+		URL:              ts.URL,
+		Prefix:           "pg_",
+		State:            "Enabled",
+		UserSpecificList: true,
+	}
+
+	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
+	b := &mcpBrokerImpl{
+		userSpecificServers:      servers,
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 30 * time.Second,
+	}
+	withStatefulVersions(b, servers)
+	withProtocolHandlers(b)
+
+	result := &mcp.ListToolsResult{}
+	headers := http.Header{
+		"Mcp-Session-Id":       []string{"gw-paged-1"},
+		"Mcp-Protocol-Version": []string{"2025-03-26"},
+		"Authorization":        []string{"Bearer user-token"},
+	}
+
+	b.FetchUserSpecificTools(context.Background(), headers, result)
+
+	require.Empty(t, result.Tools, "page-limited listing must not surface partial tools")
+	assert.LessOrEqual(t, listCalls.Load(), int32(upstream.MaxListPages),
+		"the capped walk must not be retried after a page-limit error")
+	assert.Equal(t, int32(1), initCount.Load(), "a page-limit error must not trigger a reconnect")
+}

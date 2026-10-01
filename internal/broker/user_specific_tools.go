@@ -212,6 +212,9 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 			return nil, fmt.Errorf("list tools: %w", err)
 		}
 	}
+	if err != nil {
+		return nil, fmt.Errorf("list tools: %w", err)
+	}
 
 	// dereference pointer tools from result
 	valueTools := make([]mcp.Tool, 0, len(toolsResult.Tools))
@@ -328,7 +331,7 @@ func (broker *mcpBrokerImpl) listAllUserTools(ctx context.Context, session *mcp.
 	var result mcp.ListToolsResult
 	for page := 0; ; page++ {
 		if page >= upstream.MaxListPages {
-			return nil, fmt.Errorf("tools/list from upstream %q exceeded %d pages", session.ID(), upstream.MaxListPages)
+			return nil, fmt.Errorf("%w: tools/list from session %q exceeded %d pages", upstream.ErrPageLimitExceeded, session.ID(), upstream.MaxListPages)
 		}
 		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
 		if err != nil {
