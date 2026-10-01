@@ -266,9 +266,32 @@ scrape_configs:
         replacement: $1:9090
 ```
 
-This guide assumes that Prometheus is already installed. Add the scrape job above to its configuration.
+This guide assumes that Prometheus is already installed. Add the scrape job above to its configuration. The Prometheus service account needs permission to list and watch pods in the gateway namespace.
 
-If you use Prometheus Operator, configure an equivalent pod-IP scrape job in the operator-managed Prometheus instance. The generated broker container does not declare a named `metrics` port, and the generated `Service` does not expose port `9090`, so a `PodMonitor` with `port: metrics` does not work for the default deployment unless you add that named port.
+If you use Prometheus Operator, including OpenShift user workload monitoring, use a `PodMonitor` that relabels the scrape address to port `9090`. The generated broker container does not declare a named `metrics` port, so a `PodMonitor` with `port: metrics` discovers no targets. Instead, select the declared `http` port to get one target per pod, then rewrite its address. Replace `<namespace>` with the gateway namespace from Step 1:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mcp-broker
+  namespace: <namespace>
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-gateway
+  podMetricsEndpoints:
+    - port: http             # selects one target per pod; the scrape goes to port 9090
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_ip]
+          targetLabel: __address__
+          replacement: $1:9090
+```
+
+The relabeling runs after the port filter and replaces `<pod-IP>:8080` with `<pod-IP>:9090`. It only changes where Prometheus scrapes; broker traffic on port `8080` is unaffected.
+
+On OpenShift, enable monitoring for user-defined projects (`enableUserWorkload: true` in the `cluster-monitoring-config` ConfigMap in `openshift-monitoring`) and create the `PodMonitor` in the gateway namespace. Do not add `additionalScrapeConfigs` to the user workload `Prometheus` resource; the Cluster Monitoring Operator removes it.
 
 ### Useful PromQL queries
 
