@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ import (
 )
 
 const (
+	// MCPControllerName identifies the RouteParentStatus entries this controller owns.
+	// Gateway API namespaces parent status by (parentRef, controllerName).
+	MCPControllerName gatewayv1.GatewayController = "mcp.kuadrant.io/mcp-gateway"
+
+	programmedConditionType = "Programmed"
 
 	// ManagedSecretLabel is the required label for secrets the controller watches (credentials, session store).
 	// Only secrets with this label are cached by the informer.
@@ -823,6 +829,101 @@ func isValidHostname(hostname string) bool {
 		return false
 	}
 	return u.Host == hostname
+}
+
+// desiredRouteParents prunes legacy Programmed conditions and manages MCP's own entries.
+// it never mutates parents and always returns a non-nil slice.
+func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace string,
+	generation int64, now metav1.Time, present bool) []gatewayv1.RouteParentStatus {
+	out := make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
+	for i := range parents {
+		p := parents[i].DeepCopy()
+		if p.ControllerName != MCPControllerName && pruneProgrammed(p) {
+			continue
+		}
+		out = append(out, *p)
+	}
+
+	refs := acceptedParentRefs(out)
+	relevant := make([]gatewayv1.ParentReference, 0, len(refs))
+	for i := range refs {
+		if !slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
+			return sameParentRef(ref, refs[i], routeNamespace)
+		}) {
+			relevant = append(relevant, refs[i])
+		}
+	}
+
+	retained := out[:0]
+	for i := range out {
+		p := &out[i]
+		if p.ControllerName == MCPControllerName {
+			keep := present && slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
+				return sameParentRef(ref, p.ParentRef, routeNamespace)
+			})
+			if !keep && pruneProgrammed(p) {
+				continue
+			}
+		}
+		retained = append(retained, *p)
+	}
+	out = retained
+	if !present {
+		return out
+	}
+
+	condition := metav1.Condition{
+		Type: programmedConditionType, Status: metav1.ConditionTrue, ObservedGeneration: generation,
+		LastTransitionTime: now, Reason: "InUseByMCPServerRegistration",
+		Message: "HTTPRoute is referenced by at least one MCPServerRegistration",
+	}
+	for i := range relevant {
+		index := slices.IndexFunc(out, func(p gatewayv1.RouteParentStatus) bool {
+			return p.ControllerName == MCPControllerName && sameParentRef(p.ParentRef, relevant[i], routeNamespace)
+		})
+		if index >= 0 {
+			meta.SetStatusCondition(&out[index].Conditions, condition)
+		} else {
+			out = append(out, gatewayv1.RouteParentStatus{
+				ParentRef: relevant[i], ControllerName: MCPControllerName, Conditions: []metav1.Condition{condition},
+			})
+		}
+	}
+	return out
+}
+
+func acceptedParentRefs(parents []gatewayv1.RouteParentStatus) []gatewayv1.ParentReference {
+	refs := make([]gatewayv1.ParentReference, 0, len(parents))
+	for i := range parents {
+		if parents[i].ControllerName != MCPControllerName && meta.IsStatusConditionTrue(parents[i].Conditions, "Accepted") {
+			refs = append(refs, parents[i].ParentRef)
+		}
+	}
+	return refs
+}
+
+func sameParentRef(a, b gatewayv1.ParentReference, routeNamespace string) bool {
+	return defaultedGroup(a.Group) == defaultedGroup(b.Group) &&
+		defaultedKind(a.Kind) == defaultedKind(b.Kind) &&
+		defaultedNamespace(a.Namespace, routeNamespace) == defaultedNamespace(b.Namespace, routeNamespace) &&
+		a.Name == b.Name && ptr.Equal(a.SectionName, b.SectionName) && ptr.Equal(a.Port, b.Port)
+}
+
+func defaultedGroup(g *gatewayv1.Group) gatewayv1.Group {
+	return ptr.Deref(g, gatewayv1.Group(gatewayv1.GroupName))
+}
+
+func defaultedKind(k *gatewayv1.Kind) gatewayv1.Kind {
+	return ptr.Deref(k, gatewayv1.Kind("Gateway"))
+}
+
+func defaultedNamespace(ns *gatewayv1.Namespace, routeNamespace string) gatewayv1.Namespace {
+	return ptr.Deref(ns, gatewayv1.Namespace(routeNamespace))
+}
+
+func pruneProgrammed(e *gatewayv1.RouteParentStatus) (drop bool) {
+	meta.RemoveStatusCondition(&e.Conditions, programmedConditionType)
+	return len(e.Conditions) == 0
 }
 
 func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
