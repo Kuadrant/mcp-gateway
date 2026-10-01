@@ -26,58 +26,25 @@ func extractToolResponseText(body []byte) (text []byte, isError, ok bool) {
 	return joinTexts(texts), isError, ok
 }
 
-// extractSSETexts splits body into SSE events (separated by blank lines)
-// and extracts the text from each one. Events with a data: field spread
-// across multiple lines are stitched back together first so they parse.
-// CRLF and lone CR line endings are normalized to LF first, per the SSE
-// spec. isError is true if any event is an isError result. ok is false if
-// any event failed to decode - see extractTextFromResultJSON.
+// extractSSETexts splits body into SSE events and extracts the text from
+// each one. isError is true if any event is an isError result. ok is false
+// if any event failed to decode (see extractTextFromResultJSON) or the body
+// ends mid-event.
 func extractSSETexts(body []byte) (texts []string, isError, ok bool) {
-	body = normalizeLineEndings(body)
+	var r sseEventReader
+	r.lines.Write(body) // bare JSON is routed to extractTextFromResultJSON by the caller
 	ok = true
-	var eventBytes []byte
-	remaining := body
-	for len(remaining) > 0 {
-		idx := bytes.IndexByte(remaining, '\n')
-		var line []byte
-		if idx == -1 {
-			line = remaining
-			remaining = nil
-		} else {
-			line = remaining[:idx+1]
-			remaining = remaining[idx+1:]
+	for {
+		event, more := r.Next()
+		if !more {
+			break
 		}
-		if len(bytes.TrimSpace(line)) != 0 {
-			eventBytes = append(eventBytes, line...)
-			continue
-		}
-		if len(eventBytes) == 0 {
-			continue // stray/leading blank line, not a real event boundary
-		}
-		// blank line: the event assembled so far is complete
-		event := append(eventBytes, line...)
-		eventBytes = nil
 		eventTexts, eventIsError, eventOK := extractSSEEventTexts(event)
 		texts = append(texts, eventTexts...)
 		isError = isError || eventIsError
 		ok = ok && eventOK
 	}
-	// a trailing event with no terminating blank line (e.g. a truncated body)
-	if len(eventBytes) > 0 {
-		eventTexts, eventIsError, eventOK := extractSSEEventTexts(eventBytes)
-		texts = append(texts, eventTexts...)
-		isError = isError || eventIsError
-		ok = ok && eventOK
-	}
-	return texts, isError, ok
-}
-
-// normalizeLineEndings rewrites CRLF and lone CR line endings to LF so the
-// '\n'-based splitting above and in sseEventData handles any of the three
-// line-ending forms the SSE spec allows.
-func normalizeLineEndings(b []byte) []byte {
-	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
-	return bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
+	return texts, isError, ok && r.Close() == nil
 }
 
 // extractSSEEventTexts decodes one complete SSE event's reassembled data:

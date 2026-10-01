@@ -1,7 +1,6 @@
 package mcprouter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -9,8 +8,6 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
-
-var dataPrefix = []byte("data:")
 
 // elicitationRewriter rewrites sse elicitation requests based on contents of idMap
 // idMap entries are managed in the following way:
@@ -23,37 +20,27 @@ var dataPrefix = []byte("data:")
 //  6. Stream ends -> Flush() called -> Remove() is called on entries to clean up any orphaned elicitations,
 //     is noop for already removed keys
 type elicitationRewriter struct {
-	buf        []byte
+	lines      sseLineReader
 	idMap      idmap.Map
 	req        *routing.MCPRequest
 	logger     *slog.Logger
 	gatewayIDs []string
 }
 
-// Process receives a chunk of SSE response data and rewrites any elicitation/create request IDs.
-// As SSE is a line-based protocol, splitting on \n ensures we only
-// parse and rewrite fully received JSON-RPC messages
+// Process receives a chunk of SSE response data and rewrites any
+// elicitation/create request IDs. Only complete lines are parsed, so only
+// fully received JSON-RPC messages are rewritten.
 func (w *elicitationRewriter) Process(ctx context.Context, chunk []byte) []byte {
-	w.buf = append(w.buf, chunk...)
+	w.lines.Write(chunk)
 
 	var output []byte
 	for {
-		idx := bytes.IndexByte(w.buf, '\n')
-		if idx == -1 {
+		raw, line, ok := w.lines.Next()
+		if !ok {
 			break // no complete line - hold remainder for next chunk
 		}
-
-		line := w.buf[:idx+1] // include \n
-		w.buf = w.buf[idx+1:]
-
-		// check if this is a SSE event
-		if bytes.HasPrefix(bytes.TrimSpace(line), dataPrefix) {
-			line = w.maybeRewriteElicitation(ctx, line)
-		}
-
-		output = append(output, line...)
+		output = append(output, w.maybeRewriteElicitation(ctx, raw, line)...)
 	}
-
 	return output
 }
 
@@ -61,12 +48,10 @@ func (w *elicitationRewriter) Process(ctx context.Context, chunk []byte) []byte 
 // This allows us to deal with orphaned elicitation id mappings
 // Safe to call multiple times; subsequent calls are no-ops
 func (w *elicitationRewriter) Flush(ctx context.Context) []byte {
-	remaining := w.buf
-	w.buf = nil
+	remaining := w.lines.Pending()
+	w.lines.Reset()
 	if len(remaining) > 0 {
-		if bytes.HasPrefix(bytes.TrimSpace(remaining), dataPrefix) {
-			remaining = w.maybeRewriteElicitation(ctx, remaining)
-		}
+		remaining = w.maybeRewriteElicitation(ctx, remaining, remaining)
 	}
 	for _, id := range w.gatewayIDs {
 		w.idMap.Remove(ctx, id) // tool request + response finished, no need to hold onto the mappings any more
@@ -84,26 +69,27 @@ type jsonRPCMessage struct {
 	Error   json.RawMessage `json:"error,omitempty"`
 }
 
-func (w *elicitationRewriter) maybeRewriteElicitation(ctx context.Context, line []byte) []byte {
-	trimmed := bytes.TrimSpace(line)
-	jsonData := bytes.TrimPrefix(trimmed, dataPrefix)
-	if len(jsonData) > 0 && jsonData[0] == ' ' {
-		jsonData = jsonData[1:]
+// maybeRewriteElicitation returns raw unchanged unless line (raw without its
+// terminator) is a data field carrying an elicitation/create request.
+func (w *elicitationRewriter) maybeRewriteElicitation(ctx context.Context, raw, line []byte) []byte {
+	jsonData, ok := sseDataValue(line)
+	if !ok {
+		return raw
 	}
 
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(jsonData, &msg); err != nil {
-		return line // not jsonrpc, so definitely not an elicitation req to rewrite
+		return raw // not jsonrpc, so definitely not an elicitation req to rewrite
 	}
 
 	if msg.Method != "elicitation/create" || msg.ID == nil {
-		return line
+		return raw
 	}
 
 	gatewayID, err := w.idMap.Store(ctx, msg.ID, w.req.ServerName, w.req.BackendSessionID, w.req.GetSessionID())
 	if err != nil {
 		w.logger.ErrorContext(ctx, "failed to store elicitation mapping", "error", err)
-		return line
+		return raw
 	}
 	w.logger.DebugContext(
 		ctx,
@@ -122,9 +108,9 @@ func (w *elicitationRewriter) maybeRewriteElicitation(ctx context.Context, line 
 	rewritten, err := json.Marshal(&msg)
 	if err != nil {
 		w.logger.ErrorContext(ctx, "failed to marshal rewritten elicitation", "error", err)
-		return line
+		return raw
 	}
 
-	// preserve original line prefix and ending
-	return append(append(append(dataPrefix, ' '), rewritten...), '\n')
+	// preserve original line ending
+	return append(append(append(dataPrefix, ' '), rewritten...), raw[len(line):]...)
 }

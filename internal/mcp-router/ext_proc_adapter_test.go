@@ -1211,7 +1211,48 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
 
 	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
-		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "")...)
+		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "application/json")...)
+	mock := makeMockProcessServer(t, steps)
+
+	err = srv.Process(mock)
+	require.NoError(t, err)
+	mock.verifyAllResponsesConsumed()
+}
+
+// verifies that a bare JSON-RPC result from an SSE-declared upstream is
+// dropped without invoking guardrails or forwarding a replacement.
+func TestProcess_GuardrailsDrops_RawJSONWithSSEContentType(t *testing.T) {
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cfg := &config.MCPServersConfig{}
+	cfg.ApplyReload([]*config.MCPServer{{
+		Name:                "s1",
+		GuardrailsConfigIDs: []string{"cfg-1"},
+	}}, nil, "", 0, nil, &allowAllChecker{})
+
+	srv := &ExtProcServer{
+		Logger:          logger,
+		SessionCache:    cache,
+		Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+		ResponseHandler: &bufferedResponseHandler{},
+	}
+	srv.RoutingConfig.Store(cfg)
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	toolResultBody := []byte(`{
+  "jsonrpc": "2.0",
+
+  "id": 99,
+  "result": {
+    "content": [{"type": "text", "text": "hello world"}]
+  }
+}`)
+	wantBody := []byte(nil)
+
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+		guardrailsResponseSteps(toolCallBody, toolResultBody, wantBody, "text/event-stream")...)
 	mock := makeMockProcessServer(t, steps)
 
 	err = srv.Process(mock)
@@ -1225,15 +1266,17 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 // mismatched builder would leave the client unable to parse the framing.
 func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
-	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
+	toolResultJSON := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
+	toolResultSSE := bytes.TrimPrefix([]byte(routing.BuildSSEToolResult(1, "secret data")), []byte("\n"))
 
 	tests := []struct {
-		name        string
-		contentType string
-		blockedBody []byte
+		name           string
+		contentType    string
+		toolResultBody []byte
+		blockedBody    []byte
 	}{
-		{"SSE", "", []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))},
-		{"JSON", "application/json", []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))},
+		{"SSE", "text/event-stream", toolResultSSE, []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))},
+		{"JSON", "application/json", toolResultJSON, []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))},
 	}
 
 	for _, tc := range tests {
@@ -1258,7 +1301,7 @@ func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 
 			// blockAllChecker blocks every response; adapter must send this replacement.
 			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
-				guardrailsResponseSteps(toolCallBody, toolResultBody, tc.blockedBody, tc.contentType)...)
+				guardrailsResponseSteps(toolCallBody, tc.toolResultBody, tc.blockedBody, tc.contentType)...)
 			mock := makeMockProcessServer(t, steps)
 
 			err = srv.Process(mock)
@@ -1297,18 +1340,15 @@ func TestProcess_GuardrailsBuffering_ForwardsElicitationBeforeResult(t *testing.
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 
-	// first chunk: a control event (elicitation/create) unrelated to the
-	// tool call's own id=1 - must be forwarded immediately, not withheld.
-	elicitationEvent := []byte(`event: message
-data: {"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{}}
+	// A lone-CR control event must be forwarded before end-of-stream. The
+	// guardrails buffer normalizes legal SSE line endings to LF before the
+	// downstream elicitation and resource rewriters process the event.
+	elicitationEvent := []byte("event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\r\r")
+	forwardedElicitation := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\n\n")
 
-`)
-	// second chunk: the terminal tools/call result matching id=1 - blockAllChecker
-	// blocks it, so the adapter replaces it, but only once it arrives.
-	toolResultEvent := []byte(`event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret"}]}}
-
-`)
+	// The terminal tools/call result is CR-only too. blockAllChecker replaces
+	// it after parsing, proving it cannot bypass the guardrails check.
+	toolResultEvent := []byte("event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"secret\"}]}}\r\r")
 	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
 
 	steps := []mockProcessServerMessageAndErr{
@@ -1358,7 +1398,7 @@ data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret
 						ResponseBody: &extProcV3.BodyResponse{
 							Response: &extProcV3.CommonResponse{
 								BodyMutation: &extProcV3.BodyMutation{
-									Mutation: &extProcV3.BodyMutation_Body{Body: elicitationEvent},
+									Mutation: &extProcV3.BodyMutation_Body{Body: forwardedElicitation},
 								},
 							},
 						},
@@ -1588,11 +1628,11 @@ func TestProcess_StatefulPathOverrides2026Header_UsesSSEReplacement(t *testing.T
 	)
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
-	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
+	toolResultBody := bytes.TrimPrefix([]byte(routing.BuildSSEToolResult(1, "secret data")), []byte("\n"))
 	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
 
 	steps := append([]mockProcessServerMessageAndErr{headers},
-		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "")...)
+		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "text/event-stream")...)
 	mock := makeMockProcessServer(t, steps)
 
 	require.NoError(t, srv.Process(mock))
