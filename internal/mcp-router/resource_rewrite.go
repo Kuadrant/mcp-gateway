@@ -20,21 +20,21 @@ const maxBufferedLineBytes = 1 << 20 // 1 MiB
 // Rewrites incrementally per complete line, never buffering a full line past
 // Flush, so it composes safely with elicitationRewriter on the same response.
 type resourceURIRewriter struct {
-	buf        []byte
-	overflowed bool // true while forwarding an abandoned oversized line unrewritten, until its '\n'
+	lines      sseLineReader
+	overflowed bool // true while forwarding an abandoned oversized line unrewritten, until its terminator
 	prefix     string
 	logger     *slog.Logger
 }
 
 // Process receives a chunk of response data and rewrites any complete lines it
-// contains. Splitting on '\n' ensures only fully received JSON is parsed and
-// rewritten; an incomplete trailing line is held for the next chunk (or Flush),
-// unless it exceeds maxBufferedLineBytes, in which case it's forwarded unrewritten.
+// contains. Only complete lines are parsed and rewritten; an incomplete
+// trailing line is held for the next chunk (or Flush), unless it exceeds
+// maxBufferedLineBytes, in which case it's forwarded unrewritten.
 func (r *resourceURIRewriter) Process(ctx context.Context, chunk []byte) []byte {
 	var output []byte
 
 	if r.overflowed {
-		idx := bytes.IndexByte(chunk, '\n')
+		idx := bytes.IndexAny(chunk, "\r\n")
 		if idx == -1 {
 			return chunk // still inside the abandoned line - keep passing through
 		}
@@ -43,23 +43,19 @@ func (r *resourceURIRewriter) Process(ctx context.Context, chunk []byte) []byte 
 		r.overflowed = false
 	}
 
-	r.buf = append(r.buf, chunk...)
+	r.lines.Write(chunk)
 
 	for {
-		idx := bytes.IndexByte(r.buf, '\n')
-		if idx == -1 {
-			if len(r.buf) > maxBufferedLineBytes {
-				output = append(output, r.buf...)
-				r.buf = nil
+		raw, line, ok := r.lines.Next()
+		if !ok {
+			if pending := r.lines.Pending(); len(pending) > maxBufferedLineBytes {
+				output = append(output, pending...)
+				r.lines.Reset()
 				r.overflowed = true
 			}
 			break // no complete line - hold remainder for next chunk
 		}
-
-		line := r.buf[:idx+1] // include '\n'
-		r.buf = r.buf[idx+1:]
-
-		output = append(output, r.maybeRewriteLine(ctx, line)...)
+		output = append(output, r.maybeRewriteLine(ctx, raw, line)...)
 	}
 
 	return output
@@ -69,45 +65,36 @@ func (r *resourceURIRewriter) Process(ctx context.Context, chunk []byte) []byte 
 // to call multiple times; subsequent calls are no-ops since the buffer is cleared
 // after the first call.
 func (r *resourceURIRewriter) Flush(ctx context.Context) []byte {
-	remaining := r.buf
-	r.buf = nil
+	remaining := r.lines.Pending()
+	r.lines.Reset()
 	if len(remaining) == 0 {
 		return remaining
 	}
-	return r.maybeRewriteLine(ctx, remaining)
+	return r.maybeRewriteLine(ctx, remaining, remaining)
 }
 
-// maybeRewriteLine rewrites a single line if it contains a tools/call result with
-// a ui:// _meta.ui.resourceUri, preserving the original line (including its '\n'
-// and any "data: " SSE prefix) exactly when there's nothing to rewrite.
-func (r *resourceURIRewriter) maybeRewriteLine(ctx context.Context, line []byte) []byte {
-	trimmed := bytes.TrimSpace(line)
-	if len(trimmed) == 0 {
-		return line
+// maybeRewriteLine rewrites line (raw without its terminator) if it contains a
+// tools/call result with a ui:// _meta.ui.resourceUri, as a bare JSON line or
+// an SSE data field. raw is returned unchanged when there's nothing to rewrite.
+func (r *resourceURIRewriter) maybeRewriteLine(ctx context.Context, raw, line []byte) []byte {
+	jsonData, hasDataPrefix := sseDataValue(line)
+	if !hasDataPrefix {
+		jsonData = line
 	}
-
-	jsonData := trimmed
-	hasDataPrefix := bytes.HasPrefix(trimmed, dataPrefix)
-	if hasDataPrefix {
-		jsonData = bytes.TrimSpace(bytes.TrimPrefix(trimmed, dataPrefix))
-	}
+	jsonData = bytes.TrimSpace(jsonData)
 	if len(jsonData) == 0 || jsonData[0] != '{' {
-		return line // not a JSON object on this line (event:, id:, blank, etc.) - leave untouched
+		return raw // not a JSON object on this line (event:, id:, blank, etc.) - leave untouched
 	}
 
 	rewritten, changed := r.rewriteToolResultJSON(ctx, jsonData)
 	if !changed {
-		return line
+		return raw
 	}
 
-	hasNewline := bytes.HasSuffix(line, []byte("\n"))
 	if hasDataPrefix {
 		rewritten = append([]byte("data: "), rewritten...)
 	}
-	if hasNewline {
-		rewritten = append(rewritten, '\n')
-	}
-	return rewritten
+	return append(rewritten, raw[len(line):]...)
 }
 
 // rewriteToolResultJSON rewrites _meta.ui.resourceUri in a single JSON-RPC message

@@ -186,8 +186,8 @@ func TestResourceURIRewriter_OversizedLineForwardedUnrewrittenNotBufferedForever
 	if len(out) != len(oversized) {
 		t.Fatalf("expected the oversized unterminated chunk to be forwarded once the cap is exceeded, got %d bytes, want %d", len(out), len(oversized))
 	}
-	if r.buf != nil {
-		t.Errorf("expected buf to be cleared after overflow, got %d bytes still buffered", len(r.buf))
+	if r.lines.Pending() != nil {
+		t.Errorf("expected buf to be cleared after overflow, got %d bytes still buffered", len(r.lines.Pending()))
 	}
 
 	// the rest of the abandoned line, plus its terminator, should still pass through unrewritten
