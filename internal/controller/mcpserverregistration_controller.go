@@ -13,6 +13,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -111,7 +112,7 @@ type MCPServerConfigReaderWriter interface {
 type MCPReconciler struct {
 	client.Client
 	Scheme                *runtime.Scheme
-	DirectAPIReader       client.Reader // uncached reader for fetching secrets
+	DirectAPIReader       client.Reader // uncached reader
 	ConfigReaderWriter    MCPServerConfigReaderWriter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 }
@@ -144,7 +145,10 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				return ctrl.Result{}, err
 			}
 			if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
-				return ctrl.Result{}, err
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				logger.Error(err, "failed to update HTTPRoute status during deletion")
 			}
 			controllerutil.RemoveFinalizer(mcpsr, mcpGatewayFinalizer)
 			if err := r.Update(ctx, mcpsr); err != nil {
@@ -986,31 +990,46 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 		return fmt.Errorf("failed to get HTTPRoute: %w", err)
 	}
 
-	condition := metav1.Condition{
-		Type:               "Programmed",
-		ObservedGeneration: httpRoute.Generation,
-		LastTransitionTime: metav1.Now(),
+	present := mcpsr.DeletionTimestamp.IsZero()
+	if !present {
+		present, err = r.otherRegistrationsTarget(ctx, mcpsr, namespace)
+		if err != nil {
+			return err
+		}
 	}
 
-	condition.Status = metav1.ConditionTrue
-	condition.Reason = "InUseByMCPServerRegistration"
-	// We don't include the MCP Server in the status because >1 MCPServerRegistration may reference the same HTTPRoute
-	condition.Message = "HTTPRoute is referenced by at least one MCPServerRegistration"
-	var changed bool
-	for i := range httpRoute.Status.Parents {
-		if mcpsr.DeletionTimestamp != nil {
-			changed = meta.RemoveStatusCondition(&httpRoute.Status.Parents[i].Conditions, "Programmed")
-		} else {
-			changed = meta.SetStatusCondition(&httpRoute.Status.Parents[i].Conditions, condition)
+	parents := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), present)
+	if equality.Semantic.DeepEqual(httpRoute.Status.Parents, parents) {
+		return nil
+	}
+	httpRoute.Status.Parents = parents
+	return r.Status().Update(ctx, httpRoute)
+}
+
+func (r *MCPReconciler) otherRegistrationsTarget(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, routeNamespace string) (bool, error) {
+	registrations := &mcpv1.MCPServerRegistrationList{}
+	indexKey := httpRouteIndexValue(routeNamespace, mcpsr.Spec.TargetRef.Name)
+	if err := r.List(ctx, registrations, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
+		return false, fmt.Errorf("failed to list MCPServerRegistrations targeting HTTPRoute: %w", err)
+	}
+
+	for i := range registrations.Items {
+		candidate := &registrations.Items[i]
+		if candidate.Name == mcpsr.Name && candidate.Namespace == mcpsr.Namespace {
+			continue
 		}
-		if changed {
-			if err := r.Status().Update(ctx, httpRoute); err != nil {
-				return err
+		registration := &mcpv1.MCPServerRegistration{}
+		if err := r.DirectAPIReader.Get(ctx, client.ObjectKeyFromObject(candidate), registration); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
 			}
+			return false, fmt.Errorf("failed to get MCPServerRegistration: %w", err)
+		}
+		if registration.DeletionTimestamp == nil {
+			return true, nil
 		}
 	}
-	return nil
-
+	return false, nil
 }
 
 func (r *MCPReconciler) updateStatus(
