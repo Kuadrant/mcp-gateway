@@ -120,7 +120,7 @@ func (v *Verifier) MCPServerRegistrationStatusMessage(name, namespace string) (s
 	return "", fmt.Errorf("MCPServerRegistration %s/%s has no Ready condition", namespace, name)
 }
 
-// HTTPRouteHasProgrammedCondition checks if the HTTPRoute has Programmed=True condition
+// HTTPRouteHasProgrammedCondition checks if the MCP-owned entry has Programmed=True
 func (v *Verifier) HTTPRouteHasProgrammedCondition(name, namespace string) error {
 	httpRoute, err := v.getHTTPRoute(name, namespace)
 	if err != nil {
@@ -128,16 +128,19 @@ func (v *Verifier) HTTPRouteHasProgrammedCondition(name, namespace string) error
 	}
 
 	for _, parent := range httpRoute.Status.Parents {
+		if parent.ControllerName != "mcp.kuadrant.io/mcp-gateway" {
+			continue
+		}
 		for _, condition := range parent.Conditions {
 			if condition.Type == "Programmed" && condition.Status == metav1.ConditionTrue {
 				return nil
 			}
 		}
 	}
-	return fmt.Errorf("HTTPRoute %s/%s does not have Programmed condition", namespace, name)
+	return fmt.Errorf("HTTPRoute %s/%s does not have MCP-owned Programmed condition", namespace, name)
 }
 
-// HTTPRouteNoProgrammedCondition checks that HTTPRoute does NOT have Programmed condition
+// HTTPRouteNoProgrammedCondition checks that no MCP-owned entry has Programmed=True
 func (v *Verifier) HTTPRouteNoProgrammedCondition(name, namespace string) error {
 	httpRoute, err := v.getHTTPRoute(name, namespace)
 	if err != nil {
@@ -145,9 +148,12 @@ func (v *Verifier) HTTPRouteNoProgrammedCondition(name, namespace string) error 
 	}
 
 	for _, parent := range httpRoute.Status.Parents {
+		if parent.ControllerName != "mcp.kuadrant.io/mcp-gateway" {
+			continue
+		}
 		for _, condition := range parent.Conditions {
 			if condition.Type == "Programmed" && condition.Status == metav1.ConditionTrue {
-				return fmt.Errorf("HTTPRoute %s/%s still has Programmed condition", namespace, name)
+				return fmt.Errorf("HTTPRoute %s/%s still has MCP-owned Programmed condition", namespace, name)
 			}
 		}
 	}
