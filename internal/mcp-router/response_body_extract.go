@@ -72,10 +72,11 @@ func extractSSETexts(body []byte) (texts []string, isError, ok bool) {
 	return texts, isError, ok
 }
 
-// normalizeLineEndings rewrites CRLF and lone CR line endings to LF so the
-// '\n'-based splitting above and in sseEventData handles any of the three
-// line-ending forms the SSE spec allows.
+// normalizeLineEndings rewrites CRLF and lone CR line endings to LF.
 func normalizeLineEndings(b []byte) []byte {
+	if bytes.IndexByte(b, '\r') == -1 {
+		return b
+	}
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 	return bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
 }

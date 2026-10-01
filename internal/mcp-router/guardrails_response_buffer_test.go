@@ -8,26 +8,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGuardrailsResponseBuffer_SSE_ElicitationForwardedBeforeResult(t *testing.T) {
-	// the elicitation/create event must be forwarded as soon as it is
-	// received - it must not wait on the tool result, which itself may be
-	// waiting on the client's answer to this very elicitation.
-	var checked [][]byte
-	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
-		checked = append(checked, body)
-		return nil // allow
+func TestGuardrailsResponseBuffer_SSE_LineEndings(t *testing.T) {
+	tests := []struct {
+		name       string
+		lineEnding string
+	}{
+		{name: "LF", lineEnding: "\n"},
+		{name: "CRLF", lineEnding: "\r\n"},
+		{name: "CR", lineEnding: "\r"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var checked [][]byte
+			buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+				checked = append(checked, body)
+				return nil
+			})
+
+			elicitData := `{"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{}}`
+			elicitEvent := []byte("event: message" + tc.lineEnding + "data: " + elicitData + tc.lineEnding + tc.lineEnding)
+			wantElicit := []byte("event: message\ndata: " + elicitData + "\n\n")
+
+			out := buf.Process(context.Background(), elicitEvent)
+			require.Equal(t, string(wantElicit), string(out), "elicitation event must forward immediately")
+			require.Empty(t, checked, "elicitation event must not be sent to the guardrails checker")
+
+			resultData := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}`
+			resultEvent := []byte("event: message" + tc.lineEnding + "data: " + resultData + tc.lineEnding + tc.lineEnding)
+			wantResult := []byte("event: message\ndata: " + resultData + "\n\n")
+
+			out = buf.Process(context.Background(), resultEvent)
+			require.Equal(t, string(wantResult), string(out), "allowed result must forward after the check")
+			require.Len(t, checked, 1)
+		})
+	}
+}
+
+func TestGuardrailsResponseBuffer_SSE_CRLFCanSplitAcrossEveryChunkBoundary(t *testing.T) {
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return nil
 	})
 
-	elicitEvent := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\n\n")
-	out := buf.Process(context.Background(), elicitEvent)
-	require.Equal(t, string(elicitEvent), string(out), "elicitation event must forward immediately, unwithheld")
-	require.Empty(t, checked, "the elicitation event itself must not be sent to the guardrails checker")
+	event := []byte("event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\r\n\r\n")
+	var out []byte
+	for _, b := range event {
+		out = append(out, buf.Process(context.Background(), []byte{b})...)
+	}
 
-	resultEvent := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}\n\n")
-	out = buf.Process(context.Background(), resultEvent)
-	require.Equal(t, string(resultEvent), string(out), "allowed result forwards unchanged")
-	require.Len(t, checked, 1)
-	require.Equal(t, string(resultEvent), string(checked[0]))
+	require.Equal(t, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n", string(out))
+	require.Equal(t, 1, checked)
 }
 
 func TestGuardrailsResponseBuffer_SSE_ResultWithheldUntilComplete(t *testing.T) {

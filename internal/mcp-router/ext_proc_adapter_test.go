@@ -1297,18 +1297,15 @@ func TestProcess_GuardrailsBuffering_ForwardsElicitationBeforeResult(t *testing.
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 
-	// first chunk: a control event (elicitation/create) unrelated to the
-	// tool call's own id=1 - must be forwarded immediately, not withheld.
-	elicitationEvent := []byte(`event: message
-data: {"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{}}
+	// A lone-CR control event must be forwarded before end-of-stream. The
+	// guardrails buffer normalizes legal SSE line endings to LF before the
+	// downstream elicitation and resource rewriters process the event.
+	elicitationEvent := []byte("event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\r\r")
+	forwardedElicitation := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\n\n")
 
-`)
-	// second chunk: the terminal tools/call result matching id=1 - blockAllChecker
-	// blocks it, so the adapter replaces it, but only once it arrives.
-	toolResultEvent := []byte(`event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret"}]}}
-
-`)
+	// The terminal tools/call result is CR-only too. blockAllChecker replaces
+	// it after parsing, proving it cannot bypass the guardrails check.
+	toolResultEvent := []byte("event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"secret\"}]}}\r\r")
 	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
 
 	steps := []mockProcessServerMessageAndErr{
@@ -1358,7 +1355,7 @@ data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret
 						ResponseBody: &extProcV3.BodyResponse{
 							Response: &extProcV3.CommonResponse{
 								BodyMutation: &extProcV3.BodyMutation{
-									Mutation: &extProcV3.BodyMutation_Body{Body: elicitationEvent},
+									Mutation: &extProcV3.BodyMutation_Body{Body: forwardedElicitation},
 								},
 							},
 						},

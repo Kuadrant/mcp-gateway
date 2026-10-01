@@ -13,12 +13,13 @@ import (
 type guardrailsResponseBuffer struct {
 	sse         bool
 	sseDetected bool // true once the first non-whitespace byte has settled sse's real framing
+	skipNextLF  bool // previous chunk ended with CR; a leading LF completes that CRLF
 
-	unconsumed []byte // bytes not yet forming a complete '\n'-terminated line
+	unconsumed []byte // bytes not yet forming a complete line
 	eventBytes []byte // raw bytes of lines in the currently open (undispatched) SSE event
 
 	requestID any
-	check     func(ctx context.Context, body []byte) []byte // nil return means allow (forward original)
+	check     func(ctx context.Context, body []byte) []byte // nil return means allow
 	done      bool                                          // true once the terminal result has been resolved
 
 	maxBytes  int    // upper bound on buffered bytes; 0 means unbounded
@@ -27,9 +28,9 @@ type guardrailsResponseBuffer struct {
 
 // newGuardrailsResponseBuffer builds a buffer for one tools/call response.
 // sse selects per-event withholding (text/event-stream) vs whole-body
-// withholding (application/json). check receives the raw bytes of the
-// withheld unit (one SSE event, or the whole JSON body) and returns a
-// replacement to forward instead, or nil to forward the original unchanged.
+// withholding (application/json). check receives the withheld unit and returns
+// a replacement to forward, or nil to allow it. Allowed SSE events are
+// normalized to LF framing before they reach downstream response processors.
 func newGuardrailsResponseBuffer(sse bool, requestID any, check func(context.Context, []byte) []byte) *guardrailsResponseBuffer {
 	return &guardrailsResponseBuffer{sse: sse, requestID: requestID, check: check}
 }
@@ -57,6 +58,12 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 	}
 
 	g.detectRawJSON(chunk)
+	if g.sse && g.skipNextLF && len(chunk) > 0 {
+		g.skipNextLF = false
+		if chunk[0] == '\n' {
+			chunk = chunk[1:]
+		}
+	}
 	g.unconsumed = append(g.unconsumed, chunk...)
 
 	if !g.sse {
@@ -74,14 +81,14 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 	// events coalesced into one chunk, so only the open event is measured.
 	var output []byte
 	for {
-		idx := bytes.IndexByte(g.unconsumed, '\n')
-		if idx == -1 {
-			break // no complete line yet - hold remainder for next chunk
+		line, remaining, trailingCR, ok := nextSSELine(g.unconsumed)
+		if !ok {
+			break
 		}
-		line := g.unconsumed[:idx+1]
-		g.unconsumed = g.unconsumed[idx+1:]
+		g.unconsumed = remaining
+		g.skipNextLF = trailingCR
 
-		if len(bytes.TrimSpace(line)) != 0 {
+		if len(sseLineContent(line)) != 0 {
 			g.eventBytes = append(g.eventBytes, line...)
 			if g.exceeds(len(g.eventBytes)) {
 				return append(output, g.reject()...)
@@ -89,8 +96,10 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 			continue
 		}
 
-		// blank line: the event assembled so far is complete and dispatched
-		event := append(g.eventBytes, line...)
+		// blank line: the event assembled so far is complete and dispatched.
+		// Normalize its legal SSE framing so the LF-based downstream
+		// elicitation and resource rewriters cannot reintroduce the stall.
+		event := normalizeLineEndings(append(g.eventBytes, line...))
 		g.eventBytes = nil
 
 		respID, ok := g.isTerminalResult(event)
@@ -114,6 +123,42 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 	return output
 }
 
+// nextSSELine returns the first complete raw SSE line and the unconsumed
+// remainder. A trailing CR terminates the line immediately so an interactive
+// CR-only event is never held waiting for another chunk. trailingCR tells the
+// caller to ignore one leading LF in the next chunk if the terminator was
+// actually a split CRLF pair.
+func nextSSELine(b []byte) (line, remaining []byte, trailingCR, ok bool) {
+	idx := bytes.IndexAny(b, "\r\n")
+	if idx == -1 {
+		return nil, b, false, false
+	}
+
+	end := idx + 1
+	if b[idx] == '\r' {
+		if end < len(b) && b[end] == '\n' {
+			end++
+		} else if end == len(b) {
+			trailingCR = true
+		}
+	}
+	return b[:end], b[end:], trailingCR, true
+}
+
+// sseLineContent removes one legal SSE line ending from line.
+func sseLineContent(line []byte) []byte {
+	end := len(line)
+	if end > 0 && line[end-1] == '\n' {
+		end--
+		if end > 0 && line[end-1] == '\r' {
+			end--
+		}
+	} else if end > 0 && line[end-1] == '\r' {
+		end--
+	}
+	return line[:end]
+}
+
 // Flush returns any bytes still withheld when the stream ends. Safe to call
 // multiple times; subsequent calls are no-ops. Once done, nothing further is
 // forwarded - see Process's doc comment.
@@ -125,11 +170,15 @@ func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 		return g.reject()
 	}
 	g.done = true
+	g.skipNextLF = false
 	remaining := append(g.eventBytes, g.unconsumed...)
 	g.eventBytes = nil
 	g.unconsumed = nil
 	if len(remaining) == 0 {
 		return nil
+	}
+	if g.sse {
+		remaining = normalizeLineEndings(remaining)
 	}
 	return g.resolve(ctx, remaining)
 }
@@ -233,20 +282,19 @@ func sseEventData(event []byte) []byte {
 	var parts [][]byte
 	remaining := event
 	for len(remaining) > 0 {
-		idx := bytes.IndexByte(remaining, '\n')
-		var line []byte
-		if idx == -1 {
+		line, rest, _, ok := nextSSELine(remaining)
+		if !ok {
 			line = remaining
 			remaining = nil
 		} else {
-			line = remaining[:idx]
-			remaining = remaining[idx+1:]
+			remaining = rest
 		}
-		trimmed := bytes.TrimSpace(line)
-		if !bytes.HasPrefix(trimmed, dataPrefix) {
+
+		line = sseLineContent(line)
+		if !bytes.HasPrefix(line, dataPrefix) {
 			continue
 		}
-		data := bytes.TrimPrefix(trimmed, dataPrefix)
+		data := line[len(dataPrefix):]
 		if len(data) > 0 && data[0] == ' ' {
 			data = data[1:]
 		}
