@@ -59,6 +59,7 @@ type MCPServerRegistration struct {
 // MCPServerRegistrationSpec defines the desired state of MCPServerRegistration.
 // It specifies which HTTPRoutes point to MCP servers and how their tools should be federated.
 // +kubebuilder:validation:XValidation:rule="self.userSpecificList != \"Enabled\" || self.prefix != \"\" ",message="prefix is required when userSpecificList is Enabled"
+// +kubebuilder:validation:XValidation:rule="!(has(self.credentialRef) && has(self.oauth2ClientCredentials))",message="credentialRef and oauth2ClientCredentials are mutually exclusive"
 type MCPServerRegistrationSpec struct {
 	// targetRef specifies an HTTPRoute that points to a backend MCP server.
 	// The referenced HTTPRoute should have a backend service that implements the MCP protocol.
@@ -88,6 +89,13 @@ type MCPServerRegistrationSpec struct {
 	// Used exclusively by the broker for tool discovery and session management. Never injected into client tools/call requests.
 	// +optional
 	CredentialRef *SecretReference `json:"credentialRef,omitempty"`
+
+	// oauth2ClientCredentials configures the OAuth 2.0 client credentials grant the broker uses
+	// to obtain access tokens for this MCP server. The broker refreshes the token on expiry.
+	// Used exclusively by the broker for tool discovery and session management, exactly like
+	// credentialRef. Mutually exclusive with credentialRef.
+	// +optional
+	OAuth2ClientCredentials *OAuth2ClientCredentialsConfig `json:"oauth2ClientCredentials,omitempty"`
 
 	// state dictates whether the broker should maintain a connection to this server.
 	// When set to Disabled, the broker will remove any registered tools and stop connecting to the server.
@@ -170,6 +178,37 @@ type TokenURLElicitationConfig struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://`
 	URL string `json:"url,omitempty"`
+}
+
+// OAuth2ClientCredentialsConfig configures the client credentials grant for an upstream.
+type OAuth2ClientCredentialsConfig struct {
+	// tokenURL is the authorization server's token endpoint. Must be https: the client
+	// secret is sent on this connection.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://`
+	TokenURL string `json:"tokenURL,omitempty"`
+
+	// secretRef references a Secret containing the keys clientID and clientSecret.
+	// The referenced Secret must have the label mcp.kuadrant.io/secret=true.
+	// +required
+	SecretRef ClientCredentialsSecretReference `json:"secretRef,omitzero"`
+
+	// scopes requested with the token. Omitted from the request when empty.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:MinLength=1
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// ClientCredentialsSecretReference identifies a Secret holding OAuth client credentials.
+// The keys are fixed: clientID and clientSecret.
+type ClientCredentialsSecretReference struct {
+	// name is the name of the Secret resource.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
 }
 
 // TargetReference identifies an HTTPRoute that points to MCP servers.

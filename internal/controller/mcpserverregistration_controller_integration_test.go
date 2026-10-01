@@ -964,6 +964,150 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 		})
 	})
 
+	Context("When MCPServerRegistration has oauth2ClientCredentials", func() {
+		const (
+			resourceName  = "test-mcpsr-oauth2"
+			httpRouteName = "test-route-oauth2"
+			gatewayName   = "test-gw-oauth2"
+			serviceName   = "test-svc-oauth2"
+			secretName    = "test-oauth2-client"
+			tokenURL      = "https://as.example.com/realms/mcp/protocol/openid-connect/token"
+			clientSecret  = "initial-client-secret"
+		)
+
+		ctx := context.Background()
+
+		mcpsrNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		// reconcileTwice adds the finalizer on the first pass and processes the spec on the second
+		reconcileTwice := func(reconciler *MCPReconciler) {
+			waitForMCPServerRegistrationCacheSync(ctx, mcpsrNamespacedName)
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, mcpsrNamespacedName)
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpsrNamespacedName})
+		}
+
+		BeforeEach(func() {
+			gw := createTestGateway(gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+
+			svc := createTestService(serviceName, "default", 8080)
+			Expect(testK8sClient.Create(ctx, svc)).To(Succeed())
+
+			httpRoute := createTestHTTPRoute(httpRouteName, "default", "test.example.com", serviceName, 8080, gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, httpRoute)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: httpRouteName, Namespace: "default"}, route)).To(Succeed())
+				g.Expect(setHTTPRouteAcceptedStatus(ctx, route, gatewayName, "default")).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			mcpExt := createTestMCPGatewayExtension("test-ext-oauth2", "default", gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, mcpExt)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				ext := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, types.NamespacedName{Name: "test-ext-oauth2", Namespace: "default"}, ext)).To(Succeed())
+				ext.SetReadyCondition(metav1.ConditionTrue, mcpv1.ConditionReasonSuccess, "ready")
+				g.Expect(testK8sClient.Status().Update(ctx, ext)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			oauthSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: "default",
+					Labels: map[string]string{
+						"mcp.kuadrant.io/secret": "true",
+					},
+				},
+				Data: map[string][]byte{
+					"clientID":     []byte("mcp-broker"),
+					"clientSecret": []byte(clientSecret),
+				},
+			}
+			Expect(testK8sClient.Create(ctx, oauthSecret)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, resourceName, "default")
+			forceDeleteTestMCPGatewayExtension(ctx, "test-ext-oauth2", "default")
+			deleteTestHTTPRoute(ctx, httpRouteName, "default")
+			deleteTestService(ctx, serviceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+			_ = client.IgnoreNotFound(testK8sClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
+			}))
+		})
+
+		createOAuth2Registration := func(secretRefName string) {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "test_")
+			mcpsr.Spec.OAuth2ClientCredentials = &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  tokenURL,
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: secretRefName},
+				Scopes:    []string{"mcp.read"},
+			}
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+		}
+
+		expectUpsertedOAuth2 := func(configWriter *mockMCPServerConfigReaderWriter, wantClientSecret string) {
+			Eventually(func(g Gomega) {
+				server, ok := configWriter.upsertedServers[fmt.Sprintf("default/default/%s", resourceName)]
+				g.Expect(ok).To(BeTrue(), "server not found in upserted configs")
+				g.Expect(server.OAuth2).NotTo(BeNil())
+				g.Expect(server.OAuth2.TokenURL).To(Equal(tokenURL))
+				g.Expect(server.OAuth2.ClientID).To(Equal("mcp-broker"))
+				g.Expect(server.OAuth2.ClientSecret).To(Equal(wantClientSecret))
+				g.Expect(server.OAuth2.Scopes).To(Equal([]string{"mcp.read"}))
+				g.Expect(server.Credential).To(BeEmpty())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		}
+
+		It("should include the resolved client credentials in the config", func() {
+			createOAuth2Registration(secretName)
+
+			configWriter := newMockMCPServerConfigReaderWriter()
+			reconcileTwice(newMCPServerReconciler(configWriter))
+
+			expectUpsertedOAuth2(configWriter, clientSecret)
+		})
+
+		// one representative failure: resolution errors are covered by
+		// TestResolveOAuth2ClientCredentials, this proves one reaches the condition
+		It("should fail without leaking the client secret when clientID is missing", func() {
+			noID := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "no-client-id",
+					Namespace: "default",
+					Labels:    map[string]string{"mcp.kuadrant.io/secret": "true"},
+				},
+				Data: map[string][]byte{"clientSecret": []byte(clientSecret)},
+			}
+			Expect(testK8sClient.Create(ctx, noID)).To(Succeed())
+			defer func() {
+				_ = testK8sClient.Delete(ctx, noID)
+			}()
+
+			createOAuth2Registration("no-client-id")
+
+			reconcileTwice(newMCPServerReconciler(newMockMCPServerConfigReaderWriter()))
+
+			Eventually(func(g Gomega) {
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, mcpsrNamespacedName, updated)).To(Succeed())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Message).To(ContainSubstring("missing or empty key clientID"))
+				g.Expect(cond.Message).NotTo(ContainSubstring(clientSecret))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
 	Context("When HTTPRoute has no accepted gateways", func() {
 		const (
 			resourceName  = "test-mcpsr-not-accepted"
@@ -1064,6 +1208,65 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Entry("single letter", "a"),
 			Entry("digits and underscores", "s1_prefix_"),
 			Entry("all lowercase", "weatherserver"),
+		)
+	})
+
+	Context("oauth2ClientCredentials field CRD validation", func() {
+		ctx := context.Background()
+
+		newOAuth2Registration := func(name string, oauth2 *mcpv1.OAuth2ClientCredentialsConfig) *mcpv1.MCPServerRegistration {
+			mcpsr := createTestMCPServerRegistration(name, "default", "some-route", "cc_")
+			mcpsr.Spec.OAuth2ClientCredentials = oauth2
+			return mcpsr
+		}
+
+		AfterEach(func() {
+			forceDeleteTestMCPServerRegistration(ctx, "oauth2-valid", "default")
+		})
+
+		It("accepts oauth2ClientCredentials on its own", func() {
+			mcpsr := newOAuth2Registration("oauth2-valid", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+				Scopes:    []string{"mcp.read"},
+			})
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+		})
+
+		It("rejects credentialRef and oauth2ClientCredentials set together", func() {
+			mcpsr := newOAuth2Registration("oauth2-invalid", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			})
+			mcpsr.Spec.CredentialRef = &mcpv1.SecretReference{Name: "static-token", Key: "token"}
+
+			err := testK8sClient.Create(ctx, mcpsr)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.IsInvalid(err)).To(BeTrue(), "expected Invalid error, got: %v", err)
+			Expect(err.Error()).To(ContainSubstring("mutually exclusive"))
+		})
+
+		DescribeTable("rejects invalid oauth2ClientCredentials values",
+			func(oauth2 *mcpv1.OAuth2ClientCredentialsConfig) {
+				err := testK8sClient.Create(ctx, newOAuth2Registration("oauth2-invalid", oauth2))
+				Expect(err).To(HaveOccurred())
+				Expect(errors.IsInvalid(err)).To(BeTrue(), "expected Invalid error, got: %v", err)
+			},
+			Entry("http tokenURL", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "http://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			}),
+			Entry("empty tokenURL", &mcpv1.OAuth2ClientCredentialsConfig{
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+			}),
+			Entry("empty secretRef name", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL: "https://as.example.com/token",
+			}),
+			Entry("more than 10 scopes", &mcpv1.OAuth2ClientCredentialsConfig{
+				TokenURL:  "https://as.example.com/token",
+				SecretRef: mcpv1.ClientCredentialsSecretReference{Name: "oauth-client"},
+				Scopes:    []string{"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"},
+			}),
 		)
 	})
 

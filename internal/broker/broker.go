@@ -583,7 +583,9 @@ func (m *mcpBrokerImpl) deregisterStaleManagers(ctx context.Context, servers []*
 		if !ok {
 			continue
 		}
-		serverUsesTLS := strings.HasPrefix(mcpServer.URL, "https://")
+		// an oauth2 upstream reaches its https token endpoint through the same
+		// trust pool, so it holds the bundle even when its MCP URL is plain http
+		serverUsesTLS := strings.HasPrefix(mcpServer.URL, "https://") || mcpServer.OAuth2 != nil
 		if (gatewayCACertChanged && serverUsesTLS) || mcpServer.ConfigChanged(man.Config()) {
 			m.logger.InfoContext(ctx, "Server Config Changed removing manager", "mcpID", mcpServer.ID())
 			toStop = append(toStop, man)
