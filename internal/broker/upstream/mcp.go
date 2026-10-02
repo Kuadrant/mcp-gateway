@@ -172,7 +172,16 @@ func (up *MCPServer) storeToolHints(raw map[string]ToolHints) {
 	up.hintsMu.Lock()
 	defer up.hintsMu.Unlock()
 	if up.pendingToolHints == nil {
-		up.toolHints = prefixed
+		// No walk is open: the sdk reads page bodies on its own goroutines,
+		// so this harvest can land after the walk committed. Merge into
+		// the live set instead of replacing it, or a late page would drop
+		// every other page's hints
+		if up.toolHints == nil {
+			up.toolHints = make(map[string]ToolHints, len(prefixed))
+		}
+		for name, h := range prefixed {
+			up.toolHints[name] = h
+		}
 		return
 	}
 	// A walk is open. Pages fetched over HTTP land in the pending set and
@@ -744,10 +753,13 @@ func (up *MCPServer) listAllPrompts(ctx context.Context, session *mcp.ClientSess
 
 // listAllTools is the tools counterpart of listAllPrompts.
 func (up *MCPServer) listAllTools(ctx context.Context, session *mcp.ClientSession) (*mcp.ListToolsResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
-	defer cancel()
+	// take the walk lock before starting the per-walk deadline: a queued
+	// caller must not burn its list budget waiting for the previous walk
+	// to release the lock
 	up.walkMu.Lock()
 	defer up.walkMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, listFetchTimeout)
+	defer cancel()
 	up.beginToolHints()
 	var result mcp.ListToolsResult
 	for page := 0; ; page++ {

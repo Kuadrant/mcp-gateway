@@ -329,3 +329,27 @@ func TestListAllTools_FreshHintWinsOverPreviousListing(t *testing.T) {
 	require.True(t, ok, "served tool must keep a hint")
 	require.Equal(t, ptr.To(false), h.ReadOnlyHint, "fresh walk observation must win over the previous listing")
 }
+
+// TestStoreToolHints_LateHarvestMergesNotReplaces: the sdk closes page
+// bodies on its own goroutines, so a page harvest can land after the walk
+// committed and pendingToolHints is already nil. That late harvest must
+// merge into the live set, not replace it, or every other page's hints
+// are lost.
+func TestStoreToolHints_LateHarvestMergesNotReplaces(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// a walk observes two pages, then commits
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(false)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}, "up_beta": {}})
+
+	// the sdk's reader goroutine delivers the last page's harvest after
+	// the walk returned: it must not drop alpha's hint
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(false)}})
+
+	_, okA := up.GetToolHints("up_alpha")
+	require.True(t, okA, "late harvest after commit must not erase earlier pages' hints")
+	_, okB := up.GetToolHints("up_beta")
+	require.True(t, okB, "late harvest after commit must keep its own hint")
+}
