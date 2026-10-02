@@ -22,9 +22,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -587,6 +589,49 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 		})
+
+		DescribeTable("should handle HTTPRoute status errors during deletion", func(conflict bool) {
+			reconcileRegistration(resourceName, "owner_")
+			nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+			registration := &mcpv1.MCPServerRegistration{}
+			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
+			Expect(testK8sClient.Delete(ctx, registration)).To(Succeed())
+			statusErr := fmt.Errorf("HTTPRoute status update rejected")
+			if conflict {
+				statusErr = errors.NewConflict(schema.GroupResource{Group: gatewayv1.GroupName, Resource: "httproutes"}, httpRouteName, statusErr)
+			}
+			apiClient, err := client.NewWithWatch(cfg, client.Options{Scheme: testK8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			reconciler.Client = interceptor.NewClient(apiClient, interceptor.Funcs{
+				List: func(ctx context.Context, _ client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					return testIndexedClient.List(ctx, list, opts...)
+				},
+				SubResourceUpdate: func(ctx context.Context, c client.Client, subresource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					if _, ok := obj.(*gatewayv1.HTTPRoute); ok && subresource == "status" {
+						return statusErr
+					}
+					return c.SubResource(subresource).Update(ctx, obj, opts...)
+				},
+			})
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			if conflict {
+				Expect(result.RequeueAfter).To(Equal(defaultRequeueTime))
+				Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
+				Expect(controllerutil.ContainsFinalizer(registration, mcpGatewayFinalizer)).To(BeTrue())
+			} else {
+				Expect(result).To(BeZero())
+				Expect(errors.IsNotFound(testK8sClient.Get(ctx, nn, registration))).To(BeTrue())
+			}
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(HaveLen(2))
+			Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+		},
+			Entry("retains the finalizer and requeues on conflict", true),
+			Entry("removes the finalizer on a non-conflict status error", false),
+		)
 
 		It("should persist an empty parents array when deleting the sole legacy orphan", func() {
 			route := &gatewayv1.HTTPRoute{}
