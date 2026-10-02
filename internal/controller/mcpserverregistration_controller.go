@@ -878,8 +878,12 @@ func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace s
 	out := make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
 	for i := range parents {
 		p := parents[i].DeepCopy()
-		if p.ControllerName != MCPControllerName && pruneProgrammed(p) {
-			continue
+		if p.ControllerName != MCPControllerName {
+			condition := meta.FindStatusCondition(p.Conditions, programmedConditionType)
+			if condition != nil && condition.Reason == "InUseByMCPServerRegistration" &&
+				condition.Message == "HTTPRoute is referenced by at least one MCPServerRegistration" && pruneProgrammed(p) {
+				continue
+			}
 		}
 		out = append(out, *p)
 	}
