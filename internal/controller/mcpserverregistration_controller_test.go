@@ -34,6 +34,10 @@ func TestDesiredRouteParents(t *testing.T) {
 		ObservedGeneration: 3, LastTransitionTime: now,
 		Message: "HTTPRoute is referenced by at least one MCPServerRegistration",
 	}
+	foreignReason := programmed
+	foreignReason.Reason = "Programmed"
+	foreignMessage := programmed
+	foreignMessage.Message = "route programmed by another controller"
 	parent := gatewayv1.ParentReference{Name: "gateway"}
 	status := func(ref gatewayv1.ParentReference, controller gatewayv1.GatewayController, conditions ...metav1.Condition) gatewayv1.RouteParentStatus {
 		return gatewayv1.RouteParentStatus{ParentRef: ref, ControllerName: controller, Conditions: conditions}
@@ -110,6 +114,21 @@ func TestDesiredRouteParents(t *testing.T) {
 			name: "remove Kuadrant orphan", generation: 3,
 			parents: []gatewayv1.RouteParentStatus{orphan},
 			want:    []gatewayv1.RouteParentStatus{},
+		},
+		{
+			name: "retain foreign Programmed with different reason", generation: 3, present: true,
+			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, accepted, resolved, foreignReason)},
+			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, accepted, resolved, foreignReason), mcp},
+		},
+		{
+			name: "retain foreign Programmed with different message", generation: 3, present: true,
+			parents: []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignMessage)},
+			want:    []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignMessage)},
+		},
+		{
+			name: "retain foreign-only Programmed during deletion", generation: 3,
+			parents: []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignReason)},
+			want:    []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignReason)},
 		},
 		{
 			name: "deduplicate accepted parentRefs", generation: 3, present: true,
