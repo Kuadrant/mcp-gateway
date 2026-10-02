@@ -208,7 +208,12 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 		}
 		toolsResult, err = broker.listAllUserTools(fetchCtx, session)
 		if err != nil {
-			broker.evictUserSession(gatewaySessionID, srv.name)
+			// a page-limit failure describes the upstream listing shape,
+			// not the replacement session: evicting it would close a valid
+			// session and make the next request repeat the same capped walk
+			if !errors.Is(err, upstream.ErrPageLimitExceeded) {
+				broker.evictUserSession(gatewaySessionID, srv.name)
+			}
 			return nil, fmt.Errorf("list tools: %w", err)
 		}
 	}
@@ -331,7 +336,11 @@ func (broker *mcpBrokerImpl) listAllUserTools(ctx context.Context, session *mcp.
 	var result mcp.ListToolsResult
 	for page := 0; ; page++ {
 		if page >= upstream.MaxListPages {
-			return nil, fmt.Errorf("%w: tools/list from session %q exceeded %d pages", upstream.ErrPageLimitExceeded, session.ID(), upstream.MaxListPages)
+			return nil, fmt.Errorf(
+				"%w: tools/list exceeded %d pages",
+				upstream.ErrPageLimitExceeded,
+				upstream.MaxListPages,
+			)
 		}
 		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
 		if err != nil {

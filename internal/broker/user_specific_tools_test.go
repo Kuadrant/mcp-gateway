@@ -992,3 +992,122 @@ func TestFetchUserSpecificTools_PageLimitNotRetriedAsStaleSession(t *testing.T) 
 		"the capped walk must not be retried after a page-limit error")
 	assert.Equal(t, int32(1), initCount.Load(), "a page-limit error must not trigger a reconnect")
 }
+
+// TestFetchUserSpecificTools_PageLimitKeepsReplacementSession: when the first
+// walk fails with a stale-session error and the replacement session's walk
+// then reaches the page cap, the replacement must not be evicted — a later
+// fetch reuses it instead of initializing again.
+func TestFetchUserSpecificTools_PageLimitKeepsReplacementSession(t *testing.T) {
+	var initCount atomic.Int32
+	var listCalls atomic.Int32
+	var listCallsFirstSession atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+
+		w.Header().Set("Content-Type", "application/json")
+
+		switch method {
+		case "initialize":
+			initCount.Add(1)
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"serverInfo":      map[string]any{"name": "stale-then-paged", "version": "1.0"},
+					"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			listCalls.Add(1)
+			var resp map[string]any
+			if initCount.Load() == 1 {
+				// first session: fail the very first listing so the broker
+				// treats it as stale and reconnects
+				listCallsFirstSession.Add(1)
+				resp = map[string]any{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"error":   map[string]any{"code": -32000, "message": "session not found"},
+				}
+			} else {
+				// replacement session: never-ending listing that hits the cap
+				resp = map[string]any{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"result": map[string]any{
+						"tools": []map[string]any{
+							{
+								"name":        "user_tool",
+								"description": "a user tool",
+								"inputSchema": map[string]any{"type": "object"},
+							},
+						},
+						"nextCursor": "always-more",
+					},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}
+			_ = json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer ts.Close()
+
+	cfg := config.MCPServer{
+		Name:             "stale-then-paged",
+		URL:              ts.URL,
+		Prefix:           "sp_",
+		State:            "Enabled",
+		UserSpecificList: true,
+	}
+
+	cache, _ := session.NewCache()
+	servers := []userSpecificServer{toUserSpecificServer(cfg)}
+	b := &mcpBrokerImpl{
+		userSpecificServers:      servers,
+		logger:                   slog.Default(),
+		sessionCache:             cache,
+		userSpecificFetchTimeout: 30 * time.Second,
+	}
+	withStatefulVersions(b, servers)
+	withProtocolHandlers(b)
+
+	result := &mcp.ListToolsResult{}
+	headers := http.Header{
+		"Mcp-Session-Id":       []string{"gw-stale-paged-1"},
+		"Mcp-Protocol-Version": []string{"2025-03-26"},
+		"Authorization":        []string{"Bearer user-token"},
+	}
+
+	b.FetchUserSpecificTools(context.Background(), headers, result)
+	require.Empty(t, result.Tools, "page-limited listing must not surface partial tools")
+	assert.Equal(t, int32(2), initCount.Load(), "first walk stale, replacement initialized")
+	listCallsAfterFirst := listCalls.Load()
+	assert.Equal(t, int32(1), listCallsFirstSession.Load(), "first session listed once before going stale")
+
+	// second fetch: the replacement session must be reused, not evicted and
+	// re-initialized after its page-limited walk
+	result2 := &mcp.ListToolsResult{}
+	b.FetchUserSpecificTools(context.Background(), headers, result2)
+	require.Empty(t, result2.Tools)
+	assert.Equal(t, int32(2), initCount.Load(),
+		"a page-limited replacement session must not be evicted: no third initialize")
+	assert.Equal(t, listCallsAfterFirst+int32(upstream.MaxListPages), listCalls.Load(),
+		"the second fetch must reuse the replacement session for another bounded walk")
+}
