@@ -212,6 +212,14 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 		}
+		if len(acceptedParentRefs(targetRoute.Status.Parents)) == 0 {
+			if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("reconcile failed: HTTPRoute status update failed %w", err)
+			}
+		}
 		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 	}
 	logger.Info("valid gateways discovered ", "total", len(validGateways), "mcpregistrationname", mcpsr.Name)
