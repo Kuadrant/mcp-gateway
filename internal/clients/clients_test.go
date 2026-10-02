@@ -263,7 +263,7 @@ func TestBuildHairpinHTTPClientPool(t *testing.T) {
 	t.Run("errors on invalid PEM content", func(t *testing.T) {
 		_, err := BuildHairpinHTTPClientPool("https://gw.svc:443", "mcp.example.com", "not a certificate")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to parse gateway CA cert PEM")
+		require.Contains(t, err.Error(), "failed to parse gateway CA certificate bundle PEM")
 	})
 }
 

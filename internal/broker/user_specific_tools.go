@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
+	"github.com/Kuadrant/mcp-gateway/internal/tlsutil"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -590,19 +590,9 @@ func (broker *mcpBrokerImpl) buildStatelessTransport(serverCACert string) (http.
 		return cached.(http.RoundTripper), nil
 	}
 	base := http.DefaultTransport.(*http.Transport).Clone()
-	rootCAs, err := x509.SystemCertPool()
+	rootCAs, err := tlsutil.BuildCertPool(gatewayCACert, serverCACert)
 	if err != nil {
-		rootCAs = x509.NewCertPool()
-	}
-	if gatewayCACert != "" {
-		if !rootCAs.AppendCertsFromPEM([]byte(gatewayCACert)) {
-			return nil, fmt.Errorf("failed to parse gateway CA certificate bundle PEM")
-		}
-	}
-	if serverCACert != "" {
-		if !rootCAs.AppendCertsFromPEM([]byte(serverCACert)) {
-			return nil, fmt.Errorf("failed to parse per-server CA certificate PEM")
-		}
+		return nil, err
 	}
 	base.TLSClientConfig = &tls.Config{
 		MinVersion: tls.VersionTLS12,
