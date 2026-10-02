@@ -554,6 +554,31 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(updated.ResourceVersion).To(Equal(route.ResourceVersion))
 		})
 
+		It("should remove its parent when the last gateway rejects the route", func() {
+			reconcileRegistration(resourceName, "owner_")
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			rejectedParent := *gatewayParent.DeepCopy()
+			rejectedParent.Conditions[0].Status = metav1.ConditionFalse
+			rejectedParent.Conditions[0].Reason = "NotAllowedByListeners"
+			route.Status.Parents[0] = rejectedParent
+			Expect(testK8sClient.Status().Update(ctx, route)).To(Succeed())
+			Eventually(func(g Gomega) {
+				cached := &gatewayv1.HTTPRoute{}
+				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).To(MatchError(ContainSubstring("no valid gateways for httproute")))
+			registration := &mcpv1.MCPServerRegistration{}
+			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
+			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{rejectedParent}))
+		})
+
 		It("should complete deletion after reconciling a route containing a legacy Kuadrant orphan", func() {
 			reconcileRegistration(resourceName, "owner_")
 			deleteRegistration(resourceName)
