@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -173,13 +172,11 @@ func TestFetchResources_OnlyUIRewrittenOthersUntouched(t *testing.T) {
 	assert.ElementsMatch(t, []string{"ui://mx_template.html", "https://example.com/doc.html"}, resourceURIs(result))
 }
 
-// TestFetchResources_NextCursorLoggedNotFollowed confirms pagination is
-// observed, not chased: only the first page an upstream returns ends up in
-// the merged result, even when the upstream signals more pages exist.
-func TestFetchResources_NextCursorLoggedNotFollowed(t *testing.T) {
-	var buf recordingHandler
+// TestFetchResources_FollowsPagination confirms the broker walks all pages an
+// upstream signals via NextCursor, so tools from later pages are no longer
+// silently dropped (#1532).
+func TestFetchResources_FollowsPagination(t *testing.T) {
 	b := newResourcesTestBroker(5 * time.Second)
-	b.logger = slog.New(&buf)
 
 	// PageSize 1 with 2 registered resources forces a NextCursor on the first page
 	ts := newResourceTestServer(t, []*mcp.Resource{
@@ -192,8 +189,8 @@ func TestFetchResources_NextCursorLoggedNotFollowed(t *testing.T) {
 	result := &mcp.ListResourcesResult{}
 	b.FetchResources(context.Background(), result)
 
-	assert.Len(t, result.Resources, 1, "only the first page should be merged, pagination is not followed")
-	assert.True(t, buf.hasMessage("paginated"), "expected a log entry noting the unfollowed nextCursor")
+	assert.Len(t, result.Resources, 2, "all pages should be merged, pagination is followed")
+	assert.ElementsMatch(t, []string{"ui://pg_a.html", "ui://pg_b.html"}, resourceURIs(result))
 }
 
 type nilResultServer struct{ mockActiveServer }
@@ -228,30 +225,6 @@ func TestFetchResourcesFromServer_NilResultWithMock(t *testing.T) {
 
 	require.NoError(t, err, "nil result should not cause error")
 	assert.Nil(t, resources, "nil result should return nil resource slice")
-}
-
-// recordingHandler is a minimal slog.Handler that records whether any log
-// record's message contains a given substring, just enough to assert a log
-// line fired without pulling in a full logging test framework.
-type recordingHandler struct {
-	messages []string
-}
-
-func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
-	h.messages = append(h.messages, r.Message)
-	return nil
-}
-func (h *recordingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
-func (h *recordingHandler) WithGroup(_ string) slog.Handler      { return h }
-
-func (h *recordingHandler) hasMessage(substr string) bool {
-	for _, m := range h.messages {
-		if strings.Contains(m, substr) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestFetchResources_AllUpstreamsSkipped verifies that when all upstreams are
