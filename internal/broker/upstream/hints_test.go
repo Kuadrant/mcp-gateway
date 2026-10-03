@@ -2,9 +2,11 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,33 +198,71 @@ func TestListAllPrompts_FollowsPagination(t *testing.T) {
 	require.Len(t, result.Prompts, 2, "all prompts across the pages must be listed")
 }
 
-// TestListAllPrompts_PageCap: the prompts walk is bounded by MaxListPages,
-// not by the context deadline alone. The real bound is exercised through the
-// same SDK server other tests use; here the cap itself is checked directly on
-// the loop counter semantics the walk implements.
+// TestListAllPrompts_PageCap: an upstream whose prompts/list always returns
+// a nextCursor never terminates, so the walk must stop at MaxListPages with
+// ErrPageLimitExceeded instead of looping until the deadline.
 func TestListAllPrompts_PageCap(t *testing.T) {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
-	for _, name := range []string{"p_one", "p_two"} {
-		srv.AddPrompt(&mcp.Prompt{Name: name}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-			return &mcp.GetPromptResult{}, nil
-		})
-	}
-	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	var listCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Mcp-Session-Id", "endless-prompts")
+
+		switch method {
+		case "initialize":
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"serverInfo":      map[string]any{"name": "endless-prompts", "version": "1.0"},
+					"capabilities":    map[string]any{"prompts": map[string]any{"listChanged": false}},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "prompts/list":
+			listCalls.Add(1)
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"prompts": []map[string]any{
+						{"name": "p_one", "description": "an endless prompt"},
+					},
+					"nextCursor": "always-more",
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}
+			_ = json.NewEncoder(w).Encode(resp)
+		}
+	}))
 	defer ts.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	up := NewUpstreamMCP(&config.MCPServer{Name: "endless-prompts", URL: ts.URL, Prefix: "ep_"}, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	require.NoError(t, up.Connect(ctx, func() {}))
 	defer func() { _ = up.Disconnect() }()
 
-	result, err := up.ListPrompts(ctx)
-	require.NoError(t, err)
-	require.Len(t, result.Prompts, 2, "well-behaved pagination stays under the cap and completes")
-	// the cap constant must stay tight: 100 pages is the agreed bound from
-	// the review discussion, and the loop treats page >= MaxListPages as
-	// an upstream fault
-	require.Equal(t, 100, MaxListPages)
+	_, err := up.ListPrompts(ctx)
+	require.ErrorIs(t, err, ErrPageLimitExceeded)
+	require.LessOrEqual(t, listCalls.Load(), int32(MaxListPages),
+		"the walk must stop at the page cap, not loop until the deadline")
 }
 
 // TestListAllTools_HintsSurviveCacheHitWalk: the SDK can answer later
