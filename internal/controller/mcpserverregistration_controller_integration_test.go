@@ -556,15 +556,28 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(updated.ResourceVersion).To(Equal(route.ResourceVersion))
 		})
 
-		It("should remove its parent when the last gateway rejects the route", func() {
+		DescribeTable("should remove its parent when no valid gateway remains", func(missingGateway, shared bool) {
 			reconcileRegistration(resourceName, "owner_")
+			if shared {
+				reconcileRegistration(siblingName, "sibling_")
+			}
 			route := &gatewayv1.HTTPRoute{}
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-			rejectedParent := *gatewayParent.DeepCopy()
-			rejectedParent.Conditions[0].Status = metav1.ConditionFalse
-			rejectedParent.Conditions[0].Reason = "NotAllowedByListeners"
-			route.Status.Parents[0] = rejectedParent
-			Expect(testK8sClient.Status().Update(ctx, route)).To(Succeed())
+			remainingParent := *gatewayParent.DeepCopy()
+			if missingGateway {
+				gateway := &gatewayv1.Gateway{}
+				gatewayNN := types.NamespacedName{Name: gatewayName, Namespace: "default"}
+				Expect(testK8sClient.Get(ctx, gatewayNN, gateway)).To(Succeed())
+				Expect(testK8sClient.Delete(ctx, gateway)).To(Succeed())
+				Eventually(func() bool {
+					return errors.IsNotFound(testIndexedClient.Get(ctx, gatewayNN, &gatewayv1.Gateway{}))
+				}, testTimeout, testRetryInterval).Should(BeTrue())
+			} else {
+				remainingParent.Conditions[0].Status = metav1.ConditionFalse
+				remainingParent.Conditions[0].Reason = "NotAllowedByListeners"
+				route.Status.Parents[0] = remainingParent
+				Expect(testK8sClient.Status().Update(ctx, route)).To(Succeed())
+			}
 			Eventually(func(g Gomega) {
 				cached := &gatewayv1.HTTPRoute{}
 				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
@@ -578,8 +591,23 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
 			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{rejectedParent}))
-		})
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{remainingParent}))
+			if shared {
+				Eventually(func(g Gomega) {
+					cached := &gatewayv1.HTTPRoute{}
+					g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
+					g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
+				}, testTimeout, testRetryInterval).Should(Succeed())
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: siblingName, Namespace: "default"}})
+				Expect(err).To(MatchError(ContainSubstring("no valid gateways for httproute")))
+				Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+				Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{remainingParent}))
+			}
+		},
+			Entry("when the last gateway rejects the route", false, false),
+			Entry("when the last gateway is deleted but its Accepted status remains", true, false),
+			Entry("when registrations share a route whose last gateway is deleted", true, true),
+		)
 
 		It("should complete deletion after reconciling a route containing a legacy Kuadrant orphan", func() {
 			reconcileRegistration(resourceName, "owner_")
@@ -590,7 +618,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 		})
 
-		DescribeTable("should handle HTTPRoute status errors during deletion", func(conflict bool) {
+		DescribeTable("should handle HTTPRoute status errors during deletion", func(conflict bool, failures, wantAttempts int) {
 			reconcileRegistration(resourceName, "owner_")
 			nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
 			registration := &mcpv1.MCPServerRegistration{}
@@ -602,13 +630,20 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 			apiClient, err := client.NewWithWatch(cfg, client.Options{Scheme: testK8sClient.Scheme()})
 			Expect(err).NotTo(HaveOccurred())
+			attempts := 0
 			reconciler.Client = interceptor.NewClient(apiClient, interceptor.Funcs{
 				List: func(ctx context.Context, _ client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 					return testIndexedClient.List(ctx, list, opts...)
 				},
 				SubResourceUpdate: func(ctx context.Context, c client.Client, subresource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
 					if _, ok := obj.(*gatewayv1.HTTPRoute); ok && subresource == "status" {
-						return statusErr
+						attempts++
+						pending := &mcpv1.MCPServerRegistration{}
+						Expect(testK8sClient.Get(ctx, nn, pending)).To(Succeed())
+						Expect(controllerutil.ContainsFinalizer(pending, mcpGatewayFinalizer)).To(BeTrue())
+						if attempts <= failures {
+							return statusErr
+						}
 					}
 					return c.SubResource(subresource).Update(ctx, obj, opts...)
 				},
@@ -616,6 +651,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(attempts).To(Equal(wantAttempts))
 			if conflict {
 				Expect(result.RequeueAfter).To(Equal(defaultRequeueTime))
 				Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
@@ -626,11 +662,16 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			}
 			route := &gatewayv1.HTTPRoute{}
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-			Expect(route.Status.Parents).To(HaveLen(2))
-			Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+			if attempts > failures {
+				Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
+			} else {
+				Expect(route.Status.Parents).To(HaveLen(2))
+				Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+			}
 		},
-			Entry("retains the finalizer and requeues on conflict", true),
-			Entry("removes the finalizer on a non-conflict status error", false),
+			Entry("retains the finalizer and requeues on conflict", true, 1, 1),
+			Entry("cleans up status before removing the finalizer after a transient error", false, 1, 2),
+			Entry("removes the finalizer after exhausting retries on a persistent status error", false, 4, 4),
 		)
 
 		It("should persist an empty parents array when deleting the sole legacy orphan", func() {
@@ -652,7 +693,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(registration.DeletionTimestamp).NotTo(BeNil())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
-			Expect(reconciler.updateHTTPRouteStatus(ctx, registration)).To(Succeed())
+			Expect(reconciler.updateHTTPRouteStatus(ctx, registration, false)).To(Succeed())
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).NotTo(BeNil())
 			Expect(route.Status.Parents).To(BeEmpty())
