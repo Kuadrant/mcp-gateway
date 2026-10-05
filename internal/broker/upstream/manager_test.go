@@ -1611,11 +1611,12 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 			expectedRemoved: 1,
 		},
 		{
-			name:            "meta change under same name",
+			// _meta is replaced by the gateway, so a _meta-only change must not churn
+			name:            "meta-only change not churned",
 			oldPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v1"}}},
 			newPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v2"}}},
-			expectedAdded:   1,
-			expectedRemoved: 1,
+			expectedAdded:   0,
+			expectedRemoved: 0,
 		},
 		{
 			// identical definitions with distinct pointers must not churn
