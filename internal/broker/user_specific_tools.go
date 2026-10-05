@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -195,19 +196,29 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 
-	toolsResult, err := session.ListTools(fetchCtx, nil)
-	if err != nil {
-		// stale session; evict and retry once
+	toolsResult, err := broker.listAllUserTools(fetchCtx, session)
+	if err != nil && !errors.Is(err, upstream.ErrPageLimitExceeded) {
+		// stale session; evict and retry once. page-limit errors are a
+		// property of the upstream listing, not the session: a reconnect
+		// would only repeat the same capped walk
 		broker.evictUserSession(gatewaySessionID, srv.name)
 		session, err = broker.getOrCreateUserSession(fetchCtx, srv, userHeaders, gatewaySessionID)
 		if err != nil {
 			return nil, fmt.Errorf("reconnect: %w", err)
 		}
-		toolsResult, err = session.ListTools(fetchCtx, nil)
+		toolsResult, err = broker.listAllUserTools(fetchCtx, session)
 		if err != nil {
-			broker.evictUserSession(gatewaySessionID, srv.name)
+			// a page-limit failure describes the upstream listing shape,
+			// not the replacement session: evicting it would close a valid
+			// session and make the next request repeat the same capped walk
+			if !errors.Is(err, upstream.ErrPageLimitExceeded) {
+				broker.evictUserSession(gatewaySessionID, srv.name)
+			}
 			return nil, fmt.Errorf("list tools: %w", err)
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list tools: %w", err)
 	}
 
 	// dereference pointer tools from result
@@ -283,7 +294,7 @@ func (broker *mcpBrokerImpl) fetchToolsStateless(ctx context.Context, srv userSp
 	}
 	defer func() { _ = session.Close() }()
 
-	toolsResult, err := session.ListTools(fetchCtx, nil)
+	toolsResult, err := broker.listAllUserTools(fetchCtx, session)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("list tools: %w", err)
@@ -316,6 +327,34 @@ func (broker *mcpBrokerImpl) fetchToolsStateless(ctx context.Context, srv userSp
 
 	span.SetAttributes(attribute.Int("mcp.user_specific.tools_count", len(validTools)))
 	return validTools, nil
+}
+
+// listAllUserTools walks every tools/list page on a user session, following
+// NextCursor, so user-specific listings do not drop pages after the first
+// the same way managed discovery did.
+func (broker *mcpBrokerImpl) listAllUserTools(ctx context.Context, session *mcp.ClientSession) (*mcp.ListToolsResult, error) {
+	var result mcp.ListToolsResult
+	for page := 0; ; page++ {
+		if page >= upstream.MaxListPages {
+			return nil, fmt.Errorf(
+				"%w: tools/list exceeded %d pages",
+				upstream.ErrPageLimitExceeded,
+				upstream.MaxListPages,
+			)
+		}
+		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
+		if err != nil {
+			return nil, err
+		}
+		if res == nil {
+			return &result, nil
+		}
+		result.Tools = append(result.Tools, res.Tools...)
+		result.NextCursor = res.NextCursor
+		if res.NextCursor == "" {
+			return &result, nil
+		}
+	}
 }
 
 // getOrCreateUserSession returns a cached upstream session or creates a new

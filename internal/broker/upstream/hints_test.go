@@ -2,9 +2,11 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,4 +126,270 @@ func TestToolHintsTee_EndToEnd(t *testing.T) {
 			require.False(t, ok, "hints are keyed by prefixed name only")
 		})
 	}
+}
+
+func TestToolHintsTee_AccumulatesAcrossPages(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		tool := &mcp.Tool{
+			Name:        name,
+			InputSchema: map[string]any{"type": "object"},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}
+		srv.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	result, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Tools, 3, "all tools across the pages must be listed")
+
+	require.Eventually(t, func() bool {
+		_, okA := up.GetToolHints("up_alpha")
+		_, okB := up.GetToolHints("up_beta")
+		_, okG := up.GetToolHints("up_gamma")
+		return okA && okB && okG
+	}, 5*time.Second, 10*time.Millisecond, "hints from every page must survive the walk, not just the last page")
+}
+
+func TestMinTTLMs(t *testing.T) {
+	require.Equal(t, 0, minTTLMs(0, 5000), "zero wins: uncacheable page")
+	require.Equal(t, 0, minTTLMs(5000, 0), "zero wins: uncacheable page")
+	require.Equal(t, 3000, minTTLMs(5000, 3000), "shorter page TTL wins")
+	require.Equal(t, 3000, minTTLMs(3000, 5000), "shorter page TTL wins")
+	require.Equal(t, 3000, minTTLMs(3000, 3000), "equal TTLs")
+}
+
+func TestMergeCacheScopes(t *testing.T) {
+	require.Equal(t, CacheScopePrivate, mergeCacheScopes(CacheScopePrivate, CacheScopePublic), "private page keeps the merged listing private")
+	require.Equal(t, CacheScopePrivate, mergeCacheScopes(CacheScopePublic, CacheScopePrivate), "private page keeps the merged listing private")
+	require.Equal(t, CacheScopePublic, mergeCacheScopes(CacheScopePublic, CacheScopePublic), "all-public pages stay public")
+}
+
+// TestListAllPrompts_FollowsPagination: prompts/list pages merge like the
+// tools walk.
+func TestListAllPrompts_FollowsPagination(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"p_one", "p_two"} {
+		srv.AddPrompt(&mcp.Prompt{Name: name}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	result, err := up.ListPrompts(ctx)
+	require.NoError(t, err)
+	require.Len(t, result.Prompts, 2, "all prompts across the pages must be listed")
+}
+
+// TestListAllPrompts_PageCap: an upstream whose prompts/list always returns
+// a nextCursor never terminates, so the walk must stop at MaxListPages with
+// ErrPageLimitExceeded instead of looping until the deadline.
+func TestListAllPrompts_PageCap(t *testing.T) {
+	var listCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Mcp-Session-Id", "endless-prompts")
+
+		switch method {
+		case "initialize":
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"serverInfo":      map[string]any{"name": "endless-prompts", "version": "1.0"},
+					"capabilities":    map[string]any{"prompts": map[string]any{"listChanged": false}},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "prompts/list":
+			listCalls.Add(1)
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"prompts": []map[string]any{
+						{"name": "p_one", "description": "an endless prompt"},
+					},
+					"nextCursor": "always-more",
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}
+			_ = json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "endless-prompts", URL: ts.URL, Prefix: "ep_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListPrompts(ctx)
+	require.ErrorIs(t, err, ErrPageLimitExceeded)
+	require.LessOrEqual(t, listCalls.Load(), int32(MaxListPages),
+		"the walk must stop at the page cap, not loop until the deadline")
+}
+
+// TestListAllTools_HintsSurviveCacheHitWalk: the SDK can answer later
+// tools/list calls from its per-page cache without an HTTP round trip, so
+// the tee never fires. commitToolHints must not erase the previously
+// observed hints in that case.
+func TestListAllTools_HintsSurviveCacheHitWalk(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{PageSize: 1})
+	for _, name := range []string{"alpha", "beta"} {
+		tool := &mcp.Tool{
+			Name:        name,
+			InputSchema: map[string]any{"type": "object"},
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}
+		srv.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	}
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL, Prefix: "up_"}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, okA := up.GetToolHints("up_alpha")
+		_, okB := up.GetToolHints("up_beta")
+		return okA && okB
+	}, 5*time.Second, 10*time.Millisecond, "first walk must harvest the hints")
+
+	// simulate the SDK serving the second walk from cache: no HTTP, no tee
+	// harvest, but the walk still begins/commits. commit must keep hints
+	// for every tool the fresh listing served.
+	up.beginToolHints()
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}, "up_beta": {}})
+
+	_, okA := up.GetToolHints("up_alpha")
+	_, okB := up.GetToolHints("up_beta")
+	require.True(t, okA, "cache-hit walk must not erase previously observed hints")
+	require.True(t, okB, "cache-hit walk must not erase previously observed hints")
+}
+
+// TestListAllTools_FailedWalkLeavesNoPartialHints: a walk that ends mid-way
+// must not leave the pages it did observe in the live set.
+func TestListAllTools_FailedWalkLeavesNoPartialHints(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// a completed first listing observed one tool
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
+	_, ok := up.GetToolHints("up_alpha")
+	require.True(t, ok, "first listing must observe the hint")
+
+	// a second walk observes a page, then fails: the partial harvest must
+	// be dropped and the first listing's hints restored
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(true)}})
+	_, okBeta := up.GetToolHints("up_beta")
+	require.True(t, okBeta, "in-walk live update must be visible while the walk is open")
+	up.abandonToolHints()
+
+	_, okBeta = up.GetToolHints("up_beta")
+	require.False(t, okBeta, "failed walk must not leave partial hints in the live set")
+	_, ok = up.GetToolHints("up_alpha")
+	require.True(t, ok, "failed walk must restore the previous listing's hints")
+
+	// a completed listing that drops a tool must drop its hint too: the
+	// overlay keeps previous hints only for tools the fresh listing served
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints(map[string]struct{}{"up_beta": {}})
+	_, ok = up.GetToolHints("up_alpha")
+	require.False(t, ok, "hint for a tool absent from the completed listing must be dropped")
+	_, okBeta = up.GetToolHints("up_beta")
+	require.True(t, okBeta, "hint for a served tool must be kept")
+}
+
+// TestListAllTools_FreshHintWinsOverPreviousListing: a walk that re-observes
+// a tool over HTTP must install the fresh hint, not the previous listing's
+// value: the previous hint is only a fallback for served tools the walk did
+// not re-observe (per-page cache hits).
+func TestListAllTools_FreshHintWinsOverPreviousListing(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// first listing: alpha is read-only
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
+	h, ok := up.GetToolHints("up_alpha")
+	require.True(t, ok, "first listing must observe the hint")
+	require.Equal(t, ptr.To(true), h.ReadOnlyHint)
+
+	// second listing: the upstream now reports alpha as not read-only
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(false)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}})
+	h, ok = up.GetToolHints("up_alpha")
+	require.True(t, ok, "served tool must keep a hint")
+	require.Equal(t, ptr.To(false), h.ReadOnlyHint, "fresh walk observation must win over the previous listing")
+}
+
+// TestStoreToolHints_LateHarvestMergesNotReplaces: the sdk closes page
+// bodies on its own goroutines, so a page harvest can land after the walk
+// committed and pendingToolHints is already nil. That late harvest must
+// merge into the live set, not replace it, or every other page's hints
+// are lost.
+func TestStoreToolHints_LateHarvestMergesNotReplaces(t *testing.T) {
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: "http://unused", Prefix: "up_"}, "", nil)
+
+	// a walk observes two pages, then commits
+	up.beginToolHints()
+	up.storeToolHints(map[string]ToolHints{"alpha": {ReadOnlyHint: ptr.To(true)}})
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(false)}})
+	up.commitToolHints(map[string]struct{}{"up_alpha": {}, "up_beta": {}})
+
+	// the sdk's reader goroutine delivers the last page's harvest after
+	// the walk returned: it must not drop alpha's hint
+	up.storeToolHints(map[string]ToolHints{"beta": {ReadOnlyHint: ptr.To(false)}})
+
+	_, okA := up.GetToolHints("up_alpha")
+	require.True(t, okA, "late harvest after commit must not erase earlier pages' hints")
+	_, okB := up.GetToolHints("up_beta")
+	require.True(t, okB, "late harvest after commit must keep its own hint")
 }
