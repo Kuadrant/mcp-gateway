@@ -99,6 +99,8 @@ The manager additionally re-lists tools and prompts on every health tick regardl
 
 Each re-list is diffed against the cached list by name and full definition: a tool or prompt whose definition changes under an unchanged name is removed and re-added so the gateway serves the new definition.
 
+For 2026-07-28 upstreams, which have no notification stream, the tick interval follows the shortest positive `ttlMs` across the `tools/list` and `prompts/list` responses, clamped to a 1 minute minimum, and falls back to the default when neither is positive. Healthy TTL-driven polls add up to 10% upward jitter, as the caching spec requires of polling clients.
+
 For `userSpecificList` servers the manager's health session still starts a watcher like any other connected session; only the per-user sessions do not run one, as their tool lists are fetched per request, leaving no cached state for a notification to refresh and nothing consuming server pushes.
 
 For client-facing notification forwarding, see the [notifications design documentation](./notifications.md).

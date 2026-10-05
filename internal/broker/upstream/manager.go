@@ -253,10 +253,18 @@ type MCPManager struct {
 	// consecutiveFailures counts connect/ping failures since the last
 	// healthy pass. only touched from the event loop goroutine.
 	consecutiveFailures int
+
+	// ttlPolling is set once the poll interval is derived from 2026 TTL hints,
+	// enabling jitter on healthy polls. only touched from the event loop goroutine.
+	ttlPolling bool
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
 const DefaultTickerInterval = time.Minute * 1
+
+// ttlPollJitter is the max upward jitter factor applied to TTL-driven polls,
+// as the 2026-07-28 caching spec requires polling clients to jitter.
+const ttlPollJitter = 0.1
 
 // maxConsecutiveFailures is the number of consecutive connect/ping failures
 // tolerated before cached tools and prompts are dropped from the gateway.
@@ -608,15 +616,6 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 						}
 					}
 					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
-
-					// adjust tick interval for 2026 upstreams based on upstream TTL hint.
-					// without notification handlers, polling is the only freshness mechanism.
-					// gated on the negotiated version, not UsesStatelessProtocol: a
-					// session-less 2025 upstream sends no TTL hint, so adjusting would
-					// only overwrite the configured interval with the default.
-					if info := man.mcp.ProtocolInfo(); info != nil && info.ProtocolVersion >= protocol.Version2026 {
-						man.adjustTickerFromTTL()
-					}
 				}
 			}
 		}
@@ -677,6 +676,14 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 				}
 			}
 		}
+	}
+	// adjust tick interval for 2026 upstreams based on upstream TTL hints.
+	// without notification handlers, polling is the only freshness mechanism.
+	// gated on the negotiated version, not UsesStatelessProtocol: a
+	// session-less 2025 upstream sends no TTL hint, so adjusting would
+	// only overwrite the configured interval with the default.
+	if info := man.mcp.ProtocolInfo(); info != nil && info.ProtocolVersion >= protocol.Version2026 {
+		man.adjustTickerFromTTL()
 	}
 	jointErr := errors.Join(toolErr, promptErr)
 	man.setStatus(jointErr, numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
@@ -762,7 +769,17 @@ func (man *MCPManager) handleConnectionFailure(ctx context.Context, span trace.S
 
 func (man *MCPManager) resetBackoff() {
 	man.backoff = man.baseBackoff
-	man.resetTicker(man.tickerInterval)
+	man.resetTicker(man.nextPollInterval())
+}
+
+// nextPollInterval returns the interval until the next healthy poll. TTL-driven
+// polling of 2026 upstreams is jittered upward so many brokers polling the same
+// upstream do not synchronise; the base interval stays the floor.
+func (man *MCPManager) nextPollInterval() time.Duration {
+	if !man.ttlPolling {
+		return man.tickerInterval
+	}
+	return wait.Jitter(man.tickerInterval, ttlPollJitter)
 }
 
 func (man *MCPManager) applyBackoff() {
@@ -782,22 +799,33 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 	}
 }
 
-// adjustTickerFromTTL resets the ticker to match the upstream's tools/list TTLMs
-// hint. only applied for 2026 upstreams where polling replaces push notifications.
+// adjustTickerFromTTL sets the poll interval from the shortest positive TTLMs
+// hint across the upstream's tools/list and prompts/list responses. only
+// applied for 2026 upstreams where polling replaces push notifications.
 // clamped to DefaultTickerInterval minimum to avoid hot-looping on low TTLs.
+// the ticker itself is re-armed by resetBackoff or applyBackoff.
 func (man *MCPManager) adjustTickerFromTTL() {
-	meta := man.mcp.ToolsCacheMetadata()
-	var ttlInterval time.Duration
-	if meta.TTLMs <= 0 {
-		ttlInterval = DefaultTickerInterval
-	} else {
-		ttlInterval = max(time.Duration(meta.TTLMs)*time.Millisecond, DefaultTickerInterval)
+	man.ttlPolling = true
+	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, man.mcp.PromptsCacheMetadata().TTLMs)
+	ttlInterval := DefaultTickerInterval
+	if ttlMs > 0 {
+		ttlInterval = max(time.Duration(ttlMs)*time.Millisecond, DefaultTickerInterval)
 	}
 	if ttlInterval != man.tickerInterval {
-		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", meta.TTLMs, "interval", ttlInterval)
+		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", ttlMs, "interval", ttlInterval)
 		man.tickerInterval = ttlInterval
-		man.resetTicker(ttlInterval)
 	}
+}
+
+// shortestPositiveTTLMs returns the smallest positive TTL, or 0 if none is positive.
+func shortestPositiveTTLMs(ttls ...int) int {
+	shortest := 0
+	for _, ttl := range ttls {
+		if ttl > 0 && (shortest == 0 || ttl < shortest) {
+			shortest = ttl
+		}
+	}
+	return shortest
 }
 
 func (man *MCPManager) recordBackendError(span trace.Span, err error) {
