@@ -1546,6 +1546,8 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 		newPrompts      []mcp.Prompt
 		expectedAdded   int
 		expectedRemoved int
+		addedNames      []string
+		removedNames    []string
 	}{
 		{
 			name:            "no changes",
@@ -1575,6 +1577,62 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 			expectedAdded:   0,
 			expectedRemoved: 0,
 		},
+		{
+			name:            "arguments change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Arguments: []*mcp.PromptArgument{{Name: "a"}}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}, {Name: "b"}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_p1"},
+			removedNames:    []string{"test_p1"},
+		},
+		{
+			name:            "description change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "old"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "new"}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_p1"},
+			removedNames:    []string{"test_p1"},
+		},
+		{
+			name:            "title change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Title: "old"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Title: "new"}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+		},
+		{
+			name:            "icons change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Icons: []mcp.Icon{{Source: "https://example.com/i.png"}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+		},
+		{
+			name:            "meta change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v1"}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v2"}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+		},
+		{
+			// identical definitions with distinct pointers must not churn
+			name:            "identical definition not churned",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "d", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "d", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}}}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			name:            "change with add and remove",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "old"}, {Name: "p2"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "new"}, {Name: "p3"}},
+			expectedAdded:   2,
+			expectedRemoved: 2,
+			addedNames:      []string{"test_p1", "test_p3"},
+			removedNames:    []string{"test_p1", "test_p2"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1582,8 +1640,55 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 			added, removed := manager.diffPrompts(tt.oldPrompts, tt.newPrompts)
 			assert.Len(t, added, tt.expectedAdded)
 			assert.Len(t, removed, tt.expectedRemoved)
+			addedNames := make([]string, len(added))
+			for i := range added {
+				addedNames[i] = added[i].Prompt.Name
+			}
+			for _, n := range tt.addedNames {
+				assert.Contains(t, addedNames, n)
+			}
+			for _, n := range tt.removedNames {
+				assert.Contains(t, removed, n)
+			}
 		})
 	}
+}
+
+// a same-name prompt whose definition changes upstream must be republished
+// with the new definition, and an unchanged re-list must not churn.
+func TestMCPManager_manage_PromptDefinitionChangeRepublished(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.prompts = []mcp.Prompt{{Name: "prompt1", Description: "old"}}
+	mock.hasPromptsCap = true
+	promptsGateway := newMockPromptsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), promptsGateway, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Contains(t, promptsGateway.prompts, "test_prompt1")
+	require.Equal(t, "old", promptsGateway.prompts["test_prompt1"].Prompt.Description)
+	addCalls, delCalls := promptsGateway.addCalls, promptsGateway.delCalls
+
+	manager.manage(context.Background(), eventTypeTimer)
+	assert.Equal(t, addCalls, promptsGateway.addCalls, "unchanged prompts must not be re-added")
+	assert.Equal(t, delCalls, promptsGateway.delCalls, "unchanged prompts must not be deleted")
+
+	mock.prompts = []mcp.Prompt{{Name: "prompt1", Description: "new", Arguments: []*mcp.PromptArgument{{Name: "topic", Required: true}}}}
+	manager.manage(context.Background(), eventTypeTimer)
+
+	require.Contains(t, promptsGateway.prompts, "test_prompt1")
+	served := promptsGateway.prompts["test_prompt1"].Prompt
+	assert.Equal(t, "new", served.Description)
+	require.Len(t, served.Arguments, 1)
+	assert.Equal(t, "topic", served.Arguments[0].Name)
+	assert.Equal(t, "new", manager.GetServedManagedPrompt("test_prompt1").Description)
+
+	manager.toolsLock.RLock()
+	defer manager.toolsLock.RUnlock()
+	require.Len(t, manager.serverPrompts, 1, "stale gateway prompt must be replaced, not duplicated")
+	assert.Equal(t, "new", manager.serverPrompts[0].Prompt.Description)
 }
 
 func TestMCPManager_GetManagedPrompts(t *testing.T) {

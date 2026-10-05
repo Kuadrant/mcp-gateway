@@ -1064,31 +1064,43 @@ func (man *MCPManager) promptToServerPrompt(newPrompt mcp.Prompt) GatewayPrompt 
 }
 
 func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]GatewayPrompt, []string) {
-	oldPromptMap := make(map[string]mcp.Prompt)
-	for _, p := range oldPrompts {
-		oldPromptMap[p.Name] = p
+	oldPromptMap := make(map[string]*mcp.Prompt, len(oldPrompts))
+	for i := range oldPrompts {
+		oldPromptMap[oldPrompts[i].Name] = &oldPrompts[i]
 	}
 
-	newPromptMap := make(map[string]mcp.Prompt)
-	for _, p := range newPrompts {
-		newPromptMap[p.Name] = p
+	newPromptMap := make(map[string]*mcp.Prompt, len(newPrompts))
+	for i := range newPrompts {
+		newPromptMap[newPrompts[i].Name] = &newPrompts[i]
 	}
 
 	addedPrompts := make([]GatewayPrompt, 0)
 	for _, newPrompt := range newPromptMap {
-		if _, ok := oldPromptMap[newPrompt.Name]; !ok {
-			addedPrompts = append(addedPrompts, man.promptToServerPrompt(newPrompt))
+		prev, ok := oldPromptMap[newPrompt.Name]
+		// add new prompts, and re-add prompts whose definition changed under
+		// an unchanged name so the gateway serves the new definition
+		if !ok || promptChanged(prev, newPrompt) {
+			addedPrompts = append(addedPrompts, man.promptToServerPrompt(*newPrompt))
 		}
 	}
 
 	removedPrompts := make([]string, 0)
 	for _, oldPrompt := range oldPromptMap {
-		if _, ok := newPromptMap[oldPrompt.Name]; !ok {
+		next, ok := newPromptMap[oldPrompt.Name]
+		// remove dropped prompts, and drop the stale entry for a same-name
+		// definition change before its replacement is added
+		if !ok || promptChanged(oldPrompt, next) {
 			removedPrompts = append(removedPrompts, prefixedName(man.mcp.GetPrefix(), oldPrompt.Name))
 		}
 	}
 
 	return addedPrompts, removedPrompts
+}
+
+// promptChanged reports whether any field of two same-name prompts differs
+// (description, title, arguments, icons or _meta).
+func promptChanged(oldPrompt, newPrompt *mcp.Prompt) bool {
+	return !reflect.DeepEqual(oldPrompt, newPrompt)
 }
 
 // getPrompts returns the existing and new prompts. Must only be called from the Start() event loop.

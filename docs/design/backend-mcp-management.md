@@ -97,6 +97,8 @@ Instead, each connected session runs a broker-owned **notification watcher** tha
 
 The manager additionally re-lists tools and prompts on every health tick regardless of the upstream's `listChanged` capability. This poll backstop is deliberate: upstreams without event replay do not buffer notifications sent while the stream is down (reconnect windows lose events), and the watcher stops permanently for upstreams that do not offer the stream at all. Push keeps updates immediate; the tick bounds worst-case staleness at the ticker interval (default 1 minute) in every failure mode.
 
+Each re-list is diffed against the cached list by name and full definition: a tool or prompt whose definition changes under an unchanged name is removed and re-added so the gateway serves the new definition.
+
 For `userSpecificList` servers the manager's health session still starts a watcher like any other connected session; only the per-user sessions do not run one, as their tool lists are fetched per request, leaving no cached state for a notification to refresh and nothing consuming server pushes.
 
 For client-facing notification forwarding, see the [notifications design documentation](./notifications.md).
