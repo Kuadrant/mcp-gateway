@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -144,7 +145,12 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+			err := retry.OnError(retry.DefaultBackoff, func(err error) bool {
+				return !apierrors.IsConflict(err)
+			}, func() error {
+				return r.updateHTTPRouteStatus(ctx, mcpsr, false)
+			})
+			if err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
@@ -216,13 +222,11 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 		}
-		if len(acceptedParentRefs(targetRoute.Status.Parents)) == 0 {
-			if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
-				if apierrors.IsConflict(err) {
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, fmt.Errorf("reconcile failed: HTTPRoute status update failed %w", err)
+		if err := r.updateHTTPRouteStatus(ctx, mcpsr, false); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed: HTTPRoute status update failed %w", err)
 		}
 		return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 	}
@@ -338,7 +342,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+	if err := r.updateHTTPRouteStatus(ctx, mcpsr, true); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
@@ -978,7 +982,7 @@ func pruneProgrammed(e *gatewayv1.RouteParentStatus) (drop bool) {
 	return len(e.Conditions) == 0
 }
 
-func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
+func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, present bool) error {
 	targetRef := mcpsr.Spec.TargetRef
 
 	if targetRef.Kind != "HTTPRoute" {
@@ -1002,8 +1006,7 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 		return fmt.Errorf("failed to get HTTPRoute: %w", err)
 	}
 
-	present := mcpsr.DeletionTimestamp.IsZero()
-	if !present {
+	if !mcpsr.DeletionTimestamp.IsZero() {
 		present, err = r.otherRegistrationsTarget(ctx, mcpsr, namespace)
 		if err != nil {
 			return err
