@@ -8,6 +8,7 @@ import (
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -277,11 +278,18 @@ func TestWriteEmptyConfig(t *testing.T) {
 	testCases := []struct {
 		name         string
 		createFirst  bool
+		seedData     bool
 		expectExists bool
 	}{
 		{
 			name:         "clears existing secret",
 			createFirst:  true,
+			expectExists: true,
+		},
+		{
+			// a secret read back from the API server has its config in Data only
+			name:         "clears config stored in Data",
+			seedData:     true,
 			expectExists: true,
 		},
 		{
@@ -304,6 +312,18 @@ func TestWriteEmptyConfig(t *testing.T) {
 				}
 			}
 
+			if tc.seedData {
+				seeded := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: namespaceName.Name, Namespace: namespaceName.Namespace},
+					Data: map[string][]byte{
+						configFileName: []byte("servers:\n- name: test\n  url: http://test.local/mcp\nvirtualServers: []\n"),
+					},
+				}
+				if err := srw.Client.Create(ctx, seeded); err != nil {
+					t.Fatalf("failed to create secret: %v", err)
+				}
+			}
+
 			if err := srw.WriteEmptyConfig(ctx, namespaceName); err != nil {
 				t.Fatalf("WriteEmptyConfig failed: %v", err)
 			}
@@ -316,6 +336,15 @@ func TestWriteEmptyConfig(t *testing.T) {
 			}
 			if exists && secret.StringData[configFileName] != emptyConfigFile {
 				t.Fatalf("expected empty config, got %q", secret.StringData[configFileName])
+			}
+			if exists {
+				cfg, _, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
+				if err != nil {
+					t.Fatalf("failed to read config: %v", err)
+				}
+				if len(cfg.Servers) != 0 {
+					t.Fatalf("expected no servers after clearing, got %d", len(cfg.Servers))
+				}
 			}
 		})
 	}
