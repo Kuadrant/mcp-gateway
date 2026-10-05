@@ -155,6 +155,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
 				logger.Error(err, "failed to update HTTPRoute status during deletion")
+				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(mcpsr, mcpGatewayFinalizer)
 			if err := r.Update(ctx, mcpsr); err != nil {

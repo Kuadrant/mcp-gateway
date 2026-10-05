@@ -650,14 +650,22 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			})
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
-			Expect(err).NotTo(HaveOccurred())
 			Expect(attempts).To(Equal(wantAttempts))
 			if conflict {
+				Expect(err).NotTo(HaveOccurred())
 				Expect(result.RequeueAfter).To(Equal(defaultRequeueTime))
+			} else {
+				Expect(result).To(BeZero())
+				if attempts <= failures {
+					Expect(err).To(MatchError(statusErr))
+				} else {
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+			if attempts <= failures {
 				Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
 				Expect(controllerutil.ContainsFinalizer(registration, mcpGatewayFinalizer)).To(BeTrue())
 			} else {
-				Expect(result).To(BeZero())
 				Expect(errors.IsNotFound(testK8sClient.Get(ctx, nn, registration))).To(BeTrue())
 			}
 			route := &gatewayv1.HTTPRoute{}
@@ -667,11 +675,18 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			} else {
 				Expect(route.Status.Parents).To(HaveLen(2))
 				Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+
+				result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(BeZero())
+				Expect(errors.IsNotFound(testK8sClient.Get(ctx, nn, registration))).To(BeTrue())
+				Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+				Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 			}
 		},
 			Entry("retains the finalizer and requeues on conflict", true, 1, 1),
 			Entry("cleans up status before removing the finalizer after a transient error", false, 1, 2),
-			Entry("removes the finalizer after exhausting retries on a persistent status error", false, 4, 4),
+			Entry("retains the finalizer and returns the error after exhausting retries on a persistent status error", false, 4, 4),
 		)
 
 		It("should persist an empty parents array when deleting the sole legacy orphan", func() {
