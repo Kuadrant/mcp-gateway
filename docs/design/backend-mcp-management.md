@@ -97,7 +97,7 @@ Instead, each connected session runs a broker-owned **notification watcher** tha
 
 The manager additionally re-lists tools and prompts on every health tick regardless of the upstream's `listChanged` capability. This poll backstop is deliberate: upstreams without event replay do not buffer notifications sent while the stream is down (reconnect windows lose events), and the watcher stops permanently for upstreams that do not offer the stream at all. Push keeps updates immediate; the tick bounds worst-case staleness at the ticker interval (default 1 minute) in every failure mode.
 
-Each re-list is diffed against the cached list by name and full definition: a tool or prompt whose definition changes under an unchanged name is removed and re-added so the gateway serves the new definition.
+Each re-list is diffed against the cached list by name and served definition: a tool or prompt whose definition changes under an unchanged name is removed and re-added so the gateway serves the new definition. Upstream prompt `_meta` is not compared, since the gateway replaces it before serving.
 
 For 2026-07-28 upstreams, which have no notification stream, the tick interval follows the shortest positive `ttlMs` across the `tools/list` and `prompts/list` responses, clamped to a 1 minute minimum, and falls back to the default when neither is positive. Healthy TTL-driven polls add up to 10% upward jitter, as the caching spec requires of polling clients.
 

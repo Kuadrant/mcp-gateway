@@ -1125,10 +1125,14 @@ func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]Gatew
 	return addedPrompts, removedPrompts
 }
 
-// promptChanged reports whether any field of two same-name prompts differs
-// (description, title, arguments, icons or _meta).
+// promptChanged reports whether a same-name prompt differs in any field the
+// gateway serves. _meta is excluded: promptToServerPrompt replaces it, so a
+// _meta-only change would churn without changing what clients see.
 func promptChanged(oldPrompt, newPrompt *mcp.Prompt) bool {
-	return !reflect.DeepEqual(oldPrompt, newPrompt)
+	return oldPrompt.Description != newPrompt.Description ||
+		oldPrompt.Title != newPrompt.Title ||
+		!reflect.DeepEqual(oldPrompt.Arguments, newPrompt.Arguments) ||
+		!reflect.DeepEqual(oldPrompt.Icons, newPrompt.Icons)
 }
 
 // getPrompts returns the existing and new prompts. Must only be called from the Start() event loop.
