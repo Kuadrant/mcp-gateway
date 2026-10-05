@@ -52,6 +52,7 @@ type MockMCP struct {
 	disconnectCount     atomic.Int32
 	notificationHandler func(method string)
 	toolsCacheMeta      CacheMetadata
+	promptsCacheMeta    CacheMetadata
 }
 
 func (m *MockMCP) GetName() string {
@@ -193,7 +194,7 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 }
 
 func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return m.toolsCacheMeta }
-func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
+func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return m.promptsCacheMeta }
 func (m *MockMCP) UsesStatelessProtocol() bool {
 	return m.protocolVersion >= "2026-07-28" || m.sessionless
 }
@@ -2063,6 +2064,86 @@ func TestMCPManager_SessionlessUpstreamKeepsConfiguredTicker(t *testing.T) {
 	manager.manage(context.Background(), eventTypeTimer)
 
 	assert.Equal(t, configured, manager.tickerInterval, "ticker interval")
+}
+
+// the 2026 poll interval follows the shortest positive TTL across tools and prompts.
+func TestMCPManager_adjustTickerFromTTL_ToolsAndPrompts(t *testing.T) {
+	tests := []struct {
+		name         string
+		toolsTTLMs   int
+		promptsTTLMs int
+		wantInterval time.Duration
+	}{
+		{name: "prompt TTL shorter than tool TTL", toolsTTLMs: 3600000, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
+		{name: "tool TTL shorter than prompt TTL", toolsTTLMs: 300000, promptsTTLMs: 3600000, wantInterval: 5 * time.Minute},
+		{name: "only prompts have positive TTL", toolsTTLMs: 0, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
+		{name: "only tools have positive TTL", toolsTTLMs: 300000, promptsTTLMs: 0, wantInterval: 5 * time.Minute},
+		{name: "negative prompt TTL ignored", toolsTTLMs: 300000, promptsTTLMs: -1, wantInterval: 5 * time.Minute},
+		{name: "neither positive falls back to default", toolsTTLMs: 0, promptsTTLMs: 0, wantInterval: DefaultTickerInterval},
+		{name: "short prompt TTL clamped to default", toolsTTLMs: 3600000, promptsTTLMs: 10000, wantInterval: DefaultTickerInterval},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+			mock := newMockMCP("test-server", "test_")
+			mock.protocolVersion = "2026-07-28"
+			mock.toolsCacheMeta = CacheMetadata{TTLMs: tt.toolsTTLMs}
+			mock.promptsCacheMeta = CacheMetadata{TTLMs: tt.promptsTTLMs}
+			mock.tools = []mcp.Tool{validTool("tool1")}
+			mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
+			mock.hasPromptsCap = true
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, 0, InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.manage(context.Background(), eventTypeTimer)
+
+			assert.Equal(t, tt.wantInterval, manager.tickerInterval, "ticker interval")
+		})
+	}
+}
+
+// 2026 polling must apply jitter on top of the TTL-derived interval; the
+// jittered interval never drops below the base so the minimum clamp holds.
+func TestMCPManager_nextPollInterval_Jitter(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 300000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, 5*time.Minute, manager.tickerInterval)
+
+	base := manager.tickerInterval
+	upper := base + time.Duration(float64(base)*ttlPollJitter)
+	seen := map[time.Duration]struct{}{}
+	for range 100 {
+		d := manager.nextPollInterval()
+		assert.GreaterOrEqual(t, d, base)
+		assert.LessOrEqual(t, d, upper)
+		seen[d] = struct{}{}
+	}
+	assert.Greater(t, len(seen), 1, "interval should vary between polls")
+}
+
+// 2025 upstreams keep their configured interval exactly, without jitter.
+func TestMCPManager_nextPollInterval_NoJitterFor2025(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2025-11-25"
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	configured := 2 * time.Minute
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, configured, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+
+	for range 10 {
+		assert.Equal(t, configured, manager.nextPollInterval())
+	}
 }
 
 func TestMCPManager_adjustTickerFromTTL_ResetOnZero(t *testing.T) {
