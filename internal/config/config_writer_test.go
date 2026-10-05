@@ -273,6 +273,54 @@ func TestDeleteConfig(t *testing.T) {
 	}
 }
 
+func TestWriteEmptyConfig(t *testing.T) {
+	testCases := []struct {
+		name         string
+		createFirst  bool
+		expectExists bool
+	}{
+		{
+			name:         "clears existing secret",
+			createFirst:  true,
+			expectExists: true,
+		},
+		{
+			name:         "does not create missing secret",
+			createFirst:  false,
+			expectExists: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			srw := newTestSecretReaderWriter(t)
+			ctx := context.Background()
+			namespaceName := types.NamespacedName{Namespace: "test-ns", Name: "mcp-gateway-config"}
+
+			if tc.createFirst {
+				server := MCPServer{Name: "test", URL: "http://test.local/mcp", State: string(mcpv1.ServerStateEnabled)}
+				if err := srw.UpsertMCPServer(ctx, server, namespaceName); err != nil {
+					t.Fatalf("UpsertMCPServer failed: %v", err)
+				}
+			}
+
+			if err := srw.WriteEmptyConfig(ctx, namespaceName); err != nil {
+				t.Fatalf("WriteEmptyConfig failed: %v", err)
+			}
+
+			secret := &corev1.Secret{}
+			err := srw.Client.Get(ctx, namespaceName, secret)
+			exists := err == nil
+			if exists != tc.expectExists {
+				t.Fatalf("expected exists=%v, got exists=%v", tc.expectExists, exists)
+			}
+			if exists && secret.StringData[configFileName] != emptyConfigFile {
+				t.Fatalf("expected empty config, got %q", secret.StringData[configFileName])
+			}
+		})
+	}
+}
+
 func TestWriteGatewayConfig(t *testing.T) {
 	testCases := []struct {
 		name           string

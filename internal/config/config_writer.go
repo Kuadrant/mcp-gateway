@@ -358,15 +358,20 @@ func (srw *SecretReaderWriter) DeleteConfig(ctx context.Context, namespaceName t
 // WriteEmptyConfig overwrites the config secret with an empty configuration.
 // This clears all servers and virtual servers from the config.
 // Uses a read-modify-write pattern with automatic retry on conflict errors.
+// If the secret doesn't exist, this is a no-op: there is nothing to clear, and
+// creating it would fail in a terminating namespace.
 func (srw *SecretReaderWriter) WriteEmptyConfig(ctx context.Context, namespaceName types.NamespacedName) error {
 	srw.Logger.Info("SecretReaderWriter WriteEmptyConfig", "secret", namespaceName)
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		_, backingSecret, err := srw.readOrCreateConfigSecret(ctx, namespaceName)
-		if err != nil {
+		backingSecret := &corev1.Secret{}
+		if err := srw.Client.Get(ctx, namespaceName, backingSecret); err != nil {
+			if errors.IsNotFound(err) {
+				return nil
+			}
 			return fmt.Errorf("write empty config failed to read config secret: %w", err)
 		}
 
-		backingSecret.StringData[configFileName] = emptyConfigFile
+		backingSecret.StringData = map[string]string{configFileName: emptyConfigFile}
 		return srw.Client.Update(ctx, backingSecret)
 	})
 }
