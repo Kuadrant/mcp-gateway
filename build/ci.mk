@@ -82,3 +82,6 @@ ci-debug-test-servers-logs: ## Collect test server logs for debugging CI failure
 	-$(KUBECTL) logs -n mcp-test deployment/mcp-test-server1 --tail=50
 	-$(KUBECTL) logs -n mcp-test deployment/mcp-test-server2 --tail=50
 	-$(KUBECTL) logs -n mcp-test deployment/mcp-test-server3 --tail=50
+	-$(KUBECTL) logs -n mcp-test deployment/mcp-tls-server --tail=50
+	-$(KUBECTL) logs -n mcp-test deployment/mcp-tls-server --previous --tail=50
+	-$(KUBECTL) describe -n mcp-test pod -l app=mcp-tls-server

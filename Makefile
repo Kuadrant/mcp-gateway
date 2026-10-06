@@ -405,10 +405,10 @@ kind-load-tls-server: kind build-tls-server ## Build TLS test server image local
 	$(call load-image,ghcr.io/kuadrant/mcp-gateway/test-tls-server:latest)
 
 # How test server images reach the Kind cluster: "build" (default) builds them
-# locally and loads via kind load, "pull" fetches the pre-built images published
-# to ghcr.io on merges to main, "baked" skips loading entirely because the
-# cluster was created from the baked CI node image (build/ci-node/Dockerfile)
-# that already carries them. CI uses pull or baked unless the change touches
+# locally and loads via kind load, "pull" fetches pre-built images from ghcr.io,
+# and "baked" uses pre-seeded node images for most test servers. In baked mode
+# the TLS test server is refreshed from GHCR because the cached node image can
+# lag the mutable :latest tag. CI uses pull or baked unless the change touches
 # tests/servers/** or internal/tests/**, which are not published from PRs.
 TEST_SERVER_IMAGE_SOURCE ?= build
 
@@ -422,8 +422,7 @@ load-tls-server: kind-load-tls-server
 else ifeq ($(TEST_SERVER_IMAGE_SOURCE),baked)
 load-test-servers:
 	@echo "Test server images pre-seeded in the baked CI node image, skipping load"
-load-tls-server:
-	@echo "TLS test server image pre-seeded in the baked CI node image, skipping load"
+load-tls-server: kind-pull-tls-server
 else
 $(error TEST_SERVER_IMAGE_SOURCE must be "build", "pull" or "baked", got "$(TEST_SERVER_IMAGE_SOURCE)")
 endif
