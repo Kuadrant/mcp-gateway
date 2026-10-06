@@ -2104,6 +2104,32 @@ func TestMCPManager_adjustTickerFromTTL_ToolsAndPrompts(t *testing.T) {
 	}
 }
 
+// an upstream that renegotiates below 2026 must return to the configured
+// interval without jitter, not keep the TTL-derived one.
+func TestMCPManager_manage_DowngradeRestoresConfiguredInterval(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.promptsCacheMeta = CacheMetadata{TTLMs: 3600000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
+	mock.hasPromptsCap = true
+	configured := 2 * time.Minute
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, configured, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, time.Hour, manager.tickerInterval)
+	require.True(t, manager.ttlPolling)
+
+	mock.protocolVersion = "2025-11-25"
+	manager.manage(context.Background(), eventTypeTimer)
+
+	assert.Equal(t, configured, manager.tickerInterval, "configured interval restored")
+	assert.False(t, manager.ttlPolling, "ttl polling cleared")
+	assert.Equal(t, configured, manager.nextPollInterval(), "no jitter after downgrade")
+}
+
 // 2026 polling must apply jitter on top of the TTL-derived interval; the
 // jittered interval never drops below the base so the minimum clamp holds.
 func TestMCPManager_nextPollInterval_Jitter(t *testing.T) {

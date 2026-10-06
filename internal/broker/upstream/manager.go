@@ -198,6 +198,9 @@ type MCPManager struct {
 	ticker *time.Ticker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
+	// configuredInterval is the normalized interval from construction,
+	// restored when an upstream stops negotiating 2026
+	configuredInterval time.Duration
 	// backoff is used to calculate the next interval on failure
 	backoff wait.Backoff
 	// baseBackoff stores the initial backoff configuration for resets
@@ -335,6 +338,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		gatewayServer:      gatewayServer,
 		promptsServer:      promptsServer,
 		tickerInterval:     tickerInterval,
+		configuredInterval: tickerInterval,
 		ticker:             time.NewTicker(tickerInterval),
 		backoff:            bo,
 		baseBackoff:        bo,
@@ -682,8 +686,15 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 	// gated on the negotiated version, not UsesStatelessProtocol: a
 	// session-less 2025 upstream sends no TTL hint, so adjusting would
 	// only overwrite the configured interval with the default.
-	if info := man.mcp.ProtocolInfo(); info != nil && info.ProtocolVersion >= protocol.Version2026 {
-		man.adjustTickerFromTTL()
+	if info := man.mcp.ProtocolInfo(); info != nil {
+		if info.ProtocolVersion >= protocol.Version2026 {
+			man.adjustTickerFromTTL()
+		} else if man.ttlPolling {
+			// upstream renegotiated below 2026: drop TTL-driven polling
+			man.logger.Info("restoring configured poll interval", "upstream", man.mcp.ID(), "protocolVersion", info.ProtocolVersion, "interval", man.configuredInterval)
+			man.ttlPolling = false
+			man.tickerInterval = man.configuredInterval
+		}
 	}
 	jointErr := errors.Join(toolErr, promptErr)
 	man.setStatus(jointErr, numberOfTools, numberOfPrompts, invalidTools, invalidPrompts)
