@@ -1219,45 +1219,52 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	mock.verifyAllResponsesConsumed()
 }
 
-// verifies that a bare JSON-RPC result from an SSE-declared upstream is
-// dropped without invoking guardrails or forwarding a replacement.
-func TestProcess_GuardrailsDrops_RawJSONWithSSEContentType(t *testing.T) {
-	cache, err := session.NewCache()
-	require.NoError(t, err)
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-	cfg := &config.MCPServersConfig{}
-	cfg.ApplyReload([]*config.MCPServer{{
-		Name:                "s1",
-		GuardrailsConfigIDs: []string{"cfg-1"},
-	}}, nil, "", 0, nil, &allowAllChecker{})
-
-	srv := &ExtProcServer{
-		Logger:          logger,
-		SessionCache:    cache,
-		Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
-		ResponseHandler: &bufferedResponseHandler{},
-	}
-	srv.RoutingConfig.Store(cfg)
-
+// verifies malformed SSE responses are replaced with an isError tool result.
+func TestProcess_GuardrailsMalformedSSE_ReplacementBody(t *testing.T) {
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
-	toolResultBody := []byte(`{
-  "jsonrpc": "2.0",
+	tests := []struct {
+		name         string
+		responseBody []byte
+	}{
+		{
+			name:         "bare JSON with SSE content type",
+			responseBody: []byte("{\n\n\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"hello world\"}]}}"),
+		},
+		{
+			name:         "truncated SSE event",
+			responseBody: []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[]}}\n"),
+		},
+	}
 
-  "id": 99,
-  "result": {
-    "content": [{"type": "text", "text": "hello world"}]
-  }
-}`)
-	wantBody := []byte(nil)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cache, err := session.NewCache()
+			require.NoError(t, err)
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
-		guardrailsResponseSteps(toolCallBody, toolResultBody, wantBody, "text/event-stream")...)
-	mock := makeMockProcessServer(t, steps)
+			cfg := &config.MCPServersConfig{}
+			cfg.ApplyReload([]*config.MCPServer{{
+				Name:                "s1",
+				GuardrailsConfigIDs: []string{"cfg-1"},
+			}}, nil, "", 0, nil, &allowAllChecker{})
 
-	err = srv.Process(mock)
-	require.NoError(t, err)
-	mock.verifyAllResponsesConsumed()
+			srv := &ExtProcServer{
+				Logger:          logger,
+				SessionCache:    cache,
+				Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+				ResponseHandler: &bufferedResponseHandler{},
+			}
+			srv.RoutingConfig.Store(cfg)
+
+			wantBody := []byte(routing.BuildSSEToolError(1, malformedUpstreamResponseMessage))
+			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+				guardrailsResponseSteps(toolCallBody, tc.responseBody, wantBody, "text/event-stream")...)
+			mock := makeMockProcessServer(t, steps)
+
+			require.NoError(t, srv.Process(mock))
+			mock.verifyAllResponsesConsumed()
+		})
+	}
 }
 
 // verifies that when guardrails block a response, the replacement isError

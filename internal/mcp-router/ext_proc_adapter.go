@@ -591,6 +591,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					// in full. withLimit caps how much we buffer here, separate
 					// from the request size check above.
 					oversizedBody := []byte(buildToolError(reqID, "response body exceeds configured size limit"))
+					malformedBody := []byte(buildToolError(reqID, malformedUpstreamResponseMessage))
 					guardrailsBuf = newGuardrailsResponseBuffer(!responseIsJSON, reqID, func(checkCtx context.Context, unit []byte) []byte {
 						text, isError, ok := extractToolResponseText(unit)
 						if !ok {
@@ -616,7 +617,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 							buildToolError,
 							buildRedacted,
 						)
-					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
+					}).withMalformedResponse(malformedBody).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
 				}
 			}
 

@@ -200,23 +200,36 @@ func TestGuardrailsResponseBuffer_SSE_UnconsumedAfterTerminalEventInSameChunkDro
 	require.NotContains(t, string(out), "smuggled", "a second response-shaped event in the same chunk must not reach the client unchecked")
 }
 
-func TestGuardrailsResponseBuffer_SSE_FlushDropsUndispatchedTrailer(t *testing.T) {
-	// an SSE event without the terminating blank line is incomplete at
-	// end-of-stream and must not reach guardrails or the client.
+func TestGuardrailsResponseBuffer_SSE_FlushReplacesUndispatchedTrailer(t *testing.T) {
+	malformed := []byte("malformed response replacement")
 	var checked int
 	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
 		checked++
 		return nil
-	})
+	}).withMalformedResponse(malformed)
 
-	event := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"cut off\"}]}}\n")
-	out := buf.Process(context.Background(), event)
-	require.Empty(t, out, "no blank line yet - nothing forwarded")
+	progress := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n")
+	partialResult := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"cut off\"}]}}\n")
+	out := buf.Process(context.Background(), append(progress, partialResult...))
+	require.Equal(t, string(progress), string(out), "complete control events should still be forwarded")
+	require.Zero(t, checked, "the incomplete event must not reach guardrails")
 
 	out = buf.Flush(context.Background())
-	require.Empty(t, out)
-	require.Zero(t, checked, "incomplete SSE must not reach guardrails")
+	require.Equal(t, string(malformed), string(out))
+	require.Zero(t, checked, "the incomplete event must not reach guardrails")
 	require.True(t, buf.done)
+	require.Empty(t, buf.Flush(context.Background()), "flush after replacement is a no-op")
+}
+
+func TestGuardrailsResponseBuffer_SSE_FlushAtEventBoundaryDoesNotReplace(t *testing.T) {
+	malformed := []byte("malformed response replacement")
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		return nil
+	}).withMalformedResponse(malformed)
+
+	progress := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n")
+	require.Equal(t, string(progress), string(buf.Process(context.Background(), progress)))
+	require.Empty(t, buf.Flush(context.Background()), "a complete event boundary does not trigger malformed framing replacement")
 }
 
 func TestGuardrailsResponseBuffer_JSON_WithheldUntilFlush(t *testing.T) {
@@ -373,34 +386,36 @@ func TestGuardrailsResponseBuffer_SSE_PartialLineCountsTowardEventLimit(t *testi
 	require.True(t, buf.done)
 }
 
-func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_Dropped(t *testing.T) {
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_Replaced(t *testing.T) {
+	malformed := []byte("malformed response replacement")
 	var checked int
 	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
 		checked++
 		return nil
-	})
+	}).withMalformedResponse(malformed)
 
 	body := []byte("{\n\n\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}")
-	require.Nil(t, buf.Process(context.Background(), body))
+	require.Equal(t, string(malformed), string(buf.Process(context.Background(), body)))
 	require.True(t, buf.done)
-	require.Equal(t, 0, checked)
+	require.Zero(t, checked, "bare JSON must not reach guardrails")
 	require.Nil(t, buf.Flush(context.Background()))
 }
 
-func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DroppedAcrossChunks(t *testing.T) {
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_ReplacedAcrossChunks(t *testing.T) {
+	malformed := []byte("malformed response replacement")
 	var checked int
 	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
 		checked++
 		return nil
-	})
+	}).withMalformedResponse(malformed)
 
 	require.Nil(t, buf.Process(context.Background(), []byte(" \n")))
 	require.False(t, buf.done)
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`)
-	require.Nil(t, buf.Process(context.Background(), body))
+	require.Equal(t, string(malformed), string(buf.Process(context.Background(), body)))
 	require.True(t, buf.done)
-	require.Equal(t, 0, checked)
+	require.Zero(t, checked, "bare JSON must not reach guardrails")
 	require.Nil(t, buf.Flush(context.Background()))
 	require.Nil(t, buf.Process(context.Background(), []byte("event: message\ndata: {}\n\n")))
 }

@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 )
 
+const malformedUpstreamResponseMessage = "upstream response was malformed and discarded"
+
 // guardrailsResponseBuffer holds back the final tool result so guardrails can
 // check it first, while letting earlier SSE events (like elicitation
 // prompts) through right away so the client isn't stalled. Plain JSON
 // responses are held in full until the response ends. Malformed SSE framing
-// (a bare JSON body, or a stream ending mid-event) is dropped unchecked.
+// is replaced with a tool-error result; the malformed upstream bytes are
+// never forwarded.
 type guardrailsResponseBuffer struct {
 	sse    bool
 	events sseEventReader // sse only
@@ -18,10 +21,11 @@ type guardrailsResponseBuffer struct {
 
 	requestID any
 	check     func(ctx context.Context, body []byte) []byte // nil return means allow (forward original)
-	done      bool                                          // true once the response is resolved or dropped
+	done      bool                                          // true once the response is resolved, replaced, or dropped
 
 	maxBytes  int    // upper bound on buffered bytes; 0 means unbounded
 	oversized []byte // forwarded in place of withheld content once maxBytes is exceeded
+	malformed []byte // tool-error body returned for malformed SSE framing
 }
 
 // newGuardrailsResponseBuffer builds a buffer for one tools/call response.
@@ -40,6 +44,12 @@ func newGuardrailsResponseBuffer(sse bool, requestID any, check func(context.Con
 func (g *guardrailsResponseBuffer) withLimit(maxBytes int, oversized []byte) *guardrailsResponseBuffer {
 	g.maxBytes = maxBytes
 	g.oversized = oversized
+	return g
+}
+
+// withMalformedResponse sets the replacement used when SSE framing is invalid.
+func (g *guardrailsResponseBuffer) withMalformedResponse(body []byte) *guardrailsResponseBuffer {
+	g.malformed = body
 	return g
 }
 
@@ -64,7 +74,7 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 	}
 
 	if err := g.events.Write(chunk); err != nil {
-		return g.drop()
+		return g.rejectMalformed()
 	}
 
 	var output []byte
@@ -93,14 +103,16 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 }
 
 // Flush returns any bytes still withheld when the stream ends. Safe to call
-// multiple times; subsequent calls are no-ops. An SSE stream that ends
-// mid-event has no complete terminal result, so its buffered bytes are
-// dropped rather than checked or forwarded.
+// multiple times; subsequent calls are no-ops. An incomplete SSE event is
+// discarded and replaced with a tool-error result.
 func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	if g.done {
 		return nil
 	}
 	if g.sse {
+		if err := g.events.Close(); err != nil {
+			return g.rejectMalformed()
+		}
 		return g.drop()
 	}
 	body := g.body
@@ -130,6 +142,14 @@ func (g *guardrailsResponseBuffer) drop() []byte {
 func (g *guardrailsResponseBuffer) reject() []byte {
 	g.drop()
 	return g.oversized
+}
+
+// rejectMalformed discards buffered upstream bytes and returns the configured
+// tool-error body.
+func (g *guardrailsResponseBuffer) rejectMalformed() []byte {
+	replacement := g.malformed
+	g.drop()
+	return replacement
 }
 
 // resolve runs the guardrails check on body and returns the replacement if
