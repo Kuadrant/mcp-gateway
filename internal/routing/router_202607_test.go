@@ -129,7 +129,7 @@ func TestRouter202607_ToolCallWithPrefix(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "s_mytool", "arguments": map[string]any{"key": "val"}},
+		Params:  &MCPParams{Name: "s_mytool", Arguments: json.RawMessage(`{"key":"val"}`)},
 	}
 
 	req := &Request{
@@ -166,7 +166,7 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "different_name"},
+		Params:  &MCPParams{Name: "different_name"},
 	}
 
 	req := &Request{
@@ -200,7 +200,14 @@ func TestRouter202607_PromptGet(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "prompts/get",
-		Params:  map[string]any{"name": "s_myprompt"},
+		Params: &MCPParams{
+			Name:      "s_myprompt",
+			Arguments: json.RawMessage(`{"nested":[9007199254740993,true,null]}`),
+			Extra: map[string]json.RawMessage{
+				"_meta":     json.RawMessage(`{"progressToken":9007199254740993}`),
+				"extension": json.RawMessage(`{"id":9007199254740993}`),
+			},
+		},
 	}
 
 	req := &Request{
@@ -219,6 +226,9 @@ func TestRouter202607_PromptGet(t *testing.T) {
 	require.Equal(t, "prompts", decision.SetHeaders[MCPServerNameHeader])
 	require.NotNil(t, decision.BodyMutation)
 	require.Contains(t, string(decision.BodyMutation), `"name":"myprompt"`)
+	require.Contains(t, string(decision.BodyMutation), `"arguments":{"nested":[9007199254740993,true,null]}`)
+	require.Contains(t, string(decision.BodyMutation), `"_meta":{"progressToken":9007199254740993}`)
+	require.Contains(t, string(decision.BodyMutation), `"extension":{"id":9007199254740993}`)
 }
 
 func TestRouter202607_UnknownTool(t *testing.T) {
@@ -539,19 +549,13 @@ func TestRouter202607_Guardrails(t *testing.T) {
 	}
 
 	toolReq := func() *Request {
+		var parsed MCPRequest
+		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s_mytool","arguments":{"query":"SELECT 1","nested":[9007199254740993,true,null]},"_meta":{"progressToken":9007199254740993},"extension":{"id":9007199254740993}}}`), &parsed))
 		return &Request{
 			MCPMethod: MethodToolCall,
 			MCPName:   "s_mytool",
 			RequestID: "req-1",
-			Parsed: &MCPRequest{
-				ID:      ptr.To(1),
-				JSONRPC: "2.0",
-				Method:  MethodToolCall,
-				Params: map[string]any{
-					"name":      "s_mytool",
-					"arguments": map[string]any{"query": "SELECT 1"},
-				},
-			},
+			Parsed:    &parsed,
 		}
 	}
 
@@ -570,6 +574,10 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, 1, fc.calls)
 		require.Equal(t, "mytool", fc.lastToolName)
 		require.Equal(t, []string{"svr-1"}, fc.lastConfigIDs)
+		require.Equal(t, `{"query":"SELECT 1","nested":[9007199254740993,true,null]}`, string(fc.lastArguments))
+		require.Contains(t, string(decision.BodyMutation), `"nested":[9007199254740993,true,null]`)
+		require.Contains(t, string(decision.BodyMutation), `"_meta":{"progressToken":9007199254740993}`)
+		require.Contains(t, string(decision.BodyMutation), `"extension":{"id":9007199254740993}`)
 	})
 
 	t.Run("blocked does not reach upstream", func(t *testing.T) {
@@ -592,7 +600,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	t.Run("modified arguments are forwarded in the body mutation", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
-		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"query":"SELECT sanitized"}`}}
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"query":"SELECT sanitized","nested":[9007199254740993,true,null]}`}}
 		cfg := &config.MCPServersConfig{
 			Servers:          serverConfigs,
 			GlobalGuardrails: &config.GuardrailsConfig{ConfigIDs: []string{"global-1"}},
@@ -609,8 +617,10 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 		var restored MCPRequest
 		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
-		require.Equal(t, "mytool", restored.Params["name"])
-		require.Equal(t, map[string]any{"query": "SELECT sanitized"}, restored.Params["arguments"])
+		require.Equal(t, "mytool", restored.Params.Name)
+		require.Equal(t, fc.decision.Content, string(restored.Params.Arguments))
+		require.Equal(t, json.RawMessage(`{"progressToken":9007199254740993}`), restored.Params.Extra["_meta"])
+		require.Equal(t, json.RawMessage(`{"id":9007199254740993}`), restored.Params.Extra["extension"])
 	})
 
 	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {
