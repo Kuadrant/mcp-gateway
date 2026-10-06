@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -99,12 +100,10 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 // arguments were rewritten (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
 	var requestID any
+	var args json.RawMessage
 	if mcpReq != nil {
 		requestID = mcpReq.ID
-	}
-	args, blocked := g.toolCallArguments(ctx, mcpReq, requestID)
-	if blocked != nil {
-		return false, blocked
+		args = toolCallArguments(mcpReq.Params)
 	}
 	content, blocked := g.request(ctx, toolName, args, requestID)
 	if blocked != nil {
@@ -296,28 +295,19 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 	}
 }
 
-func (g *guardrailsCheck) toolCallArguments(ctx context.Context, mcpReq *MCPRequest, requestID any) (json.RawMessage, *Decision) {
-	if mcpReq == nil {
-		return nil, nil
-	}
-	args, err := toolCallArguments(mcpReq.Params)
-	if err != nil {
-		g.logError(ctx, "guardrails tool arguments failed", "", err)
-		return nil, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
-	}
-	return args, nil
-}
-
 func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil || modified == "" {
 		return nil
 	}
-	params, err := replaceMapJSON(mcpReq.Params, "arguments", modified)
-	if err != nil {
-		g.logError(ctx, "guardrails apply modified arguments failed", "", err)
+	raw := json.RawMessage(modified)
+	if !json.Valid(raw) {
+		g.logError(ctx, "guardrails apply modified arguments failed", "", fmt.Errorf("invalid modified arguments JSON"))
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
-	mcpReq.Params = params
+	if mcpReq.Params == nil {
+		mcpReq.Params = &MCPParams{}
+	}
+	mcpReq.Params.Arguments = raw
 	return nil
 }
 
@@ -338,20 +328,12 @@ func isElicitationAccept(req *MCPRequest) bool {
 	return req != nil && req.IsElicitationResponse() && elicitationAction(req.Result) == elicitationActionAccept
 }
 
-// toolCallArguments JSON-encodes params["arguments"]. Missing or nil becomes {}.
-func toolCallArguments(params map[string]any) (json.RawMessage, error) {
-	if params == nil {
-		return json.RawMessage(`{}`), nil
+// toolCallArguments passes through raw arguments. Missing or null becomes {}.
+func toolCallArguments(params *MCPParams) json.RawMessage {
+	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
+		return json.RawMessage(`{}`)
 	}
-	args, ok := params["arguments"]
-	if !ok || args == nil {
-		return json.RawMessage(`{}`), nil
-	}
-	raw, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tool arguments: %w", err)
-	}
-	return raw, nil
+	return params.Arguments
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
@@ -385,19 +367,6 @@ func elicitationAction(result map[string]any) string {
 		return ""
 	}
 	return action
-}
-
-// replaceMapJSON unmarshals content and stores it at key. Returns a new-or-same map.
-func replaceMapJSON(m map[string]any, key, content string) (map[string]any, error) {
-	var v any
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
-		return nil, fmt.Errorf("unmarshal modified %s: %w", key, err)
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	m[key] = v
-	return m, nil
 }
 
 func replaceElicitationContent(result map[string]any, content string) (map[string]any, error) {
