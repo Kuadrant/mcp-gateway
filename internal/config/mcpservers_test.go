@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 )
 
 func TestMCPServer_Path(t *testing.T) {
@@ -534,6 +535,101 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			},
 			expectChanged: false,
 		},
+		{
+			name: "oauth2 identical does not trigger change",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+					Scopes:       []string{"mcp.read", "mcp.write"},
+				},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+					Scopes:       []string{"mcp.read", "mcp.write"},
+				},
+			},
+			expectChanged: false,
+		},
+		{
+			name: "oauth2 added triggers change",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+				},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+			},
+			expectChanged: true,
+		},
+		{
+			name: "oauth2 clientSecret rotated triggers change",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "rotated",
+				},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+				},
+			},
+			expectChanged: true,
+		},
+		{
+			name: "oauth2 scopes changed",
+			current: &MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+					Scopes:       []string{"mcp.read"},
+				},
+			},
+			existing: MCPServer{
+				Name:     "server1",
+				Prefix:   "s1_",
+				Hostname: "server1.local",
+				OAuth2: &OAuth2ClientCredentials{
+					TokenURL:     "https://as.example.com/token",
+					ClientID:     "broker",
+					ClientSecret: "secret1",
+					Scopes:       []string{"mcp.read", "mcp.write"},
+				},
+			},
+			expectChanged: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -542,6 +638,32 @@ func TestMCPServer_ConfigChanged(t *testing.T) {
 			require.Equal(t, tc.expectChanged, changed)
 		})
 	}
+}
+
+// the controller writes the config Secret with sigs.k8s.io/yaml, so the oauth2
+// block has to survive a marshal/unmarshal cycle through BrokerConfig intact.
+func TestBrokerConfig_OAuth2YAMLRoundTrip(t *testing.T) {
+	original := BrokerConfig{
+		Servers: []MCPServer{{
+			Name:  "server1",
+			URL:   "https://server1.local/mcp",
+			State: "Enabled",
+			OAuth2: &OAuth2ClientCredentials{
+				TokenURL:     "https://as.example.com/token",
+				ClientID:     "broker",
+				ClientSecret: "secret1",
+				Scopes:       []string{"mcp.read", "mcp.write"},
+			},
+		}},
+	}
+
+	raw, err := yaml.Marshal(original)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "oauth2:", "the block must serialise under the oauth2 key")
+
+	var decoded BrokerConfig
+	require.NoError(t, yaml.Unmarshal(raw, &decoded))
+	require.Equal(t, original, decoded)
 }
 
 func TestMCPServersConfig_GetServerConfigByName(t *testing.T) {
