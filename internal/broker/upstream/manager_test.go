@@ -52,6 +52,7 @@ type MockMCP struct {
 	disconnectCount     atomic.Int32
 	notificationHandler func(method string)
 	toolsCacheMeta      CacheMetadata
+	promptsCacheMeta    CacheMetadata
 }
 
 func (m *MockMCP) GetName() string {
@@ -193,7 +194,7 @@ func (m *MockMCP) SupportsVersion(v string) bool {
 }
 
 func (m *MockMCP) ToolsCacheMetadata() CacheMetadata   { return m.toolsCacheMeta }
-func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return CacheMetadata{} }
+func (m *MockMCP) PromptsCacheMetadata() CacheMetadata { return m.promptsCacheMeta }
 func (m *MockMCP) UsesStatelessProtocol() bool {
 	return m.protocolVersion >= "2026-07-28" || m.sessionless
 }
@@ -1546,6 +1547,8 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 		newPrompts      []mcp.Prompt
 		expectedAdded   int
 		expectedRemoved int
+		addedNames      []string
+		removedNames    []string
 	}{
 		{
 			name:            "no changes",
@@ -1575,6 +1578,63 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 			expectedAdded:   0,
 			expectedRemoved: 0,
 		},
+		{
+			name:            "arguments change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Arguments: []*mcp.PromptArgument{{Name: "a"}}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}, {Name: "b"}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_p1"},
+			removedNames:    []string{"test_p1"},
+		},
+		{
+			name:            "description change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "old"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "new"}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+			addedNames:      []string{"test_p1"},
+			removedNames:    []string{"test_p1"},
+		},
+		{
+			name:            "title change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Title: "old"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Title: "new"}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+		},
+		{
+			name:            "icons change under same name",
+			oldPrompts:      []mcp.Prompt{{Name: "p1"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Icons: []mcp.Icon{{Source: "https://example.com/i.png"}}}},
+			expectedAdded:   1,
+			expectedRemoved: 1,
+		},
+		{
+			// _meta is replaced by the gateway, so a _meta-only change must not churn
+			name:            "meta-only change not churned",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v1"}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Meta: mcp.Meta{"k": "v2"}}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			// identical definitions with distinct pointers must not churn
+			name:            "identical definition not churned",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "d", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}}}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "d", Arguments: []*mcp.PromptArgument{{Name: "a", Required: true}}}},
+			expectedAdded:   0,
+			expectedRemoved: 0,
+		},
+		{
+			name:            "change with add and remove",
+			oldPrompts:      []mcp.Prompt{{Name: "p1", Description: "old"}, {Name: "p2"}},
+			newPrompts:      []mcp.Prompt{{Name: "p1", Description: "new"}, {Name: "p3"}},
+			expectedAdded:   2,
+			expectedRemoved: 2,
+			addedNames:      []string{"test_p1", "test_p3"},
+			removedNames:    []string{"test_p1", "test_p2"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1582,8 +1642,55 @@ func TestMCPManager_diffPrompts(t *testing.T) {
 			added, removed := manager.diffPrompts(tt.oldPrompts, tt.newPrompts)
 			assert.Len(t, added, tt.expectedAdded)
 			assert.Len(t, removed, tt.expectedRemoved)
+			addedNames := make([]string, len(added))
+			for i := range added {
+				addedNames[i] = added[i].Prompt.Name
+			}
+			for _, n := range tt.addedNames {
+				assert.Contains(t, addedNames, n)
+			}
+			for _, n := range tt.removedNames {
+				assert.Contains(t, removed, n)
+			}
 		})
 	}
+}
+
+// a same-name prompt whose definition changes upstream must be republished
+// with the new definition, and an unchanged re-list must not churn.
+func TestMCPManager_manage_PromptDefinitionChangeRepublished(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.prompts = []mcp.Prompt{{Name: "prompt1", Description: "old"}}
+	mock.hasPromptsCap = true
+	promptsGateway := newMockPromptsAdderDeleter()
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), promptsGateway, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Contains(t, promptsGateway.prompts, "test_prompt1")
+	require.Equal(t, "old", promptsGateway.prompts["test_prompt1"].Prompt.Description)
+	addCalls, delCalls := promptsGateway.addCalls, promptsGateway.delCalls
+
+	manager.manage(context.Background(), eventTypeTimer)
+	assert.Equal(t, addCalls, promptsGateway.addCalls, "unchanged prompts must not be re-added")
+	assert.Equal(t, delCalls, promptsGateway.delCalls, "unchanged prompts must not be deleted")
+
+	mock.prompts = []mcp.Prompt{{Name: "prompt1", Description: "new", Arguments: []*mcp.PromptArgument{{Name: "topic", Required: true}}}}
+	manager.manage(context.Background(), eventTypeTimer)
+
+	require.Contains(t, promptsGateway.prompts, "test_prompt1")
+	served := promptsGateway.prompts["test_prompt1"].Prompt
+	assert.Equal(t, "new", served.Description)
+	require.Len(t, served.Arguments, 1)
+	assert.Equal(t, "topic", served.Arguments[0].Name)
+	assert.Equal(t, "new", manager.GetServedManagedPrompt("test_prompt1").Description)
+
+	manager.toolsLock.RLock()
+	defer manager.toolsLock.RUnlock()
+	require.Len(t, manager.serverPrompts, 1, "stale gateway prompt must be replaced, not duplicated")
+	assert.Equal(t, "new", manager.serverPrompts[0].Prompt.Description)
 }
 
 func TestMCPManager_GetManagedPrompts(t *testing.T) {
@@ -1958,6 +2065,112 @@ func TestMCPManager_SessionlessUpstreamKeepsConfiguredTicker(t *testing.T) {
 	manager.manage(context.Background(), eventTypeTimer)
 
 	assert.Equal(t, configured, manager.tickerInterval, "ticker interval")
+}
+
+// the 2026 poll interval follows the shortest positive TTL across tools and prompts.
+func TestMCPManager_adjustTickerFromTTL_ToolsAndPrompts(t *testing.T) {
+	tests := []struct {
+		name         string
+		toolsTTLMs   int
+		promptsTTLMs int
+		wantInterval time.Duration
+	}{
+		{name: "prompt TTL shorter than tool TTL", toolsTTLMs: 3600000, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
+		{name: "tool TTL shorter than prompt TTL", toolsTTLMs: 300000, promptsTTLMs: 3600000, wantInterval: 5 * time.Minute},
+		{name: "only prompts have positive TTL", toolsTTLMs: 0, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
+		{name: "only tools have positive TTL", toolsTTLMs: 300000, promptsTTLMs: 0, wantInterval: 5 * time.Minute},
+		{name: "negative prompt TTL ignored", toolsTTLMs: 300000, promptsTTLMs: -1, wantInterval: 5 * time.Minute},
+		{name: "neither positive falls back to default", toolsTTLMs: 0, promptsTTLMs: 0, wantInterval: DefaultTickerInterval},
+		{name: "short prompt TTL clamped to default", toolsTTLMs: 3600000, promptsTTLMs: 10000, wantInterval: DefaultTickerInterval},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+			mock := newMockMCP("test-server", "test_")
+			mock.protocolVersion = "2026-07-28"
+			mock.toolsCacheMeta = CacheMetadata{TTLMs: tt.toolsTTLMs}
+			mock.promptsCacheMeta = CacheMetadata{TTLMs: tt.promptsTTLMs}
+			mock.tools = []mcp.Tool{validTool("tool1")}
+			mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
+			mock.hasPromptsCap = true
+			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, 0, InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.manage(context.Background(), eventTypeTimer)
+
+			assert.Equal(t, tt.wantInterval, manager.tickerInterval, "ticker interval")
+		})
+	}
+}
+
+// an upstream that renegotiates below 2026 must return to the configured
+// interval without jitter, not keep the TTL-derived one.
+func TestMCPManager_manage_DowngradeRestoresConfiguredInterval(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.promptsCacheMeta = CacheMetadata{TTLMs: 3600000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
+	mock.hasPromptsCap = true
+	configured := 2 * time.Minute
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, configured, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, time.Hour, manager.tickerInterval)
+	require.True(t, manager.ttlPolling)
+
+	mock.protocolVersion = "2025-11-25"
+	manager.manage(context.Background(), eventTypeTimer)
+
+	assert.Equal(t, configured, manager.tickerInterval, "configured interval restored")
+	assert.False(t, manager.ttlPolling, "ttl polling cleared")
+	assert.Equal(t, configured, manager.nextPollInterval(), "no jitter after downgrade")
+}
+
+// 2026 polling must apply jitter on top of the TTL-derived interval; the
+// jittered interval never drops below the base so the minimum clamp holds.
+func TestMCPManager_nextPollInterval_Jitter(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 300000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, 5*time.Minute, manager.tickerInterval)
+
+	base := manager.tickerInterval
+	upper := base + time.Duration(float64(base)*ttlPollJitter)
+	seen := map[time.Duration]struct{}{}
+	for range 100 {
+		d := manager.nextPollInterval()
+		assert.GreaterOrEqual(t, d, base)
+		assert.LessOrEqual(t, d, upper)
+		seen[d] = struct{}{}
+	}
+	assert.Greater(t, len(seen), 1, "interval should vary between polls")
+}
+
+// 2025 upstreams keep their configured interval exactly, without jitter.
+func TestMCPManager_nextPollInterval_NoJitterFor2025(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2025-11-25"
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	configured := 2 * time.Minute
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, configured, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+
+	for range 10 {
+		assert.Equal(t, configured, manager.nextPollInterval())
+	}
 }
 
 func TestMCPManager_adjustTickerFromTTL_ResetOnZero(t *testing.T) {

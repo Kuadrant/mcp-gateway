@@ -198,6 +198,9 @@ type MCPManager struct {
 	ticker *time.Ticker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
+	// configuredInterval is the normalized interval from construction,
+	// restored when an upstream stops negotiating 2026
+	configuredInterval time.Duration
 	// backoff is used to calculate the next interval on failure
 	backoff wait.Backoff
 	// baseBackoff stores the initial backoff configuration for resets
@@ -253,10 +256,18 @@ type MCPManager struct {
 	// consecutiveFailures counts connect/ping failures since the last
 	// healthy pass. only touched from the event loop goroutine.
 	consecutiveFailures int
+
+	// ttlPolling is set once the poll interval is derived from 2026 TTL hints,
+	// enabling jitter on healthy polls. only touched from the event loop goroutine.
+	ttlPolling bool
 }
 
 // DefaultTickerInterval is the default interval for backend health checks
 const DefaultTickerInterval = time.Minute * 1
+
+// ttlPollJitter is the max upward jitter factor applied to TTL-driven polls,
+// as the 2026-07-28 caching spec requires polling clients to jitter.
+const ttlPollJitter = 0.1
 
 // maxConsecutiveFailures is the number of consecutive connect/ping failures
 // tolerated before cached tools and prompts are dropped from the gateway.
@@ -327,6 +338,7 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		gatewayServer:      gatewayServer,
 		promptsServer:      promptsServer,
 		tickerInterval:     tickerInterval,
+		configuredInterval: tickerInterval,
 		ticker:             time.NewTicker(tickerInterval),
 		backoff:            bo,
 		baseBackoff:        bo,
@@ -608,15 +620,6 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 						}
 					}
 					man.logger.DebugContext(ctx, "internal tools", "upstream mcp server", man.mcp.ID(), "total", len(man.serverTools))
-
-					// adjust tick interval for 2026 upstreams based on upstream TTL hint.
-					// without notification handlers, polling is the only freshness mechanism.
-					// gated on the negotiated version, not UsesStatelessProtocol: a
-					// session-less 2025 upstream sends no TTL hint, so adjusting would
-					// only overwrite the configured interval with the default.
-					if info := man.mcp.ProtocolInfo(); info != nil && info.ProtocolVersion >= protocol.Version2026 {
-						man.adjustTickerFromTTL()
-					}
 				}
 			}
 		}
@@ -676,6 +679,21 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.promptsServer.AddPrompts(toAddPrompts...)
 				}
 			}
+		}
+	}
+	// adjust tick interval for 2026 upstreams based on upstream TTL hints.
+	// without notification handlers, polling is the only freshness mechanism.
+	// gated on the negotiated version, not UsesStatelessProtocol: a
+	// session-less 2025 upstream sends no TTL hint, so adjusting would
+	// only overwrite the configured interval with the default.
+	if info := man.mcp.ProtocolInfo(); info != nil {
+		if info.ProtocolVersion >= protocol.Version2026 {
+			man.adjustTickerFromTTL()
+		} else if man.ttlPolling {
+			// upstream renegotiated below 2026: drop TTL-driven polling
+			man.logger.Info("restoring configured poll interval", "upstream", man.mcp.ID(), "protocolVersion", info.ProtocolVersion, "interval", man.configuredInterval)
+			man.ttlPolling = false
+			man.tickerInterval = man.configuredInterval
 		}
 	}
 	jointErr := errors.Join(toolErr, promptErr)
@@ -762,7 +780,17 @@ func (man *MCPManager) handleConnectionFailure(ctx context.Context, span trace.S
 
 func (man *MCPManager) resetBackoff() {
 	man.backoff = man.baseBackoff
-	man.resetTicker(man.tickerInterval)
+	man.resetTicker(man.nextPollInterval())
+}
+
+// nextPollInterval returns the interval until the next healthy poll. TTL-driven
+// polling of 2026 upstreams is jittered upward so many brokers polling the same
+// upstream do not synchronise; the base interval stays the floor.
+func (man *MCPManager) nextPollInterval() time.Duration {
+	if !man.ttlPolling {
+		return man.tickerInterval
+	}
+	return wait.Jitter(man.tickerInterval, ttlPollJitter)
 }
 
 func (man *MCPManager) applyBackoff() {
@@ -782,22 +810,33 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 	}
 }
 
-// adjustTickerFromTTL resets the ticker to match the upstream's tools/list TTLMs
-// hint. only applied for 2026 upstreams where polling replaces push notifications.
+// adjustTickerFromTTL sets the poll interval from the shortest positive TTLMs
+// hint across the upstream's tools/list and prompts/list responses. only
+// applied for 2026 upstreams where polling replaces push notifications.
 // clamped to DefaultTickerInterval minimum to avoid hot-looping on low TTLs.
+// the ticker itself is re-armed by resetBackoff or applyBackoff.
 func (man *MCPManager) adjustTickerFromTTL() {
-	meta := man.mcp.ToolsCacheMetadata()
-	var ttlInterval time.Duration
-	if meta.TTLMs <= 0 {
-		ttlInterval = DefaultTickerInterval
-	} else {
-		ttlInterval = max(time.Duration(meta.TTLMs)*time.Millisecond, DefaultTickerInterval)
+	man.ttlPolling = true
+	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, man.mcp.PromptsCacheMetadata().TTLMs)
+	ttlInterval := DefaultTickerInterval
+	if ttlMs > 0 {
+		ttlInterval = max(time.Duration(ttlMs)*time.Millisecond, DefaultTickerInterval)
 	}
 	if ttlInterval != man.tickerInterval {
-		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", meta.TTLMs, "interval", ttlInterval)
+		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", ttlMs, "interval", ttlInterval)
 		man.tickerInterval = ttlInterval
-		man.resetTicker(ttlInterval)
 	}
+}
+
+// shortestPositiveTTLMs returns the smallest positive TTL, or 0 if none is positive.
+func shortestPositiveTTLMs(ttls ...int) int {
+	shortest := 0
+	for _, ttl := range ttls {
+		if ttl > 0 && (shortest == 0 || ttl < shortest) {
+			shortest = ttl
+		}
+	}
+	return shortest
 }
 
 func (man *MCPManager) recordBackendError(span trace.Span, err error) {
@@ -1064,31 +1103,47 @@ func (man *MCPManager) promptToServerPrompt(newPrompt mcp.Prompt) GatewayPrompt 
 }
 
 func (man *MCPManager) diffPrompts(oldPrompts, newPrompts []mcp.Prompt) ([]GatewayPrompt, []string) {
-	oldPromptMap := make(map[string]mcp.Prompt)
-	for _, p := range oldPrompts {
-		oldPromptMap[p.Name] = p
+	oldPromptMap := make(map[string]*mcp.Prompt, len(oldPrompts))
+	for i := range oldPrompts {
+		oldPromptMap[oldPrompts[i].Name] = &oldPrompts[i]
 	}
 
-	newPromptMap := make(map[string]mcp.Prompt)
-	for _, p := range newPrompts {
-		newPromptMap[p.Name] = p
+	newPromptMap := make(map[string]*mcp.Prompt, len(newPrompts))
+	for i := range newPrompts {
+		newPromptMap[newPrompts[i].Name] = &newPrompts[i]
 	}
 
 	addedPrompts := make([]GatewayPrompt, 0)
 	for _, newPrompt := range newPromptMap {
-		if _, ok := oldPromptMap[newPrompt.Name]; !ok {
-			addedPrompts = append(addedPrompts, man.promptToServerPrompt(newPrompt))
+		prev, ok := oldPromptMap[newPrompt.Name]
+		// add new prompts, and re-add prompts whose definition changed under
+		// an unchanged name so the gateway serves the new definition
+		if !ok || promptChanged(prev, newPrompt) {
+			addedPrompts = append(addedPrompts, man.promptToServerPrompt(*newPrompt))
 		}
 	}
 
 	removedPrompts := make([]string, 0)
 	for _, oldPrompt := range oldPromptMap {
-		if _, ok := newPromptMap[oldPrompt.Name]; !ok {
+		next, ok := newPromptMap[oldPrompt.Name]
+		// remove dropped prompts, and drop the stale entry for a same-name
+		// definition change before its replacement is added
+		if !ok || promptChanged(oldPrompt, next) {
 			removedPrompts = append(removedPrompts, prefixedName(man.mcp.GetPrefix(), oldPrompt.Name))
 		}
 	}
 
 	return addedPrompts, removedPrompts
+}
+
+// promptChanged reports whether a same-name prompt differs in any field the
+// gateway serves. _meta is excluded: promptToServerPrompt replaces it, so a
+// _meta-only change would churn without changing what clients see.
+func promptChanged(oldPrompt, newPrompt *mcp.Prompt) bool {
+	return oldPrompt.Description != newPrompt.Description ||
+		oldPrompt.Title != newPrompt.Title ||
+		!reflect.DeepEqual(oldPrompt.Arguments, newPrompt.Arguments) ||
+		!reflect.DeepEqual(oldPrompt.Icons, newPrompt.Icons)
 }
 
 // getPrompts returns the existing and new prompts. Must only be called from the Start() event loop.
