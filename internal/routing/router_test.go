@@ -2521,7 +2521,8 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "does not support elicitation")
-	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
@@ -2547,7 +2548,8 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "missing sub claim")
-	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
@@ -2611,8 +2613,8 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	require.Equal(t, validToken, entry.SessionID)
 }
 
-func TestBuildSSEToolError(t *testing.T) {
-	result := BuildSSEToolError("req-1", "something went wrong")
+func TestBuildSSEToolExecutionError(t *testing.T) {
+	result := BuildSSEToolExecutionError("req-1", "something went wrong")
 	var envelope struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      string `json:"id"`
