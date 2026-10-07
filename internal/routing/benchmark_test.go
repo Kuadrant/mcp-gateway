@@ -57,6 +57,30 @@ func BenchmarkMCPRequestParse_LargeArguments(b *testing.B) {
 	}
 }
 
+func BenchmarkToolCallArguments(b *testing.B) {
+	item := `{"id":9007199254740993,"nested":{"flags":[true,false,null],"values":[1,2,3]},"text":"sample"}`
+	large := `{"items":[` + strings.Repeat(item+",", 255) + item + `]`
+	for _, tc := range []struct {
+		name      string
+		arguments string
+	}{
+		{"small", `{"city":"Dublin"}`},
+		{"large", large + `}`},
+		{"escaped_small", `{"city":"\u0044\u0075\u0062\u006c\u0069\u006e"}`},
+		{"escaped_large", large + `,"city":"\u0044\u0075\u0062\u006c\u0069\u006e"}`},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			params := &MCPParams{Arguments: json.RawMessage(tc.arguments)}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := toolCallArguments(params); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkMCPRequestValidate(b *testing.B) {
 	var req MCPRequest
 	_ = json.Unmarshal(toolCallPayload, &req)

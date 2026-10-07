@@ -197,8 +197,10 @@ func TestToolCallArguments(t *testing.T) {
 		params *MCPParams
 		want   string
 	}{
-		{"nested arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{"q":[9007199254740993,1.234567890123456789,1e400,true,null,{"key":"value"}]}`},
+		{"unescaped arguments preserve formatting and numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`},
+		{"unescaped arguments preserve key order", &MCPParams{Arguments: json.RawMessage(` {"z":"<tag>&","a":1} `)}, ` {"z":"<tag>&","a":1} `},
 		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`},
+		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`},
 		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`},
 		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`},
 		{"nil params", nil, `{}`},
@@ -247,15 +249,19 @@ func TestGuardrailsArguments(t *testing.T) {
 	})
 
 	t.Run("invalid arguments return 400 even with failMode allow", func(t *testing.T) {
-		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
-		gc := &guardrailsCheck{checker: fc, global: &api.Config{FailMode: api.FailModeAllow}, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		req := &MCPRequest{ID: 1, Method: MethodToolCall, Params: &MCPParams{Arguments: json.RawMessage(`{"q":`)}}
-		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
-		require.False(t, modified)
-		require.NotNil(t, blocked)
-		require.Equal(t, 400, blocked.Error.StatusCode)
-		require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
-		require.Zero(t, fc.calls)
+		for _, arguments := range []string{`{"q":`, `{"q":1} {"q":2}`, `{"q":"\x"}`} {
+			t.Run(arguments, func(t *testing.T) {
+				fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+				gc := &guardrailsCheck{checker: fc, global: &api.Config{FailMode: api.FailModeAllow}, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
+				req := &MCPRequest{ID: 1, Method: MethodToolCall, Params: &MCPParams{Arguments: json.RawMessage(arguments)}}
+				modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+				require.False(t, modified)
+				require.NotNil(t, blocked)
+				require.Equal(t, 400, blocked.Error.StatusCode)
+				require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
+				require.Zero(t, fc.calls)
+			})
+		}
 	})
 
 	t.Run("invalid modified arguments returns 400", func(t *testing.T) {

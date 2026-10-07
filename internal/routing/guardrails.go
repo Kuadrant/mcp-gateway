@@ -337,11 +337,17 @@ func isElicitationAccept(req *MCPRequest) bool {
 	return req != nil && req.IsElicitationResponse() && elicitationAction(req.Result) == elicitationActionAccept
 }
 
-// toolCallArguments normalizes JSON escapes for guardrails, preserving numbers.
+// toolCallArguments passes through unescaped JSON and normalizes escaped input.
 // Missing or null becomes {}. Raw arguments are retained for forwarding.
 func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
 	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
 		return json.RawMessage(`{}`), nil
+	}
+	if bytes.IndexByte(params.Arguments, '\\') == -1 {
+		if !json.Valid(params.Arguments) {
+			return nil, fmt.Errorf("invalid tool arguments JSON")
+		}
+		return params.Arguments, nil
 	}
 	var args any
 	decoder := json.NewDecoder(bytes.NewReader(params.Arguments))
