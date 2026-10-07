@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"sync/atomic"
@@ -242,11 +243,7 @@ func TestResponseHandler_StoresElicitationForDirectInit(t *testing.T) {
 
 	mcpReq := &MCPRequest{
 		Method: "initialize",
-		Params: map[string]any{
-			"capabilities": map[string]any{
-				"elicitation": map[string]any{},
-			},
-		},
+		Params: &MCPParams{Capabilities: json.RawMessage(`{"elicitation":{}}`)},
 	}
 
 	input := &ResponseInput{
@@ -280,11 +277,7 @@ func TestResponseHandler_SkipsElicitationForHairpinInit(t *testing.T) {
 
 	mcpReq := &MCPRequest{
 		Method: "initialize",
-		Params: map[string]any{
-			"capabilities": map[string]any{
-				"elicitation": map[string]any{},
-			},
-		},
+		Params: &MCPParams{Capabilities: json.RawMessage(`{"elicitation":{}}`)},
 	}
 
 	input := &ResponseInput{
