@@ -99,11 +99,20 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 // applies any modification onto mcpReq in place. modified is true when
 // arguments were rewritten (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
+	if !g.configured() {
+		return false, nil
+	}
+
 	var requestID any
 	var args json.RawMessage
 	if mcpReq != nil {
 		requestID = mcpReq.ID
-		args = toolCallArguments(mcpReq.Params)
+		var err error
+		args, err = toolCallArguments(mcpReq.Params)
+		if err != nil {
+			g.logError(ctx, "guardrails tool arguments failed", toolName, err)
+			return false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		}
 	}
 	content, blocked := g.request(ctx, toolName, args, requestID)
 	if blocked != nil {
@@ -328,12 +337,19 @@ func isElicitationAccept(req *MCPRequest) bool {
 	return req != nil && req.IsElicitationResponse() && elicitationAction(req.Result) == elicitationActionAccept
 }
 
-// toolCallArguments passes through raw arguments. Missing or null becomes {}.
-func toolCallArguments(params *MCPParams) json.RawMessage {
+// toolCallArguments normalizes JSON escapes for guardrails, preserving numbers.
+// Missing or null becomes {}. Raw arguments are retained for forwarding.
+func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
 	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
-		return json.RawMessage(`{}`)
+		return json.RawMessage(`{}`), nil
 	}
-	return params.Arguments
+	var args any
+	decoder := json.NewDecoder(bytes.NewReader(params.Arguments))
+	decoder.UseNumber()
+	if err := decoder.Decode(&args); err != nil {
+		return nil, fmt.Errorf("decode tool arguments: %w", err)
+	}
+	return json.Marshal(args)
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
