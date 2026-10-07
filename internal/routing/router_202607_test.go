@@ -550,7 +550,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	toolReq := func() *Request {
 		var parsed MCPRequest
-		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s_mytool","arguments":{"query":"SELECT 1","nested":[9007199254740993,true,null]},"_meta":{"progressToken":9007199254740993},"extension":{"id":9007199254740993}}}`), &parsed))
+		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s_mytool","arguments":{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":[9007199254740993,true,null]},"_meta":{"progressToken":9007199254740993},"extension":{"id":9007199254740993}}}`), &parsed))
 		return &Request{
 			MCPMethod: MethodToolCall,
 			MCPName:   "s_mytool",
@@ -574,7 +574,8 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, 1, fc.calls)
 		require.Equal(t, "mytool", fc.lastToolName)
 		require.Equal(t, []string{"svr-1"}, fc.lastConfigIDs)
-		require.Equal(t, `{"query":"SELECT 1","nested":[9007199254740993,true,null]}`, string(fc.lastArguments))
+		require.Equal(t, `{"nested":[9007199254740993,true,null],"query":"SELECT 1"}`, string(fc.lastArguments))
+		require.Contains(t, string(decision.BodyMutation), `"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1"`)
 		require.Contains(t, string(decision.BodyMutation), `"nested":[9007199254740993,true,null]`)
 		require.Contains(t, string(decision.BodyMutation), `"_meta":{"progressToken":9007199254740993}`)
 		require.Contains(t, string(decision.BodyMutation), `"extension":{"id":9007199254740993}`)
