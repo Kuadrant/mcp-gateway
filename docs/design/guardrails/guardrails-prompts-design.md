@@ -43,7 +43,7 @@ When an MCP developer's prompt is blocked, the client receives a generic error a
 
 ### When an agent fetches prompts without a human in the loop
 
-When a non-interactive agent calls `prompts/get` and the result is blocked, it receives a JSON-RPC error it can handle like any other failed request. With the default `failMode: deny`, content that was never checked does not reach its LLM. With `failMode: allow`, a check that times out releases the result unchecked.
+When a non-interactive agent calls `prompts/get` and the result is blocked, it receives a JSON-RPC error it can handle like any other failed request. With the default `failMode: deny`, message text that was never checked does not reach its LLM. Content this design does not inspect (see Non-Goals) still passes, and with `failMode: allow` a check that times out releases the result unchecked.
 
 ## Design
 
@@ -138,10 +138,9 @@ A blocked prompt returns a JSON-RPC `error` object, not an `isError` result, bec
 
 | Component | Change |
 |-----------|--------|
-| `internal/guardrails/api`, `internal/guardrails` | Add `CheckPromptResponse(ctx, promptName, role, content, configIDs)` to the `Checker` interface and implement it in `nemoChecker`. The five test fakes of `Checker` (in `internal/routing` and `internal/mcp-router`) must add the method. `CheckResponse` is unchanged |
-| `internal/guardrails/external/nemo` | `TransformPromptMessage`, mapping the role through instead of fixing it to `assistant` |
-| `internal/routing` | Both `HandlePromptGet` implementations copy `route.GuardrailsConfigIDs` onto the request, as `tools/call` does today. Both `HandleResponse` implementations enable buffering for `prompts/get`. Prompt check helper beside `checkToolCallResponse` |
-| `internal/mcp-router` | Prompt result extractor, JSON and SSE redacted-result builders, method switch in the adapter's guardrails block |
+| Guardrails (`internal/guardrails`) | Adds `CheckPromptResponse(ctx, promptName, role, content, configIDs)` to the `Checker` interface. The NeMo translation passes the message role through instead of fixing it to `assistant`. `CheckResponse` is unchanged |
+| Routing | Prompt requests carry the server's guardrails config IDs, as `tools/call` does today, and prompt responses are buffered when guardrails are configured |
+| Router adapter | Extracts the text from a prompt result, runs the checks, and builds the redacted result or the JSON-RPC error |
 | Broker, controller, CRDs, Secret | No change |
 
 Tracing and metrics for guardrails checks are tracked in #1548. Prompt checks should be covered there rather than adding separate instrumentation here.
