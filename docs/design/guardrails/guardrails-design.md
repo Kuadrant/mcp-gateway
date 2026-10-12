@@ -444,7 +444,7 @@ Requires parsed JSON-RPC body, resolved backend, and guardrails config. Only the
 
 ### Guardrails for Prompts
 
-Check `prompts/get` response content. Same pattern, different translation mapping.
+Check `prompts/get` response content. Same pattern, different translation mapping. See [guardrails for prompts](guardrails-prompts-design.md).
 
 ### Circuit Breaker
 
