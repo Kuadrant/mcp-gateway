@@ -33,13 +33,17 @@ When a platform engineer has guardrails enabled for an MCP server, they want `pr
 
 When one message in a multi-message prompt trips a rail, the platform engineer wants the whole result blocked or the message redacted, not silently forwarded.
 
+### When I pick a prompt in my client
+
+When an MCP client user picks a prompt, they want the prompt unchanged when it passes, the redacted prompt when guardrails modify it, and a clear error when it is blocked, so that they know whether the prompt ran and can ask the platform engineer if it was blocked.
+
 ### When my server's prompt gets blocked
 
 When an MCP developer's prompt is blocked, the client receives a generic error and the rail name is only in the gateway logs. They want the logs to identify the prompt and rail so they can fix the server, since guardrails do not replace securing it.
 
 ### When an agent fetches prompts without a human in the loop
 
-When a non-interactive agent calls `prompts/get` and the result is blocked, it receives a JSON-RPC error it can handle like any other failed request. Content that was never checked does not reach its LLM.
+When a non-interactive agent calls `prompts/get` and the result is blocked, it receives a JSON-RPC error it can handle like any other failed request. With the default `failMode: deny`, content that was never checked does not reach its LLM. With `failMode: allow`, a check that times out releases the result unchecked.
 
 ## Design
 
@@ -70,12 +74,12 @@ sequenceDiagram
         R->>G: message 2
     end
     G-->>R: passed, modified or blocked per message
-    alt all passed
-        R-->>E: original body
+    alt any blocked
+        R-->>E: JSON-RPC error
     else any modified
         R-->>E: body with redacted text
-    else any blocked
-        R-->>E: JSON-RPC error
+    else all passed
+        R-->>E: original body
     end
     E-->>C: response
 ```
@@ -98,7 +102,7 @@ A new extractor parses a `prompts/get` result ([MCP prompts spec](https://modelc
 
 Inspected: `content.text` for `type: "text"`, and `content.resource.text` for `type: "resource"`. Not inspected: `image`, `audio`, `resource.blob`, `resource_link`, and the top-level `description`. As with `tools/call`, a body that cannot be decoded as a JSON-RPC response fails closed rather than passing through unchecked.
 
-On 2026-07-28 the result can instead be an `InputRequiredResult` (`inputRequests`, `requestState`), which has no `messages`. It decodes fine, so it is not a failure. With no messages there is nothing to check and it passes through, as an `InputRequiredResult` from `tools/call` does today. If a result has both `messages` and `inputRequests`, the messages are still checked.
+On 2026-07-28 every result carries `resultType`, and `"input_required"` marks an `InputRequiredResult` (`inputRequests`, `requestState`), which has no `messages`. A result with `resultType: "input_required"` and no `messages` passes through, as an `InputRequiredResult` from `tools/call` does today. Any other result without `messages` is not a valid `prompts/get` result and fails closed, so a server cannot skip the check by leaving `messages` out. This is stricter than `tools/call`, which passes any result with no text items. If `messages` is present it is checked whatever the `resultType`. 2025-11-25 has no `resultType`, so a result without `messages` always fails closed there.
 
 ### Granularity
 
@@ -125,7 +129,8 @@ Each text-bearing message is checked in its own guardrails call, so the MCP `rol
 | Exceeds `maxBodyBytes` | JSON-RPC error. Tools return an `isError` result here, but prompts have none. `failMode` does not apply |
 | Guardrails server non-2xx or timeout | Apply `failMode` |
 | Undecodable response body | Fail closed |
-| `InputRequiredResult` with no `messages` | Release original body |
+| `resultType: "input_required"` with no `messages` | Release original body |
+| Any other result with no `messages` | Fail closed |
 
 A blocked prompt returns a JSON-RPC `error` object, not an `isError` result, because `prompts/get` results have no `isError` field. The existing `BuildJSONRPCError` and `BuildSSEJSONRPCError` (code `-32000`, as for request-side rejections) already produce this. The message is generic (`blocked by guardrails`); the rail name is logged, not returned.
 
