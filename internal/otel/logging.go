@@ -119,11 +119,11 @@ func NewTracingLogger(w io.Writer, opts *slog.HandlerOptions, jsonFormat bool, l
 	stdoutHandler := NewTracingHandler(baseHandler, tracingActive)
 
 	if loggerProvider == nil {
-		return slog.New(stdoutHandler)
+		return slog.New(newSessionScrubHandler(stdoutHandler))
 	}
 
 	otelHandler := otelslog.NewHandler("mcp-gateway",
 		otelslog.WithLoggerProvider(loggerProvider))
 
-	return slog.New(NewMultiHandler(stdoutHandler, otelHandler))
+	return slog.New(newSessionScrubHandler(NewMultiHandler(stdoutHandler, otelHandler)))
 }

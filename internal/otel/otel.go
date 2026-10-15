@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -10,16 +11,24 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // BrokerTracerName is the OpenTelemetry tracer name for the broker component.
 const BrokerTracerName = "mcp-broker"
 
-// SpanError records an error on the span and sets its status to error.
+// SpanError records an error on the span and sets its status to error. the
+// exception event is written directly rather than via RecordError so its
+// message and the status can be scrubbed of sdk-embedded session IDs.
 func SpanError(span trace.Span, err error, msg string) {
-	span.RecordError(err)
-	span.SetStatus(codes.Error, msg)
+	if err != nil {
+		span.AddEvent(semconv.ExceptionEventName, trace.WithAttributes(
+			semconv.ExceptionType(fmt.Sprintf("%T", err)),
+			semconv.ExceptionMessage(scrubSessionIDs(err.Error())),
+		))
+	}
+	span.SetStatus(codes.Error, scrubSessionIDs(msg))
 }
 
 // SetupOTelSDK initializes the OpenTelemetry SDK with tracing, logs, and metrics support.

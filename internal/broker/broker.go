@@ -16,12 +16,12 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
@@ -958,8 +958,7 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 
 	result, err := srv.ListResources(fetchCtx)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		mcpotel.SpanError(span, err, err.Error())
 		return nil, err
 	}
 	if result == nil {
