@@ -984,6 +984,38 @@ func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
 	}
 }
 
+func TestBuildBrokerRouterDeployment_MetricsPort(t *testing.T) {
+	r := &MCPGatewayExtensionReconciler{
+		BrokerRouterImage: "test-image:v1",
+	}
+	mcpExt := &mcpv1.MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "test-ns",
+		},
+		Spec: mcpv1.MCPGatewayExtensionSpec{
+			TargetRef: mcpv1.MCPGatewayExtensionTargetReference{
+				Name:      "my-gateway",
+				Namespace: "gateway-system",
+			},
+		},
+	}
+
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+
+	want := corev1.ContainerPort{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP}
+	if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Ports, want) {
+		t.Errorf("expected container port %+v, got %+v", want, deployment.Spec.Template.Spec.Containers[0].Ports)
+	}
+
+	// metrics are scraped per pod, not exposed on the service
+	for _, p := range r.buildBrokerRouterService(mcpExt).Spec.Ports {
+		if p.Port == 9090 || p.TargetPort.IntValue() == 9090 {
+			t.Errorf("expected service not to expose 9090, got %+v", p)
+		}
+	}
+}
+
 func TestDerivePublicHost(t *testing.T) {
 	tests := []struct {
 		name               string
