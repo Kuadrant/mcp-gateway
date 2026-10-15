@@ -57,52 +57,6 @@ func (h *TracingHandler) WithGroup(name string) slog.Handler {
 	return &TracingHandler{handler: h.handler.WithGroup(name), tracingActive: h.tracingActive}
 }
 
-// MultiHandler sends logs to multiple handlers simultaneously
-type MultiHandler struct {
-	handlers []slog.Handler
-}
-
-// NewMultiHandler creates a handler that sends logs to all provided handlers
-func NewMultiHandler(handlers ...slog.Handler) *MultiHandler {
-	return &MultiHandler{handlers: handlers}
-}
-
-// Enabled returns true if any handler is enabled for the given level
-func (m *MultiHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	for _, h := range m.handlers {
-		if h.Enabled(ctx, level) {
-			return true
-		}
-	}
-	return false
-}
-
-// Handle sends the record to all handlers
-func (m *MultiHandler) Handle(ctx context.Context, r slog.Record) error {
-	for _, h := range m.handlers {
-		_ = h.Handle(ctx, r.Clone())
-	}
-	return nil
-}
-
-// WithAttrs returns a new MultiHandler with the given attributes added to all handlers
-func (m *MultiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	handlers := make([]slog.Handler, len(m.handlers))
-	for i, h := range m.handlers {
-		handlers[i] = h.WithAttrs(attrs)
-	}
-	return &MultiHandler{handlers: handlers}
-}
-
-// WithGroup returns a new MultiHandler with the given group added to all handlers
-func (m *MultiHandler) WithGroup(name string) slog.Handler {
-	handlers := make([]slog.Handler, len(m.handlers))
-	for i, h := range m.handlers {
-		handlers[i] = h.WithGroup(name)
-	}
-	return &MultiHandler{handlers: handlers}
-}
-
 // NewTracingLogger creates a logger with trace context and optional OTLP export
 func NewTracingLogger(w io.Writer, opts *slog.HandlerOptions, jsonFormat bool, loggerProvider *sdklog.LoggerProvider) *slog.Logger {
 	if w == nil {
@@ -125,5 +79,28 @@ func NewTracingLogger(w io.Writer, opts *slog.HandlerOptions, jsonFormat bool, l
 	otelHandler := otelslog.NewHandler("mcp-gateway",
 		otelslog.WithLoggerProvider(loggerProvider))
 
-	return slog.New(newSessionScrubHandler(NewMultiHandler(stdoutHandler, otelHandler)))
+	var level slog.Leveler = slog.LevelInfo
+	if opts != nil && opts.Level != nil {
+		level = opts.Level
+	}
+	return slog.New(newSessionScrubHandler(slog.NewMultiHandler(stdoutHandler, &levelHandler{Handler: otelHandler, level: level})))
+}
+
+// levelHandler applies the configured level to the OTLP bridge, which ignores
+// slog.HandlerOptions and would otherwise export debug records at any level.
+type levelHandler struct {
+	slog.Handler
+	level slog.Leveler
+}
+
+func (h *levelHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.level.Level() && h.Handler.Enabled(ctx, level)
+}
+
+func (h *levelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &levelHandler{Handler: h.Handler.WithAttrs(attrs), level: h.level}
+}
+
+func (h *levelHandler) WithGroup(name string) slog.Handler {
+	return &levelHandler{Handler: h.Handler.WithGroup(name), level: h.level}
 }
