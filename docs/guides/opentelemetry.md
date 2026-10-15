@@ -268,7 +268,24 @@ scrape_configs:
 
 This guide assumes that Prometheus is already installed. Add the scrape job above to its configuration. The Prometheus service account needs permission to list and watch pods in the gateway namespace.
 
-If you use Prometheus Operator, including OpenShift user workload monitoring, use a `PodMonitor` that relabels the scrape address to port `9090`. The generated broker container does not declare a named `metrics` port, so a `PodMonitor` with `port: metrics` discovers no targets. Instead, select the declared `http` port to get one target per pod, then rewrite its address. Replace `<namespace>` with the gateway namespace from Step 1:
+If you use Prometheus Operator, including OpenShift user workload monitoring, use a `PodMonitor` that selects the broker container's named `metrics` port. Replace `<namespace>` with the gateway namespace from Step 1:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mcp-broker
+  namespace: <namespace>
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+```
+
+In v1.0.1 and earlier, the broker container has no named `metrics` port, so the `PodMonitor` above finds no targets. Use this variant instead. It selects the declared `http` port to get one target per pod, then rewrites the scrape address to port `9090`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
