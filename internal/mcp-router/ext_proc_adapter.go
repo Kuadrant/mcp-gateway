@@ -291,7 +291,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			responses, _ := s.HandleRequestHeaders(ctx, r.RequestHeaders)
 			s.Logger.DebugContext(ctx, "[ext_proc ] Process: ProcessingRequest_RequestHeaders", "request id:", requestID, "path", requestPath, "method", method)
 			for _, response := range responses {
-				s.Logger.DebugContext(ctx, "sending header processing instructions to envoy", "response", response)
+				s.Logger.DebugContext(ctx, "sending header processing instructions to envoy", "response", logSafeResponse{response})
 				if err := stream.Send(response); err != nil {
 					s.Logger.ErrorContext(ctx, "error sending response", "error", err)
 					recordError(span, err, 500)
@@ -474,7 +474,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 			routeResponses := decisionToResponse(decision)
 			for _, response := range routeResponses {
-				s.Logger.DebugContext(ctx, "sending mcp body routing instructions to envoy", "response", response)
+				s.Logger.DebugContext(ctx, "sending mcp body routing instructions to envoy", "response", logSafeResponse{response})
 				if err := stream.Send(response); err != nil {
 					s.Logger.ErrorContext(ctx, "error sending response", "error", err)
 					recordError(span, err, 500)
@@ -621,7 +621,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			for _, response := range responses {
-				s.Logger.DebugContext(ctx, "sending response header processing instructions to envoy", "response", response)
+				s.Logger.DebugContext(ctx, "sending response header processing instructions to envoy", "response", logSafeResponse{response})
 				if err := stream.Send(response); err != nil {
 					s.Logger.ErrorContext(ctx, "error sending response", "error", err)
 					recordError(span, err, 500)

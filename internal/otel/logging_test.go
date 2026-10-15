@@ -116,3 +116,55 @@ func TestTracingHandler_NonRecordingSpan(t *testing.T) {
 		t.Errorf("expected no trace_id for non-recording span, got: %s", output)
 	}
 }
+
+// captureExporter records exported log bodies on a buffered channel.
+type captureExporter struct {
+	bodies chan string
+}
+
+func (e *captureExporter) Export(_ context.Context, records []sdklog.Record) error {
+	for i := range records {
+		e.bodies <- records[i].Body().AsString()
+	}
+	return nil
+}
+
+func (e *captureExporter) Shutdown(context.Context) error   { return nil }
+func (e *captureExporter) ForceFlush(context.Context) error { return nil }
+
+func exported(e *captureExporter) []string {
+	var out []string
+	for {
+		select {
+		case b := <-e.bodies:
+			out = append(out, b)
+		default:
+			return out
+		}
+	}
+}
+
+func TestTracingLogger_OTLPRespectsLevel(t *testing.T) {
+	exp := &captureExporter{bodies: make(chan string, 16)}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
+	defer func() { _ = lp.Shutdown(context.Background()) }()
+
+	var buf bytes.Buffer
+	logger := NewTracingLogger(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}, true, lp)
+	logger.Debug("debug detail")
+	logger.Info("info event")
+
+	got := exported(exp)
+	if len(got) != 1 || got[0] != "info event" {
+		t.Fatalf("expected only the info record exported to OTLP, got %q", got)
+	}
+	if strings.Contains(buf.String(), "debug detail") {
+		t.Fatalf("debug record written to stdout at info level: %s", buf.String())
+	}
+
+	debugLogger := NewTracingLogger(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}, true, lp)
+	debugLogger.Debug("debug detail")
+	if got := exported(exp); len(got) != 1 || got[0] != "debug detail" {
+		t.Fatalf("expected debug record exported at debug level, got %q", got)
+	}
+}
