@@ -8,6 +8,7 @@ import (
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -87,7 +88,7 @@ func (a *app) setUpHTTPServer() {
 	}
 
 	mux.HandleFunc("OPTIONS /mcp", func(w http.ResponseWriter, r *http.Request) {
-		a.logger.Debug("Handling OPTIONS", "Mcp-Session-Id", r.Header.Get("Mcp-Session-Id"))
+		a.logger.Debug("Handling OPTIONS", "session", internaljwt.LogSafeSessionID(r.Header.Get("Mcp-Session-Id")))
 		w.WriteHeader(http.StatusOK)
 	})
 
