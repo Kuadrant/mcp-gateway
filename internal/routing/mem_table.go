@@ -122,16 +122,20 @@ func (t *Table) LookupPrompt(name string) (*ServerRoute, bool) {
 	return r, ok
 }
 
-// LookupPrefix finds a server route by matching the tool name against
-// registered prefixes. Used for userSpecificList servers where per-user
-// tools may not appear in the tool lookup.
+// LookupPrefix finds a server route by longest-prefix match of the tool name
+// against registered prefixes. Used for userSpecificList servers where
+// per-user tools may not appear in the tool lookup. Prefixes may overlap
+// (gh_ vs gh_ent_), so the longest one wins, as in the broker's lookup.
 func (t *Table) LookupPrefix(name string) (*ServerRoute, bool) {
+	var best *ServerRoute
+	bestLen := -1
 	for prefix, route := range t.prefixes {
-		if strings.HasPrefix(name, prefix) {
-			return route, true
+		if strings.HasPrefix(name, prefix) && len(prefix) > bestLen {
+			best = route
+			bestLen = len(prefix)
 		}
 	}
-	return nil, false
+	return best, best != nil
 }
 
 // LookupResourcePrefix finds a server route by longest-prefix match against a

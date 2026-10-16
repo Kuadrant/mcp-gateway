@@ -106,6 +106,27 @@ func TestLookupPrefix(t *testing.T) {
 	}
 }
 
+// TestLookupPrefix_LongestMatch confirms a tool name matching two registered
+// prefixes (gh_ vs gh_ent_) always routes to the longer one, like the broker's
+// user-specific lookup, and not to whichever prefix the map yields first.
+func TestLookupPrefix_LongestMatch(t *testing.T) {
+	table := NewTableBuilder().
+		AddPrefix("gh_", &ServerRoute{Name: "gh"}).
+		AddPrefix("gh_ent_", &ServerRoute{Name: "gh-ent"}).
+		Build()
+
+	// map iteration order is random, so check many lookups
+	for i := 0; i < 100; i++ {
+		r, ok := table.LookupPrefix("gh_ent_list_repos")
+		if !ok {
+			t.Fatal("expected prefix match")
+		}
+		if r.Name != "gh-ent" {
+			t.Fatalf("expected longest-prefix match to win, got %s", r.Name)
+		}
+	}
+}
+
 func TestLookupResourcePrefix(t *testing.T) {
 	table := buildTestTable()
 
