@@ -81,12 +81,76 @@ var MCPVerifiedSubHeader = sharedheaders.VerifiedSubHeader
 // and routing that must be stripped before forwarding to upstream MCP servers.
 var InternalOnlyHeaders = []string{MCPAuthorizedHeader, MCPVirtualServerHeader, MCPVerifiedSubHeader}
 
+// MCPParams decodes routing fields while preserving other payloads as raw JSON.
+type MCPParams struct {
+	Name         string
+	URI          string
+	Arguments    json.RawMessage
+	Capabilities json.RawMessage
+	Extra        map[string]json.RawMessage
+	// distinguish missing fields from explicitly empty strings.
+	nameSet bool
+	uriSet  bool
+}
+
+// UnmarshalJSON decodes names and URIs, retaining other fields as raw JSON.
+func (p *MCPParams) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = MCPParams{Arguments: fields["arguments"], Capabilities: fields["capabilities"]}
+	delete(fields, "arguments")
+	delete(fields, "capabilities")
+	// retain non-string fields so accessors and pass-through behavior stay unchanged.
+	if raw := fields["name"]; len(raw) > 0 && raw[0] == '"' {
+		_ = json.Unmarshal(raw, &p.Name)
+		p.nameSet = true
+		delete(fields, "name")
+	}
+	if raw := fields["uri"]; len(raw) > 0 && raw[0] == '"' {
+		_ = json.Unmarshal(raw, &p.URI)
+		p.uriSet = true
+		delete(fields, "uri")
+	}
+	if len(fields) > 0 {
+		p.Extra = fields
+	}
+	return nil
+}
+
+// MarshalJSON merges typed fields and extra keys into one params object.
+func (p MCPParams) MarshalJSON() ([]byte, error) {
+	fields := make(map[string]any, len(p.Extra)+4)
+	for key, value := range p.Extra {
+		fields[key] = value
+	}
+	if p.Name != "" || p.nameSet {
+		fields["name"] = p.Name
+	}
+	if p.URI != "" || p.uriSet {
+		fields["uri"] = p.URI
+	}
+	if len(p.Arguments) > 0 {
+		fields["arguments"] = p.Arguments
+	}
+	if len(p.Capabilities) > 0 {
+		fields["capabilities"] = p.Capabilities
+	}
+	return json.Marshal(fields)
+}
+
+// IsZero preserves omission of empty params objects on requests.
+func (p *MCPParams) IsZero() bool {
+	return p == nil || (p.Name == "" && p.URI == "" && len(p.Arguments) == 0 && len(p.Capabilities) == 0 && len(p.Extra) == 0 && !p.nameSet && !p.uriSet)
+}
+
 // MCPRequest encapsulates a mcp protocol request to the gateway
 type MCPRequest struct {
 	ID                  any               `json:"id"`
 	JSONRPC             string            `json:"jsonrpc"`
 	Method              string            `json:"method,omitempty"`
-	Params              map[string]any    `json:"params,omitempty"`
+	Params              *MCPParams        `json:"params,omitzero"`
 	Result              map[string]any    `json:"result,omitempty"`
 	Headers             map[string]string `json:"-"`
 	SessionID           string            `json:"-"`
@@ -147,12 +211,8 @@ func (mr *MCPRequest) ClientSupportsElicitation() bool {
 	if mr.Method != MethodInitialize || mr.Params == nil {
 		return false
 	}
-	caps, ok := mr.Params["capabilities"]
-	if !ok {
-		return false
-	}
-	capsMap, ok := caps.(map[string]any)
-	if !ok {
+	var capsMap map[string]json.RawMessage
+	if err := json.Unmarshal(mr.Params.Capabilities, &capsMap); err != nil {
 		return false
 	}
 	_, hasElicitation := capsMap["elicitation"]
@@ -177,26 +237,20 @@ func (mr *MCPRequest) IsElicitationResponse() bool {
 
 // ToolName extracts tool name from tools/call params
 func (mr *MCPRequest) ToolName() string {
-	if !mr.IsToolCall() {
+	if !mr.IsToolCall() || mr.Params == nil {
 		return ""
 	}
-	tool, ok := mr.Params["name"]
-	if !ok {
-		return ""
-	}
-	t, ok := tool.(string)
-	if !ok {
-		return ""
-	}
-	return t
+	return mr.Params.Name
 }
 
 // ReWriteToolName replaces tool name in params
 func (mr *MCPRequest) ReWriteToolName(actualTool string) {
 	if mr.Params == nil {
-		mr.Params = map[string]any{}
+		mr.Params = &MCPParams{}
 	}
-	mr.Params["name"] = actualTool
+	mr.Params.Name = actualTool
+	mr.Params.nameSet = true
+	delete(mr.Params.Extra, "name")
 }
 
 // IsPromptGet checks if method is prompts/get
@@ -206,26 +260,15 @@ func (mr *MCPRequest) IsPromptGet() bool {
 
 // PromptName extracts prompt name from prompts/get params
 func (mr *MCPRequest) PromptName() string {
-	if !mr.IsPromptGet() {
+	if !mr.IsPromptGet() || mr.Params == nil {
 		return ""
 	}
-	prompt, ok := mr.Params["name"]
-	if !ok {
-		return ""
-	}
-	p, ok := prompt.(string)
-	if !ok {
-		return ""
-	}
-	return p
+	return mr.Params.Name
 }
 
 // ReWritePromptName replaces prompt name in params
 func (mr *MCPRequest) ReWritePromptName(actualPrompt string) {
-	if mr.Params == nil {
-		mr.Params = map[string]any{}
-	}
-	mr.Params["name"] = actualPrompt
+	mr.ReWriteToolName(actualPrompt)
 }
 
 // IsResourceRead checks if method is resources/read
@@ -235,26 +278,20 @@ func (mr *MCPRequest) IsResourceRead() bool {
 
 // ResourceURI extracts the resource uri from resources/read params
 func (mr *MCPRequest) ResourceURI() string {
-	if !mr.IsResourceRead() {
+	if !mr.IsResourceRead() || mr.Params == nil {
 		return ""
 	}
-	uri, ok := mr.Params["uri"]
-	if !ok {
-		return ""
-	}
-	u, ok := uri.(string)
-	if !ok {
-		return ""
-	}
-	return u
+	return mr.Params.URI
 }
 
 // ReWriteResourceURI replaces the resource uri in params
 func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
 	if mr.Params == nil {
-		mr.Params = map[string]any{}
+		mr.Params = &MCPParams{}
 	}
-	mr.Params["uri"] = actualURI
+	mr.Params.URI = actualURI
+	mr.Params.uriSet = true
+	delete(mr.Params.Extra, "uri")
 }
 
 // ToBytes marshals request to json
