@@ -253,9 +253,15 @@ spec:
                     minLength: 1
                     type: string
                   namespace:
-                    description: namespace of the target resource (optional, defaults
-                      to same namespace).
+                    description: |-
+                      namespace of the target resource. The target HTTPRoute must live in the
+                      same namespace as the MCPServerRegistration; cross-namespace references
+                      are not supported, so this field must be left empty.
                     type: string
+                    x-kubernetes-validations:
+                    - message: cross-namespace targetRef is not supported, the HTTPRoute
+                        must be in the MCPServerRegistration namespace
+                      rule: self == ""
                 required:
                 - name
                 type: object
@@ -582,9 +588,15 @@ spec:
                     minLength: 1
                     type: string
                   namespace:
-                    description: namespace of the target resource (optional, defaults
-                      to same namespace).
+                    description: |-
+                      namespace of the target resource. The target HTTPRoute must live in the
+                      same namespace as the MCPServerRegistration; cross-namespace references
+                      are not supported, so this field must be left empty.
                     type: string
+                    x-kubernetes-validations:
+                    - message: cross-namespace targetRef is not supported, the HTTPRoute
+                        must be in the MCPServerRegistration namespace
+                      rule: self == ""
                 required:
                 - name
                 type: object

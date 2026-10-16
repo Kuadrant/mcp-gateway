@@ -868,10 +868,8 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 		return nil
 	}
 
+	// targetRef is same-namespace only (enforced by CRD validation)
 	namespace := mcpsr.Namespace
-	if targetRef.Namespace != "" {
-		namespace = targetRef.Namespace
-	}
 
 	httpRoute := &gatewayv1.HTTPRoute{}
 	err := r.Get(ctx, types.NamespacedName{
@@ -1025,11 +1023,8 @@ func setupIndexMCPRegistrationToHTTPRoute(ctx context.Context, indexer client.Fi
 		mcpsr := rawObj.(*mcpv1.MCPServerRegistration)
 		targetRef := mcpsr.Spec.TargetRef
 		if targetRef.Kind == "HTTPRoute" {
-			namespace := targetRef.Namespace
-			if namespace == "" {
-				namespace = mcpsr.Namespace
-			}
-			return []string{httpRouteIndexValue(namespace, targetRef.Name)}
+			// targetRef is same-namespace only (enforced by CRD validation)
+			return []string{httpRouteIndexValue(mcpsr.Namespace, targetRef.Name)}
 		}
 		return []string{}
 	}); err != nil {
