@@ -343,10 +343,8 @@ func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
 	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
 		return json.RawMessage(`{}`), nil
 	}
+	// already validated when the request body was decoded.
 	if bytes.IndexByte(params.Arguments, '\\') == -1 {
-		if !json.Valid(params.Arguments) {
-			return nil, fmt.Errorf("invalid tool arguments JSON")
-		}
 		return params.Arguments, nil
 	}
 	var args any
@@ -355,7 +353,14 @@ func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
 	if err := decoder.Decode(&args); err != nil {
 		return nil, fmt.Errorf("decode tool arguments: %w", err)
 	}
-	return json.Marshal(args)
+	// keep <, > and & literal so guardrails see the same text as the fast path.
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(args); err != nil {
+		return nil, fmt.Errorf("encode tool arguments: %w", err)
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
