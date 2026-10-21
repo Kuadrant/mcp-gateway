@@ -476,6 +476,38 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 		})
 	})
 
+	Context("When MCPServerRegistration targets an HTTPRoute in another namespace", func() {
+		const (
+			resourceName = "test-mcpsr-cross-ns"
+		)
+
+		ctx := context.Background()
+
+		It("rejects a non-empty targetRef.namespace", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", "some-route", "cross_")
+			mcpsr.Spec.TargetRef.Namespace = "other-ns"
+			err := testK8sClient.Create(ctx, mcpsr)
+
+			Expect(err).To(HaveOccurred())
+			Expect(errors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("cross-namespace targetRef is not supported"))
+		})
+
+		It("rejects a non-empty targetRef.namespace on update", func() {
+			mcpsr := createTestMCPServerRegistration(resourceName, "default", "some-route", "cross_")
+			Expect(testK8sClient.Create(ctx, mcpsr)).To(Succeed())
+
+			defer forceDeleteTestMCPServerRegistration(ctx, resourceName, "default")
+
+			mcpsr.Spec.TargetRef.Namespace = "other-ns"
+			err := testK8sClient.Update(ctx, mcpsr)
+
+			Expect(err).To(HaveOccurred())
+			Expect(errors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("cross-namespace targetRef is not supported"))
+		})
+	})
+
 	Context("When HTTPRoute does not exist", func() {
 		const (
 			resourceName  = "test-mcpsr-no-route"

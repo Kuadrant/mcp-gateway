@@ -38,7 +38,7 @@
 | `group` | String | No | Group of the target resource. Default: `gateway.networking.k8s.io` |
 | `kind` | String | No | Kind of the target resource. Default: `HTTPRoute` |
 | `name` | String | Yes | Name of the target HTTPRoute |
-| `namespace` | String | No | Namespace of the target resource. Defaults to same namespace |
+| `namespace` | String | No | Unused. The target HTTPRoute must be in the MCPServerRegistration namespace; setting this field is rejected |
 
 ## SecretReference
 
