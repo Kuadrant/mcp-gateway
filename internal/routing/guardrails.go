@@ -97,7 +97,8 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 
 // checkToolCall extracts tool arguments, runs the guardrails check, and
 // applies any modification onto mcpReq in place. modified is true when
-// arguments were rewritten (callers that buffer the body must re-marshal).
+// arguments were normalized for the check or rewritten by guardrails
+// (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
 	if !g.configured() {
 		return false, nil
@@ -108,10 +109,14 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 	if mcpReq != nil {
 		requestID = mcpReq.ID
 		var err error
-		args, err = toolCallArguments(mcpReq.Params)
+		args, modified, err = toolCallArguments(mcpReq.Params)
 		if err != nil {
 			g.logError(ctx, "guardrails tool arguments failed", toolName, err)
 			return false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		}
+		if modified {
+			// forward exactly what guardrails check, e.g. duplicate keys collapsed.
+			mcpReq.Params.Arguments = args
 		}
 	}
 	content, blocked := g.request(ctx, toolName, args, requestID)
@@ -119,7 +124,7 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 		return false, blocked
 	}
 	if content == "" {
-		return false, nil
+		return modified, nil
 	}
 	if blocked := g.applyModifiedArguments(ctx, mcpReq, content, requestID); blocked != nil {
 		return false, blocked
@@ -338,29 +343,29 @@ func isElicitationAccept(req *MCPRequest) bool {
 }
 
 // toolCallArguments passes through unescaped JSON and normalizes escaped input.
-// Missing or null becomes {}. Raw arguments are retained for forwarding.
-func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
+// Missing or null becomes {}. normalized is true when args were re-encoded.
+func toolCallArguments(params *MCPParams) (args json.RawMessage, normalized bool, err error) {
 	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
-		return json.RawMessage(`{}`), nil
+		return json.RawMessage(`{}`), false, nil
 	}
 	// already validated when the request body was decoded.
 	if bytes.IndexByte(params.Arguments, '\\') == -1 {
-		return params.Arguments, nil
+		return params.Arguments, false, nil
 	}
-	var args any
+	var decoded any
 	decoder := json.NewDecoder(bytes.NewReader(params.Arguments))
 	decoder.UseNumber()
-	if err := decoder.Decode(&args); err != nil {
-		return nil, fmt.Errorf("decode tool arguments: %w", err)
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false, fmt.Errorf("decode tool arguments: %w", err)
 	}
 	// keep <, > and & literal so guardrails see the same text as the fast path.
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(args); err != nil {
-		return nil, fmt.Errorf("encode tool arguments: %w", err)
+	if err := encoder.Encode(decoded); err != nil {
+		return nil, false, fmt.Errorf("encode tool arguments: %w", err)
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), true, nil
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.

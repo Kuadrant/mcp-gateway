@@ -193,23 +193,25 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 
 func TestToolCallArguments(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		params *MCPParams
-		want   string
+		name       string
+		params     *MCPParams
+		want       string
+		normalized bool
 	}{
-		{"unescaped arguments preserve formatting and numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`},
-		{"unescaped arguments preserve key order", &MCPParams{Arguments: json.RawMessage(` {"z":"<tag>&","a":1} `)}, ` {"z":"<tag>&","a":1} `},
-		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`},
-		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`},
-		{"escaped arguments keep html characters literal", &MCPParams{Arguments: json.RawMessage(`{"q":"<tag>&","x":"a\nb"}`)}, `{"q":"<tag>&","x":"a\nb"}`},
-		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`},
-		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`},
-		{"nil params", nil, `{}`},
+		{"unescaped arguments preserve formatting and numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`, false},
+		{"unescaped arguments preserve key order", &MCPParams{Arguments: json.RawMessage(` {"z":"<tag>&","a":1} `)}, ` {"z":"<tag>&","a":1} `, false},
+		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`, true},
+		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`, true},
+		{"escaped arguments keep html characters literal", &MCPParams{Arguments: json.RawMessage(`{"q":"<tag>&","x":"a\nb"}`)}, `{"q":"<tag>&","x":"a\nb"}`, true},
+		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`, false},
+		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`, false},
+		{"nil params", nil, `{}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args, err := toolCallArguments(tc.params)
+			args, normalized, err := toolCallArguments(tc.params)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, string(args))
+			require.Equal(t, tc.normalized, normalized)
 		})
 	}
 }

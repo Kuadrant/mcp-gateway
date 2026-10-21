@@ -73,7 +73,7 @@ func BenchmarkToolCallArguments(b *testing.B) {
 			params := &MCPParams{Arguments: json.RawMessage(tc.arguments)}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := toolCallArguments(params); err != nil {
+				if _, _, err := toolCallArguments(params); err != nil {
 					b.Fatal(err)
 				}
 			}
