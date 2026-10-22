@@ -4,7 +4,7 @@ module github.com/Kuadrant/mcp-gateway
 // (which use their own toolchain image) are never blocked. CI and builder images
 // float to the latest patch of this minor. Bump only when moving to a new minor,
 // never for patch releases.
-go 1.26.0
+go 1.26.7
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
