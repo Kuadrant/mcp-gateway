@@ -487,6 +487,30 @@ func TestIsReady(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "all servers disabled",
+			setup: func(b *mcpBrokerImpl) {
+				m1 := createTestManagerUserSpecific(t, config.MCPServer{Name: "s1", State: "Disabled"})
+				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
+				m2 := createTestManagerUserSpecific(t, config.MCPServer{Name: "s2", State: "Disabled"})
+				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
+			},
+			expected: true,
+		},
+		{
+			name: "one disabled, one enabled but not ready",
+			setup: func(b *mcpBrokerImpl) {
+				m1 := createTestManagerUserSpecific(t, config.MCPServer{Name: "s1", State: "Disabled"})
+				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
+				m2 := createTestManager(t, "s2", "", nil)
+				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

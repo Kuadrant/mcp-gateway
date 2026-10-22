@@ -185,6 +185,7 @@ func (m *mockResourceServer) GetServedManagedPrompt(string) *mcp.Prompt { return
 func (m *mockResourceServer) Config() config.MCPServer {
 	return config.MCPServer{Name: m.name, Prefix: m.prefix}
 }
+func (m *mockResourceServer) IsEnabled() bool             { return true }
 func (m *mockResourceServer) SupportedVersions() []string { return nil }
 func (m *mockResourceServer) SupportsVersion(string) bool { return false }
 func (m *mockResourceServer) ToolsCacheMetadata() upstream.CacheMetadata {
