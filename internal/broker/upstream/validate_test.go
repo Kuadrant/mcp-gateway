@@ -173,6 +173,62 @@ func TestValidateTool(t *testing.T) {
 			expectValid: false,
 			errContains: "inputSchema must be a JSON object",
 		},
+		{
+			name: "property with union type is valid",
+			tool: mcp.Tool{
+				Name: "union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"items": map[string]any{
+							"type": []any{"array", "null"},
+						},
+					},
+				},
+			},
+			expectValid: true,
+		},
+		{
+			name: "property union with invalid member rejected",
+			tool: mcp.Tool{
+				Name: "bad_union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"code": map[string]any{
+							"type": []any{"string", "int"},
+						},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: "inputSchema.properties[\"code\"].type \"int\" is not a valid JSON Schema type",
+		},
+		{
+			name: "property type as non-string non-array rejected",
+			tool: mcp.Tool{
+				Name: "numeric_type",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": 42},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: "inputSchema.properties[\"x\"].type must be a string or array of strings",
+		},
+		{
+			// AddTool panics on any non-"object" input top-level, including a
+			// union that contains "object", so the validator must reject it.
+			name: "input top-level union rejected (AddTool panics on it)",
+			tool: mcp.Tool{
+				Name:        "nullable_object_input",
+				InputSchema: map[string]any{"type": []any{"object", "null"}},
+			},
+			expectValid: false,
+			errContains: "inputSchema.type must be \"object\"",
+		},
 	}
 
 	for _, tt := range tests {
@@ -242,6 +298,7 @@ func TestValidateTools_SchemasThatPanicAddToolAreRejected(t *testing.T) {
 		{Name: "bool_schema", InputSchema: true},
 		{Name: "string_schema", InputSchema: "not a schema"},
 		{Name: "wrong_type_schema", InputSchema: map[string]any{"type": "string"}},
+		{Name: "union_type_schema", InputSchema: map[string]any{"type": []any{"object", "null"}}},
 	}
 
 	valid, invalid := ValidateTools(hostile)
@@ -265,6 +322,27 @@ func TestValidateTool_OutputSchema(t *testing.T) {
 	info := ValidateTool(tool)
 	assert.NotEmpty(t, info.Errors)
 	assert.Contains(t, info.Errors[0], "outputSchema.type must be \"object\"")
+}
+
+// regression: github-mcp-server v2 (and other MCP 2026-07-28 backends) emit
+// structured output schemas whose top-level and property `type` keywords are
+// JSON Schema union arrays (e.g. ["object","null"]). These are valid JSON
+// Schema and must not be filtered out of the aggregated tools/list.
+func TestValidateTool_UnionTypeOutputSchemaAccepted(t *testing.T) {
+	tool := mcp.Tool{
+		Name:        "search_code",
+		InputSchema: map[string]any{"type": "object"},
+		OutputSchema: map[string]any{
+			"type": []any{"object", "null"},
+			"properties": map[string]any{
+				"items":       map[string]any{"type": []any{"array", "null"}},
+				"total_count": map[string]any{"type": "integer"},
+			},
+		},
+	}
+
+	info := ValidateTool(tool)
+	assert.Empty(t, info.Errors, "union-typed output schema should be valid, got %v", info.Errors)
 }
 
 func TestValidatePrompt(t *testing.T) {
