@@ -1,11 +1,14 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
@@ -98,13 +101,20 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 // applies any modification onto mcpReq in place. modified is true when
 // arguments were rewritten (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
+	if !g.configured() {
+		return false, nil
+	}
+
 	var requestID any
+	var args json.RawMessage
 	if mcpReq != nil {
 		requestID = mcpReq.ID
-	}
-	args, blocked := g.toolCallArguments(ctx, mcpReq, requestID)
-	if blocked != nil {
-		return false, blocked
+		var err error
+		args, err = toolCallArguments(mcpReq.Params)
+		if err != nil {
+			g.logError(ctx, "guardrails tool arguments failed", toolName, err)
+			return false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		}
 	}
 	content, blocked := g.request(ctx, toolName, args, requestID)
 	if blocked != nil {
@@ -296,28 +306,20 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 	}
 }
 
-func (g *guardrailsCheck) toolCallArguments(ctx context.Context, mcpReq *MCPRequest, requestID any) (json.RawMessage, *Decision) {
-	if mcpReq == nil {
-		return nil, nil
-	}
-	args, err := toolCallArguments(mcpReq.Params)
-	if err != nil {
-		g.logError(ctx, "guardrails tool arguments failed", "", err)
-		return nil, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
-	}
-	return args, nil
-}
-
 func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil || modified == "" {
 		return nil
 	}
-	params, err := replaceMapJSON(mcpReq.Params, "arguments", modified)
-	if err != nil {
-		g.logError(ctx, "guardrails apply modified arguments failed", "", err)
+	raw := json.RawMessage(modified)
+	// formatting needs no compaction; marshaling the request compacts it.
+	if !json.Valid(raw) || bytes.TrimSpace(raw)[0] != '{' {
+		g.logError(ctx, "guardrails apply modified arguments failed", "", fmt.Errorf("modified arguments are not a JSON object"))
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
-	mcpReq.Params = params
+	if mcpReq.Params == nil {
+		mcpReq.Params = &MCPParams{}
+	}
+	mcpReq.Params.Arguments = raw
 	return nil
 }
 
@@ -338,20 +340,102 @@ func isElicitationAccept(req *MCPRequest) bool {
 	return req != nil && req.IsElicitationResponse() && elicitationAction(req.Result) == elicitationActionAccept
 }
 
-// toolCallArguments JSON-encodes params["arguments"]. Missing or nil becomes {}.
-func toolCallArguments(params map[string]any) (json.RawMessage, error) {
-	if params == nil {
+// toolCallArguments returns the arguments guardrails check: raw when
+// unescaped, escape-decoded otherwise. The raw arguments are forwarded, so
+// invalid UTF-8 and duplicate names, which parsers read differently, are
+// rejected. Missing or null becomes {}.
+func toolCallArguments(params *MCPParams) (json.RawMessage, error) {
+	if params == nil || len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
 		return json.RawMessage(`{}`), nil
 	}
-	args, ok := params["arguments"]
-	if !ok || args == nil {
-		return json.RawMessage(`{}`), nil
+	if !utf8.Valid(params.Arguments) {
+		return nil, fmt.Errorf("tool arguments contain invalid UTF-8")
 	}
-	raw, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tool arguments: %w", err)
+	if err := checkUniqueNames(params.Arguments); err != nil {
+		return nil, err
 	}
-	return raw, nil
+	// already validated when the request body was decoded.
+	if bytes.IndexByte(params.Arguments, '\\') == -1 {
+		return params.Arguments, nil
+	}
+	var decoded any
+	decoder := json.NewDecoder(bytes.NewReader(params.Arguments))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("decode tool arguments: %w", err)
+	}
+	// keep <, > and & literal so guardrails see the same text as the fast path.
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(decoded); err != nil {
+		return nil, fmt.Errorf("encode tool arguments: %w", err)
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// checkUniqueNames returns an error when any object in raw repeats a member
+// name, comparing names after escapes are decoded. raw must be valid JSON.
+func checkUniqueNames(raw []byte) error {
+	var names [][]byte // member names of all open objects
+	var starts []int   // per open container, its first index in names; -1 for arrays
+	var prev byte      // last byte outside whitespace and strings
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch c {
+		case '{':
+			starts = append(starts, len(names))
+		case '[':
+			starts = append(starts, -1)
+		case '}', ']':
+			if len(starts) == 0 {
+				return fmt.Errorf("scan tool arguments: unbalanced %q", c)
+			}
+			start := starts[len(starts)-1]
+			starts = starts[:len(starts)-1]
+			if start < 0 {
+				break
+			}
+			// sorting keeps large objects O(n log n) without a map per object.
+			object := names[start:]
+			slices.SortFunc(object, bytes.Compare)
+			for j := 1; j < len(object); j++ {
+				if bytes.Equal(object[j-1], object[j]) {
+					return fmt.Errorf("tool arguments repeat name %q", object[j])
+				}
+			}
+			names = names[:start]
+		case '"':
+			end, escaped := i+1, false
+			for end < len(raw) && raw[end] != '"' {
+				if raw[end] == '\\' {
+					escaped = true
+					end++
+				}
+				end++
+			}
+			if end >= len(raw) {
+				return fmt.Errorf("scan tool arguments: unterminated string")
+			}
+			// in an object, a string after { or , is a member name.
+			if n := len(starts); n > 0 && starts[n-1] >= 0 && (prev == '{' || prev == ',') {
+				name := raw[i+1 : end]
+				if escaped {
+					var decoded string
+					if err := json.Unmarshal(raw[i:end+1], &decoded); err != nil {
+						return fmt.Errorf("scan tool arguments: %w", err)
+					}
+					name = []byte(decoded)
+				}
+				names = append(names, name)
+			}
+			i = end
+		}
+		if c > ' ' {
+			prev = c
+		}
+	}
+	return nil
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
@@ -385,19 +469,6 @@ func elicitationAction(result map[string]any) string {
 		return ""
 	}
 	return action
-}
-
-// replaceMapJSON unmarshals content and stores it at key. Returns a new-or-same map.
-func replaceMapJSON(m map[string]any, key, content string) (map[string]any, error) {
-	var v any
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
-		return nil, fmt.Errorf("unmarshal modified %s: %w", key, err)
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	m[key] = v
-	return m, nil
 }
 
 func replaceElicitationContent(result map[string]any, content string) (map[string]any, error) {
