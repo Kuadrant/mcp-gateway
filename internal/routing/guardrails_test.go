@@ -286,42 +286,41 @@ func TestGuardrailsArguments(t *testing.T) {
 		require.Zero(t, fc.calls)
 	})
 
-	t.Run("invalid modified arguments returns 400", func(t *testing.T) {
-		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"q":`}}
-		badReq := &MCPRequest{
-			Method: MethodToolCall,
-			Params: &MCPParams{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
-		}
-		gc := &guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		modified, blocked := gc.checkToolCall(context.Background(), badReq, "mytool")
-		require.False(t, modified)
-		require.NotNil(t, blocked)
-		require.Equal(t, 400, blocked.Error.StatusCode)
-		require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
-		require.Equal(t, `{"q":"secret"}`, string(badReq.Params.Arguments))
-	})
-}
-
-func TestCheckToolCall_Modified(t *testing.T) {
-	for _, content := range []string{`{"q":"redacted","nested":[9007199254740993,true,null]}`, `null`, `[9007199254740993]`} {
-		t.Run(content, func(t *testing.T) {
+	for _, content := range []string{`{"q":`, `null`, `[9007199254740993]`, `42`} {
+		t.Run("invalid modified arguments returns 400: "+content, func(t *testing.T) {
 			fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: content}}
-			gc := &guardrailsCheck{
-				checker:    fc,
-				serverIDs:  []string{"svr-1"},
-				buildError: BuildSSEJSONRPCError,
-			}
-			req := &MCPRequest{
-				ID:     1,
+			badReq := &MCPRequest{
 				Method: MethodToolCall,
 				Params: &MCPParams{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
 			}
-			modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
-			require.Nil(t, blocked)
-			require.True(t, modified)
-			require.Equal(t, content, string(req.Params.Arguments))
+			gc := &guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
+			modified, blocked := gc.checkToolCall(context.Background(), badReq, "mytool")
+			require.False(t, modified)
+			require.NotNil(t, blocked)
+			require.Equal(t, 400, blocked.Error.StatusCode)
+			require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
+			require.Equal(t, `{"q":"secret"}`, string(badReq.Params.Arguments))
 		})
 	}
+}
+
+func TestCheckToolCall_Modified(t *testing.T) {
+	content := ` {"q":"redacted","nested":[9007199254740993,true,null]}`
+	fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: content}}
+	gc := &guardrailsCheck{
+		checker:    fc,
+		serverIDs:  []string{"svr-1"},
+		buildError: BuildSSEJSONRPCError,
+	}
+	req := &MCPRequest{
+		ID:     1,
+		Method: MethodToolCall,
+		Params: &MCPParams{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
+	}
+	modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+	require.Nil(t, blocked)
+	require.True(t, modified)
+	require.Equal(t, content, string(req.Params.Arguments))
 }
 
 func TestNewGuardrailsCheck_Options(t *testing.T) {

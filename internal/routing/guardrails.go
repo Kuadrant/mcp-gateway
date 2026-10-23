@@ -311,8 +311,9 @@ func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MC
 		return nil
 	}
 	raw := json.RawMessage(modified)
-	if !json.Valid(raw) {
-		g.logError(ctx, "guardrails apply modified arguments failed", "", fmt.Errorf("invalid modified arguments JSON"))
+	// formatting needs no compaction; marshaling the request compacts it.
+	if !json.Valid(raw) || bytes.TrimSpace(raw)[0] != '{' {
+		g.logError(ctx, "guardrails apply modified arguments failed", "", fmt.Errorf("modified arguments are not a JSON object"))
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 	if mcpReq.Params == nil {
