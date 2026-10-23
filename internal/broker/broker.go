@@ -71,7 +71,7 @@ type MCPBroker interface {
 	// Disabled servers are ignored.
 	// Returns true when no enabled upstream servers are configured (empty tool list is valid),
 	// or when at least one enabled upstream is healthy.
-	// Returns false only when enabled servers are configured but none have connected yet.
+	// Returns false when enabled servers are configured but none are currently ready.
 	IsReady() bool
 
 	// HandleStatusRequest handles HTTP status endpoint requests
