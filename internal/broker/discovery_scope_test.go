@@ -121,3 +121,45 @@ func TestScopeStore_ResetMaxSizeEviction(t *testing.T) {
 	store.resetScope("s3")
 	require.Equal(t, 2, store.size())
 }
+
+func TestScopeStore_UpdateExistingAtCapacityDoesNotEvict(t *testing.T) {
+	const maxSize = 5
+	sessions := []string{"s0", "s1", "s2", "s3", "s4"}
+
+	t.Run("setScope", func(t *testing.T) {
+		store := newScopeStore(time.Hour, maxSize)
+		defer store.stop()
+		for _, id := range sessions {
+			store.setScope(id, []string{"a"})
+		}
+		require.Equal(t, maxSize, store.size())
+
+		store.setScope("s4", []string{"b"})
+
+		require.Equal(t, maxSize, store.size())
+		for _, id := range sessions {
+			state, _ := store.getScope(id)
+			require.Equal(t, scopeFiltered, state, "session %s should keep its scope", id)
+		}
+		_, tools := store.getScope("s4")
+		require.Contains(t, tools, "b")
+	})
+
+	t.Run("resetScope", func(t *testing.T) {
+		store := newScopeStore(time.Hour, maxSize)
+		defer store.stop()
+		for _, id := range sessions {
+			store.setScope(id, []string{"a"})
+		}
+
+		store.resetScope("s4")
+
+		require.Equal(t, maxSize, store.size())
+		for _, id := range sessions[:4] {
+			state, _ := store.getScope(id)
+			require.Equal(t, scopeFiltered, state, "session %s should keep its scope", id)
+		}
+		state, _ := store.getScope("s4")
+		require.Equal(t, scopeAll, state)
+	})
+}
