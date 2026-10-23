@@ -193,26 +193,38 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 
 func TestToolCallArguments(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		params     *MCPParams
-		want       string
-		normalized bool
+		name   string
+		params *MCPParams
+		want   string
 	}{
-		{"unescaped arguments preserve formatting and numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`, false},
-		{"unescaped arguments preserve key order", &MCPParams{Arguments: json.RawMessage(` {"z":"<tag>&","a":1} `)}, ` {"z":"<tag>&","a":1} `, false},
-		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`, true},
-		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`, true},
-		{"escaped arguments keep html characters literal", &MCPParams{Arguments: json.RawMessage(`{"q":"<tag>&","x":"a\nb"}`)}, `{"q":"<tag>&","x":"a\nb"}`, true},
-		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`, false},
-		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`, false},
-		{"nil params", nil, `{}`, false},
+		{"unescaped arguments preserve formatting and numeric precision", &MCPParams{Arguments: json.RawMessage(`{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`)}, `{ "q": [9007199254740993, 1.234567890123456789, 1e400, true, null, {"key":"value"}] }`},
+		{"unescaped arguments preserve key order", &MCPParams{Arguments: json.RawMessage(` {"z":"<tag>&","a":1} `)}, ` {"z":"<tag>&","a":1} `},
+		{"names may repeat across objects", &MCPParams{Arguments: json.RawMessage(`{"a":{"a":1},"b":[{"a":1},{"a":1}]}`)}, `{"a":{"a":1},"b":[{"a":1},{"a":1}]}`},
+		{"strings may hold structural characters", &MCPParams{Arguments: json.RawMessage(`{"a":"{\"a\":1,","b":"}"}`)}, `{"a":"{\"a\":1,","b":"}"}`},
+		{"scalar arguments", &MCPParams{Arguments: json.RawMessage(`42`)}, `42`},
+		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`},
+		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`},
+		{"escaped arguments keep html characters literal", &MCPParams{Arguments: json.RawMessage(`{"q":"<tag>&","x":"a\nb"}`)}, `{"q":"<tag>&","x":"a\nb"}`},
+		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`},
+		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`},
+		{"nil params", nil, `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args, normalized, err := toolCallArguments(tc.params)
+			args, err := toolCallArguments(tc.params)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, string(args))
-			require.Equal(t, tc.normalized, normalized)
 		})
+	}
+
+	// parsers disagree on these, so the forwarded bytes could differ from what guardrails check.
+	for _, raw := range []string{
+		`{"query":"SELECT 1","query":"DROP TABLE x"}`,
+		`{"a":1,"\u0061":2}`,
+		`[{"n":{"a":1,"a":2}}]`,
+		"{\"q\":\"DR\xffOP\"}",
+	} {
+		_, err := toolCallArguments(&MCPParams{Arguments: json.RawMessage(raw)})
+		require.Error(t, err, raw)
 	}
 }
 
@@ -260,6 +272,17 @@ func TestGuardrailsArguments(t *testing.T) {
 		require.NotNil(t, blocked)
 		require.Equal(t, 400, blocked.Error.StatusCode)
 		require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
+		require.Zero(t, fc.calls)
+	})
+
+	t.Run("duplicate argument names return 400 without a check", func(t *testing.T) {
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+		gc := &guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
+		req := &MCPRequest{ID: 1, Method: MethodToolCall, Params: &MCPParams{Arguments: json.RawMessage(`{"query":"SELECT 1","query":"DROP TABLE x"}`)}}
+		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+		require.False(t, modified)
+		require.NotNil(t, blocked)
+		require.Equal(t, 400, blocked.Error.StatusCode)
 		require.Zero(t, fc.calls)
 	})
 

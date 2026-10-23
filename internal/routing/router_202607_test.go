@@ -550,7 +550,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 	toolReq := func() *Request {
 		var parsed MCPRequest
-		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s_mytool","arguments":{"query":"DROP TABLE users","query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":[9007199254740993,true,null]},"_meta":{"progressToken":9007199254740993},"extension":{"id":9007199254740993}}}`), &parsed))
+		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s_mytool","arguments":{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":[9007199254740993,true,null]},"_meta":{"progressToken":9007199254740993},"extension":{"id":9007199254740993}}}`), &parsed))
 		return &Request{
 			MCPMethod: MethodToolCall,
 			MCPName:   "s_mytool",
@@ -575,10 +575,8 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, "mytool", fc.lastToolName)
 		require.Equal(t, []string{"svr-1"}, fc.lastConfigIDs)
 		require.Equal(t, `{"nested":[9007199254740993,true,null],"query":"SELECT 1"}`, string(fc.lastArguments))
-		// duplicate keys must not smuggle unchecked arguments upstream.
-		var restored MCPRequest
-		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
-		require.Equal(t, string(fc.lastArguments), string(restored.Params.Arguments))
+		require.Contains(t, string(decision.BodyMutation), `"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1"`)
+		require.Contains(t, string(decision.BodyMutation), `"nested":[9007199254740993,true,null]`)
 		require.Contains(t, string(decision.BodyMutation), `"_meta":{"progressToken":9007199254740993}`)
 		require.Contains(t, string(decision.BodyMutation), `"extension":{"id":9007199254740993}`)
 	})
@@ -624,6 +622,21 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.Equal(t, fc.decision.Content, string(restored.Params.Arguments))
 		require.Equal(t, json.RawMessage(`{"progressToken":9007199254740993}`), restored.Params.Extra["_meta"])
 		require.Equal(t, json.RawMessage(`{"id":9007199254740993}`), restored.Params.Extra["extension"])
+	})
+
+	t.Run("escaped arguments without a prefix keep the original body", func(t *testing.T) {
+		plain := []*config.MCPServer{{Name: "plain", URL: "http://localhost:8080/mcp", State: "Enabled", Hostname: "localhost", GuardrailsConfigIDs: []string{"svr-1"}}}
+		router := newTestRouter202607(t, plain, map[string]string{"mytool": "plain"}, map[string]string{})
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+		cfg := &config.MCPServersConfig{Servers: plain}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
+		var parsed MCPRequest
+		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mytool","arguments":{"code":"a\nb"}}}`), &parsed))
+		decision := router.RouteRequest(context.Background(), &Request{MCPMethod: MethodToolCall, MCPName: "mytool", RequestID: "req-1", Parsed: &parsed})
+		require.Nil(t, decision.Error)
+		require.Equal(t, 1, fc.calls)
+		require.Nil(t, decision.BodyMutation)
 	})
 
 	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {
