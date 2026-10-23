@@ -1,10 +1,13 @@
 package routing
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
@@ -117,25 +120,46 @@ func (p *MCPParams) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON merges typed fields and extra keys into one params object.
+// MarshalJSON writes typed fields, then extra keys in sorted order, into one
+// params object without HTML escaping.
 func (p MCPParams) MarshalJSON() ([]byte, error) {
-	fields := make(map[string]any, len(p.Extra)+4)
-	for key, value := range p.Extra {
-		fields[key] = value
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	str := func(s string) {
+		_ = enc.Encode(s)       // strings always encode
+		b.Truncate(b.Len() - 1) // drop the trailing newline
 	}
+	field := func(key string) {
+		if b.Len() > 1 {
+			b.WriteByte(',')
+		}
+		str(key)
+		b.WriteByte(':')
+	}
+	b.WriteByte('{')
 	if p.Name != nil {
-		fields["name"] = *p.Name
+		field("name")
+		str(*p.Name)
 	}
 	if p.URI != nil {
-		fields["uri"] = *p.URI
+		field("uri")
+		str(*p.URI)
 	}
 	if len(p.Arguments) > 0 {
-		fields["arguments"] = p.Arguments
+		field("arguments")
+		b.Write(p.Arguments)
 	}
 	if len(p.Capabilities) > 0 {
-		fields["capabilities"] = p.Capabilities
+		field("capabilities")
+		b.Write(p.Capabilities)
 	}
-	return json.Marshal(fields)
+	for _, key := range slices.Sorted(maps.Keys(p.Extra)) {
+		field(key)
+		b.Write(p.Extra[key])
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
 }
 
 // IsZero preserves omission of empty params objects on requests.
@@ -294,9 +318,16 @@ func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
 	delete(mr.Params.Extra, "uri")
 }
 
-// ToBytes marshals request to json
+// ToBytes marshals request to json, leaving <, > and & unescaped so
+// upstreams receive the text guardrails checked.
 func (mr *MCPRequest) ToBytes() ([]byte, error) {
-	return json.Marshal(mr)
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(mr); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // ElicitationInfo holds the data needed to route an elicitation request to the broker.

@@ -18,7 +18,7 @@ func TestMCPRequest_RewritesPreserveParams(t *testing.T) {
 		{MethodResourceRead, "uri", (*MCPRequest).ReWriteResourceURI},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
-			payload := `{"jsonrpc":"2.0","id":1,"method":"` + tc.method + `","params":{"` + tc.field + `":"prefixed","arguments":{"nested":[9007199254740993,true,null,{"text":"value"}]},"capabilities":{"custom":{"id":9007199254740993}},"_meta":{"progressToken":9007199254740993},"extension":[9007199254740993,{"enabled":false}]}}`
+			payload := `{"jsonrpc":"2.0","id":1,"method":"` + tc.method + `","params":{"` + tc.field + `":"prefixed","arguments":{"nested":[9007199254740993,true,null,{"text":"<script>&"}]},"capabilities":{"custom":{"id":9007199254740993}},"_meta":{"progressToken":9007199254740993},"extension":[9007199254740993,{"enabled":false}]}}`
 			var req MCPRequest
 			require.NoError(t, json.Unmarshal([]byte(payload), &req))
 			tc.rewrite(&req, "original")

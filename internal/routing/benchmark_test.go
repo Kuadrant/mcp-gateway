@@ -57,6 +57,20 @@ func BenchmarkMCPRequestParse_LargeArguments(b *testing.B) {
 	}
 }
 
+func BenchmarkMCPRequestToBytes(b *testing.B) {
+	var req MCPRequest
+	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"server1_get-weather","arguments":{"city":"Dublin"},"_meta":{"progressToken":1}}}`), &req); err != nil {
+		b.Fatal(err)
+	}
+	req.ReWriteToolName("get-weather")
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := req.ToBytes(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkToolCallArguments(b *testing.B) {
 	item := `{"id":9007199254740993,"nested":{"flags":[true,false,null],"values":[1,2,3]},"text":"sample"}`
 	large := `{"items":[` + strings.Repeat(item+",", 255) + item + `]`
