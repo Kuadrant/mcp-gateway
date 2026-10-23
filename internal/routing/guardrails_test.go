@@ -12,6 +12,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 )
 
 // fakeChecker is a Checker test double that returns a canned
@@ -205,7 +206,7 @@ func TestToolCallArguments(t *testing.T) {
 		{"JSON escapes are decoded", &MCPParams{Arguments: json.RawMessage(`{"query":"\u0053\u0045\u004c\u0045\u0043\u0054 1","nested":{"\u006b\u0065\u0079":["\u0076\u0061\u006c\u0075\u0065"]}}`)}, `{"nested":{"key":["value"]},"query":"SELECT 1"}`},
 		{"escaped arguments preserve numeric precision", &MCPParams{Arguments: json.RawMessage(`{"q":"\u0053","n":[9007199254740993,1.234567890123456789,1e400]}`)}, `{"n":[9007199254740993,1.234567890123456789,1e400],"q":"S"}`},
 		{"escaped arguments keep html characters literal", &MCPParams{Arguments: json.RawMessage(`{"q":"<tag>&","x":"a\nb"}`)}, `{"q":"<tag>&","x":"a\nb"}`},
-		{"missing arguments", &MCPParams{Name: "mytool"}, `{}`},
+		{"missing arguments", &MCPParams{Name: ptr.To("mytool")}, `{}`},
 		{"null arguments", &MCPParams{Arguments: json.RawMessage(` null `)}, `{}`},
 		{"nil params", nil, `{}`},
 	} {
@@ -291,7 +292,7 @@ func TestGuardrailsArguments(t *testing.T) {
 			fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: content}}
 			badReq := &MCPRequest{
 				Method: MethodToolCall,
-				Params: &MCPParams{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
+				Params: &MCPParams{Name: ptr.To("mytool"), Arguments: json.RawMessage(`{"q":"secret"}`)},
 			}
 			gc := &guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
 			modified, blocked := gc.checkToolCall(context.Background(), badReq, "mytool")
@@ -315,7 +316,7 @@ func TestCheckToolCall_Modified(t *testing.T) {
 	req := &MCPRequest{
 		ID:     1,
 		Method: MethodToolCall,
-		Params: &MCPParams{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
+		Params: &MCPParams{Name: ptr.To("mytool"), Arguments: json.RawMessage(`{"q":"secret"}`)},
 	}
 	modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
 	require.Nil(t, blocked)

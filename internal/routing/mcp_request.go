@@ -83,14 +83,12 @@ var InternalOnlyHeaders = []string{MCPAuthorizedHeader, MCPVirtualServerHeader, 
 
 // MCPParams decodes routing fields while preserving other payloads as raw JSON.
 type MCPParams struct {
-	Name         string
-	URI          string
+	// nil when absent, so explicitly empty strings round-trip.
+	Name         *string
+	URI          *string
 	Arguments    json.RawMessage
 	Capabilities json.RawMessage
 	Extra        map[string]json.RawMessage
-	// distinguish missing fields from explicitly empty strings.
-	nameSet bool
-	uriSet  bool
 }
 
 // UnmarshalJSON decodes names and URIs, retaining other fields as raw JSON.
@@ -104,13 +102,13 @@ func (p *MCPParams) UnmarshalJSON(data []byte) error {
 	delete(fields, "capabilities")
 	// retain non-string fields so accessors and pass-through behavior stay unchanged.
 	if raw := fields["name"]; len(raw) > 0 && raw[0] == '"' {
-		_ = json.Unmarshal(raw, &p.Name)
-		p.nameSet = true
+		p.Name = new(string)
+		_ = json.Unmarshal(raw, p.Name)
 		delete(fields, "name")
 	}
 	if raw := fields["uri"]; len(raw) > 0 && raw[0] == '"' {
-		_ = json.Unmarshal(raw, &p.URI)
-		p.uriSet = true
+		p.URI = new(string)
+		_ = json.Unmarshal(raw, p.URI)
 		delete(fields, "uri")
 	}
 	if len(fields) > 0 {
@@ -125,11 +123,11 @@ func (p MCPParams) MarshalJSON() ([]byte, error) {
 	for key, value := range p.Extra {
 		fields[key] = value
 	}
-	if p.Name != "" || p.nameSet {
-		fields["name"] = p.Name
+	if p.Name != nil {
+		fields["name"] = *p.Name
 	}
-	if p.URI != "" || p.uriSet {
-		fields["uri"] = p.URI
+	if p.URI != nil {
+		fields["uri"] = *p.URI
 	}
 	if len(p.Arguments) > 0 {
 		fields["arguments"] = p.Arguments
@@ -142,7 +140,7 @@ func (p MCPParams) MarshalJSON() ([]byte, error) {
 
 // IsZero preserves omission of empty params objects on requests.
 func (p *MCPParams) IsZero() bool {
-	return p == nil || (p.Name == "" && p.URI == "" && len(p.Arguments) == 0 && len(p.Capabilities) == 0 && len(p.Extra) == 0 && !p.nameSet && !p.uriSet)
+	return p == nil || (p.Name == nil && p.URI == nil && len(p.Arguments) == 0 && len(p.Capabilities) == 0 && len(p.Extra) == 0)
 }
 
 // MCPRequest encapsulates a mcp protocol request to the gateway
@@ -237,20 +235,15 @@ func (mr *MCPRequest) IsElicitationResponse() bool {
 
 // ToolName extracts tool name from tools/call params
 func (mr *MCPRequest) ToolName() string {
-	if !mr.IsToolCall() || mr.Params == nil {
+	if !mr.IsToolCall() || mr.Params == nil || mr.Params.Name == nil {
 		return ""
 	}
-	return mr.Params.Name
+	return *mr.Params.Name
 }
 
 // ReWriteToolName replaces tool name in params
 func (mr *MCPRequest) ReWriteToolName(actualTool string) {
-	if mr.Params == nil {
-		mr.Params = &MCPParams{}
-	}
-	mr.Params.Name = actualTool
-	mr.Params.nameSet = true
-	delete(mr.Params.Extra, "name")
+	mr.rewriteName(actualTool)
 }
 
 // IsPromptGet checks if method is prompts/get
@@ -260,15 +253,23 @@ func (mr *MCPRequest) IsPromptGet() bool {
 
 // PromptName extracts prompt name from prompts/get params
 func (mr *MCPRequest) PromptName() string {
-	if !mr.IsPromptGet() || mr.Params == nil {
+	if !mr.IsPromptGet() || mr.Params == nil || mr.Params.Name == nil {
 		return ""
 	}
-	return mr.Params.Name
+	return *mr.Params.Name
 }
 
 // ReWritePromptName replaces prompt name in params
 func (mr *MCPRequest) ReWritePromptName(actualPrompt string) {
-	mr.ReWriteToolName(actualPrompt)
+	mr.rewriteName(actualPrompt)
+}
+
+func (mr *MCPRequest) rewriteName(name string) {
+	if mr.Params == nil {
+		mr.Params = &MCPParams{}
+	}
+	mr.Params.Name = &name
+	delete(mr.Params.Extra, "name")
 }
 
 // IsResourceRead checks if method is resources/read
@@ -278,10 +279,10 @@ func (mr *MCPRequest) IsResourceRead() bool {
 
 // ResourceURI extracts the resource uri from resources/read params
 func (mr *MCPRequest) ResourceURI() string {
-	if !mr.IsResourceRead() || mr.Params == nil {
+	if !mr.IsResourceRead() || mr.Params == nil || mr.Params.URI == nil {
 		return ""
 	}
-	return mr.Params.URI
+	return *mr.Params.URI
 }
 
 // ReWriteResourceURI replaces the resource uri in params
@@ -289,8 +290,7 @@ func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
 	if mr.Params == nil {
 		mr.Params = &MCPParams{}
 	}
-	mr.Params.URI = actualURI
-	mr.Params.uriSet = true
+	mr.Params.URI = &actualURI
 	delete(mr.Params.Extra, "uri")
 }
 

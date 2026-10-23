@@ -129,7 +129,7 @@ func TestRouter202607_ToolCallWithPrefix(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  &MCPParams{Name: "s_mytool", Arguments: json.RawMessage(`{"key":"val"}`)},
+		Params:  &MCPParams{Name: ptr.To("s_mytool"), Arguments: json.RawMessage(`{"key":"val"}`)},
 	}
 
 	req := &Request{
@@ -166,7 +166,7 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  &MCPParams{Name: "different_name"},
+		Params:  &MCPParams{Name: ptr.To("different_name")},
 	}
 
 	req := &Request{
@@ -201,7 +201,7 @@ func TestRouter202607_PromptGet(t *testing.T) {
 		JSONRPC: "2.0",
 		Method:  "prompts/get",
 		Params: &MCPParams{
-			Name:      "s_myprompt",
+			Name:      ptr.To("s_myprompt"),
 			Arguments: json.RawMessage(`{"nested":[9007199254740993,true,null]}`),
 			Extra: map[string]json.RawMessage{
 				"_meta":     json.RawMessage(`{"progressToken":9007199254740993}`),
@@ -618,7 +618,7 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 		var restored MCPRequest
 		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
-		require.Equal(t, "mytool", restored.Params.Name)
+		require.Equal(t, "mytool", *restored.Params.Name)
 		require.Equal(t, fc.decision.Content, string(restored.Params.Arguments))
 		require.Equal(t, json.RawMessage(`{"progressToken":9007199254740993}`), restored.Params.Extra["_meta"])
 		require.Equal(t, json.RawMessage(`{"id":9007199254740993}`), restored.Params.Extra["extension"])
