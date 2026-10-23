@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	"github.com/Kuadrant/mcp-gateway/internal/routing"
@@ -280,7 +281,7 @@ func TestGetServerInfo_UserSpecificLongestPrefix(t *testing.T) {
 	for id, srv := range bImpl.mcpServers {
 		cfg := srv.Config()
 		cfg.UserSpecificList = true
-		bImpl.mcpServers[id] = upstream.NewActiveForTesting(createTestManagerUserSpecific(t, cfg))
+		bImpl.mcpServers[id] = upstream.NewActiveForTesting(createTestManagerFromConfig(t, cfg))
 	}
 
 	svr, err := b.GetServerInfo("gh_repos_search")
@@ -347,7 +348,7 @@ func createTestManagerMCP(t *testing.T, serverName, prefix string, tools []mcp.T
 	return mcpServer, manager
 }
 
-func createTestManagerUserSpecific(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
+func createTestManagerFromConfig(t *testing.T, cfg config.MCPServer) *upstream.MCPManager {
 	t.Helper()
 	mcpServer := upstream.NewUpstreamMCP(&cfg, "", nil)
 	manager, err := upstream.NewUpstreamMCPManager(mcpServer, newMockGateway(), nil, slog.Default(), 0, upstream.InvalidToolPolicyFilterOut)
@@ -486,6 +487,30 @@ func TestIsReady(t *testing.T) {
 				b.mcpServers["s1"] = upstream.NewActiveForTesting(mgr)
 			},
 			expected: true,
+		},
+		{
+			name: "all servers disabled",
+			setup: func(b *mcpBrokerImpl) {
+				m1 := createTestManagerFromConfig(t, config.MCPServer{Name: "s1", State: string(mcpv1.ServerStateDisabled)})
+				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
+				m2 := createTestManagerFromConfig(t, config.MCPServer{Name: "s2", State: string(mcpv1.ServerStateDisabled)})
+				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
+			},
+			expected: true,
+		},
+		{
+			name: "one disabled, one enabled but not ready",
+			setup: func(b *mcpBrokerImpl) {
+				m1 := createTestManagerFromConfig(t, config.MCPServer{Name: "s1", State: string(mcpv1.ServerStateDisabled)})
+				m1.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s1", Ready: false})
+				b.mcpServers["s1"] = upstream.NewActiveForTesting(m1)
+				m2 := createTestManagerFromConfig(t, config.MCPServer{Name: "s2", State: string(mcpv1.ServerStateEnabled)})
+				m2.SetStatusForTesting(upstream.ServerValidationStatus{Name: "s2", Ready: false})
+				b.mcpServers["s2"] = upstream.NewActiveForTesting(m2)
+			},
+			expected: false,
 		},
 	}
 

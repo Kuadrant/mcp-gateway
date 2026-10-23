@@ -126,6 +126,7 @@ type ActiveMCPServer interface {
 	GetManagedPrompts() []mcp.Prompt
 	GetServedManagedPrompt(promptName string) *mcp.Prompt
 	Config() config.MCPServer
+	IsEnabled() bool
 	SupportedVersions() []string
 	SupportsVersion(v string) bool
 	ToolsCacheMetadata() CacheMetadata
@@ -425,6 +426,7 @@ func (a *activeMCP) GetServedManagedPrompt(p string) *mcp.Prompt {
 	return a.manager.GetServedManagedPrompt(p)
 }
 func (a *activeMCP) Config() config.MCPServer            { return a.manager.mcp.GetConfig() }
+func (a *activeMCP) IsEnabled() bool                     { return a.manager.mcp.IsEnabled() }
 func (a *activeMCP) SupportedVersions() []string         { return a.manager.mcp.SupportedVersions() }
 func (a *activeMCP) SupportsVersion(v string) bool       { return a.manager.mcp.SupportsVersion(v) }
 func (a *activeMCP) ToolsCacheMetadata() CacheMetadata   { return a.manager.mcp.ToolsCacheMetadata() }
