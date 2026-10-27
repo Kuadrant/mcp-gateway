@@ -717,6 +717,28 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 		})
 
+		It("should remove its parent when the cache still shows a deleted sibling as Ready", func() {
+			reconcileRegistration(resourceName, "owner_")
+			reconcileRegistration(siblingName, "sibling_")
+			siblingNN := types.NamespacedName{Name: siblingName, Namespace: "default"}
+			apiClient, err := client.NewWithWatch(cfg, client.Options{Scheme: testK8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			// the cached sibling stays Ready, so only the uncached read can report it gone
+			reconciler.DirectAPIReader = interceptor.NewClient(apiClient, interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key == siblingNN {
+						return errors.NewNotFound(schema.GroupResource{Group: mcpv1.GroupVersion.Group, Resource: "mcpserverregistrations"}, key.Name)
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			})
+
+			deleteRegistration(resourceName)
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
+		})
+
 		It("should remove its parent when its MCPGatewayExtension is removed", func() {
 			reconcileRegistration(resourceName, "owner_")
 			forceDeleteTestMCPGatewayExtension(ctx, extName, "default")
