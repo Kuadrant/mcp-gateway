@@ -36,6 +36,7 @@ func (m *resourceCapableMockServer) GetToolHints(string) (upstream.ToolHints, bo
 func (m *resourceCapableMockServer) GetManagedPrompts() []mcp.Prompt           { return nil }
 func (m *resourceCapableMockServer) GetServedManagedPrompt(string) *mcp.Prompt { return nil }
 func (m *resourceCapableMockServer) Config() config.MCPServer                  { return m.cfg }
+func (m *resourceCapableMockServer) IsEnabled() bool                           { return true }
 func (m *resourceCapableMockServer) SupportedVersions() []string               { return nil }
 func (m *resourceCapableMockServer) SupportsVersion(string) bool               { return false }
 func (m *resourceCapableMockServer) ToolsCacheMetadata() upstream.CacheMetadata {

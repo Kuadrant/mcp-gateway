@@ -414,6 +414,7 @@ func (m *mockActiveMCPServer) configPtr() *config.MCPServer                { ret
 func (m *mockActiveMCPServer) GetToolHints(_ string) (upstream.ToolHints, bool) {
 	return upstream.ToolHints{}, false
 }
+func (m *mockActiveMCPServer) IsEnabled() bool               { return true }
 func (m *mockActiveMCPServer) SupportedVersions() []string   { return nil }
 func (m *mockActiveMCPServer) SupportsVersion(_ string) bool { return false }
 func (m *mockActiveMCPServer) ToolsCacheMetadata() upstream.CacheMetadata {

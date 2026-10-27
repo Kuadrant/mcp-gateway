@@ -68,9 +68,10 @@ type MCPBroker interface {
 	ValidateAllServers() StatusResponse
 
 	// IsReady reports whether the broker can serve traffic.
-	// Returns true when no upstream servers are configured (empty tool list is valid),
-	// or when at least one configured upstream is healthy.
-	// Returns false only when servers are configured but none have connected yet.
+	// Disabled servers are ignored.
+	// Returns true when no enabled upstream servers are configured (empty tool list is valid),
+	// or when at least one enabled upstream is healthy.
+	// Returns false when enabled servers are configured but none are currently ready.
 	IsReady() bool
 
 	// HandleStatusRequest handles HTTP status endpoint requests
@@ -987,21 +988,24 @@ func (m *mcpBrokerImpl) fetchResourcesFromServer(ctx context.Context, srv upstre
 	return out, nil
 }
 
-// IsReady reports whether the broker can serve traffic.
+// IsReady reports whether the broker can serve traffic. Disabled servers are
+// ignored, so having only disabled servers is treated like having none.
 // Accesses m.mcpServers directly (lock already not held here) rather than
 // calling RegisteredMCPServers to avoid nested RLock under a pending writer.
 func (m *mcpBrokerImpl) IsReady() bool {
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
-	if len(m.mcpServers) == 0 {
-		return true
-	}
+	anyEnabled := false
 	for _, mgr := range m.mcpServers {
+		if !mgr.IsEnabled() {
+			continue
+		}
 		if mgr.GetStatus().Ready {
 			return true
 		}
+		anyEnabled = true
 	}
-	return false
+	return !anyEnabled
 }
 
 // serverProtocolVersions returns the protocol versions the given upstream

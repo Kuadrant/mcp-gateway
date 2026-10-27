@@ -70,7 +70,7 @@ kubectl rollout status deployment/mcp-gateway -n mcp-system
 
 Envoy load-balances requests across the replicas. There is no cross-replica state to share, so no shared session store and no `CACHE_CONNECTION_STRING` are required.
 
-> **Note:** A replica passing its readiness probe does not guarantee it has already connected to every configured backend — readiness reports true once any upstream is ready or while backend config is still syncing. Envoy adds a replica to its load-balancing pool as soon as it is ready, so immediately after scaling a new replica may briefly return errors for tools whose backend it has not yet loaded. Allow a short warm-up after `kubectl rollout status` completes, or confirm a replica serves the expected tools by checking the broker `/status` endpoint before sending production traffic.
+> **Note:** A replica passing its readiness probe does not guarantee it has already connected to every configured backend — readiness reports true once any enabled upstream is ready, when every registered server is disabled, or while backend config is still syncing. Envoy adds a replica to its load-balancing pool as soon as it is ready, so immediately after scaling a new replica may briefly return errors for tools whose backend it has not yet loaded. Allow a short warm-up after `kubectl rollout status` completes, or confirm a replica serves the expected tools by checking the broker `/status` endpoint before sending production traffic.
 
 ## Scaling a 2025-11-25 or mixed gateway (Redis required)
 
