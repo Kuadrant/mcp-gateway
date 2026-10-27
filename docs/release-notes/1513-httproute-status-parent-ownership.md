@@ -6,12 +6,15 @@ deletions getting stuck after Kuadrant policies are removed.
 
 ## What's Changed
 
-- Each accepted gateway parent has a separate MCP-owned entry with
-  `Programmed=True`. Other controllers' conditions are preserved.
+- Each accepted gateway parent that attaches to a listener targeted by an
+  MCPGatewayExtension has a separate MCP-owned entry with `Programmed=True`.
+  Other parents get no MCP entry. Other controllers' conditions are preserved.
 - Legacy `Programmed` conditions previously written by MCP into other controllers'
   entries are removed. Entries left without conditions are removed entirely.
-- Deleting an MCPServerRegistration removes MCP's `Programmed` condition only when
-  no other active registration references the same HTTPRoute.
+- MCP's `Programmed` condition is removed when an MCPServerRegistration is deleted
+  or stops being ready, for example when its MCPGatewayExtension is removed or its
+  prefix conflicts. Previously it stayed until deletion. It is kept while another
+  registration on the same HTTPRoute is still Ready or Disabled.
 
 ## Migration
 
@@ -24,5 +27,6 @@ No manifest changes are required.
   after upgrade. A controller restart triggers reconciliation; cleanup is not
   instantaneous at upgrade.
 - A route that no gateway has accepted now receives no MCP `Programmed` condition.
-- Deleting one of several registrations on a shared route leaves MCP's
-  `Programmed` condition in place. Deleting the last active registration removes it.
+- On a shared route, MCP's `Programmed` condition stays while any registration on
+  it is Ready or Disabled. It is removed once the last of them is deleted or stops
+  being ready.
