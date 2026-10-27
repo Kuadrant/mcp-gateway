@@ -591,18 +591,15 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
 			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{remainingParent}))
 			if shared {
-				Eventually(func(g Gomega) {
-					cached := &gatewayv1.HTTPRoute{}
-					g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
-					g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
-				}, testTimeout, testRetryInterval).Should(Succeed())
+				// the sibling is still Ready, so the MCP parent stays until it reconciles
+				Expect(route.Status.Parents).To(HaveLen(2))
+				Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: siblingName, Namespace: "default"}})
 				Expect(err).To(MatchError(ContainSubstring("no valid gateways for httproute")))
 				Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-				Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{remainingParent}))
 			}
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{remainingParent}))
 		},
 			Entry("when the last gateway rejects the route", false, false),
 			Entry("when the last gateway is deleted but its Accepted status remains", true, false),
@@ -696,7 +693,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(registration.DeletionTimestamp).NotTo(BeNil())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
-			Expect(reconciler.updateHTTPRouteStatus(ctx, registration, nil)).To(Succeed())
+			Expect(reconciler.releaseHTTPRouteStatus(ctx, registration)).To(Succeed())
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).NotTo(BeNil())
 			Expect(route.Status.Parents).To(BeEmpty())
@@ -718,6 +715,65 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			deleteRegistration(siblingName)
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
+		})
+
+		It("should remove its parent when its MCPGatewayExtension is removed", func() {
+			reconcileRegistration(resourceName, "owner_")
+			forceDeleteTestMCPGatewayExtension(ctx, extName, "default")
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+				g.Expect(err).NotTo(HaveOccurred())
+				route := &gatewayv1.HTTPRoute{}
+				g.Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+				g.Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+
+		It("should keep the MCP parent stable while a sibling with a conflicting prefix reconciles", func() {
+			ownerNN := types.NamespacedName{Name: resourceName, Namespace: "default"}
+			reconcileRegistration(resourceName, "shared_")
+			owner := &mcpv1.MCPServerRegistration{}
+			Expect(testK8sClient.Get(ctx, ownerNN, owner)).To(Succeed())
+			// creation timestamps have second precision, so make the sibling strictly newer
+			Eventually(func() bool {
+				return time.Now().After(owner.CreationTimestamp.Add(time.Second))
+			}, testTimeout, testRetryInterval).Should(BeTrue())
+
+			sibling := createTestMCPServerRegistration(siblingName, "default", httpRouteName, "shared_")
+			Expect(testK8sClient.Create(ctx, sibling)).To(Succeed())
+			siblingNN := client.ObjectKeyFromObject(sibling)
+			waitForMCPServerRegistrationCacheSync(ctx, siblingNN)
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: siblingNN})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, siblingNN)
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: siblingNN})
+				g.Expect(err).NotTo(HaveOccurred())
+				updated := &mcpv1.MCPServerRegistration{}
+				g.Expect(testK8sClient.Get(ctx, siblingNN, updated)).To(Succeed())
+				ready := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(ready).NotTo(BeNil())
+				g.Expect(ready.Reason).To(Equal(conditionReasonPrefixConflict))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(HaveLen(2))
+			Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+			Eventually(func(g Gomega) {
+				cached := &gatewayv1.HTTPRoute{}
+				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			for _, nn := range []types.NamespacedName{ownerNN, siblingNN} {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			updated := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, updated)).To(Succeed())
+			Expect(updated.ResourceVersion).To(Equal(route.ResourceVersion))
 		})
 	})
 

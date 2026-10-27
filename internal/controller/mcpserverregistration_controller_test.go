@@ -308,6 +308,35 @@ func TestAcceptedParentRefs(t *testing.T) {
 	}
 }
 
+func TestHoldsHTTPRoute(t *testing.T) {
+	withReady := func(status metav1.ConditionStatus, reason string) *mcpv1.MCPServerRegistration {
+		return &mcpv1.MCPServerRegistration{Status: mcpv1.MCPServerRegistrationStatus{
+			Conditions: []metav1.Condition{{Type: "Ready", Status: status, Reason: reason}},
+		}}
+	}
+	deleting := withReady(metav1.ConditionTrue, conditionReasonReady)
+	deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+
+	tests := []struct {
+		name  string
+		mcpsr *mcpv1.MCPServerRegistration
+		want  bool
+	}{
+		{"ready", withReady(metav1.ConditionTrue, conditionReasonReady), true},
+		{"disabled", withReady(metav1.ConditionFalse, conditionReasonDisabled), true},
+		{"not ready", withReady(metav1.ConditionFalse, conditionReasonPrefixConflict), false},
+		{"deleting", deleting, false},
+		{"no status", &mcpv1.MCPServerRegistration{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := holdsHTTPRoute(tt.mcpsr); got != tt.want {
+				t.Errorf("holdsHTTPRoute() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMcpsrReferencesSecret(t *testing.T) {
 	tests := []struct {
 		name       string
