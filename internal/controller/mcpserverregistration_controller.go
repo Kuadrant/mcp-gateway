@@ -1032,6 +1032,11 @@ func (r *MCPReconciler) routeHeldByOtherRegistration(ctx context.Context, mcpsr 
 		if candidate.Name == mcpsr.Name && candidate.Namespace == mcpsr.Namespace {
 			continue
 		}
+		// skip cached non-holders; a stale skip self-heals as the route write re-enqueues them
+		if !holdsHTTPRoute(candidate) {
+			continue
+		}
+		// confirm holders uncached so a stale cache can't keep entries after the last holder is gone
 		registration := &mcpv1.MCPServerRegistration{}
 		if err := r.DirectAPIReader.Get(ctx, client.ObjectKeyFromObject(candidate), registration); err != nil {
 			if apierrors.IsNotFound(err) {
