@@ -696,7 +696,7 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 				g.Expect(registration.DeletionTimestamp).NotTo(BeNil())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
-			Expect(reconciler.updateHTTPRouteStatus(ctx, registration, false)).To(Succeed())
+			Expect(reconciler.updateHTTPRouteStatus(ctx, registration, nil)).To(Succeed())
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).NotTo(BeNil())
 			Expect(route.Status.Parents).To(BeEmpty())

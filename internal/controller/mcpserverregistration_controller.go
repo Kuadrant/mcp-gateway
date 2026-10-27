@@ -144,7 +144,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.updateHTTPRouteStatus(ctx, mcpsr, false); err != nil {
+			if err := r.updateHTTPRouteStatus(ctx, mcpsr, nil); err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
@@ -216,7 +216,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 			return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 		}
-		if err := r.updateHTTPRouteStatus(ctx, mcpsr, false); err != nil {
+		if err := r.updateHTTPRouteStatus(ctx, mcpsr, nil); err != nil {
 			if apierrors.IsConflict(err) {
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
@@ -228,6 +228,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
 	var validExts []*mcpv1.MCPGatewayExtension
+	var mcpParentRefs []gatewayv1.ParentReference
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -253,13 +254,15 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 		for _, vext := range mcpGatewayExtensions {
 			// only include extensions whose listener matches the HTTPRoute
-			if !httpRouteAttachesToListener(targetRoute, vg, vext) {
+			attached := listenerParentRefs(targetRoute, vg, vext)
+			if len(attached) == 0 {
 				logger.V(1).Info("skipping mcpgatewayextension: httproute does not attach to targeted listener",
 					"extension", vext.Name, "namespace", vext.Namespace, "sectionName", vext.Spec.TargetRef.SectionName)
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
 			validExts = append(validExts, vext)
+			mcpParentRefs = append(mcpParentRefs, attached...)
 		}
 	}
 
@@ -336,7 +339,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	if err := r.updateHTTPRouteStatus(ctx, mcpsr, true); err != nil {
+	if err := r.updateHTTPRouteStatus(ctx, mcpsr, mcpParentRefs); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
@@ -878,9 +881,10 @@ func isValidHostname(hostname string) bool {
 }
 
 // desiredRouteParents prunes legacy Programmed conditions and manages MCP's own entries.
+// only accepted parents matching mcpRefs get an entry; empty mcpRefs removes them all.
 // it never mutates parents and always returns a non-nil slice.
 func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace string,
-	generation int64, now metav1.Time, present bool) []gatewayv1.RouteParentStatus {
+	generation int64, now metav1.Time, mcpRefs []gatewayv1.ParentReference) []gatewayv1.RouteParentStatus {
 	out := make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
 	for i := range parents {
 		p := parents[i].DeepCopy()
@@ -897,9 +901,10 @@ func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace s
 	refs := acceptedParentRefs(out)
 	relevant := make([]gatewayv1.ParentReference, 0, len(refs))
 	for i := range refs {
-		if !slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
+		matches := func(ref gatewayv1.ParentReference) bool {
 			return sameParentRef(ref, refs[i], routeNamespace)
-		}) {
+		}
+		if slices.ContainsFunc(mcpRefs, matches) && !slices.ContainsFunc(relevant, matches) {
 			relevant = append(relevant, refs[i])
 		}
 	}
@@ -908,7 +913,7 @@ func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace s
 	for i := range out {
 		p := &out[i]
 		if p.ControllerName == MCPControllerName {
-			keep := present && slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
+			keep := slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
 				return sameParentRef(ref, p.ParentRef, routeNamespace)
 			})
 			if !keep && pruneProgrammed(p) {
@@ -918,9 +923,6 @@ func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace s
 		retained = append(retained, *p)
 	}
 	out = retained
-	if !present {
-		return out
-	}
 
 	condition := metav1.Condition{
 		Type: programmedConditionType, Status: metav1.ConditionTrue, ObservedGeneration: generation,
@@ -976,7 +978,7 @@ func pruneProgrammed(e *gatewayv1.RouteParentStatus) (drop bool) {
 	return len(e.Conditions) == 0
 }
 
-func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, present bool) error {
+func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, mcpRefs []gatewayv1.ParentReference) error {
 	targetRef := mcpsr.Spec.TargetRef
 
 	if targetRef.Kind != "HTTPRoute" {
@@ -1001,13 +1003,17 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 	}
 
 	if !mcpsr.DeletionTimestamp.IsZero() {
-		present, err = r.otherRegistrationsTarget(ctx, mcpsr, namespace)
+		others, err := r.otherRegistrationsTarget(ctx, mcpsr, namespace)
 		if err != nil {
 			return err
 		}
+		if others {
+			// remaining registrations own the entries
+			return nil
+		}
 	}
 
-	parents := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), present)
+	parents := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), mcpRefs)
 	if equality.Semantic.DeepEqual(httpRoute.Status.Parents, parents) {
 		return nil
 	}

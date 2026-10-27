@@ -75,31 +75,36 @@ func TestDesiredRouteParents(t *testing.T) {
 	notAccepted.Status = metav1.ConditionFalse
 	unknownAccepted := accepted
 	unknownAccepted.Status = metav1.ConditionUnknown
+	// every parentRef above, as if each attached to an MCP listener
+	mcpRefs := []gatewayv1.ParentReference{
+		parent, defaultedParent, serviceParent, implicitGroupServiceParent, crossNamespaceParent,
+		sectionParent, portParent, otherParent, listenerParent,
+	}
 
 	tests := []struct {
 		name       string
 		parents    []gatewayv1.RouteParentStatus
 		generation int64
-		present    bool
+		mcpRefs    []gatewayv1.ParentReference
 		want       []gatewayv1.RouteParentStatus
 	}{
 		{
-			name: "input not mutated", generation: 3, present: true,
+			name: "input not mutated", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{legacyIstio, oldMCP},
 			want:    []gatewayv1.RouteParentStatus{istio, oldMCP},
 		},
 		{
-			name: "round-trip idempotence", generation: 3, present: true,
+			name: "round-trip idempotence", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, oldMCP},
 			want:    []gatewayv1.RouteParentStatus{istio, oldMCP},
 		},
 		{
-			name: "accepted foreign entry preserved", generation: 3, present: true,
+			name: "accepted foreign entry preserved", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio},
 			want:    []gatewayv1.RouteParentStatus{istio, mcp},
 		},
 		{
-			name: "MCP entry already present", generation: 3, present: true,
+			name: "MCP entry already present", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, mcp},
 			want:    []gatewayv1.RouteParentStatus{istio, mcp},
 		},
@@ -109,7 +114,7 @@ func TestDesiredRouteParents(t *testing.T) {
 			want:    []gatewayv1.RouteParentStatus{istio},
 		},
 		{
-			name: "migrate legacy Programmed", generation: 3, present: true,
+			name: "migrate legacy Programmed", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{legacyIstio},
 			want:    []gatewayv1.RouteParentStatus{istio, mcp},
 		},
@@ -119,12 +124,12 @@ func TestDesiredRouteParents(t *testing.T) {
 			want:    []gatewayv1.RouteParentStatus{},
 		},
 		{
-			name: "retain foreign Programmed with different reason", generation: 3, present: true,
+			name: "retain foreign Programmed with different reason", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, accepted, resolved, foreignReason)},
 			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, accepted, resolved, foreignReason), mcp},
 		},
 		{
-			name: "retain foreign Programmed with different message", generation: 3, present: true,
+			name: "retain foreign Programmed with different message", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignMessage)},
 			want:    []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignMessage)},
 		},
@@ -134,17 +139,17 @@ func TestDesiredRouteParents(t *testing.T) {
 			want:    []gatewayv1.RouteParentStatus{status(parent, otherController.ControllerName, foreignReason)},
 		},
 		{
-			name: "deduplicate accepted parentRefs", generation: 3, present: true,
+			name: "deduplicate accepted parentRefs", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, otherController},
 			want:    []gatewayv1.RouteParentStatus{istio, otherController, mcp},
 		},
 		{
-			name: "deduplicate defaulted parentRefs", generation: 3, present: true,
+			name: "deduplicate defaulted parentRefs", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(defaultedParent, otherController.ControllerName, accepted)},
 			want:    []gatewayv1.RouteParentStatus{istio, status(defaultedParent, otherController.ControllerName, accepted), mcp},
 		},
 		{
-			name: "reuse existing defaulted parentRef", generation: 3, present: true,
+			name: "reuse existing defaulted parentRef", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(defaultedParent, MCPControllerName, programmed)},
 			want:    []gatewayv1.RouteParentStatus{istio, status(defaultedParent, MCPControllerName, programmed)},
 		},
@@ -154,7 +159,7 @@ func TestDesiredRouteParents(t *testing.T) {
 			want:    []gatewayv1.RouteParentStatus{istio, status(parent, MCPControllerName, resolved)},
 		},
 		{
-			name: "core Service differs from Gateway", generation: 3, present: true,
+			name: "core Service differs from Gateway", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(serviceParent, otherController.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				istio, status(serviceParent, otherController.ControllerName, accepted), mcp,
@@ -162,7 +167,7 @@ func TestDesiredRouteParents(t *testing.T) {
 			},
 		},
 		{
-			name: "explicit core group differs from omitted group", generation: 3, present: true,
+			name: "explicit core group differs from omitted group", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{
 				status(implicitGroupServiceParent, istio.ControllerName, accepted), status(serviceParent, otherController.ControllerName, accepted),
 			},
@@ -172,78 +177,86 @@ func TestDesiredRouteParents(t *testing.T) {
 			},
 		},
 		{
-			name: "different parent namespaces", generation: 3, present: true,
+			name: "different parent namespaces", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(crossNamespaceParent, istio.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				istio, status(crossNamespaceParent, istio.ControllerName, accepted), mcp, status(crossNamespaceParent, MCPControllerName, programmed),
 			},
 		},
 		{
-			name: "different parent sections", generation: 3, present: true,
+			name: "different parent sections", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(sectionParent, istio.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				istio, status(sectionParent, istio.ControllerName, accepted), mcp, status(sectionParent, MCPControllerName, programmed),
 			},
 		},
 		{
-			name: "different parent ports", generation: 3, present: true,
+			name: "different parent ports", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(portParent, istio.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				istio, status(portParent, istio.ControllerName, accepted), mcp, status(portParent, MCPControllerName, programmed),
 			},
 		},
 		{
-			name: "nil input", generation: 3, present: true,
+			name: "nil input", generation: 3, mcpRefs: mcpRefs,
 			want: []gatewayv1.RouteParentStatus{},
 		},
 		{
-			name: "empty input", generation: 3, present: true,
+			name: "empty input", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{},
 			want:    []gatewayv1.RouteParentStatus{},
 		},
 		{
-			name: "generation bump preserves transition time", generation: 4, present: true,
+			name: "generation bump preserves transition time", generation: 4, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, oldMCP},
 			want:    []gatewayv1.RouteParentStatus{istio, newGenerationMCP},
 		},
 		{
-			name: "two accepted gateways", generation: 3, present: true,
+			name: "two accepted gateways", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{istio, status(otherParent, istio.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				istio, status(otherParent, istio.ControllerName, accepted), mcp, status(otherParent, MCPControllerName, programmed),
 			},
 		},
 		{
-			name: "preserve sectionName and port", generation: 3, present: true,
+			name: "preserve sectionName and port", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(listenerParent, istio.ControllerName, accepted)},
 			want: []gatewayv1.RouteParentStatus{
 				status(listenerParent, istio.ControllerName, accepted), status(listenerParent, MCPControllerName, programmed),
 			},
 		},
 		{
-			name: "foreign parent without Accepted", generation: 3, present: true,
+			name: "foreign parent without Accepted", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, resolved)},
 			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, resolved)},
 		},
 		{
-			name: "foreign parent with Accepted false", generation: 3, present: true,
+			name: "foreign parent with Accepted false", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, notAccepted)},
 			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, notAccepted)},
 		},
 		{
-			name: "foreign parent with Accepted unknown", generation: 3, present: true,
+			name: "foreign parent with Accepted unknown", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, unknownAccepted)},
 			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, unknownAccepted)},
 		},
 		{
-			name: "remove MCP entry for no longer accepted parent", generation: 3, present: true,
+			name: "remove MCP entry for no longer accepted parent", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, notAccepted), mcp},
 			want:    []gatewayv1.RouteParentStatus{status(parent, istio.ControllerName, notAccepted)},
 		},
 		{
-			name: "retain unrelated MCP condition for no longer accepted parent", generation: 3, present: true,
+			name: "retain unrelated MCP condition for no longer accepted parent", generation: 3, mcpRefs: mcpRefs,
 			parents: []gatewayv1.RouteParentStatus{mcpWithExtra},
 			want:    []gatewayv1.RouteParentStatus{status(parent, MCPControllerName, resolved)},
+		},
+		{
+			name: "only parents attached to an MCP listener get an entry", generation: 3,
+			mcpRefs: []gatewayv1.ParentReference{parent},
+			parents: []gatewayv1.RouteParentStatus{
+				istio, status(otherParent, istio.ControllerName, accepted), status(otherParent, MCPControllerName, programmed),
+			},
+			want: []gatewayv1.RouteParentStatus{istio, status(otherParent, istio.ControllerName, accepted), mcp},
 		},
 	}
 
@@ -256,7 +269,7 @@ func TestDesiredRouteParents(t *testing.T) {
 					snapshot[i] = *tt.parents[i].DeepCopy()
 				}
 			}
-			got := desiredRouteParents(tt.parents, "routes", tt.generation, now, tt.present)
+			got := desiredRouteParents(tt.parents, "routes", tt.generation, now, tt.mcpRefs)
 			if !reflect.DeepEqual(tt.parents, snapshot) {
 				t.Errorf("input mutated: got %#v, want %#v", tt.parents, snapshot)
 			}
@@ -271,7 +284,7 @@ func TestDesiredRouteParents(t *testing.T) {
 					t.Errorf("parent %d has empty conditions", i)
 				}
 			}
-			if again := desiredRouteParents(got, "routes", tt.generation, metav1.NewTime(now.Add(time.Hour)), tt.present); !reflect.DeepEqual(again, got) {
+			if again := desiredRouteParents(got, "routes", tt.generation, metav1.NewTime(now.Add(time.Hour)), tt.mcpRefs); !reflect.DeepEqual(again, got) {
 				t.Errorf("repeat call changed output: got %#v, want %#v", again, got)
 			}
 		})
