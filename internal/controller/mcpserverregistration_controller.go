@@ -19,7 +19,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -145,17 +144,11 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
 				return ctrl.Result{}, err
 			}
-			err := retry.OnError(retry.DefaultBackoff, func(err error) bool {
-				return !apierrors.IsConflict(err)
-			}, func() error {
-				return r.updateHTTPRouteStatus(ctx, mcpsr, false)
-			})
-			if err != nil {
+			if err := r.updateHTTPRouteStatus(ctx, mcpsr, false); err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
-				logger.Error(err, "failed to update HTTPRoute status during deletion")
-				return ctrl.Result{}, err
+				return ctrl.Result{}, fmt.Errorf("failed to update HTTPRoute status during deletion: %w", err)
 			}
 			controllerutil.RemoveFinalizer(mcpsr, mcpGatewayFinalizer)
 			if err := r.Update(ctx, mcpsr); err != nil {
