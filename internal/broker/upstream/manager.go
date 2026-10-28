@@ -192,7 +192,6 @@ func NoopPromptHandler(_ context.Context, _ *mcp.GetPromptRequest) (*mcp.GetProm
 	return &mcp.GetPromptResult{}, nil
 }
 
-// MCPManager manages a single backend MCPServer for the broker. It does not act on behalf of clients. It is the only thing that should be connecting to the MCP Server for the broker. It handles tools updates, disconnection, notifications, liveness checks and updating the status for the MCP server. It is responsible for adding and removing tools to the broker. It is intended to be long lived and have 1:1 relationship with a backend MCP server.
 type healthTicker interface {
 	Chan() <-chan time.Time
 	Reset(time.Duration)
@@ -204,9 +203,10 @@ type realHealthTicker struct {
 }
 
 func (ticker *realHealthTicker) Chan() <-chan time.Time {
-	return ticker.Ticker.C
+	return ticker.C
 }
 
+// MCPManager manages a single backend MCPServer for the broker. It does not act on behalf of clients. It is the only thing that should be connecting to the MCP Server for the broker. It handles tools updates, disconnection, notifications, liveness checks and updating the status for the MCP server. It is responsible for adding and removing tools to the broker. It is intended to be long lived and have 1:1 relationship with a backend MCP server.
 type MCPManager struct {
 	mcp MCP
 	// ticker allows for us to continue to probe and retry the backend
