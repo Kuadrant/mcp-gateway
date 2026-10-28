@@ -1,8 +1,30 @@
 # Releasing MCP Gateway
 
 Creating a GitHub release with a `vX.Y.Z` tag triggers automated workflows that:
-1. Build and push container images (`mcp-gateway`, `mcp-controller`) to `ghcr.io/kuadrant/`
+1. Build and push container images (`mcp-gateway`, `mcp-controller`) to `quay.io/kuadrant/`
 2. Package and push the Helm chart to `oci://ghcr.io/kuadrant/charts/mcp-gateway`
+
+## Container image publishing
+
+The Build Images workflow publishes `quay.io/kuadrant/mcp-gateway` and
+`quay.io/kuadrant/mcp-controller` for `linux/amd64`, `linux/arm64`, `linux/s390x`,
+and `linux/ppc64le`. Publishing runs only in `Kuadrant/mcp-gateway`.
+
+Before enabling publishing, maintainers must create both Quay repositories as
+public and configure these GitHub Actions secrets for a Quay robot account with
+write access to both repositories:
+
+- `IMG_REGISTRY_USERNAME`: the Quay robot account username
+- `IMG_REGISTRY_TOKEN`: the robot account token
+
+When migrating registries, ensure the release tags referenced by the chart and
+deployment manifests are also available in Quay before distributing them.
+
+Pushes to `main` publish `main`, `latest`, and SHA tags. Release tags publish the
+Git tag (for example, `v1.1.0`), semantic-version tags (`1.1.0`, `1.1`), and SHA
+tags; stable releases also publish `latest`. Pre-releases do not update `latest`.
+Manual runs can publish branch and custom tags using the workflow's `image_tag`
+input. Helm charts continue to be published to GHCR.
 
 ## Using the `/release` command
 
@@ -74,11 +96,14 @@ Release branches use the minor-level format `release-X.Y` (e.g. `release-0.7`). 
 # Replace X.Y.Z with the full version (e.g. 0.5.1-rc1 or 0.5.1)
 VERSION=X.Y.Z
 for image in \
-  ghcr.io/kuadrant/mcp-gateway:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller:v${VERSION}; do
+  quay.io/kuadrant/mcp-gateway:v${VERSION} \
+  quay.io/kuadrant/mcp-controller:v${VERSION}; do
   docker manifest inspect "$image" > /dev/null 2>&1 \
     && echo "✅ $image" || echo "❌ $image"
 done
+# Inspect a manifest to confirm all four architectures are present.
+docker buildx imagetools inspect quay.io/kuadrant/mcp-gateway:v${VERSION}
+docker buildx imagetools inspect quay.io/kuadrant/mcp-controller:v${VERSION}
 helm show chart oci://ghcr.io/kuadrant/charts/mcp-gateway --version ${VERSION} > /dev/null 2>&1 \
   && echo "✅ helm chart ${VERSION}" || echo "❌ helm chart ${VERSION}"
 ```

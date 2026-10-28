@@ -66,6 +66,10 @@ This automatically installs:
 - **MCP Gateway Controller** - Watches MCPGatewayExtension and MCPServerRegistration resources
 - **MCPGatewayExtension** - Custom resource targeting your Gateway
 
+The Helm chart is hosted on `ghcr.io`; the controller and broker/router container
+images are hosted on `quay.io/kuadrant`. Allow cluster nodes to pull images from
+`quay.io`.
+
 When the MCPGatewayExtension becomes ready, the controller automatically creates:
 - **MCP Broker/Router Deployment** - Aggregates tools from upstream MCP servers
 - **MCP Broker/Router Service** - Named `mcp-gateway` in the MCPGatewayExtension namespace
