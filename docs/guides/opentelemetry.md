@@ -285,7 +285,7 @@ spec:
       path: /metrics
 ```
 
-In v1.0.1 and earlier, the broker container has no named `metrics` port, so the `PodMonitor` above finds no targets. Use this variant instead. It selects the declared `http` port to get one target per pod, then rewrites the scrape address to port `9090`:
+Before v1.1.0, the broker container has no named `metrics` port, so the `PodMonitor` above finds no targets. Use this variant instead. It selects the declared `http` port to get one target per pod, then rewrites the scrape address to port `9090`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
