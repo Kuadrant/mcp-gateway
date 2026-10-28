@@ -193,12 +193,27 @@ func NoopPromptHandler(_ context.Context, _ *mcp.GetPromptRequest) (*mcp.GetProm
 }
 
 // MCPManager manages a single backend MCPServer for the broker. It does not act on behalf of clients. It is the only thing that should be connecting to the MCP Server for the broker. It handles tools updates, disconnection, notifications, liveness checks and updating the status for the MCP server. It is responsible for adding and removing tools to the broker. It is intended to be long lived and have 1:1 relationship with a backend MCP server.
+type healthTicker interface {
+	Chan() <-chan time.Time
+	Reset(time.Duration)
+	Stop()
+}
+
+type realHealthTicker struct {
+	*time.Ticker
+}
+
+func (ticker *realHealthTicker) Chan() <-chan time.Time {
+	return ticker.Ticker.C
+}
+
 type MCPManager struct {
 	mcp MCP
 	// ticker allows for us to continue to probe and retry the backend
-	ticker *time.Ticker
+	ticker healthTicker
 	// tickerInterval is the interval between backend health checks
 	tickerInterval time.Duration
+	jitter         func(time.Duration, float64) time.Duration
 	// configuredInterval is the normalized interval from construction,
 	// restored when an upstream stops negotiating 2026
 	configuredInterval time.Duration
@@ -270,6 +285,9 @@ const DefaultTickerInterval = time.Minute * 1
 // as the 2026-07-28 caching spec requires polling clients to jitter.
 const ttlPollJitter = 0.1
 
+// maxTTLInterval leaves ample room for upward jitter before duration overflow.
+const maxTTLInterval = time.Duration(1<<62 - 1)
+
 // maxConsecutiveFailures is the number of consecutive connect/ping failures
 // tolerated before cached tools and prompts are dropped from the gateway.
 // tool calls route directly to the backend via envoy, so serving a cached
@@ -340,7 +358,8 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		promptsServer:      promptsServer,
 		tickerInterval:     tickerInterval,
 		configuredInterval: tickerInterval,
-		ticker:             time.NewTicker(tickerInterval),
+		ticker:             &realHealthTicker{time.NewTicker(tickerInterval)},
+		jitter:             wait.Jitter,
 		backoff:            bo,
 		baseBackoff:        bo,
 		logger:             logger,
@@ -395,7 +414,7 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				close(man.done)
 				man.logger.Debug("manager stopped", "upstream mcp server", man.mcp.ID())
 				return
-			case <-man.ticker.C:
+			case <-man.ticker.Chan():
 				man.logger.DebugContext(ctx, "health check tick", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypeTimer)
 			case <-man.toolEvents:
@@ -792,7 +811,7 @@ func (man *MCPManager) nextPollInterval() time.Duration {
 	if !man.ttlPolling {
 		return man.tickerInterval
 	}
-	return wait.Jitter(man.tickerInterval, ttlPollJitter)
+	return man.jitter(man.tickerInterval, ttlPollJitter)
 }
 
 func (man *MCPManager) applyBackoff() {
@@ -807,7 +826,7 @@ func (man *MCPManager) applyBackoff() {
 func (man *MCPManager) resetTicker(d time.Duration) {
 	man.ticker.Reset(d)
 	select {
-	case <-man.ticker.C:
+	case <-man.ticker.Chan():
 	default:
 	}
 }
@@ -815,14 +834,18 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 // adjustTickerFromTTL sets the poll interval from the shortest positive TTLMs
 // hint across the upstream's tools/list and prompts/list responses. only
 // applied for 2026 upstreams where polling replaces push notifications.
-// clamped to DefaultTickerInterval minimum to avoid hot-looping on low TTLs.
-// the ticker itself is re-armed by resetBackoff or applyBackoff.
+// clamped between a safe maximum and DefaultTickerInterval minimum to avoid
+// overflow with jitter and hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {
 	man.ttlPolling = true
 	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, man.mcp.PromptsCacheMetadata().TTLMs)
 	ttlInterval := DefaultTickerInterval
 	if ttlMs > 0 {
-		ttlInterval = max(time.Duration(ttlMs)*time.Millisecond, DefaultTickerInterval)
+		if int64(ttlMs) > int64(maxTTLInterval/time.Millisecond) {
+			ttlInterval = maxTTLInterval
+		} else {
+			ttlInterval = max(time.Duration(ttlMs)*time.Millisecond, DefaultTickerInterval)
+		}
 	}
 	if ttlInterval != man.tickerInterval {
 		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", ttlMs, "interval", ttlInterval)

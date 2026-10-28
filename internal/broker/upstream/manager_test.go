@@ -2130,9 +2130,23 @@ func TestMCPManager_manage_DowngradeRestoresConfiguredInterval(t *testing.T) {
 	assert.Equal(t, configured, manager.nextPollInterval(), "no jitter after downgrade")
 }
 
-// 2026 polling must apply jitter on top of the TTL-derived interval; the
-// jittered interval never drops below the base so the minimum clamp holds.
-func TestMCPManager_nextPollInterval_Jitter(t *testing.T) {
+type recordingTicker struct {
+	channel       chan time.Time
+	resetInterval time.Duration
+}
+
+func (ticker *recordingTicker) Chan() <-chan time.Time {
+	return ticker.channel
+}
+
+func (ticker *recordingTicker) Reset(interval time.Duration) {
+	ticker.resetInterval = interval
+}
+
+func (ticker *recordingTicker) Stop() {}
+
+// resetBackoff must schedule the TTL-derived interval with upward jitter.
+func TestMCPManager_resetBackoff_UsesTTLJitter(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
 	mock.protocolVersion = "2026-07-28"
@@ -2143,17 +2157,45 @@ func TestMCPManager_nextPollInterval_Jitter(t *testing.T) {
 
 	manager.manage(context.Background(), eventTypeTimer)
 	require.Equal(t, 5*time.Minute, manager.tickerInterval)
+	require.True(t, manager.ttlPolling)
 
 	base := manager.tickerInterval
-	upper := base + time.Duration(float64(base)*ttlPollJitter)
-	seen := map[time.Duration]struct{}{}
-	for range 100 {
-		d := manager.nextPollInterval()
-		assert.GreaterOrEqual(t, d, base)
-		assert.LessOrEqual(t, d, upper)
-		seen[d] = struct{}{}
+	ticker := &recordingTicker{channel: make(chan time.Time, 1)}
+	manager.ticker.Stop()
+	manager.ticker = ticker
+
+	var jitterBase time.Duration
+	var jitterFactor float64
+	manager.jitter = func(interval time.Duration, factor float64) time.Duration {
+		jitterBase = interval
+		jitterFactor = factor
+		return interval + interval/20
 	}
-	assert.Greater(t, len(seen), 1, "interval should vary between polls")
+
+	manager.resetBackoff()
+
+	assert.Equal(t, base, jitterBase)
+	assert.Equal(t, ttlPollJitter, jitterFactor)
+	assert.Equal(t, base+base/20, ticker.resetInterval)
+}
+
+func TestMCPManager_manage_LargeTTLDoesNotPanic(t *testing.T) {
+	ttlMs := int64(9_000_000_000_000)
+	if int64(int(ttlMs)) != ttlMs {
+		t.Skip("int cannot represent the overflow-triggering TTL")
+	}
+
+	mock := newMockMCP("test-server", "")
+	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: int(ttlMs)}
+	mock.hasToolsCap = false
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, slog.Default(), 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() {
+		manager.manage(context.Background(), eventTypeTimer)
+	})
+	assert.Equal(t, maxTTLInterval, manager.tickerInterval, "large TTL is capped before duration conversion")
 }
 
 // 2025 upstreams keep their configured interval exactly, without jitter.
