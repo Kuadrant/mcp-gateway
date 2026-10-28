@@ -42,7 +42,7 @@ require (
 	golang.org/x/sync v0.24.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
-	istio.io/api v1.31.3-0.20261021173654-6bc70d5e00c2
+	istio.io/api v1.32.0-beta.0
 	istio.io/client-go v1.31.3
 	k8s.io/api v0.37.1
 	k8s.io/apiextensions-apiserver v0.37.1
