@@ -2130,6 +2130,27 @@ func TestMCPManager_manage_DowngradeRestoresConfiguredInterval(t *testing.T) {
 	assert.Equal(t, configured, manager.nextPollInterval(), "no jitter after downgrade")
 }
 
+// a cached prompt TTL must not affect polling after prompt support disappears.
+func TestMCPManager_manage_IgnoresPromptTTLWhenPromptSupportDisappears(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{}
+	mock.promptsCacheMeta = CacheMetadata{TTLMs: 3600000}
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	mock.hasPromptsCap = true
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.Equal(t, time.Hour, manager.tickerInterval)
+
+	mock.hasPromptsCap = false
+	manager.manage(context.Background(), eventTypeTimer)
+
+	assert.Equal(t, DefaultTickerInterval, manager.tickerInterval)
+}
+
 type recordingTicker struct {
 	channel       chan time.Time
 	resetInterval time.Duration
