@@ -223,6 +223,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	validNamespaces := []string{}
 	var validExts []*mcpv1.MCPGatewayExtension
 	var mcpParentRefs []gatewayv1.ParentReference
+	hasExts := false
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -236,16 +237,10 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 		}
 		if len(mcpGatewayExtensions) == 0 {
-			// this is not an error so we are going to exit
-			if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
-				if apierrors.IsConflict(err) {
-					// don't log these as they are just noise
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
+			// other gateways that accepted the route may still have an extension
+			continue
 		}
+		hasExts = true
 		for _, vext := range mcpGatewayExtensions {
 			// only include extensions whose listener matches the HTTPRoute
 			attached := listenerParentRefs(targetRoute, vg, vext)
@@ -258,6 +253,18 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			validExts = append(validExts, vext)
 			mcpParentRefs = append(mcpParentRefs, attached...)
 		}
+	}
+
+	if !hasExts {
+		// this is not an error so we are going to exit
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
+			if apierrors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if len(validNamespaces) == 0 {

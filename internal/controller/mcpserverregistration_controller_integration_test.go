@@ -739,6 +739,33 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 		})
 
+		It("should become Ready when a gateway without an MCPGatewayExtension is listed first", func() {
+			const plainGatewayName = "test-status-owner-plain-gw"
+			Expect(testK8sClient.Create(ctx, createTestGateway(plainGatewayName, "default"))).To(Succeed())
+			DeferCleanup(deleteTestGateway, ctx, plainGatewayName, "default")
+
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			plainParent := *gatewayParent.DeepCopy()
+			plainParent.ParentRef.Name = plainGatewayName
+			route.Spec.ParentRefs = append([]gatewayv1.ParentReference{plainParent.ParentRef}, route.Spec.ParentRefs...)
+			Expect(testK8sClient.Update(ctx, route)).To(Succeed())
+			Expect(setHTTPRouteParentStatuses(ctx, route, []gatewayv1.RouteParentStatus{plainParent, gatewayParent})).To(Succeed())
+			Eventually(func(g Gomega) {
+				cached := &gatewayv1.HTTPRoute{}
+				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			reconcileRegistration(resourceName, "owner_")
+
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(HaveLen(3))
+			Expect(route.Status.Parents[:2]).To(Equal([]gatewayv1.RouteParentStatus{plainParent, gatewayParent}))
+			Expect(route.Status.Parents[2].ControllerName).To(Equal(mcpController))
+			Expect(route.Status.Parents[2].ParentRef).To(Equal(gatewayParent.ParentRef))
+		})
+
 		It("should remove its parent when its MCPGatewayExtension is removed", func() {
 			reconcileRegistration(resourceName, "owner_")
 			forceDeleteTestMCPGatewayExtension(ctx, extName, "default")
