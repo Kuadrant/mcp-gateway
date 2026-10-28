@@ -1,6 +1,7 @@
 package mcprouter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -226,7 +227,7 @@ func TestElicitationRewriter_Flush(t *testing.T) {
 
 		flushed := w.Flush(ctx)
 		require.Equal(t, "data: partial", string(flushed))
-		require.Nil(t, w.buf)
+		require.Nil(t, w.lines.Pending())
 	})
 
 	t.Run("cleans up gateway IDs from idmap", func(t *testing.T) {
@@ -298,7 +299,7 @@ func TestElicitationRewriter_Flush(t *testing.T) {
 		// subsequent flush is a no-op; no panic, no state change
 		require.NotPanics(t, func() { w.Flush(ctx) })
 		require.Empty(t, w.gatewayIDs)
-		require.Nil(t, w.buf)
+		require.Nil(t, w.lines.Pending())
 	})
 }
 
@@ -356,7 +357,8 @@ func TestElicitationRewriter_MaybeRewriteElicitation(t *testing.T) {
 				},
 			}
 
-			result := w.maybeRewriteElicitation(ctx, []byte(tc.line))
+			raw := []byte(tc.line)
+			result := w.maybeRewriteElicitation(ctx, raw, bytes.TrimSuffix(raw, []byte("\n")))
 
 			if !tc.expectRewrite {
 				require.Equal(t, tc.line, string(result))
