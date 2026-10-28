@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +36,11 @@ import (
 )
 
 const (
+	// MCPControllerName identifies the RouteParentStatus entries this controller owns.
+	// Gateway API namespaces parent status by (parentRef, controllerName).
+	MCPControllerName gatewayv1.GatewayController = "mcp.kuadrant.io/mcp-gateway"
+
+	programmedConditionType = "Programmed"
 
 	// ManagedSecretLabel is the required label for secrets the controller watches (credentials, session store).
 	// Only secrets with this label are cached by the informer.
@@ -105,7 +112,7 @@ type MCPServerConfigReaderWriter interface {
 type MCPReconciler struct {
 	client.Client
 	Scheme                *runtime.Scheme
-	DirectAPIReader       client.Reader // uncached reader for fetching secrets
+	DirectAPIReader       client.Reader // uncached reader
 	ConfigReaderWriter    MCPServerConfigReaderWriter
 	MCPExtFinderValidator MCPGatewayExtensionFinderValidator
 }
@@ -137,8 +144,11 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
-				return ctrl.Result{}, err
+			if err := r.releaseHTTPRouteStatus(ctx, mcpsr); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+				}
+				return ctrl.Result{}, fmt.Errorf("failed to update HTTPRoute status during deletion: %w", err)
 			}
 			controllerutil.RemoveFinalizer(mcpsr, mcpGatewayFinalizer)
 			if err := r.Update(ctx, mcpsr); err != nil {
@@ -199,7 +209,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	if len(validGateways) == 0 {
 		err := fmt.Errorf("no valid gateways for httproute")
 		logger.Error(err, "failed to find any valid gateways", "route", targetRoute)
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -212,6 +222,8 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// check for valid MCPGatewayExtension
 	validNamespaces := []string{}
 	var validExts []*mcpv1.MCPGatewayExtension
+	var mcpParentRefs []gatewayv1.ParentReference
+	hasExts := false
 	for _, vg := range validGateways {
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
@@ -225,30 +237,38 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			}
 		}
 		if len(mcpGatewayExtensions) == 0 {
-			// this is not an error so we are going to exit
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
-				if apierrors.IsConflict(err) {
-					// don't log these as they are just noise
-					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
+			// other gateways that accepted the route may still have an extension
+			continue
 		}
+		hasExts = true
 		for _, vext := range mcpGatewayExtensions {
 			// only include extensions whose listener matches the HTTPRoute
-			if !httpRouteAttachesToListener(targetRoute, vg, vext) {
+			attached := listenerParentRefs(targetRoute, vg, vext)
+			if len(attached) == 0 {
 				logger.V(1).Info("skipping mcpgatewayextension: httproute does not attach to targeted listener",
 					"extension", vext.Name, "namespace", vext.Namespace, "sectionName", vext.Spec.TargetRef.SectionName)
 				continue
 			}
 			validNamespaces = append(validNamespaces, vext.Namespace)
 			validExts = append(validExts, vext)
+			mcpParentRefs = append(mcpParentRefs, attached...)
 		}
 	}
 
+	if !hasExts {
+		// this is not an error so we are going to exit
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, "no valid mcpgatewayextensions configured"); err != nil {
+			if apierrors.IsConflict(err) {
+				// don't log these as they are just noise
+				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if len(validNamespaces) == 0 {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, "no matching mcpgatewayextensions for attached listener"); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, "no matching mcpgatewayextensions for attached listener"); err != nil {
 			if apierrors.IsConflict(err) {
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
@@ -258,7 +278,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	}
 
 	if err := r.checkPrefixConflict(ctx, mcpsr, validNamespaces); err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonPrefixConflict, err.Error()); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonPrefixConflict, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 			}
@@ -279,7 +299,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 
 	mcpServerconfig, err := r.buildMCPServerConfig(ctx, targetRoute, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -293,7 +313,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 			if errors.Is(err, config.ErrGatewayGuardrailsNotApplied) {
 				return r.rejectForGuardrails(ctx, mcpsr, err, ctrl.Result{RequeueAfter: guardrailsNotAppliedRequeueTime})
 			}
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+			if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 				}
@@ -320,7 +340,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		}
 	}
 
-	if err := r.updateHTTPRouteStatus(ctx, mcpsr); err != nil {
+	if err := r.updateHTTPRouteStatus(ctx, mcpsr, mcpParentRefs); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
@@ -346,7 +366,7 @@ func (r *MCPReconciler) rejectForGuardrails(ctx context.Context, mcpsr *mcpv1.MC
 	if err := r.ConfigReaderWriter.RemoveMCPServer(ctx, mcpServerName(mcpsr)); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.updateStatus(ctx, mcpsr, false, conditionReasonGatewayGuardrailsNotConfigured, cause.Error()); err != nil {
+	if err := r.setNotReady(ctx, mcpsr, conditionReasonGatewayGuardrailsNotConfigured, cause.Error()); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
@@ -861,22 +881,115 @@ func isValidHostname(hostname string) bool {
 	return u.Host == hostname
 }
 
-func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
+// desiredRouteParents prunes legacy Programmed conditions and manages MCP's own entries.
+// only accepted parents matching mcpRefs get an entry; empty mcpRefs removes them all.
+// it never mutates parents and always returns a non-nil slice.
+func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace string,
+	generation int64, now metav1.Time, mcpRefs []gatewayv1.ParentReference) []gatewayv1.RouteParentStatus {
+	out := make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
+	for i := range parents {
+		p := parents[i].DeepCopy()
+		if p.ControllerName != MCPControllerName {
+			condition := meta.FindStatusCondition(p.Conditions, programmedConditionType)
+			if condition != nil && condition.Reason == "InUseByMCPServerRegistration" &&
+				condition.Message == "HTTPRoute is referenced by at least one MCPServerRegistration" && pruneProgrammed(p) {
+				continue
+			}
+		}
+		out = append(out, *p)
+	}
+
+	refs := acceptedParentRefs(out)
+	relevant := make([]gatewayv1.ParentReference, 0, len(refs))
+	for i := range refs {
+		matches := func(ref gatewayv1.ParentReference) bool {
+			return sameParentRef(ref, refs[i], routeNamespace)
+		}
+		if slices.ContainsFunc(mcpRefs, matches) && !slices.ContainsFunc(relevant, matches) {
+			relevant = append(relevant, refs[i])
+		}
+	}
+
+	retained := out[:0]
+	for i := range out {
+		p := &out[i]
+		if p.ControllerName == MCPControllerName {
+			keep := slices.ContainsFunc(relevant, func(ref gatewayv1.ParentReference) bool {
+				return sameParentRef(ref, p.ParentRef, routeNamespace)
+			})
+			if !keep && pruneProgrammed(p) {
+				continue
+			}
+		}
+		retained = append(retained, *p)
+	}
+	out = retained
+
+	condition := metav1.Condition{
+		Type: programmedConditionType, Status: metav1.ConditionTrue, ObservedGeneration: generation,
+		LastTransitionTime: now, Reason: "InUseByMCPServerRegistration",
+		Message: "HTTPRoute is referenced by at least one MCPServerRegistration",
+	}
+	for i := range relevant {
+		index := slices.IndexFunc(out, func(p gatewayv1.RouteParentStatus) bool {
+			return p.ControllerName == MCPControllerName && sameParentRef(p.ParentRef, relevant[i], routeNamespace)
+		})
+		if index >= 0 {
+			meta.SetStatusCondition(&out[index].Conditions, condition)
+		} else {
+			out = append(out, gatewayv1.RouteParentStatus{
+				ParentRef: relevant[i], ControllerName: MCPControllerName, Conditions: []metav1.Condition{condition},
+			})
+		}
+	}
+	return out
+}
+
+func acceptedParentRefs(parents []gatewayv1.RouteParentStatus) []gatewayv1.ParentReference {
+	refs := make([]gatewayv1.ParentReference, 0, len(parents))
+	for i := range parents {
+		if parents[i].ControllerName != MCPControllerName && meta.IsStatusConditionTrue(parents[i].Conditions, "Accepted") {
+			refs = append(refs, parents[i].ParentRef)
+		}
+	}
+	return refs
+}
+
+func sameParentRef(a, b gatewayv1.ParentReference, routeNamespace string) bool {
+	return defaultedGroup(a.Group) == defaultedGroup(b.Group) &&
+		defaultedKind(a.Kind) == defaultedKind(b.Kind) &&
+		defaultedNamespace(a.Namespace, routeNamespace) == defaultedNamespace(b.Namespace, routeNamespace) &&
+		a.Name == b.Name && ptr.Equal(a.SectionName, b.SectionName) && ptr.Equal(a.Port, b.Port)
+}
+
+func defaultedGroup(g *gatewayv1.Group) gatewayv1.Group {
+	return ptr.Deref(g, gatewayv1.Group(gatewayv1.GroupName))
+}
+
+func defaultedKind(k *gatewayv1.Kind) gatewayv1.Kind {
+	return ptr.Deref(k, gatewayv1.Kind("Gateway"))
+}
+
+func defaultedNamespace(ns *gatewayv1.Namespace, routeNamespace string) gatewayv1.Namespace {
+	return ptr.Deref(ns, gatewayv1.Namespace(routeNamespace))
+}
+
+func pruneProgrammed(e *gatewayv1.RouteParentStatus) (drop bool) {
+	meta.RemoveStatusCondition(&e.Conditions, programmedConditionType)
+	return len(e.Conditions) == 0
+}
+
+func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, mcpRefs []gatewayv1.ParentReference) error {
 	targetRef := mcpsr.Spec.TargetRef
 
 	if targetRef.Kind != "HTTPRoute" {
 		return nil
 	}
 
-	namespace := mcpsr.Namespace
-	if targetRef.Namespace != "" {
-		namespace = targetRef.Namespace
-	}
-
 	httpRoute := &gatewayv1.HTTPRoute{}
 	err := r.Get(ctx, types.NamespacedName{
 		Name:      targetRef.Name,
-		Namespace: namespace,
+		Namespace: targetRouteNamespace(mcpsr),
 	}, httpRoute)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -885,31 +998,78 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 		return fmt.Errorf("failed to get HTTPRoute: %w", err)
 	}
 
-	condition := metav1.Condition{
-		Type:               "Programmed",
-		ObservedGeneration: httpRoute.Generation,
-		LastTransitionTime: metav1.Now(),
+	parents := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), mcpRefs)
+	if equality.Semantic.DeepEqual(httpRoute.Status.Parents, parents) {
+		return nil
+	}
+	httpRoute.Status.Parents = parents
+	return r.Status().Update(ctx, httpRoute)
+}
+
+// setNotReady marks mcpsr not ready and releases its HTTPRoute status
+func (r *MCPReconciler) setNotReady(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration, reason, message string) error {
+	if err := r.updateStatus(ctx, mcpsr, false, reason, message); err != nil {
+		return err
+	}
+	return r.releaseHTTPRouteStatus(ctx, mcpsr)
+}
+
+// releaseHTTPRouteStatus removes MCP's route entries unless another registration still holds the route.
+// leaving held entries alone stops registrations on a shared route from undoing each other's writes.
+func (r *MCPReconciler) releaseHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) error {
+	held, err := r.routeHeldByOtherRegistration(ctx, mcpsr)
+	if err != nil {
+		return err
+	}
+	if held {
+		return nil
+	}
+	return r.updateHTTPRouteStatus(ctx, mcpsr, nil)
+}
+
+func (r *MCPReconciler) routeHeldByOtherRegistration(ctx context.Context, mcpsr *mcpv1.MCPServerRegistration) (bool, error) {
+	registrations := &mcpv1.MCPServerRegistrationList{}
+	indexKey := httpRouteIndexValue(targetRouteNamespace(mcpsr), mcpsr.Spec.TargetRef.Name)
+	if err := r.List(ctx, registrations, client.MatchingFields{HTTPRouteIndex: indexKey}); err != nil {
+		return false, fmt.Errorf("failed to list MCPServerRegistrations targeting HTTPRoute: %w", err)
 	}
 
-	condition.Status = metav1.ConditionTrue
-	condition.Reason = "InUseByMCPServerRegistration"
-	// We don't include the MCP Server in the status because >1 MCPServerRegistration may reference the same HTTPRoute
-	condition.Message = "HTTPRoute is referenced by at least one MCPServerRegistration"
-	var changed bool
-	for i := range httpRoute.Status.Parents {
-		if mcpsr.DeletionTimestamp != nil {
-			changed = meta.RemoveStatusCondition(&httpRoute.Status.Parents[i].Conditions, "Programmed")
-		} else {
-			changed = meta.SetStatusCondition(&httpRoute.Status.Parents[i].Conditions, condition)
+	for i := range registrations.Items {
+		candidate := &registrations.Items[i]
+		if candidate.Name == mcpsr.Name && candidate.Namespace == mcpsr.Namespace {
+			continue
 		}
-		if changed {
-			if err := r.Status().Update(ctx, httpRoute); err != nil {
-				return err
+		// skip cached non-holders; a stale skip self-heals as the route write re-enqueues them
+		if !holdsHTTPRoute(candidate) {
+			continue
+		}
+		// confirm holders uncached so a stale cache can't keep entries after the last holder is gone
+		registration := &mcpv1.MCPServerRegistration{}
+		if err := r.DirectAPIReader.Get(ctx, client.ObjectKeyFromObject(candidate), registration); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
 			}
+			return false, fmt.Errorf("failed to get MCPServerRegistration: %w", err)
+		}
+		if holdsHTTPRoute(registration) {
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
+}
 
+// holdsHTTPRoute reports whether the registration's config is written, which keeps MCP's route entries
+func holdsHTTPRoute(mcpsr *mcpv1.MCPServerRegistration) bool {
+	ready := meta.FindStatusCondition(mcpsr.Status.Conditions, "Ready")
+	return mcpsr.DeletionTimestamp.IsZero() && ready != nil &&
+		(ready.Status == metav1.ConditionTrue || ready.Reason == conditionReasonDisabled)
+}
+
+func targetRouteNamespace(mcpsr *mcpv1.MCPServerRegistration) string {
+	if mcpsr.Spec.TargetRef.Namespace != "" {
+		return mcpsr.Spec.TargetRef.Namespace
+	}
+	return mcpsr.Namespace
 }
 
 func (r *MCPReconciler) updateStatus(

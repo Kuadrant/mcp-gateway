@@ -139,10 +139,15 @@ func (r *MCPGatewayExtensionValidator) ListMCPGatewayExtensionNamespaces(ctx con
 //  2. The HTTPRoute has no sectionName but its hostnames match a listener hostname
 //     on the same port
 func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.Gateway, ext *mcpv1.MCPGatewayExtension) bool {
+	return len(listenerParentRefs(route, gateway, ext)) > 0
+}
+
+// listenerParentRefs returns the HTTPRoute parentRefs that attach to the extension's listener
+func listenerParentRefs(route *gatewayv1.HTTPRoute, gateway *gatewayv1.Gateway, ext *mcpv1.MCPGatewayExtension) []gatewayv1.ParentReference {
 	// find the port for the extension's target listener
 	targetPort, ok := listenerPort(gateway, ext.Spec.TargetRef.SectionName)
 	if !ok {
-		return false
+		return nil
 	}
 
 	// collect all listener hostnames on the same port
@@ -150,6 +155,8 @@ func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.
 	// collect all listener names on the same port
 	samePortNames := listenerNamesByPort(gateway, targetPort)
 
+	var attached []gatewayv1.ParentReference
+parentRefs:
 	for _, parentRef := range route.Spec.ParentRefs {
 		if !parentRefMatchesGateway(parentRef, gateway, route.Namespace) {
 			continue
@@ -157,7 +164,7 @@ func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.
 		if parentRef.SectionName != nil {
 			// explicit sectionName: check if it targets a listener on the same port
 			if samePortNames[string(*parentRef.SectionName)] {
-				return true
+				attached = append(attached, parentRef)
 			}
 			continue
 		}
@@ -165,12 +172,13 @@ func httpRouteAttachesToListener(route *gatewayv1.HTTPRoute, gateway *gatewayv1.
 		for _, routeHostname := range route.Spec.Hostnames {
 			for _, listenerHostname := range samePortHostnames {
 				if hostnameMatches(string(routeHostname), listenerHostname) {
-					return true
+					attached = append(attached, parentRef)
+					continue parentRefs
 				}
 			}
 		}
 	}
-	return false
+	return attached
 }
 
 // listenerPort returns the port for a named listener on the gateway
