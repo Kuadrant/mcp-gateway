@@ -14,11 +14,6 @@ Deployment. This changes the pod template, so the broker-router pods roll once. 
 broker-router restart, 2025-11-25 sessions held in memory are lost unless a `sessionStore` is
 configured, and affected clients must re-initialize.
 
-While the old and new controller pods overlap during the upgrade, both reconcile the
-Deployment for a few seconds. You may see its `metadata.generation` jump by several hundred and
-an extra broker-router pod created and removed before it starts. This stops once the old
-controller pod exits.
-
 ## Migration Steps
 
 No action needed. Existing `PodMonitor`s that select the `http` port and relabel the address to
