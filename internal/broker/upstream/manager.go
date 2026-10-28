@@ -838,7 +838,11 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 // overflow with jitter and hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {
 	man.ttlPolling = true
-	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, man.mcp.PromptsCacheMetadata().TTLMs)
+	promptsTTLMs := 0
+	if man.promptsServer != nil && man.mcp.SupportsPrompts() {
+		promptsTTLMs = man.mcp.PromptsCacheMetadata().TTLMs
+	}
+	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, promptsTTLMs)
 	ttlInterval := DefaultTickerInterval
 	if ttlMs > 0 {
 		if int64(ttlMs) > int64(maxTTLInterval/time.Millisecond) {
