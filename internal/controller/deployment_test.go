@@ -57,9 +57,10 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		modify   func(d *appsv1.Deployment)
-		expected bool
+		name          string
+		modifyDesired func(d *appsv1.Deployment)
+		modify        func(d *appsv1.Deployment)
+		expected      bool
 	}{
 		{
 			name:     "no changes",
@@ -219,12 +220,119 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "server-defaulted managed volume mode does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = ptr.To(int32(420))
+			},
+			expected: false,
+		},
+		{
+			name: "unowned non-default managed volume mode does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = ptr.To(int32(0o400))
+			},
+			expected: false,
+		},
+		{
+			name: "owned managed volume mode change triggers update",
+			modifyDesired: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = ptr.To(int32(0o644))
+			},
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = ptr.To(int32(0o400))
+			},
+			expected: true,
+		},
+		{
+			name: "missing managed secret source triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret = nil
+			},
+			expected: true,
+		},
+		{
+			name: "missing managed volume triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes = nil
+			},
+			expected: true,
+		},
+		{
+			name: "stale managed volume triggers update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes = append(
+					d.Spec.Template.Spec.Volumes,
+					corev1.Volume{
+						Name: "gateway-ca",
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{
+								SecretName: "old-ca",
+							},
+						},
+					},
+				)
+			},
+			expected: true,
+		},
+		{
+			name: "unowned secret optional change does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Optional = ptr.To(true)
+			},
+			expected: false,
+		},
+		{
+			name: "owned secret optional change triggers update",
+			modifyDesired: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Optional = ptr.To(true)
+			},
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Optional = ptr.To(false)
+			},
+			expected: true,
+		},
+		{
+			name: "unowned secret items change does not trigger update",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Items = []corev1.KeyToPath{
+					{
+						Key:  "config",
+						Path: "custom-config",
+					},
+				}
+			},
+			expected: false,
+		},
+		{
+			name: "owned secret items change triggers update",
+			modifyDesired: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Items = []corev1.KeyToPath{
+					{
+						Key:  "config",
+						Path: "desired-config",
+					},
+				}
+			},
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.Volumes[0].Secret.Items = []corev1.KeyToPath{
+					{
+						Key:  "config",
+						Path: "existing-config",
+					},
+				}
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			desired := baseDeployment()
 			existing := baseDeployment()
+			if tt.modifyDesired != nil {
+				tt.modifyDesired(desired)
+			}
 			tt.modify(existing)
 
 			result, reason := deploymentNeedsUpdate(desired, existing)
