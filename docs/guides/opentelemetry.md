@@ -308,6 +308,8 @@ spec:
 
 The relabeling runs after the port filter and replaces `<pod-IP>:8080` with `<pod-IP>:9090`. It only changes where Prometheus scrapes; broker traffic on port `8080` is unaffected.
 
+> **Note:** Prometheus Operator only scrapes a `PodMonitor` that matches the `podMonitorSelector` and `podMonitorNamespaceSelector` of your `Prometheus` resource. Add any labels your installation requires under `metadata.labels`, and make sure the gateway namespace is selected. For example, `kube-prometheus-stack` by default selects only `PodMonitor`s that carry its Helm release label, such as `release: <prometheus-release>`.
+
 On OpenShift, enable monitoring for user-defined projects (`enableUserWorkload: true` in the `cluster-monitoring-config` ConfigMap in `openshift-monitoring`) and create the `PodMonitor` in the gateway namespace. Do not add `additionalScrapeConfigs` to the user workload `Prometheus` resource; the Cluster Monitoring Operator removes it.
 
 ### Useful PromQL queries
