@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -264,7 +265,7 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 	}
 }
 
-var errExtLookup = fmt.Errorf("mcpgatewayextension lookup failed")
+var errLookup = fmt.Errorf("lookup failed")
 
 // failingExtFinder fails MCPGatewayExtension lookups for one gateway
 type failingExtFinder struct {
@@ -274,7 +275,7 @@ type failingExtFinder struct {
 
 func (f *failingExtFinder) FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1.MCPGatewayExtension, error) {
 	if g.Name == f.gateway {
-		return nil, errExtLookup
+		return nil, errLookup
 	}
 	return f.MCPGatewayExtensionFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, g)
 }
@@ -801,13 +802,61 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			waitForMCPServerRegistrationFinalizer(ctx, nn)
 
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
-			Expect(err).To(MatchError(errExtLookup))
+			Expect(err).To(MatchError(errLookup))
 			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
 			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
 			route := &gatewayv1.HTTPRoute{}
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{failingParent, gatewayParent}))
 		})
+
+		// failFirstGet fails the reconciler's first Get of obj's type with errLookup
+		failFirstGet := func(obj client.Object) {
+			apiClient, err := client.NewWithWatch(cfg, client.Options{Scheme: testK8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			failed := false
+			reconciler.Client = interceptor.NewClient(apiClient, interceptor.Funcs{
+				List: func(ctx context.Context, _ client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					return testIndexedClient.List(ctx, list, opts...)
+				},
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+					if !failed && reflect.TypeOf(o) == reflect.TypeOf(obj) {
+						failed = true
+						return errLookup
+					}
+					return c.Get(ctx, key, o, opts...)
+				},
+			})
+		}
+
+		DescribeTable("should remove its parent when a lookup fails", func(failLookup func()) {
+			reconcileRegistration(resourceName, "owner_")
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(HaveLen(2))
+			Expect(route.Status.Parents[1].ControllerName).To(Equal(mcpController))
+			Eventually(func(g Gomega) {
+				cached := &gatewayv1.HTTPRoute{}
+				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			failLookup()
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: "default"}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).To(MatchError(errLookup))
+			registration := &mcpv1.MCPServerRegistration{}
+			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
+			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
+		},
+			Entry("when the HTTPRoute lookup fails", func() { failFirstGet(&gatewayv1.HTTPRoute{}) }),
+			Entry("when the Gateway lookup fails", func() { failFirstGet(&gatewayv1.Gateway{}) }),
+			Entry("when the MCPGatewayExtension lookup fails", func() {
+				reconciler.MCPExtFinderValidator = &failingExtFinder{MCPGatewayExtensionFinderValidator: reconciler.MCPExtFinderValidator, gateway: gatewayName}
+			}),
+		)
 
 		It("should remove its parent when its MCPGatewayExtension is removed", func() {
 			reconcileRegistration(resourceName, "owner_")

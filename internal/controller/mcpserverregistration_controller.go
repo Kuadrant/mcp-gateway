@@ -181,7 +181,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// get the HTTPRoute and gateway(s) this MCPServerRegistration targets
 	targetRoute, err := r.getTargetHTTPRoute(ctx, mcpsr)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -195,7 +195,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 	// find gateways that have accepted the httproute
 	validGateways, err := r.findValidGatewaysForMCPServer(ctx, targetRoute)
 	if err != nil {
-		if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+		if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 			if apierrors.IsConflict(err) {
 				// don't log these as they are just noise
 				return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
@@ -228,7 +228,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		mcpGatewayExtensions, err := r.MCPExtFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, vg)
 		if err != nil {
 			logger.Error(err, "failed to find valid mcpgatewayextension ", "gateway", vg, "mcpserverregistration", mcpsr)
-			if err := r.updateStatus(ctx, mcpsr, false, conditionReasonNotReady, err.Error()); err != nil {
+			if err := r.setNotReady(ctx, mcpsr, conditionReasonNotReady, err.Error()); err != nil {
 				if apierrors.IsConflict(err) {
 					// don't log these as they are just noise
 					return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
