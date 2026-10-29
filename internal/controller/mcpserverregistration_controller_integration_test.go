@@ -264,6 +264,21 @@ func newMCPServerReconciler(configWriter *mockMCPServerConfigReaderWriter) *MCPR
 	}
 }
 
+var errExtLookup = fmt.Errorf("mcpgatewayextension lookup failed")
+
+// failingExtFinder fails MCPGatewayExtension lookups for one gateway
+type failingExtFinder struct {
+	MCPGatewayExtensionFinderValidator
+	gateway string
+}
+
+func (f *failingExtFinder) FindValidMCPGatewayExtsForGateway(ctx context.Context, g *gatewayv1.Gateway) ([]*mcpv1.MCPGatewayExtension, error) {
+	if g.Name == f.gateway {
+		return nil, errExtLookup
+	}
+	return f.MCPGatewayExtensionFinderValidator.FindValidMCPGatewayExtsForGateway(ctx, g)
+}
+
 // waitForMCPServerRegistrationCacheSync waits for cache to see the resource
 func waitForMCPServerRegistrationCacheSync(ctx context.Context, nn types.NamespacedName) {
 	Eventually(func(g Gomega) {
@@ -739,31 +754,59 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{gatewayParent}))
 		})
 
-		It("should become Ready when a gateway without an MCPGatewayExtension is listed first", func() {
-			const plainGatewayName = "test-status-owner-plain-gw"
-			Expect(testK8sClient.Create(ctx, createTestGateway(plainGatewayName, "default"))).To(Succeed())
-			DeferCleanup(deleteTestGateway, ctx, plainGatewayName, "default")
+		// prependAcceptedGateway creates a gateway and lists it as the route's first accepted parent
+		prependAcceptedGateway := func(name string) gatewayv1.RouteParentStatus {
+			Expect(testK8sClient.Create(ctx, createTestGateway(name, "default"))).To(Succeed())
+			DeferCleanup(deleteTestGateway, ctx, name, "default")
 
 			route := &gatewayv1.HTTPRoute{}
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
-			plainParent := *gatewayParent.DeepCopy()
-			plainParent.ParentRef.Name = plainGatewayName
-			route.Spec.ParentRefs = append([]gatewayv1.ParentReference{plainParent.ParentRef}, route.Spec.ParentRefs...)
+			parent := *gatewayParent.DeepCopy()
+			parent.ParentRef.Name = gatewayv1.ObjectName(name)
+			route.Spec.ParentRefs = append([]gatewayv1.ParentReference{parent.ParentRef}, route.Spec.ParentRefs...)
 			Expect(testK8sClient.Update(ctx, route)).To(Succeed())
-			Expect(setHTTPRouteParentStatuses(ctx, route, []gatewayv1.RouteParentStatus{plainParent, gatewayParent})).To(Succeed())
+			Expect(setHTTPRouteParentStatuses(ctx, route, []gatewayv1.RouteParentStatus{parent, gatewayParent})).To(Succeed())
 			Eventually(func(g Gomega) {
 				cached := &gatewayv1.HTTPRoute{}
 				g.Expect(testIndexedClient.Get(ctx, routeNN, cached)).To(Succeed())
 				g.Expect(cached.ResourceVersion).To(Equal(route.ResourceVersion))
 			}, testTimeout, testRetryInterval).Should(Succeed())
+			return parent
+		}
+
+		It("should become Ready when a gateway without an MCPGatewayExtension is listed first", func() {
+			plainParent := prependAcceptedGateway("test-status-owner-plain-gw")
 
 			reconcileRegistration(resourceName, "owner_")
 
+			route := &gatewayv1.HTTPRoute{}
 			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
 			Expect(route.Status.Parents).To(HaveLen(3))
 			Expect(route.Status.Parents[:2]).To(Equal([]gatewayv1.RouteParentStatus{plainParent, gatewayParent}))
 			Expect(route.Status.Parents[2].ControllerName).To(Equal(mcpController))
 			Expect(route.Status.Parents[2].ParentRef).To(Equal(gatewayParent.ParentRef))
+		})
+
+		It("should not become Ready when the MCPGatewayExtension lookup fails for one gateway", func() {
+			const failingGatewayName = "test-status-owner-failing-gw"
+			failingParent := prependAcceptedGateway(failingGatewayName)
+			reconciler.MCPExtFinderValidator = &failingExtFinder{MCPGatewayExtensionFinderValidator: reconciler.MCPExtFinderValidator, gateway: failingGatewayName}
+
+			registration := createTestMCPServerRegistration(resourceName, "default", httpRouteName, "owner_")
+			Expect(testK8sClient.Create(ctx, registration)).To(Succeed())
+			nn := client.ObjectKeyFromObject(registration)
+			waitForMCPServerRegistrationCacheSync(ctx, nn)
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			waitForMCPServerRegistrationFinalizer(ctx, nn)
+
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).To(MatchError(errExtLookup))
+			Expect(testK8sClient.Get(ctx, nn, registration)).To(Succeed())
+			Expect(meta.IsStatusConditionFalse(registration.Status.Conditions, "Ready")).To(BeTrue())
+			route := &gatewayv1.HTTPRoute{}
+			Expect(testK8sClient.Get(ctx, routeNN, route)).To(Succeed())
+			Expect(route.Status.Parents).To(Equal([]gatewayv1.RouteParentStatus{failingParent, gatewayParent}))
 		})
 
 		It("should remove its parent when its MCPGatewayExtension is removed", func() {

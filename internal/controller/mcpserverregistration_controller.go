@@ -235,6 +235,7 @@ func (r *MCPReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 				}
 				return ctrl.Result{}, fmt.Errorf("reconcile failed: status update failed %w", err)
 			}
+			return ctrl.Result{}, fmt.Errorf("reconcile failed %w", err)
 		}
 		if len(mcpGatewayExtensions) == 0 {
 			// other gateways that accepted the route may still have an extension
