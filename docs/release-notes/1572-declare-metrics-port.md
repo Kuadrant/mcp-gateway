@@ -9,10 +9,12 @@ without relabeling. The broker-router `Service` is unchanged and does not expose
 
 ## Who is affected
 
-All installations. On upgrade, the controller adds the port to the existing broker-router
-Deployment. This changes the pod template, so the broker-router pods roll once. As with any
-broker-router restart, 2025-11-25 sessions held in memory are lost unless a `sessionStore` is
-configured, and affected clients must re-initialize.
+All installations. On upgrade, the controller adds the port to the existing controller-generated
+broker-router Deployment (`mcp-gateway`). This changes the pod template, so those pods roll once.
+As with any broker-router restart, 2025-11-25 sessions held in memory are lost unless a
+`sessionStore` is configured, and affected clients must re-initialize. The static
+`mcp-broker-router` Deployment in `config/install` already declares the `metrics` port and does
+not roll.
 
 ## Migration Steps
 
