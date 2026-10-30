@@ -537,6 +537,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingContainer.ReadinessProbe = desiredContainer.ReadinessProbe
 		existingDeployment.Spec.Template.Spec.Containers[0] = existingContainer
 		existingDeployment.Spec.Template.Spec.Volumes = mergeVolumes(deployment.Spec.Template.Spec.Volumes, existingDeployment.Spec.Template.Spec.Volumes)
+		existingDeployment.Spec.Template.Spec.AutomountServiceAccountToken = deployment.Spec.Template.Spec.AutomountServiceAccountToken
 		if err := r.Update(ctx, existingDeployment); err != nil {
 			return false, fmt.Errorf("failed to update deployment: %w", err)
 		}
@@ -643,6 +644,10 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 
 	if desiredContainer.Image != existingContainer.Image {
 		return true, fmt.Sprintf("image changed: %q -> %q", existingContainer.Image, desiredContainer.Image)
+	}
+	if !equality.Semantic.DeepEqual(desired.Spec.Template.Spec.AutomountServiceAccountToken, existing.Spec.Template.Spec.AutomountServiceAccountToken) {
+		return true, fmt.Sprintf("automountServiceAccountToken changed: %v -> %v",
+			existing.Spec.Template.Spec.AutomountServiceAccountToken, desired.Spec.Template.Spec.AutomountServiceAccountToken)
 	}
 	// only compare flags the controller manages; user-added flags are preserved
 	desiredCmd := filterManagedFlags(desiredContainer.Command)
