@@ -1,0 +1,33 @@
+---
+# Attach the AgentCert check to MCP traffic — opt-in, per selector.
+#
+# action: CUSTOM hands the check off to the `agentcert-tag` extension provider
+# defined in extension-provider.yaml. This runs ALONGSIDE the gateway's
+# existing Kuadrant AuthPolicy (Authorino) — it does not replace it, and the
+# gateway itself is unchanged.
+#
+# Shadow-mode default: the TAG sidecar runs with TAG_MODE=shadow, so it always
+# allows and just surfaces x-agentcert-* verdict headers upstream. This policy
+# therefore blocks nothing today; it only wires the observation path. To start
+# enforcing, set TAG_MODE=enforce on the sidecar (sidecar.yaml) — no change
+# here is required.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: agentcert-ext-authz
+  namespace: mcp-system
+spec:
+  # scope to the MCP gateway workload. adjust the label to match your install
+  # (see `kubectl -n mcp-system get pods --show-labels`).
+  selector:
+    matchLabels:
+      app: mcp-gateway
+  action: CUSTOM
+  provider:
+    name: agentcert-tag   # must match the extensionProviders name in mesh config
+  rules:
+    # only agent-facing requests that carry a cert. everything else is
+    # untouched by this policy.
+    - when:
+        - key: request.headers[x-agent-cert]
+          notValues: [""]

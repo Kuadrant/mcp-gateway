@@ -1,0 +1,44 @@
+---
+# Register the TAG sidecar as an Istio ext_authz extension provider.
+#
+# This is a patch to the mesh config (ConfigMap `istio` in `istio-system`),
+# NOT a gateway code change. It just tells Istio "there is an external
+# authorizer called agentcert-tag at this address". Nothing is enforced until
+# an AuthorizationPolicy (authorizationpolicy.yaml) references it by name.
+#
+# Apply the mesh-config block however your install manages istio config, e.g.:
+#   kubectl -n istio-system get configmap istio -o yaml   # inspect current mesh
+# then merge the `extensionProviders` entry below into `data.mesh`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |-
+    extensionProviders:
+    - name: agentcert-tag
+      envoyExtAuthzHttp:
+        service: agentcert-tag.mcp-system.svc.cluster.local
+        port: "8080"
+        pathPrefix: /ext_authz
+        # cert the caller presents + the claimed agent id → forwarded to TAG
+        includeRequestHeadersInCheck:
+        - x-agent-cert
+        - x-agent-cert-carriage
+        - x-agent-cert-proof
+        - x-agent-id
+        - x-agent-cert-audience
+        # verdict TAG returns → surfaced to the upstream MCP server (+ logs).
+        # in shadow mode TAG always allows, so these ride along on every call.
+        headersToUpstreamOnAllow:
+        - x-agentcert-verdict
+        - x-agentcert-trustscore
+        - x-agentcert-tier
+        - x-agentcert-decision
+        - x-agentcert-shadow-would
+        headersToDownstreamOnDeny:
+        - content-type
+        # fail-open while you're in shadow: if TAG is unreachable, don't block.
+        # tighten this (remove / set false) when you move to enforce.
+        failOpen: true

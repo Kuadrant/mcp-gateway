@@ -1,0 +1,56 @@
+---
+# AgentCert TAG sidecar — external verifier, runs OUTSIDE the gateway.
+#
+# It verifies a presented AgentCert (signature, revocation, TrustScore) and
+# returns a verdict. It speaks the Envoy ext_authz check API directly on
+# /ext_authz, so Istio can call it as a CUSTOM external authorizer with no
+# code in the gateway. Image is public (MIT): github.com/pdxlab/agentcert-tag.
+#
+# TAG_MODE=shadow (default): returns 200 on everything, just logs + surfaces
+# the verdict via x-agentcert-* response headers. Flip to "enforce" to deny.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentcert-tag
+  namespace: mcp-system
+  labels:
+    app: agentcert-tag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentcert-tag
+  template:
+    metadata:
+      labels:
+        app: agentcert-tag
+    spec:
+      containers:
+        - name: sidecar
+          image: ghcr.io/pdxlab/agentcert-tag/sidecar:latest
+          ports:
+            - containerPort: 8080
+          env:
+            # shadow is the default — observe + log, never block. Flip to
+            # "enforce" only after you've reviewed the shadow verdicts.
+            - name: TAG_MODE
+              value: "shadow"
+            # - name: TAG_MIN_SCORE   # optional enforce floor, e.g. "600"
+            #   value: "600"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentcert-tag
+  namespace: mcp-system
+spec:
+  selector:
+    app: agentcert-tag
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
