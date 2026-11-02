@@ -150,6 +150,49 @@ func TestRouter202607_ToolCallWithPrefix(t *testing.T) {
 	require.NotContains(t, string(decision.BodyMutation), `"name":"s_mytool"`)
 }
 
+// TestRouter202607_ToolCallPreservesParams verifies the prefix rewrite keeps
+// the 2026-07-28 _meta block and any other params key in the upstream body.
+func TestRouter202607_ToolCallPreservesParams(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "prefixed",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+	router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "prefixed"}, map[string]string{})
+
+	meta := `{
+		"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+		"io.modelcontextprotocol/clientInfo":{"name":"test","version":"0.0.1"},
+		"io.modelcontextprotocol/clientCapabilities":{}
+	}`
+	var parsed MCPRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+		"name":"s_mytool",
+		"arguments":{"key":"val"},
+		"_meta":`+meta+`,
+		"x-custom":{"a":1}
+	}}`), &parsed))
+
+	decision := router.RouteRequest(context.Background(), &Request{
+		MCPMethod: MethodToolCall,
+		MCPName:   "s_mytool",
+		RequestID: "req-1",
+		Parsed:    &parsed,
+	})
+	require.Nil(t, decision.Error)
+
+	params := upstreamParams(t, decision.BodyMutation)
+	require.Len(t, params, 4)
+	require.JSONEq(t, `"mytool"`, string(params["name"]))
+	require.JSONEq(t, `{"key":"val"}`, string(params["arguments"]))
+	require.JSONEq(t, meta, string(params["_meta"]))
+	require.JSONEq(t, `{"a":1}`, string(params["x-custom"]))
+}
+
 func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{
