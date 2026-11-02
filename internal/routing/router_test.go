@@ -713,6 +713,54 @@ func TestRouteRequest_PrefixFallback(t *testing.T) {
 	require.Contains(t, decision.UnsetHeaders, "x-mcp-authorized")
 }
 
+// upstreamParams decodes the params object of a rewritten upstream body,
+// keeping each value as raw JSON so tests can compare it byte-for-byte.
+func upstreamParams(t *testing.T, body []byte) map[string]json.RawMessage {
+	t.Helper()
+	var msg struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	require.NoError(t, json.Unmarshal(body, &msg))
+	require.NotEmpty(t, msg.Params)
+	return msg.Params
+}
+
+// TestRouter202511_ToolCallPreservesParams verifies the re-marshaled upstream
+// body keeps every params key, not only the ones the router reads.
+func TestRouter202511_ToolCallPreservesParams(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+	router, validToken := newTestRouter(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+	_, err := router.SessionCache.AddSession(context.Background(), validToken, "dummy", "upstream-session-123", 0)
+	require.NoError(t, err)
+
+	var req MCPRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+		"name":"s_mytool",
+		"arguments":{"city":"Dublin"},
+		"_meta":{"progressToken":"tok-1"},
+		"x-custom":{"a":1}
+	}}`), &req))
+	req.Headers = map[string]string{"mcp-session-id": validToken}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: &req})
+	require.Nil(t, decision.Error)
+
+	params := upstreamParams(t, decision.BodyMutation)
+	require.Len(t, params, 4)
+	require.JSONEq(t, `"mytool"`, string(params["name"]))
+	require.JSONEq(t, `{"city":"Dublin"}`, string(params["arguments"]))
+	require.JSONEq(t, `{"progressToken":"tok-1"}`, string(params["_meta"]))
+	require.JSONEq(t, `{"a":1}`, string(params["x-custom"]))
+}
+
 func TestMCPRequest_ReWriteToolName(t *testing.T) {
 	req := &MCPRequest{
 		Params: map[string]any{
