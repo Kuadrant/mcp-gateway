@@ -97,6 +97,68 @@ type MCPRequest struct {
 	GuardrailsConfigIDs []string          `json:"-"` // per-server IDs for response guardrails check
 }
 
+// Params is a json-rpc params object. Name and URI are set only when the key
+// holds a non-empty string; arguments and capabilities stay raw. Every other
+// key is kept as received in Extra so re-marshaling loses nothing.
+type Params struct {
+	Name         string
+	URI          string
+	Arguments    json.RawMessage
+	Capabilities json.RawMessage
+	Extra        map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes params shallowly; values other than name and uri stay as raw bytes
+func (p *Params) UnmarshalJSON(data []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	p.Name = takeString(m, "name")
+	p.URI = takeString(m, "uri")
+	p.Arguments = m["arguments"]
+	p.Capabilities = m["capabilities"]
+	delete(m, "arguments")
+	delete(m, "capabilities")
+	p.Extra = m
+	return nil
+}
+
+// MarshalJSON merges Extra with the typed fields that are set
+func (p Params) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, len(p.Extra)+4)
+	for k, v := range p.Extra {
+		m[k] = v
+	}
+	if p.Name != "" {
+		m["name"] = p.Name
+	}
+	if p.URI != "" {
+		m["uri"] = p.URI
+	}
+	if p.Arguments != nil {
+		m["arguments"] = p.Arguments
+	}
+	if p.Capabilities != nil {
+		m["capabilities"] = p.Capabilities
+	}
+	return json.Marshal(m)
+}
+
+// takeString removes and returns m[key] when it is a non-empty json string
+func takeString(m map[string]json.RawMessage, key string) string {
+	raw, ok := m[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil || s == "" {
+		return ""
+	}
+	delete(m, key)
+	return s
+}
+
 // GetSingleHeaderValue returns header value by key
 func (mr *MCPRequest) GetSingleHeaderValue(key string) string {
 	return mr.Headers[key]
