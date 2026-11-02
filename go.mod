@@ -4,7 +4,7 @@ module github.com/Kuadrant/mcp-gateway
 // (which use their own toolchain image) are never blocked. CI and builder images
 // float to the latest patch of this minor. Bump only when moving to a new minor,
 // never for patch releases.
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
@@ -50,7 +50,7 @@ require (
 	k8s.io/client-go v0.37.2
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	sigs.k8s.io/controller-runtime v0.25.2
-	sigs.k8s.io/gateway-api v1.6.3
+	sigs.k8s.io/gateway-api v1.7.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -115,11 +115,11 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
