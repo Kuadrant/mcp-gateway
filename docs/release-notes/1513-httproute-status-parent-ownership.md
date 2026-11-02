@@ -15,6 +15,11 @@ deletions getting stuck after Kuadrant policies are removed.
   or stops being ready, for example when its MCPGatewayExtension is removed or its
   prefix conflicts. Previously it stayed until deletion. It is kept while another
   registration on the same HTTPRoute is still Ready or Disabled.
+- A gateway without an MCPGatewayExtension no longer makes a registration NotReady
+  when its HTTPRoute is also accepted by a gateway that has one. That gateway is
+  skipped and the registration becomes Ready through the MCPGatewayExtension whose
+  listener the route attaches to. Previously the registration stayed NotReady with
+  `no valid mcpgatewayextensions configured`.
 
 ## Migration
 
@@ -30,3 +35,7 @@ No manifest changes are required.
 - On a shared route, MCP's `Programmed` condition stays while any registration on
   it is Ready or Disabled. It is removed once the last of them is deleted or stops
   being ready.
+- Registrations on HTTPRoutes accepted by both an MCP gateway and a gateway without
+  an MCPGatewayExtension can become Ready after upgrade, and their tools are then
+  federated by the MCP gateway. Before upgrading, set `spec.state: Disabled` on, or
+  delete, any of these registrations that should stay unfederated.
