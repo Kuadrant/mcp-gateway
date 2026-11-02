@@ -831,18 +831,18 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 	}
 }
 
-// adjustTickerFromTTL sets the poll interval from the shortest positive TTLMs
-// hint across the upstream's tools/list and prompts/list responses. only
-// applied for 2026 upstreams where polling replaces push notifications.
-// clamped between a safe maximum and DefaultTickerInterval minimum to avoid
-// overflow with jitter and hot-looping on low TTLs.
+// adjustTickerFromTTL sets the poll interval from the shortest TTLMs hint
+// across the upstream's tools/list and, when served, prompts/list responses.
+// a TTL of 0 means immediately stale and wins. only applied for 2026 upstreams
+// where polling replaces push notifications. clamped between a safe maximum
+// and DefaultTickerInterval minimum to avoid overflow with jitter and
+// hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {
 	man.ttlPolling = true
-	promptsTTLMs := 0
+	ttlMs := man.mcp.ToolsCacheMetadata().TTLMs
 	if man.promptsServer != nil && man.mcp.SupportsPrompts() {
-		promptsTTLMs = man.mcp.PromptsCacheMetadata().TTLMs
+		ttlMs = minTTLMs(ttlMs, man.mcp.PromptsCacheMetadata().TTLMs)
 	}
-	ttlMs := shortestPositiveTTLMs(man.mcp.ToolsCacheMetadata().TTLMs, promptsTTLMs)
 	ttlInterval := DefaultTickerInterval
 	if ttlMs > 0 {
 		if int64(ttlMs) > int64(maxTTLInterval/time.Millisecond) {
@@ -855,17 +855,6 @@ func (man *MCPManager) adjustTickerFromTTL() {
 		man.logger.Info("adjusting poll interval from upstream TTL", "upstream", man.mcp.ID(), "ttlMs", ttlMs, "interval", ttlInterval)
 		man.tickerInterval = ttlInterval
 	}
-}
-
-// shortestPositiveTTLMs returns the smallest positive TTL, or 0 if none is positive.
-func shortestPositiveTTLMs(ttls ...int) int {
-	shortest := 0
-	for _, ttl := range ttls {
-		if ttl > 0 && (shortest == 0 || ttl < shortest) {
-			shortest = ttl
-		}
-	}
-	return shortest
 }
 
 func (man *MCPManager) recordBackendError(span trace.Span, err error) {

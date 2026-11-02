@@ -1997,7 +1997,7 @@ func TestMCPManager_adjustTickerFromTTL(t *testing.T) {
 			wantAdjusted:    false,
 		},
 		{
-			name:            "2026 upstream with TTL zero is ignored",
+			name:            "2026 upstream with TTL zero is immediately stale",
 			protocolVersion: "2026-07-28",
 			ttlMs:           0,
 			wantInterval:    DefaultTickerInterval,
@@ -2067,21 +2067,24 @@ func TestMCPManager_SessionlessUpstreamKeepsConfiguredTicker(t *testing.T) {
 	assert.Equal(t, configured, manager.tickerInterval, "ticker interval")
 }
 
-// the 2026 poll interval follows the shortest positive TTL across tools and prompts.
+// the 2026 poll interval follows the shortest TTL across tools and served
+// prompts; a TTL of 0 means immediately stale and wins.
 func TestMCPManager_adjustTickerFromTTL_ToolsAndPrompts(t *testing.T) {
 	tests := []struct {
-		name         string
-		toolsTTLMs   int
-		promptsTTLMs int
-		wantInterval time.Duration
+		name             string
+		toolsTTLMs       int
+		promptsTTLMs     int
+		promptsNotServed bool
+		wantInterval     time.Duration
 	}{
 		{name: "prompt TTL shorter than tool TTL", toolsTTLMs: 3600000, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
 		{name: "tool TTL shorter than prompt TTL", toolsTTLMs: 300000, promptsTTLMs: 3600000, wantInterval: 5 * time.Minute},
-		{name: "only prompts have positive TTL", toolsTTLMs: 0, promptsTTLMs: 300000, wantInterval: 5 * time.Minute},
-		{name: "only tools have positive TTL", toolsTTLMs: 300000, promptsTTLMs: 0, wantInterval: 5 * time.Minute},
-		{name: "negative prompt TTL ignored", toolsTTLMs: 300000, promptsTTLMs: -1, wantInterval: 5 * time.Minute},
-		{name: "neither positive falls back to default", toolsTTLMs: 0, promptsTTLMs: 0, wantInterval: DefaultTickerInterval},
+		{name: "zero tool TTL wins over long prompt TTL", toolsTTLMs: 0, promptsTTLMs: 3600000, wantInterval: DefaultTickerInterval},
+		{name: "zero prompt TTL wins over long tool TTL", toolsTTLMs: 3600000, promptsTTLMs: 0, wantInterval: DefaultTickerInterval},
+		{name: "negative prompt TTL falls back to default", toolsTTLMs: 300000, promptsTTLMs: -1, wantInterval: DefaultTickerInterval},
+		{name: "both zero falls back to default", toolsTTLMs: 0, promptsTTLMs: 0, wantInterval: DefaultTickerInterval},
 		{name: "short prompt TTL clamped to default", toolsTTLMs: 3600000, promptsTTLMs: 10000, wantInterval: DefaultTickerInterval},
+		{name: "prompt TTL ignored when prompts not served", toolsTTLMs: 3600000, promptsTTLMs: 0, promptsNotServed: true, wantInterval: time.Hour},
 	}
 
 	for _, tt := range tests {
@@ -2093,7 +2096,7 @@ func TestMCPManager_adjustTickerFromTTL_ToolsAndPrompts(t *testing.T) {
 			mock.promptsCacheMeta = CacheMetadata{TTLMs: tt.promptsTTLMs}
 			mock.tools = []mcp.Tool{validTool("tool1")}
 			mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
-			mock.hasPromptsCap = true
+			mock.hasPromptsCap = !tt.promptsNotServed
 			manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, 0, InvalidToolPolicyFilterOut)
 			require.NoError(t, err)
 
@@ -2110,6 +2113,7 @@ func TestMCPManager_manage_DowngradeRestoresConfiguredInterval(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
 	mock.protocolVersion = "2026-07-28"
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 3600000}
 	mock.promptsCacheMeta = CacheMetadata{TTLMs: 3600000}
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.prompts = []mcp.Prompt{{Name: "prompt1"}}
@@ -2135,20 +2139,20 @@ func TestMCPManager_manage_IgnoresPromptTTLWhenPromptSupportDisappears(t *testin
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	mock := newMockMCP("test-server", "test_")
 	mock.protocolVersion = "2026-07-28"
-	mock.toolsCacheMeta = CacheMetadata{}
-	mock.promptsCacheMeta = CacheMetadata{TTLMs: 3600000}
+	mock.toolsCacheMeta = CacheMetadata{TTLMs: 3600000}
+	mock.promptsCacheMeta = CacheMetadata{TTLMs: 0}
 	mock.tools = []mcp.Tool{validTool("tool1")}
 	mock.hasPromptsCap = true
 	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), newMockPromptsAdderDeleter(), logger, 0, InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
 	manager.manage(context.Background(), eventTypeTimer)
-	require.Equal(t, time.Hour, manager.tickerInterval)
+	require.Equal(t, DefaultTickerInterval, manager.tickerInterval)
 
 	mock.hasPromptsCap = false
 	manager.manage(context.Background(), eventTypeTimer)
 
-	assert.Equal(t, DefaultTickerInterval, manager.tickerInterval)
+	assert.Equal(t, time.Hour, manager.tickerInterval)
 }
 
 type recordingTicker struct {
