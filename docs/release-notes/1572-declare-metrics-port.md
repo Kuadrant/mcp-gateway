@@ -13,8 +13,8 @@ All installations. On upgrade, the controller adds the port to the existing cont
 broker-router Deployment (`mcp-gateway`). This changes the pod template, so those pods roll once.
 As with any broker-router restart, 2025-11-25 sessions held in memory are lost unless a
 `sessionStore` is configured, and affected clients must re-initialize. The static
-`mcp-broker-router` Deployment in `config/install` already declares the `metrics` port and does
-not roll.
+`mcp-broker-router` Deployment in `config/mcp-system/deployment-broker.yaml`, included by
+`config/install`, already declares the `metrics` port and does not roll.
 
 ## Migration Steps
 
@@ -35,3 +35,7 @@ spec:
     - port: metrics
       path: /metrics
 ```
+
+This `PodMonitor` selects only the controller-generated broker-router pods. The static
+`mcp-broker-router` pods are labeled `app: mcp-broker-router` and `component: broker-router`, so
+it does not select them.
