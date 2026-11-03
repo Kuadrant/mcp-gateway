@@ -192,24 +192,22 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 }
 
 func TestToolCallArguments(t *testing.T) {
-	t.Run("marshals params.arguments", func(t *testing.T) {
-		raw, err := toolCallArguments(map[string]any{"name": "mytool", "arguments": map[string]any{"q": 1}})
-		require.NoError(t, err)
-		var got map[string]any
-		require.NoError(t, json.Unmarshal(raw, &got))
-		require.Equal(t, float64(1), got["q"])
+	t.Run("returns raw arguments unchanged", func(t *testing.T) {
+		args := `{"q":1,"id":12345678901234567890}`
+		raw := toolCallArguments(&Params{Name: "mytool", Arguments: json.RawMessage(args)})
+		require.Equal(t, args, string(raw))
 	})
 
 	t.Run("missing arguments yields empty object", func(t *testing.T) {
-		raw, err := toolCallArguments(map[string]any{"name": "mytool"})
-		require.NoError(t, err)
-		require.Equal(t, `{}`, string(raw))
+		require.Equal(t, `{}`, string(toolCallArguments(&Params{Name: "mytool"})))
+	})
+
+	t.Run("null arguments yields empty object", func(t *testing.T) {
+		require.Equal(t, `{}`, string(toolCallArguments(&Params{Name: "mytool", Arguments: json.RawMessage(`null`)})))
 	})
 
 	t.Run("nil params yields empty object", func(t *testing.T) {
-		raw, err := toolCallArguments(nil)
-		require.NoError(t, err)
-		require.Equal(t, `{}`, string(raw))
+		require.Equal(t, `{}`, string(toolCallArguments(nil)))
 	})
 }
 
@@ -248,17 +246,22 @@ func TestGuardrailsArguments(t *testing.T) {
 		require.Nil(t, blocked)
 	})
 
-	t.Run("arguments that cannot marshal returns 400", func(t *testing.T) {
-		badReq := &MCPRequest{
+	t.Run("invalid JSON modification from guardrails returns 400", func(t *testing.T) {
+		req := &MCPRequest{
 			Method: MethodToolCall,
-			Params: map[string]any{"name": "mytool", "arguments": make(chan int)},
+			Params: &Params{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
 		}
-		gc := &guardrailsCheck{buildError: BuildSSEJSONRPCError}
-		modified, blocked := gc.checkToolCall(context.Background(), badReq, "mytool")
+		gc := &guardrailsCheck{
+			checker:    &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"q":`}},
+			serverIDs:  []string{"svr-1"},
+			buildError: BuildSSEJSONRPCError,
+		}
+		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
 		require.False(t, modified)
 		require.NotNil(t, blocked)
 		require.Equal(t, 400, blocked.Error.StatusCode)
 		require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
+		require.Equal(t, `{"q":"secret"}`, string(req.Params.Arguments))
 	})
 }
 
@@ -272,12 +275,12 @@ func TestCheckToolCall_Modified(t *testing.T) {
 	req := &MCPRequest{
 		ID:     1,
 		Method: MethodToolCall,
-		Params: map[string]any{"name": "mytool", "arguments": map[string]any{"q": "secret"}},
+		Params: &Params{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
 	}
 	modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
 	require.Nil(t, blocked)
 	require.True(t, modified)
-	require.Equal(t, map[string]any{"q": "redacted"}, req.Params["arguments"])
+	require.Equal(t, `{"q":"redacted"}`, string(req.Params.Arguments))
 }
 
 func TestNewGuardrailsCheck_Options(t *testing.T) {
