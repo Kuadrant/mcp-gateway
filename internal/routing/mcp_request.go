@@ -1,11 +1,14 @@
 package routing
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 )
@@ -124,36 +127,90 @@ func (p *Params) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON merges Extra with the typed fields that are set
+// MarshalJSON merges Extra with the typed fields that are set, typed fields
+// winning. Keys are sorted to match encoding/json map output.
 func (p Params) MarshalJSON() ([]byte, error) {
-	m := make(map[string]any, len(p.Extra)+4)
+	var arr [8]string
+	keys := arr[:0]
+	n := 64 + len(p.Name) + len(p.URI) + len(p.Arguments) + len(p.Capabilities)
 	for k, v := range p.Extra {
-		m[k] = v
+		keys = append(keys, k)
+		n += len(k) + len(v) + 4
 	}
-	if p.Name != "" {
-		m["name"] = p.Name
+	for _, k := range [...]string{"name", "uri", "arguments", "capabilities"} {
+		if _, dup := p.Extra[k]; !dup && p.typedSet(k) {
+			keys = append(keys, k)
+		}
 	}
-	if p.URI != "" {
-		m["uri"] = p.URI
+	slices.Sort(keys)
+
+	b := make([]byte, 0, n)
+	b = append(b, '{')
+	for i, k := range keys {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendString(b, k)
+		b = append(b, ':')
+		switch {
+		case !p.typedSet(k):
+			b = append(b, p.Extra[k]...)
+		case k == "name":
+			b = appendString(b, p.Name)
+		case k == "uri":
+			b = appendString(b, p.URI)
+		case k == "arguments":
+			b = append(b, p.Arguments...)
+		default:
+			b = append(b, p.Capabilities...)
+		}
 	}
-	if p.Arguments != nil {
-		m["arguments"] = p.Arguments
+	return append(b, '}'), nil
+}
+
+// typedSet reports whether key k is held by a typed field that is set
+func (p *Params) typedSet(k string) bool {
+	switch k {
+	case "name":
+		return p.Name != ""
+	case "uri":
+		return p.URI != ""
+	case "arguments":
+		return p.Arguments != nil
+	case "capabilities":
+		return p.Capabilities != nil
 	}
-	if p.Capabilities != nil {
-		m["capabilities"] = p.Capabilities
+	return false
+}
+
+// appendString appends s as a json string; non-ascii and escapes go through encoding/json
+func appendString(b []byte, s string) []byte {
+	for i := range len(s) {
+		if c := s[i]; c < 0x20 || c == '"' || c == '\\' || c >= utf8.RuneSelf {
+			q, _ := json.Marshal(s)
+			return append(b, q...)
+		}
 	}
-	return json.Marshal(m)
+	b = append(b, '"')
+	b = append(b, s...)
+	return append(b, '"')
 }
 
 // takeString removes and returns m[key] when it is a non-empty json string
 func takeString(m map[string]json.RawMessage, key string) string {
 	raw, ok := m[key]
-	if !ok {
+	if !ok || len(raw) < 3 || raw[0] != '"' {
 		return ""
 	}
 	var s string
-	if json.Unmarshal(raw, &s) != nil || s == "" {
-		return ""
+	if bytes.IndexByte(raw, '\\') < 0 && utf8.Valid(raw) {
+		s = string(raw[1 : len(raw)-1]) // nothing to unescape
+	} else {
+		var u string // separate var: &u escapes to the heap, s stays on the stack
+		if json.Unmarshal(raw, &u) != nil {
+			return ""
+		}
+		s = u
 	}
 	delete(m, key)
 	return s
