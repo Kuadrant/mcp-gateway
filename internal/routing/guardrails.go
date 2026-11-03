@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -95,8 +96,10 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 }
 
 // checkToolCall extracts tool arguments, runs the guardrails check, and
-// applies any modification onto mcpReq in place. modified is true when
-// arguments were rewritten (callers that buffer the body must re-marshal).
+// applies any modification onto mcpReq in place. When guardrails is
+// configured the arguments are first canonicalized and the canonical form is
+// what gets checked and forwarded. modified is true when arguments were
+// rewritten (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
 	var requestID any
 	var params *Params
@@ -104,12 +107,21 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 		requestID = mcpReq.ID
 		params = mcpReq.Params
 	}
+	if g.configured() && params != nil && params.Arguments != nil {
+		canon, err := canonicalJSON(params.Arguments)
+		if err != nil {
+			g.logError(ctx, "guardrails canonicalize arguments failed", toolName, err)
+			return false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		}
+		modified = !bytes.Equal(canon, params.Arguments)
+		params.Arguments = canon
+	}
 	content, blocked := g.request(ctx, toolName, toolCallArguments(params), requestID)
 	if blocked != nil {
 		return false, blocked
 	}
 	if content == "" {
-		return false, nil
+		return modified, nil
 	}
 	if blocked := g.applyModifiedArguments(ctx, mcpReq, content, requestID); blocked != nil {
 		return false, blocked
@@ -333,6 +345,25 @@ func toolCallArguments(p *Params) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return p.Arguments
+}
+
+// canonicalJSON decodes and re-encodes raw so guardrails sees what an upstream
+// parses: escapes decoded, duplicate keys collapsed (last wins), invalid utf-8
+// replaced. Numbers keep their original text; html is left unescaped.
+func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte{'\n'}), nil
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
