@@ -192,3 +192,24 @@ func TestParamsRewriteName(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPRequest_ClientSupportsElicitation(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "declared on initialize", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"elicitation":{}}}}`, want: true},
+		{name: "not initialize", in: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"capabilities":{"elicitation":{}}}}`},
+		{name: "no params", in: `{"jsonrpc":"2.0","id":1,"method":"initialize"}`},
+		{name: "no capabilities", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`},
+		{name: "capabilities without elicitation", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"sampling":{}}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mr MCPRequest
+			require.NoError(t, json.Unmarshal([]byte(tt.in), &mr))
+			require.Equal(t, tt.want, mr.ClientSupportsElicitation())
+		})
+	}
+}
