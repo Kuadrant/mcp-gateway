@@ -283,6 +283,44 @@ func TestCheckToolCall_Modified(t *testing.T) {
 	require.Equal(t, `{"q":"redacted"}`, string(req.Params.Arguments))
 }
 
+// TestCheckToolCall_CanonicalArguments verifies guardrails checks decoded
+// arguments and the same form is forwarded, so escapes or duplicate keys
+// can't hide content from guardrails that the upstream would parse.
+func TestCheckToolCall_CanonicalArguments(t *testing.T) {
+	// escaped "DROP" and "@", duplicate "query" (last wins), literal "<", large int
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mytool","arguments":{
+		"query":"SELECT 1","query":"\u0044\u0052OP TABLE x",
+		"email":"bob\u0040example.com","html":"<b>","id":12345678901234567890}}}`
+	const want = `{"email":"bob@example.com","html":"<b>","id":12345678901234567890,"query":"DROP TABLE x"}`
+	parse := func(t *testing.T) *MCPRequest {
+		t.Helper()
+		var req MCPRequest
+		require.NoError(t, json.Unmarshal([]byte(body), &req))
+		return &req
+	}
+
+	t.Run("configured checks and forwards the canonical form", func(t *testing.T) {
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+		gc := &guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
+		req := parse(t)
+		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+		require.Nil(t, blocked)
+		require.True(t, modified)
+		require.Equal(t, want, string(fc.lastArguments))
+		require.Equal(t, want, string(req.Params.Arguments))
+	})
+
+	t.Run("not configured leaves arguments as received", func(t *testing.T) {
+		gc := &guardrailsCheck{buildError: BuildSSEJSONRPCError}
+		req := parse(t)
+		raw := string(req.Params.Arguments)
+		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+		require.Nil(t, blocked)
+		require.False(t, modified)
+		require.Equal(t, raw, string(req.Params.Arguments))
+	})
+}
+
 func TestNewGuardrailsCheck_Options(t *testing.T) {
 	fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
 	cfg := &config.MCPServersConfig{}
