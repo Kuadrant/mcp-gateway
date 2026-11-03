@@ -656,6 +656,34 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		require.JSONEq(t, `{"query":"SELECT sanitized"}`, string(restored.Params.Arguments))
 	})
 
+	t.Run("unprefixed server forwards the arguments guardrails checked", func(t *testing.T) {
+		servers := []*config.MCPServer{{
+			Name:                "plain",
+			URL:                 "http://localhost:8080/mcp",
+			State:               "Enabled",
+			Hostname:            "localhost",
+			GuardrailsConfigIDs: []string{"svr-1"},
+		}}
+		router := newTestRouter202607(t, servers, map[string]string{"mytool": "plain"}, map[string]string{})
+		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
+		cfg := &config.MCPServersConfig{Servers: servers}
+		cfg.SetGuardrailsChecker(fc)
+		router.RoutingConfig.Store(cfg)
+
+		var parsed MCPRequest
+		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+			"name":"mytool","arguments":{"query":"SELECT 1","query":"\u0044ROP TABLE x"}}}`), &parsed))
+		decision := router.RouteRequest(context.Background(), &Request{
+			MCPMethod: MethodToolCall,
+			MCPName:   "mytool",
+			RequestID: "req-1",
+			Parsed:    &parsed,
+		})
+		require.Nil(t, decision.Error)
+		require.Equal(t, `{"query":"DROP TABLE x"}`, string(fc.lastArguments))
+		require.Equal(t, string(fc.lastArguments), string(upstreamParams(t, decision.BodyMutation)["arguments"]))
+	})
+
 	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {
 		router := newTestRouter202607(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
