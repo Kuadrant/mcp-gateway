@@ -268,7 +268,24 @@ scrape_configs:
 
 This guide assumes that Prometheus is already installed. Add the scrape job above to its configuration. The Prometheus service account needs permission to list and watch pods in the gateway namespace.
 
-If you use Prometheus Operator, including OpenShift user workload monitoring, use a `PodMonitor` that relabels the scrape address to port `9090`. The generated broker container does not declare a named `metrics` port, so a `PodMonitor` with `port: metrics` discovers no targets. Instead, select the declared `http` port to get one target per pod, then rewrite its address. Replace `<namespace>` with the gateway namespace from Step 1:
+If you use Prometheus Operator, including OpenShift user workload monitoring, use a `PodMonitor` that selects the broker container's named `metrics` port. Replace `<namespace>` with the gateway namespace from Step 1:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mcp-broker
+  namespace: <namespace>
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+```
+
+Before v1.1.0, the broker container has no named `metrics` port, so the `PodMonitor` above finds no targets. Use this variant instead. It selects the declared `http` port to get one target per pod, then rewrites the scrape address to port `9090`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -290,6 +307,8 @@ spec:
 ```
 
 The relabeling runs after the port filter and replaces `<pod-IP>:8080` with `<pod-IP>:9090`. It only changes where Prometheus scrapes; broker traffic on port `8080` is unaffected.
+
+> **Note:** Prometheus Operator only scrapes a `PodMonitor` that matches the `podMonitorSelector` and `podMonitorNamespaceSelector` of your `Prometheus` resource. Add any labels your installation requires under `metadata.labels`, and make sure the gateway namespace is selected. For example, `kube-prometheus-stack` by default selects only `PodMonitor`s that carry its Helm release label, such as `release: <prometheus-release>`.
 
 On OpenShift, enable monitoring for user-defined projects (`enableUserWorkload: true` in the `cluster-monitoring-config` ConfigMap in `openshift-monitoring`) and create the `PodMonitor` in the gateway namespace. Do not add `additionalScrapeConfigs` to the user workload `Prometheus` resource; the Cluster Monitoring Operator removes it.
 
