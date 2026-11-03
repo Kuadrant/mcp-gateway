@@ -116,7 +116,7 @@ func TestLookupPrefix_LongestMatch(t *testing.T) {
 		Build()
 
 	// map iteration order is random, so check many lookups
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		r, ok := table.LookupPrefix("gh_ent_list_repos")
 		if !ok {
 			t.Fatal("expected prefix match")
