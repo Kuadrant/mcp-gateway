@@ -129,7 +129,7 @@ func TestRouter202607_ToolCallWithPrefix(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "s_mytool", "arguments": map[string]any{"key": "val"}},
+		Params:  &Params{Name: "s_mytool", Arguments: json.RawMessage(`{"key":"val"}`)},
 	}
 
 	req := &Request{
@@ -209,7 +209,7 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "different_name"},
+		Params:  &Params{Name: "different_name"},
 	}
 
 	req := &Request{
@@ -243,7 +243,7 @@ func TestRouter202607_PromptGet(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "prompts/get",
-		Params:  map[string]any{"name": "s_myprompt"},
+		Params:  &Params{Name: "s_myprompt"},
 	}
 
 	req := &Request{
@@ -590,9 +590,9 @@ func TestRouter202607_Guardrails(t *testing.T) {
 				ID:      ptr.To(1),
 				JSONRPC: "2.0",
 				Method:  MethodToolCall,
-				Params: map[string]any{
-					"name":      "s_mytool",
-					"arguments": map[string]any{"query": "SELECT 1"},
+				Params: &Params{
+					Name:      "s_mytool",
+					Arguments: json.RawMessage(`{"query":"SELECT 1"}`),
 				},
 			},
 		}
@@ -652,8 +652,8 @@ func TestRouter202607_Guardrails(t *testing.T) {
 
 		var restored MCPRequest
 		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
-		require.Equal(t, "mytool", restored.Params["name"])
-		require.Equal(t, map[string]any{"query": "SELECT sanitized"}, restored.Params["arguments"])
+		require.Equal(t, "mytool", restored.Params.Name)
+		require.JSONEq(t, `{"query":"SELECT sanitized"}`, string(restored.Params.Arguments))
 	})
 
 	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {
