@@ -1,0 +1,51 @@
+Secret data limit: 1048576 bytes
+Certificate: 485 bytes; eight-certificate bundle: 3880 bytes
+Large server bundle: 65475 bytes; large shared bundle: 261900 bytes
+
+profile,servers,virtual_servers,config_bytes,percent_of_limit
+lean,10,0,1961,0.19
+lean,100,0,19331,1.84
+lean,500,0,96531,9.21
+lean,1000,0,193031,18.41
+credential,10,0,12351,1.18
+credential,100,0,123231,11.75
+credential,500,0,616031,58.75
+credential,1000,0,1232031,117.50
+shared-ca,10,0,16395,1.56
+shared-ca,100,0,127275,12.14
+shared-ca,500,0,620075,59.13
+shared-ca,1000,0,1236075,117.88
+per-server-ca,10,0,54161,5.17
+per-server-ca,100,0,541331,51.63
+per-server-ca,500,0,2706531,258.11
+per-server-ca,1000,0,5413031,516.23
+large-server-ca,10,0,715831,68.27
+large-server-ca,100,0,7158031,682.64
+large-server-ca,500,0,35790031,3413.20
+large-server-ca,1000,0,71580031,6826.40
+large-shared-ca,10,0,283991,27.08
+large-shared-ca,100,0,394871,37.66
+large-shared-ca,500,0,887671,84.65
+large-shared-ca,1000,0,1503671,143.40
+virtuals,10,10,41637,3.97
+virtuals,100,100,415947,39.67
+virtuals,500,500,2079547,198.32
+virtuals,1000,1000,4159047,396.64
+
+profile,first_server_count_over_limit,previous_bytes,over_limit_bytes
+lean,5433,1048407,1048600
+credential,852,1048463,1049695
+shared-ca,848,1047579,1048811
+per-server-ca,194,1044740,1050153
+large-server-ca,15,1002151,1073731
+large-shared-ca,631,1047831,1049063
+virtuals,253,1048115,1052274
+
+Fixed 100 credential-bearing servers; vary only virtual-server count:
+profile,servers,virtual_servers,config_bytes,percent_of_limit
+virtual-only-growth,100,0,123231,11.75
+virtual-only-growth,100,10,152517,14.55
+virtual-only-growth,100,100,415947,39.67
+virtual-only-growth,100,500,1586747,151.32
+virtual-only-growth,100,1000,3050247,290.89
+First virtual-server count over limit with 100 servers: 317
