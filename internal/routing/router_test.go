@@ -323,6 +323,15 @@ func TestMCPRequestToolName(t *testing.T) {
 			},
 			ExpectTool: "",
 		},
+		{
+			Name: "test with numeric tool name",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params:  rawParams(`{"name":2}`),
+			},
+			ExpectTool: "",
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
