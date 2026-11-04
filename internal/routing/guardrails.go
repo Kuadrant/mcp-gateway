@@ -116,11 +116,11 @@ func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest,
 		modified = !bytes.Equal(canon, params.Arguments)
 		params.Arguments = canon
 	}
-	content, blocked := g.request(ctx, toolName, toolCallArguments(params), requestID)
+	content, isModified, blocked := g.request(ctx, toolName, toolCallArguments(params), requestID)
 	if blocked != nil {
 		return false, blocked
 	}
-	if content == "" {
+	if !isModified {
 		return modified, nil
 	}
 	if blocked := g.applyModifiedArguments(ctx, mcpReq, content, requestID); blocked != nil {
@@ -228,24 +228,25 @@ func (g *guardrailsCheck) checkElicitationAccept(ctx context.Context, mcpReq *MC
 		g.logError(ctx, "guardrails elicitation arguments failed", elicitationActionAccept, err)
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
-	content, blocked := g.request(ctx, elicitationActionAccept, args, requestID)
-	if blocked != nil {
+	content, isModified, blocked := g.request(ctx, elicitationActionAccept, args, requestID)
+	if blocked != nil || !isModified {
 		return blocked
 	}
 	return g.applyModifiedElicitation(ctx, mcpReq, content, requestID)
 }
 
 // request runs the guardrails check for name/arguments. blocked is non-nil
-// when the request must not proceed. modified content is returned when the
-// verdict is StatusModified. Empty merged config IDs skip the check.
-// Non-empty IDs with no Checker fail closed (503).
-func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, blocked *Decision) {
+// when the request must not proceed. isModified is true when the verdict is
+// StatusModified, with modified holding the replacement content (possibly
+// empty). Empty merged config IDs skip the check. Non-empty IDs with no
+// Checker fail closed (503).
+func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, isModified bool, blocked *Decision) {
 	if !g.configured() {
-		return "", nil
+		return "", false, nil
 	}
 
 	if g.checker == nil {
-		return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
+		return "", false, g.errorDecision(503, requestID, guardrailsUnavailableMessage)
 	}
 
 	decision, checkErr := g.checker.CheckRequest(ctx, name, arguments, g.serverIDs)
@@ -254,34 +255,34 @@ func (g *guardrailsCheck) request(ctx context.Context, name string, arguments js
 		// apply. checkErr can carry internal transport/provider detail, so
 		// it's logged rather than returned to the client.
 		g.logError(ctx, "guardrails request translation failed", name, checkErr)
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 
 	if decision == nil {
 		g.logError(ctx, "guardrails returned nil decision", name, fmt.Errorf("nil decision"))
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 
 	switch decision.Status {
 	case api.StatusBlocked:
 		if decision.Err != nil {
 			g.logError(ctx, "guardrails check unavailable, failing closed", name, decision.Err)
-			return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
+			return "", false, g.errorDecision(503, requestID, guardrailsUnavailableMessage)
 		}
 		if g.logger != nil {
 			g.logger.InfoContext(ctx, "guardrails blocked request", "tool", name, "reason", decision.Reason)
 		}
-		return "", g.errorDecision(403, requestID, guardrailsBlockedMessage)
+		return "", false, g.errorDecision(403, requestID, guardrailsBlockedMessage)
 	case api.StatusAllowed:
 		if decision.Err != nil && g.logger != nil {
 			g.logger.ErrorContext(ctx, "guardrails check failed open", "tool", name, "error", decision.Err)
 		}
-		return "", nil
+		return "", false, nil
 	case api.StatusModified:
-		return decision.Content, nil
+		return decision.Content, true, nil
 	default:
 		g.logError(ctx, "guardrails returned unrecognized status", name, fmt.Errorf("status %q", decision.Status))
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 }
 
@@ -307,7 +308,7 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 }
 
 func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
-	if mcpReq == nil || modified == "" {
+	if mcpReq == nil {
 		return nil
 	}
 	args := json.RawMessage(modified)
@@ -323,7 +324,7 @@ func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MC
 }
 
 func (g *guardrailsCheck) applyModifiedElicitation(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
-	if mcpReq == nil || modified == "" {
+	if mcpReq == nil {
 		return nil
 	}
 	result, err := replaceElicitationContent(mcpReq.Result, modified)
