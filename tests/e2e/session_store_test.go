@@ -43,13 +43,23 @@ func enableSessionStore(replicas int) {
 
 	DeferCleanup(func() {
 		By("Cleanup: removing sessionStore from MCPGatewayExtension")
+		gen, gErr := GetDeploymentGeneration(ctx, SystemNamespace, gatewayDeploymentName)
+		Expect(gErr).NotTo(HaveOccurred())
+		removed := false
 		Eventually(func(g Gomega) {
 			ext := &mcpv1.MCPGatewayExtension{}
 			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
+			if ext.Spec.SessionStore == nil {
+				return
+			}
 			ext.Spec.SessionStore = nil
 			g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
+			removed = true
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		Expect(WaitForDeploymentReady(ctx, SystemNamespace, gatewayDeploymentName)).To(Succeed())
+		// wait for the rollout to finish so later specs don't lose in-memory sessions to a restart
+		if removed {
+			Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, gatewayDeploymentName, 1, gen)).To(Succeed())
+		}
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: sessionStoreSecretName, Namespace: SystemNamespace},
 		}))).To(Succeed())
@@ -58,8 +68,12 @@ func enableSessionStore(replicas int) {
 	ext := &mcpv1.MCPGatewayExtension{}
 	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
 	if ext.Spec.SessionStore != nil && ext.Spec.SessionStore.SecretName == sessionStoreSecretName {
-		// already enabled by a crashed earlier run; no rollout to wait for
-		Expect(WaitForDeploymentReady(ctx, SystemNamespace, gatewayDeploymentName)).To(Succeed())
+		// already enabled by a crashed earlier run; reset replicas and restart so pods reread the secret
+		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, gatewayDeploymentName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ScaleDeployment(ctx, SystemNamespace, gatewayDeploymentName, replicas)).To(Succeed())
+		Expect(RestartDeploymentAndWait(ctx, SystemNamespace, gatewayDeploymentName)).To(Succeed())
+		Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, gatewayDeploymentName, replicas, gen)).To(Succeed())
 		return
 	}
 
@@ -107,6 +121,7 @@ func gatewayRestartCount() int32 {
 	pods := &corev1.PodList{}
 	Expect(k8sClient.List(ctx, pods, client.InNamespace(SystemNamespace),
 		client.MatchingLabels{"app.kubernetes.io/name": gatewayDeploymentName})).To(Succeed())
+	Expect(pods.Items).NotTo(BeEmpty(), "no gateway pods matched the label selector")
 	var restarts int32
 	for i := range pods.Items {
 		for _, cs := range pods.Items[i].Status.ContainerStatuses {
