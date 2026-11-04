@@ -52,7 +52,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 
 	t.Run("nil checker with no IDs skips check", func(t *testing.T) {
 		gc := guardrailsCheck{buildError: BuildSSEJSONRPCError}
-		modified, decision := gc.request(context.Background(), "mytool", args, 1)
+		modified, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
 		require.Empty(t, modified)
 	})
@@ -60,7 +60,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("empty merged config IDs skips check without calling checker", func(t *testing.T) {
 		fc := &fakeChecker{}
 		gc := guardrailsCheck{checker: fc, global: &api.Config{}, buildError: BuildSSEJSONRPCError}
-		modified, decision := gc.request(context.Background(), "mytool", args, 1)
+		modified, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
 		require.Empty(t, modified)
 		require.Equal(t, 0, fc.calls, "checker must not be called when merged config IDs are empty")
@@ -68,7 +68,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 
 	t.Run("non-empty IDs with nil checker fail closed", func(t *testing.T) {
 		gc := guardrailsCheck{global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.Equal(t, 503, decision.Error.StatusCode)
 		require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
@@ -78,7 +78,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("nil global guardrails config with server IDs still checks", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
 		gc := guardrailsCheck{checker: fc, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
 		require.Equal(t, 1, fc.calls)
 		require.Equal(t, []string{"svr-1"}, fc.lastConfigIDs)
@@ -87,8 +87,9 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("allowed proceeds with normal routing", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		modified, decision := gc.request(context.Background(), "mytool", args, 1)
+		modified, isModified, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
+		require.False(t, isModified)
 		require.Empty(t, modified)
 		require.Equal(t, "mytool", fc.lastToolName)
 		require.JSONEq(t, `{"key":"value"}`, string(fc.lastArguments))
@@ -98,15 +99,16 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("modified returns rewritten content", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusModified, Content: `{"key":"redacted"}`}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		modified, decision := gc.request(context.Background(), "mytool", args, 1)
+		modified, isModified, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
+		require.True(t, isModified)
 		require.Equal(t, `{"key":"redacted"}`, modified)
 	})
 
 	t.Run("blocked returns 403 with a generic JSON-RPC error, never the triggering reason", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Reason: "pii"}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.NotNil(t, decision.Error)
 		require.Equal(t, 403, decision.Error.StatusCode)
@@ -120,7 +122,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 		var buf bytes.Buffer
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Reason: "pii-detection"}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, logger: slog.New(slog.NewTextHandler(&buf, nil)), buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.NotContains(t, decision.Error.JSONRPCErr, "pii-detection")
 		require.Contains(t, buf.String(), "pii-detection")
@@ -129,7 +131,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("blocked via failMode deny fallback returns 503", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusBlocked, Err: context.DeadlineExceeded}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.NotNil(t, decision.Error)
 		require.Equal(t, 503, decision.Error.StatusCode)
@@ -138,7 +140,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 	t.Run("allowed via failMode allow fallback proceeds", func(t *testing.T) {
 		fc := &fakeChecker{decision: &api.Decision{Status: api.StatusAllowed, Err: context.DeadlineExceeded}}
 		gc := guardrailsCheck{checker: fc, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
 	})
 
@@ -152,7 +154,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 			logger:     slog.New(slog.NewTextHandler(&buf, nil)),
 			buildError: BuildSSEJSONRPCError,
 		}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.Nil(t, decision)
 		require.Contains(t, buf.String(), "guardrails check failed open")
 		require.Contains(t, buf.String(), context.DeadlineExceeded.Error())
@@ -160,14 +162,14 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 
 	t.Run("nil decision returns 400", func(t *testing.T) {
 		gc := guardrailsCheck{checker: &fakeChecker{}, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.Equal(t, 400, decision.Error.StatusCode)
 	})
 
 	t.Run("translation error returns 400 with a generic message, never the internal error", func(t *testing.T) {
 		gc := guardrailsCheck{checker: &fakeChecker{err: errTranslation}, global: globalCfg, serverIDs: []string{"svr-1"}, buildError: BuildSSEJSONRPCError}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.NotNil(t, decision.Error)
 		require.Equal(t, 400, decision.Error.StatusCode)
@@ -184,7 +186,7 @@ func TestCheckGuardrailsRequest(t *testing.T) {
 			logger:     slog.New(slog.NewTextHandler(&buf, nil)),
 			buildError: BuildSSEJSONRPCError,
 		}
-		_, decision := gc.request(context.Background(), "mytool", args, 1)
+		_, _, decision := gc.request(context.Background(), "mytool", args, 1)
 		require.NotNil(t, decision)
 		require.NotContains(t, decision.Error.JSONRPCErr, errTranslation.Error())
 		require.Contains(t, buf.String(), errTranslation.Error())
@@ -262,6 +264,34 @@ func TestGuardrailsArguments(t *testing.T) {
 		require.Equal(t, 400, blocked.Error.StatusCode)
 		require.Contains(t, blocked.Error.JSONRPCErr, guardrailsCheckFailedMessage)
 		require.Equal(t, `{"q":"secret"}`, string(req.Params.Arguments))
+	})
+
+	t.Run("empty modified arguments from guardrails returns 400", func(t *testing.T) {
+		req := &MCPRequest{
+			Method: MethodToolCall,
+			Params: &Params{Name: "mytool", Arguments: json.RawMessage(`{"q":"secret"}`)},
+		}
+		gc := &guardrailsCheck{
+			checker:    &fakeChecker{decision: &api.Decision{Status: api.StatusModified}},
+			serverIDs:  []string{"svr-1"},
+			buildError: BuildSSEJSONRPCError,
+		}
+		modified, blocked := gc.checkToolCall(context.Background(), req, "mytool")
+		require.False(t, modified)
+		require.NotNil(t, blocked, "empty modified content must not forward the original arguments")
+		require.Equal(t, 400, blocked.Error.StatusCode)
+	})
+
+	t.Run("empty modified elicitation content from guardrails returns 400", func(t *testing.T) {
+		req := &MCPRequest{Result: map[string]any{"action": "accept", "content": map[string]any{"q": "secret"}}}
+		gc := &guardrailsCheck{
+			checker:    &fakeChecker{decision: &api.Decision{Status: api.StatusModified}},
+			serverIDs:  []string{"svr-1"},
+			buildError: BuildSSEJSONRPCError,
+		}
+		blocked := gc.checkElicitationAccept(context.Background(), req, 1)
+		require.NotNil(t, blocked, "empty modified content must not forward the original elicitation content")
+		require.Equal(t, 400, blocked.Error.StatusCode)
 	})
 }
 
