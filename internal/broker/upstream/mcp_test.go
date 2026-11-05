@@ -558,6 +558,133 @@ func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
 	}
 }
 
+// newStateless2026Server returns a go-sdk server that only speaks 2026,
+// seeded with one tool and one prompt so it advertises listChanged for both.
+func newStateless2026Server() *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "up", Version: "0.0.1"}, &mcp.ServerOptions{
+		SupportedProtocolVersions: []string{protocol.Version2026},
+	})
+	srv.AddTool(&mcp.Tool{Name: "t1", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	srv.AddPrompt(&mcp.Prompt{Name: "p1"},
+		func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+	return srv
+}
+
+// ackSpyWriter calls onAck when the server writes its
+// subscriptions/acknowledged notification, i.e. the listen is registered.
+type ackSpyWriter struct {
+	http.ResponseWriter
+	onAck func()
+}
+
+func (w ackSpyWriter) Write(b []byte) (int, error) {
+	if bytes.Contains(b, []byte("notifications/subscriptions/acknowledged")) {
+		w.onAck()
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.ResponseController reach the underlying Flusher.
+func (w ackSpyWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// regression (#1643): 2026 upstreams only push list changes over
+// subscriptions/listen, which the sdk opens only when list-changed handlers
+// are set. without them the broker only sees changes on the TTL poll.
+func TestConnect_2026ListChangedPushReachesBroker(t *testing.T) {
+	srv := newStateless2026Server()
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	subscribed := make(chan struct{})
+	var once sync.Once
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Method") == "subscriptions/listen" {
+			w = ackSpyWriter{ResponseWriter: w, onAck: func() { once.Do(func() { close(subscribed) }) }}
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	got := make(chan string, 16)
+	up.OnNotification(func(method string) { got <- method })
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
+
+	// the listen is fire-and-forget, so wait for the upstream to register it
+	// before changing the lists, or the change could land before the subscription
+	select {
+	case <-subscribed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream never acknowledged a subscriptions/listen")
+	}
+
+	waitFor := func(want string) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case method := <-got:
+				if method == want {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("%s not delivered", want)
+			}
+		}
+	}
+	srv.AddTool(&mcp.Tool{Name: "t2", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	waitFor("notifications/tools/list_changed")
+	srv.AddPrompt(&mcp.Prompt{Name: "p2"},
+		func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+	waitFor("notifications/prompts/list_changed")
+}
+
+// regression (#1484): upstreams such as GitHub MCP and FastMCP 4.x answer
+// subscriptions/listen with a plain-text 404. go-sdk <= v1.7.0 failed Connect
+// on that; it must stay non-fatal now that the handlers are set again.
+func TestConnect_2026ListenRejectedIsNonFatal(t *testing.T) {
+	srv := newStateless2026Server()
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	var listens atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Method") == "subscriptions/listen" {
+			listens.Add(1)
+			http.Error(w, "404 page not found", http.StatusNotFound)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
+
+	// the listen POST is written synchronously inside Connect; only its
+	// stream is read in the background, so the 404 has been handled by now
+	require.Positive(t, listens.Load(), "broker never sent subscriptions/listen")
+	tools, err := up.ListTools(ctx)
+	require.NoError(t, err, "a rejected listen must not break the connection")
+	require.Len(t, tools.Tools, 1)
+}
+
 func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
 	caPEM, caKey, caCert := generateSelfSignedCA(t)
 	serverCert := generateServerCert(t, caCert, caKey)

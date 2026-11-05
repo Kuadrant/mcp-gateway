@@ -605,11 +605,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 			RootsV2:     &mcp.RootCapabilities{ListChanged: true}, //nolint:staticcheck // deliberate parity with mark3labs
 			Elicitation: &mcp.ElicitationCapabilities{},
 		},
-		// go-sdk <= v1.7.0 opens subscriptions/listen during Connect when these
-		// handlers are set. servers that return 404 for subscriptions/listen
-		// (e.g. GitHub MCP, FastMCP 4.x) cause Connect to fail fatally.
-		// re-add once go-sdk >= v1.8.0 is adopted (PR #1193 wraps the failure).
-		// without handlers the broker relies on TTL-based polling for freshness.
+		// no-ops: setting them makes the sdk open subscriptions/listen on 2026
+		// upstreams; dispatch happens in the receiving middleware below. since
+		// go-sdk v1.8.0 a rejected listen (e.g. a 404 from GitHub MCP or FastMCP
+		// 4.x) is non-fatal and the TTL poll covers freshness.
+		ToolListChangedHandler:   func(context.Context, *mcp.ToolListChangedRequest) {},
+		PromptListChangedHandler: func(context.Context, *mcp.PromptListChangedRequest) {},
 	})
 	// wire the notification handler before the session exists so nothing
 	// arriving during or right after the handshake is missed
@@ -657,10 +658,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
-	// push notifications. stateless upstreams rely on TTL-based polling: 2026
-	// has no notification handlers until go-sdk >= v1.8.0 (see client options
-	// above), and a session-less 2025 upstream has no Mcp-Session-Id to key the
-	// standalone GET SSE stream on.
+	// push notifications. 2026 upstreams push over the sdk's subscriptions/listen
+	// stream (see client options above), backed up by TTL-based polling; the sdk
+	// does not reopen that stream if the upstream restarts, so push stays off
+	// until the broker reconnects. a session-less 2025 upstream has no
+	// Mcp-Session-Id to key the standalone GET SSE stream on and relies on
+	// polling alone.
 	if !up.UsesStatelessProtocol() {
 		up.logger.Debug("starting GET SSE notification watcher", "upstream", up.ID(), "negotiated-protocol", negotiated)
 		up.startNotificationWatcher(ctx, httpC, session)

@@ -703,7 +703,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		}
 	}
 	// adjust tick interval for 2026 upstreams based on upstream TTL hints.
-	// without notification handlers, polling is the only freshness mechanism.
+	// polling backs up subscriptions/listen push, which can be rejected or lost.
 	// gated on the negotiated version, not UsesStatelessProtocol: a
 	// session-less 2025 upstream sends no TTL hint, so adjusting would
 	// only overwrite the configured interval with the default.
@@ -834,7 +834,7 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 // adjustTickerFromTTL sets the poll interval from the shortest TTLMs hint
 // across the upstream's tools/list and, when served, prompts/list responses.
 // a TTL of 0 means immediately stale and wins. only applied for 2026 upstreams
-// where polling replaces push notifications. clamped between a safe maximum
+// where polling backs up subscriptions/listen push. clamped between a safe maximum
 // and DefaultTickerInterval minimum to avoid overflow with jitter and
 // hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {
