@@ -73,6 +73,38 @@ func TestParseReportsIgnoredKeys(t *testing.T) {
 	}
 }
 
+func TestParseNormalizesValues(t *testing.T) {
+	// kubectl create secret --from-file keeps the trailing newline
+	settings := map[string]string{
+		"CACHE_MODE":            "Sentinel\n",
+		"CACHE_SENTINEL_MASTER": "mymaster\n",
+		"CACHE_SENTINEL_ADDRS":  "s-0:26379, s-1:26379\n",
+		"CACHE_DB":              "2\n",
+		"CACHE_TLS_ENABLED":     "true\n",
+		"CACHE_PASSWORD":        " keep spaces ",
+	}
+	cfg, err := Parse(func(key string) string { return settings[key] })
+	require.NoError(t, err)
+	require.Equal(t, "sentinel", cfg.Mode)
+	require.Equal(t, "mymaster", cfg.ha.MasterName)
+	require.Equal(t, []string{"s-0:26379", "s-1:26379"}, cfg.ha.Addrs)
+	require.Equal(t, 2, cfg.ha.DB)
+	require.NotNil(t, cfg.ha.TLSConfig)
+	require.Equal(t, " keep spaces ", cfg.ha.Password, "credentials are passed through verbatim")
+}
+
+func TestParseMissingModeWithHAKeys(t *testing.T) {
+	settings := map[string]string{"CACHE_SENTINEL_MASTER": "mymaster", "CACHE_SENTINEL_ADDRS": "s-0:26379"}
+	_, err := Parse(func(key string) string { return settings[key] })
+	require.ErrorContains(t, err, "set CACHE_MODE to sentinel or cluster")
+}
+
+func TestKeysReturnsCopy(t *testing.T) {
+	k := Keys()
+	k[0] = "MUTATED"
+	require.Equal(t, "CACHE_MODE", Keys()[0])
+}
+
 func TestClusterSingleSeedDiscoversDataNode(t *testing.T) {
 	seed := miniredis.RunT(t)
 	data := miniredis.RunT(t)

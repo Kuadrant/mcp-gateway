@@ -413,7 +413,7 @@ func TestBuildBrokerRouterDeployment_PublicHost(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, tt.publicHost, "my-gateway-istio.gateway-system.svc.cluster.local:8080")
+			deployment := r.buildBrokerRouterDeployment(mcpExt, tt.publicHost, "my-gateway-istio.gateway-system.svc.cluster.local:8080", "")
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			found := false
@@ -483,7 +483,7 @@ func TestBuildBrokerRouterDeployment_InternalHost(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, tt.gatewayClassName))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, tt.gatewayClassName), "")
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			wantFlag := "--mcp-gateway-private-host=" + tt.wantInternalHost
@@ -539,7 +539,7 @@ func TestBuildBrokerRouterDeployment_PollInterval(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			if tt.wantAbsent {
@@ -587,7 +587,7 @@ func TestBuildBrokerRouterDeployment_NoRouterKeyFlag(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 	command := deployment.Spec.Template.Spec.Containers[0].Command
 
 	for _, arg := range command {
@@ -670,7 +670,7 @@ func TestBuildBrokerRouterDeployment_LogLevel(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 
 			var got string
@@ -751,7 +751,7 @@ func TestBuildBrokerRouterDeployment_SpecLogLevel(t *testing.T) {
 					LogLevel: tt.specLogLevel,
 				},
 			}
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 			command := deployment.Spec.Template.Spec.Containers[0].Command
 			var got string
 			for _, arg := range command {
@@ -807,7 +807,7 @@ func TestBuildBrokerRouterDeployment_TrustedHeadersKey(t *testing.T) {
 				},
 			}
 
-			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+			deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 			container := deployment.Spec.Template.Spec.Containers[0]
 
 			// JWT_SESSION_SIGNING_KEY should always be present
@@ -974,7 +974,7 @@ func TestBuildBrokerRouterDeployment_ServiceAccount(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 
 	if deployment.Spec.Template.Spec.ServiceAccountName != brokerRouterName {
 		t.Errorf("expected ServiceAccountName %q, got %q", brokerRouterName, deployment.Spec.Template.Spec.ServiceAccountName)
@@ -1001,7 +1001,7 @@ func TestBuildBrokerRouterDeployment_MetricsPort(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 
 	want := corev1.ContainerPort{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP}
 	if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Ports, want) {
@@ -2160,7 +2160,7 @@ func TestBuildBrokerRouterDeployment_URLElicitation(t *testing.T) {
 				mcpExt.Spec.URLElicitation = mcpv1.URLElicitationPolicy(tt.policy)
 			}
 
-			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+			dep := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 			cmd := dep.Spec.Template.Spec.Containers[0].Command
 			hasFlag := slices.Contains(cmd, "--enable-url-elicitation")
 			if hasFlag != tt.wantFlag {
@@ -2187,7 +2187,7 @@ func TestBuildBrokerRouterDeployment_ReadinessProbe(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"))
+	deployment := r.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", mcpExt.InternalHost(8080, "istio"), "")
 	probe := deployment.Spec.Template.Spec.Containers[0].ReadinessProbe
 
 	if probe == nil {
@@ -2307,7 +2307,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 	}
 
 	t.Run("no oauth config sets no oauth env vars", func(t *testing.T) {
-		dep := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
+		dep := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080", "")
 		env := dep.Spec.Template.Spec.Containers[0].Env
 		for _, e := range env {
 			if strings.HasPrefix(e.Name, "OAUTH_") {
@@ -2321,7 +2321,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
-		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 		envMap := make(map[string]string)
 		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
 			envMap[e.Name] = e.Value
@@ -2352,7 +2352,7 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 			BearerMethodsSupported: []string{"header", "body"},
 			ScopesSupported:        []string{"basic", "groups", "roles"},
 		}
-		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		dep := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 		envMap := make(map[string]string)
 		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
 			envMap[e.Name] = e.Value
@@ -2379,13 +2379,13 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
-		desired := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		desired := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 
 		mcpExt2 := base()
 		mcpExt2.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://other-auth.example.com/realms/mcp"},
 		}
-		existing := reconciler.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", "internal:8080")
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt2, "mcp.example.com", "internal:8080", "")
 
 		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
 		if !needsUpdate {
@@ -2398,8 +2398,8 @@ func TestBuildBrokerRouterDeployment_OAuthProtectedResource(t *testing.T) {
 		mcpExt.Spec.OAuthProtectedResource = &mcpv1.OAuthProtectedResource{
 			AuthorizationServers: []string{"https://keycloak.example.com/realms/mcp"},
 		}
-		desired := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080")
-		existing := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+		desired := reconciler.buildBrokerRouterDeployment(base(), "mcp.example.com", "internal:8080", "")
+		existing := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 
 		needsUpdate, _ := deploymentNeedsUpdate(desired, existing)
 		if !needsUpdate {
@@ -2421,7 +2421,7 @@ func TestBuildBrokerRouterDeployment_NoGatewayCACertFlag(t *testing.T) {
 			CACertBundleRef: &mcpv1.CACertBundleReference{Name: "shared-ca", Key: "ca.crt"},
 		},
 	}
-	deployment := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080")
+	deployment := reconciler.buildBrokerRouterDeployment(mcpExt, "mcp.example.com", "internal:8080", "")
 	container := deployment.Spec.Template.Spec.Containers[0]
 	for _, arg := range container.Command {
 		if strings.HasPrefix(arg, "--gateway-ca-cert=") {

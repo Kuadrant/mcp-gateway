@@ -13,8 +13,8 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
-// Keys are the session-store Secret keys exposed to the broker-router.
-var Keys = []string{
+// keys are the session-store Secret keys exposed to the broker-router.
+var keys = []string{
 	"CACHE_MODE",
 	"CACHE_CONNECTION_STRING",
 	"CACHE_SENTINEL_MASTER",
@@ -26,6 +26,15 @@ var Keys = []string{
 	"CACHE_PASSWORD",
 	"CACHE_DB",
 	"CACHE_TLS_ENABLED",
+}
+
+// credentialKeys are passed through verbatim; every other value is trimmed so
+// a trailing newline from kubectl create secret --from-file is tolerated.
+var credentialKeys = []string{"CACHE_SENTINEL_USERNAME", "CACHE_SENTINEL_PASSWORD", "CACHE_USERNAME", "CACHE_PASSWORD"}
+
+// Keys returns the session-store Secret keys exposed to the broker-router.
+func Keys() []string {
+	return slices.Clone(keys)
 }
 
 // modeKeys lists the keys each mode reads; any other set key is ignored.
@@ -50,13 +59,19 @@ type Config struct {
 
 // Parse reads settings without connecting. Errors never include Secret values.
 // An unset mode selects standalone; HA-only settings do not override a standalone URL.
-func Parse(get func(string) string) (*Config, error) {
-	cfg := &Config{Mode: strings.TrimSpace(get("CACHE_MODE"))}
+func Parse(raw func(string) string) (*Config, error) {
+	get := func(key string) string {
+		if slices.Contains(credentialKeys, key) {
+			return raw(key)
+		}
+		return strings.TrimSpace(raw(key))
+	}
+	cfg := &Config{Mode: strings.ToLower(get("CACHE_MODE"))}
 	if cfg.Mode == "" {
 		cfg.Mode = "standalone"
 	}
 	if used, ok := modeKeys[cfg.Mode]; ok {
-		for _, key := range Keys {
+		for _, key := range keys {
 			if key != "CACHE_MODE" && get(key) != "" && !slices.Contains(used, key) {
 				cfg.Ignored = append(cfg.Ignored, key)
 			}
@@ -65,11 +80,14 @@ func Parse(get func(string) string) (*Config, error) {
 	if cfg.Mode == "standalone" {
 		connectionString := get("CACHE_CONNECTION_STRING")
 		if connectionString == "" {
+			if len(cfg.Ignored) > 0 {
+				return nil, errors.New("CACHE_CONNECTION_STRING is required for standalone mode; set CACHE_MODE to sentinel or cluster to use the other CACHE_* keys")
+			}
 			return nil, errors.New("CACHE_CONNECTION_STRING is required for standalone mode")
 		}
 		opts, err := redis.ParseURL(connectionString)
 		if err != nil {
-			// ParseURL errors can contain the full URL, including credentials.
+			// ParseURL errors can contain the full URL, including credentials
 			return nil, errors.New("CACHE_CONNECTION_STRING is not a valid Redis URL")
 		}
 		cfg.standalone = opts
@@ -79,7 +97,7 @@ func Parse(get func(string) string) (*Config, error) {
 	var err error
 	switch cfg.Mode {
 	case "sentinel":
-		cfg.ha.MasterName = strings.TrimSpace(get("CACHE_SENTINEL_MASTER"))
+		cfg.ha.MasterName = get("CACHE_SENTINEL_MASTER")
 		if cfg.ha.MasterName == "" {
 			return nil, errors.New("CACHE_SENTINEL_MASTER is required for sentinel mode")
 		}
@@ -142,7 +160,7 @@ func (c *Config) NewClient() redis.UniversalClient {
 	case "sentinel":
 		return redis.NewFailoverClient(c.ha.Failover())
 	case "cluster":
-		// Explicit construction also supports clusters with a single seed address.
+		// explicit construction also supports clusters with a single seed address
 		return redis.NewClusterClient(c.ha.Cluster())
 	default:
 		return redis.NewClient(c.standalone)

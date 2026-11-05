@@ -11,6 +11,8 @@ import (
 	_ "net/http/pprof" //nolint:gosec // G108: intentional pprof endpoint for performance profiling
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -201,17 +203,20 @@ func (a *app) setupTelemetry(ctx context.Context, logOpts *slog.HandlerOptions, 
 }
 
 func (a *app) setupSessionInfra(ctx context.Context) {
-	if a.brokerCfg.cacheConnectionString != "" || a.brokerCfg.cacheMode != "" {
-		redisCfg, err := redisconfig.Parse(func(key string) string {
-			switch key {
-			case "CACHE_MODE":
-				return a.brokerCfg.cacheMode
-			case "CACHE_CONNECTION_STRING":
-				return a.brokerCfg.cacheConnectionString
-			default:
-				return os.Getenv(key)
-			}
-		})
+	cacheSetting := func(key string) string {
+		switch key {
+		case "CACHE_MODE":
+			return a.brokerCfg.cacheMode
+		case "CACHE_CONNECTION_STRING":
+			return a.brokerCfg.cacheConnectionString
+		default:
+			return os.Getenv(key)
+		}
+	}
+	// any session store setting enables redis, so incomplete config fails
+	// startup rather than silently falling back to in-memory sessions
+	if slices.ContainsFunc(redisconfig.Keys(), func(key string) bool { return strings.TrimSpace(cacheSetting(key)) != "" }) {
+		redisCfg, err := redisconfig.Parse(cacheSetting)
 		if err != nil {
 			panic("invalid session store configuration: " + err.Error())
 		}

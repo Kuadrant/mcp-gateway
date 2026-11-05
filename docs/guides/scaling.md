@@ -217,6 +217,8 @@ Cluster supports only database `0`; omit `CACHE_DB` or set it to `"0"`.
 
 Use a `rediss://` connection string for standalone TLS, or add `CACHE_TLS_ENABLED: "true"` to a Sentinel or Cluster Secret. Certificates must validate against the broker-router system trust store. In Sentinel mode, TLS applies to both Sentinel and the data nodes.
 
+Clients verify the certificate against the address Redis advertises. Cluster nodes and Sentinel advertise IP addresses by default, so either include those IPs in the certificate SANs or configure hostname announcement (`cluster-announce-hostname` with `cluster-preferred-endpoint-type hostname` for Cluster, `announce-hostnames yes` for Sentinel).
+
 Failover can briefly delay or fail requests. Redis replication is asynchronous, so a primary failure can lose recent writes.
 
 ### Step 3: Configure the MCPGatewayExtension
@@ -230,6 +232,12 @@ spec:
 ```
 
 The operator validates the selected mode and injects its Secret-backed Redis settings into the broker-router deployment. HA modes do not require `CACHE_CONNECTION_STRING`.
+
+Changing `CACHE_MODE` in the Secret rolls the broker-router pods automatically. Other changes, such as new addresses or credentials, are read when a pod starts, so restart the deployment after updating them:
+
+```bash
+kubectl rollout restart deployment/mcp-gateway -n mcp-system
+```
 
 ### Step 4: Scale the Gateway
 

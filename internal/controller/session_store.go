@@ -13,40 +13,38 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// validateSessionStore checks that the session store secret contains a valid Redis configuration.
-func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
+// validateSessionStore checks that the session store secret contains a valid
+// Redis configuration and returns its mode, or "" when no store is configured.
+func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) (string, error) {
 	if mcpExt.Spec.SessionStore == nil {
-		return nil
+		return "", nil
 	}
 
 	secretName := mcpExt.Spec.SessionStore.SecretName
 	secret := &corev1.Secret{}
 	if err := r.DirectAPIReader.Get(ctx, client.ObjectKey{Name: secretName, Namespace: mcpExt.Namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return newValidationError(mcpv1.ConditionReasonSecretNotFound,
+			return "", newValidationError(mcpv1.ConditionReasonSecretNotFound,
 				fmt.Sprintf("session store secret %s not found in namespace %s", secretName, mcpExt.Namespace))
 		}
-		return fmt.Errorf("failed to get session store secret: %w", err)
+		return "", fmt.Errorf("failed to get session store secret: %w", err)
 	}
 
 	if secret.Labels == nil || secret.Labels[ManagedSecretLabel] != ManagedSecretValue {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return "", newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s is missing required label %s=%s", secretName, ManagedSecretLabel, ManagedSecretValue))
 	}
 	if secret.Data == nil {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return "", newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s has no data", secretName))
 	}
+	// keys the mode ignores are warned about once by the broker-router at startup
 	cfg, err := redisconfig.Parse(func(key string) string { return string(secret.Data[key]) })
 	if err != nil {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
+		return "", newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s has invalid Redis configuration: %v", secretName, err))
 	}
-	if len(cfg.Ignored) > 0 {
-		r.log.Warn("session store secret has keys ignored for its mode", "secret", secretName, "mode", cfg.Mode, "keys", cfg.Ignored)
-	}
-
-	return nil
+	return cfg.Mode, nil
 }
 
 // enqueueMCPGatewayExtForSecret maps a secret change to MCPGatewayExtension reconcile requests.

@@ -451,7 +451,7 @@ func TestValidateSessionStore(t *testing.T) {
 			}
 			var logs bytes.Buffer
 			r := &MCPGatewayExtensionReconciler{DirectAPIReader: builder.Build(), log: slog.New(slog.NewTextHandler(&logs, nil))}
-			err := r.validateSessionStore(context.Background(), ext)
+			mode, err := r.validateSessionStore(context.Background(), ext)
 			if strings.Contains(logs.String(), privateValue) {
 				t.Fatalf("log leaked a secret value: %s", logs.String())
 			}
@@ -477,10 +477,21 @@ func TestValidateSessionStore(t *testing.T) {
 
 			// Resolve the generated cache environment as Kubernetes would: absent
 			// mode-specific keys must not prevent the container from starting.
-			deployment := r.buildBrokerRouterDeployment(ext, "mcp.example.com", "gateway:8080")
+			if mode != tt.wantMode {
+				t.Errorf("validated mode = %q, want %q", mode, tt.wantMode)
+			}
+			deployment := r.buildBrokerRouterDeployment(ext, "mcp.example.com", "gateway:8080", mode)
 			resolved := make(map[string]string)
 			for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
 				if !strings.HasPrefix(env.Name, "CACHE_") {
+					continue
+				}
+				if env.Name == "CACHE_MODE" {
+					// set explicitly so the broker-router never falls back to memory
+					if env.ValueFrom != nil || env.Value != tt.wantMode {
+						t.Fatalf("CACHE_MODE = %q, want literal %q", env.Value, tt.wantMode)
+					}
+					resolved[env.Name] = env.Value
 					continue
 				}
 				if env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {

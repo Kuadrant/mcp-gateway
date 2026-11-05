@@ -168,7 +168,7 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 			ext.Spec.SessionStore = &mcpv1.SessionStore{SecretName: "old-redis-session"}
 			listener := &ListenerConfig{Hostname: "mcp.example.com", Port: 8080, Protocol: "HTTP"}
 			privateHost := derivePrivateHost(ext, listener, "istio")
-			existing := r.buildBrokerRouterDeployment(ext, listener.Hostname, privateHost)
+			existing := r.buildBrokerRouterDeployment(ext, listener.Hostname, privateHost, "standalone")
 			userEnv := corev1.EnvVar{Name: "MY_CUSTOM_VAR", Value: "preserved"}
 			existing.Spec.Template.Spec.Containers[0].Env = append(existing.Spec.Template.Spec.Containers[0].Env, userEnv)
 			// Reconcile a manually supplied password alongside old Secret refs.
@@ -181,13 +181,15 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 				}
 			}
 			r.Client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+			mode := ""
 			if tt.secretName == "" {
 				ext.Spec.SessionStore = nil
 			} else {
 				ext.Spec.SessionStore.SecretName = tt.secretName
+				mode = "sentinel"
 			}
 
-			if _, err := r.reconcileBrokerRouter(context.Background(), ext, listener, "istio"); err != nil {
+			if _, err := r.reconcileBrokerRouter(context.Background(), ext, listener, "istio", mode); err != nil {
 				t.Fatalf("reconcileBrokerRouter() failed: %v", err)
 			}
 			updated := &appsv1.Deployment{}
@@ -200,7 +202,7 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 				if env.Name == userEnv.Name {
 					userPreserved = equality.Semantic.DeepEqual(env, userEnv)
 				}
-				if !slices.Contains(redisconfig.Keys, env.Name) {
+				if !slices.Contains(redisconfig.Keys(), env.Name) {
 					continue
 				}
 				if tt.secretName == "" {
@@ -208,6 +210,12 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 					continue
 				}
 				seen[env.Name]++
+				if env.Name == "CACHE_MODE" {
+					if env.Value != mode || env.ValueFrom != nil {
+						t.Errorf("CACHE_MODE = %q, want literal %q", env.Value, mode)
+					}
+					continue
+				}
 				if env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
 					t.Errorf("%s retains a literal value instead of using the replacement secret", env.Name)
 					continue
@@ -220,7 +228,7 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 				t.Error("reconciling the store changed unrelated user environment")
 			}
 			if tt.secretName != "" {
-				for _, key := range redisconfig.Keys {
+				for _, key := range redisconfig.Keys() {
 					if seen[key] != 1 {
 						t.Errorf("%s occurs %d times after secret replacement, want once", key, seen[key])
 					}
@@ -229,7 +237,7 @@ func TestReconcileBrokerRouterSessionStoreTransition(t *testing.T) {
 			if strings.Contains(logs.String(), privateValue) {
 				t.Error("reconciliation logs contain a cache credential")
 			}
-			desired := r.buildBrokerRouterDeployment(ext, listener.Hostname, privateHost)
+			desired := r.buildBrokerRouterDeployment(ext, listener.Hostname, privateHost, mode)
 			if needsUpdate, _ := deploymentNeedsUpdate(desired, updated); needsUpdate {
 				t.Error("session store reconciliation did not converge")
 			}

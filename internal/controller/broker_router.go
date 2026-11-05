@@ -79,7 +79,7 @@ var managedEnvVarNames = slices.Concat([]string{
 	"OAUTH_AUTHORIZATION_SERVERS",
 	"OAUTH_BEARER_METHODS_SUPPORTED",
 	"OAUTH_SCOPES_SUPPORTED",
-}, redisconfig.Keys)
+}, redisconfig.Keys())
 
 // logLevelFlagValues maps spec.logLevel to the numeric value expected by the
 // broker-router's --log-level flag, following Go's slog level convention
@@ -98,7 +98,9 @@ func brokerRouterLabels() map[string]string {
 	}
 }
 
-func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1.MCPGatewayExtension, publicHost, internalHost string) *appsv1.Deployment {
+// buildBrokerRouterDeployment builds the broker-router Deployment. sessionStoreMode
+// is the validated session store mode, used only when spec.sessionStore is set.
+func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv1.MCPGatewayExtension, publicHost, internalHost, sessionStoreMode string) *appsv1.Deployment {
 	labels := brokerRouterLabels()
 	replicas := int32(1)
 
@@ -147,7 +149,14 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		})
 	}
 	if mcpExt.Spec.SessionStore != nil {
-		for _, key := range redisconfig.Keys {
+		// the resolved mode is set explicitly so the broker-router always parses
+		// its session store config: a missing secret fails startup instead of
+		// falling back to in-memory sessions, and a mode change rolls the pods.
+		envVars = append(envVars, corev1.EnvVar{Name: "CACHE_MODE", Value: sessionStoreMode})
+		for _, key := range redisconfig.Keys() {
+			if key == "CACHE_MODE" {
+				continue
+			}
 			envVars = append(envVars, corev1.EnvVar{
 				Name: key,
 				ValueFrom: &corev1.EnvVarSource{
@@ -456,7 +465,7 @@ func derivePrivateHost(mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *Listen
 	return host
 }
 
-func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *ListenerConfig, gatewayClassName string) (bool, error) {
+func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension, listenerConfig *ListenerConfig, gatewayClassName, sessionStoreMode string) (bool, error) {
 	// derive values from listener config before building resources
 	publicHost, err := derivePublicHost(listenerConfig, mcpExt.Spec.PublicHost)
 	if err != nil {
@@ -515,7 +524,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	// reconcile deployment
-	deployment := r.buildBrokerRouterDeployment(mcpExt, publicHost, internalHost)
+	deployment := r.buildBrokerRouterDeployment(mcpExt, publicHost, internalHost, sessionStoreMode)
 	if err := controllerutil.SetControllerReference(mcpExt, deployment, r.Scheme); err != nil {
 		return false, fmt.Errorf("failed to set controller reference on deployment: %w", err)
 	}
@@ -679,7 +688,8 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	desiredEnv := filterManagedEnvVars(desiredContainer.Env)
 	existingEnv := filterManagedEnvVars(existingContainer.Env)
 	if !equality.Semantic.DeepEqual(desiredEnv, existingEnv) {
-		return true, "managed environment changed"
+		// names only: values may be credentials
+		return true, fmt.Sprintf("managed env changed: %v", changedEnvNames(desiredEnv, existingEnv))
 	}
 	return false, ""
 }
@@ -725,6 +735,31 @@ func filterManagedEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
 		}
 	}
 	return out
+}
+
+// changedEnvNames returns the names of env vars that differ between a and b.
+func changedEnvNames(a, b []corev1.EnvVar) []string {
+	index := func(envs []corev1.EnvVar) map[string]*corev1.EnvVar {
+		m := make(map[string]*corev1.EnvVar, len(envs))
+		for i := range envs {
+			m[envs[i].Name] = &envs[i]
+		}
+		return m
+	}
+	am, bm := index(a), index(b)
+	var names []string
+	for name, av := range am {
+		if bv, ok := bm[name]; !ok || !equality.Semantic.DeepEqual(av, bv) {
+			names = append(names, name)
+		}
+	}
+	for name := range bm {
+		if _, ok := am[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // mergeEnvVars takes the desired env vars from the controller and the existing

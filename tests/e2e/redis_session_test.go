@@ -145,7 +145,8 @@ func deployRedisSentinel(ctx context.Context, name, master string) string {
 						Ports:   []corev1.ContainerPort{{Name: "sentinel", ContainerPort: 26379}},
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
-								Command: []string{"redis-cli", "-p", "26379", "sentinel", "get-master-addr-by-name", master},
+								// redis-cli exits 0 on a nil reply, so require a resolved address
+								Command: []string{"sh", "-c", fmt.Sprintf(`[ -n "$(redis-cli -p 26379 --raw sentinel get-master-addr-by-name %s)" ]`, master)},
 							}},
 							PeriodSeconds: 2,
 						},
