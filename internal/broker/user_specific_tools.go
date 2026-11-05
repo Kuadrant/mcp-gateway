@@ -52,6 +52,16 @@ type cachedUserSession struct {
 	headers atomic.Pointer[map[string]string]
 }
 
+// toolsForRequest merges the protocol-cache snapshot with tools fetched for this
+// caller. The resulting inventory stays request-local; per-user tools must never
+// be added to the shared gateway tool cache. No broker lock is held during I/O.
+func (broker *mcpBrokerImpl) toolsForRequest(ctx context.Context, headers http.Header) []*mcp.Tool {
+	tools, freshFetchServers := broker.toolsAndFreshFetchServersForProtocol(isStatelessProtocol(headers))
+	result := &mcp.ListToolsResult{Tools: tools}
+	broker.fetchUserSpecificTools(ctx, headers, result, freshFetchServers)
+	return result.Tools
+}
+
 // FetchUserSpecificTools fetches tools from servers that need per-request
 // fetching and merges them into the result before FilterTools runs.
 // Sources: CRD-declared userSpecificList (precomputed in startManagers) and

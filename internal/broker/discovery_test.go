@@ -221,9 +221,7 @@ func TestSelectTools_AllOrNothing(t *testing.T) {
 	)
 	populateTestVersions(b)
 
-	b.mcpLock.RLock()
-	err := b.validateToolSelectionLocked([]string{"s1_real_tool", "s1_nonexistent"}, http.Header{}, "test-session-1")
-	b.mcpLock.RUnlock()
+	err := b.validateToolSelection(context.Background(), []string{"s1_real_tool", "s1_nonexistent"}, http.Header{}, "test-session-1")
 	require.Error(t, err, "should fail because s1_nonexistent doesn't exist")
 
 	// scope must remain unset after a failed validation
@@ -333,9 +331,7 @@ func TestSelectTools_Rescope(t *testing.T) {
 func TestSelectTools_BrokerToolsNotSelectable(t *testing.T) {
 	b := NewBroker(logger, WithDiscoveryToolsEnabled(true)).(*mcpBrokerImpl)
 
-	b.mcpLock.RLock()
-	err := b.validateToolSelectionLocked([]string{"discover_tools"}, http.Header{}, "s1")
-	b.mcpLock.RUnlock()
+	err := b.validateToolSelection(context.Background(), []string{"discover_tools"}, http.Header{}, "s1")
 	require.Error(t, err)
 }
 
@@ -461,9 +457,7 @@ func TestSelectTools_ValidationSucceedsForValidTool(t *testing.T) {
 	)
 	populateTestVersions(b)
 
-	b.mcpLock.RLock()
-	err := b.validateToolSelectionLocked([]string{"s1_tool_a"}, http.Header{}, "validate-session")
-	b.mcpLock.RUnlock()
+	err := b.validateToolSelection(context.Background(), []string{"s1_tool_a"}, http.Header{}, "validate-session")
 	require.NoError(t, err)
 }
 
