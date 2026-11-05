@@ -15,8 +15,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -532,38 +530,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		deferCleanupResources(&testResources)
 		mcpGatewayClient := newTestGatewayClient()
 
-		deploymentName := "mcp-gateway"
-		redisSecretName := "redis-session-store"
-		redisConnectionString := fmt.Sprintf("redis://redis.%s.svc.cluster.local:6379", SystemNamespace)
-
-		By("Creating Redis session store secret")
-		redisSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      redisSecretName,
-				Namespace: SystemNamespace,
-				Labels: map[string]string{
-					"mcp.kuadrant.io/secret": "true",
-					"e2e":                    "test",
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"CACHE_CONNECTION_STRING": redisConnectionString,
-			},
-		}
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, redisSecret))).To(Succeed())
-
-		DeferCleanup(func() {
-			By("Cleanup: removing sessionStore from MCPGatewayExtension")
-			Eventually(func(g Gomega) {
-				ext := &mcpv1.MCPGatewayExtension{}
-				g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
-				ext.Spec.SessionStore = nil
-				g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
-			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-			Expect(WaitForDeploymentReady(ctx, SystemNamespace, deploymentName)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, redisSecret)).To(Succeed())
-		})
+		deploymentName := gatewayDeploymentName
 
 		By("Registering an MCP server")
 		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).WithPrefix("redis_").Build()
@@ -578,19 +545,7 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 		By("Ensuring the gateway has the tools")
 		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
 
-		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, deploymentName)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("Enabling Redis session cache via sessionStore on MCPGatewayExtension")
-		Eventually(func(g Gomega) {
-			ext := &mcpv1.MCPGatewayExtension{}
-			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
-			ext.Spec.SessionStore = &mcpv1.SessionStore{SecretName: redisSecretName}
-			g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-		By("Waiting for gateway rollout after enabling Redis")
-		Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, deploymentName, 1, gen)).To(Succeed())
+		enableSessionStore(1)
 
 		By("Initializing a raw HTTP session with the gateway")
 		var sessionID string
