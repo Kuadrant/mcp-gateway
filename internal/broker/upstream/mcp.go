@@ -58,7 +58,7 @@ type MCPServer struct {
 	*config.MCPServer
 	client           *mcp.Client
 	session          *mcp.ClientSession
-	sessionStale     <-chan struct{} // closed when session's connection or listen stream ends
+	sessionStale     <-chan struct{} // closed when session's connection closes or its listen push stops
 	clientMu         sync.RWMutex
 	headers          map[string]string
 	init             *mcp.InitializeResult
@@ -229,10 +229,13 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, err
 }
 
-// listenEndWatcher calls onEnd once an accepted subscriptions/listen stream
-// stops. the sdk drains the body on every exit, so each ending reaches Read
-// as an error. the sdk never reopens that stream, so push from the upstream
-// stays off until the session is replaced.
+// listenEndWatcher calls onEnd once push over subscriptions/listen stops: an
+// accepted stream ends, or the listen fails for a reason that may pass (a
+// transport error, 429 or 5xx). the sdk never reopens or retries that stream,
+// so push from the upstream stays off until the session is replaced. it
+// drains the body on every exit, so each stream ending reaches Read as an
+// error. other rejections, such as a 404 from an upstream without listen,
+// leave the session alone: a new one would be rejected the same way.
 type listenEndWatcher struct {
 	base  http.RoundTripper
 	onEnd func()
@@ -240,13 +243,26 @@ type listenEndWatcher struct {
 
 func (w *listenEndWatcher) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := w.base.RoundTrip(req)
-	if err != nil || req.Header.Get("Mcp-Method") != "subscriptions/listen" ||
-		resp.StatusCode != http.StatusOK ||
-		!strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+	if req.Header.Get("Mcp-Method") != "subscriptions/listen" {
 		return resp, err
 	}
-	resp.Body = &listenBody{ReadCloser: resp.Body, onEnd: w.onEnd}
-	return resp, nil
+	switch {
+	case err != nil || isTemporaryStatus(resp.StatusCode):
+		w.onEnd()
+	case resp.StatusCode == http.StatusOK && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream"):
+		resp.Body = &listenBody{ReadCloser: resp.Body, onEnd: w.onEnd}
+	}
+	return resp, err
+}
+
+// isTemporaryStatus matches the statuses the sdk treats as transient.
+func isTemporaryStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
 }
 
 type listenBody struct {
@@ -602,10 +618,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		select {
 		case <-sessionStale:
 			// the sdk already closed the connection (e.g. a plain-text 4xx, or a
-			// refused resume of a listen stream that sent an event id), or the
-			// listen stream ended (upstream restart, idle timeout) and the sdk
-			// will not reopen it. stateless upstreams have no connection-lost
-			// watcher, so reconnect here; the close error carries nothing new
+			// refused resume of a listen stream that sent an event id), or push
+			// over subscriptions/listen stopped and the sdk will not restart it
+			// (see listenEndWatcher). stateless upstreams have no connection-lost
+			// watcher, so reconnect here, which OnSessionStale lets the manager
+			// schedule early; the close error carries nothing new
 			up.logger.Debug("upstream session stale, reconnecting", "upstream", up.ID())
 			_ = up.Disconnect()
 		default:
@@ -668,11 +685,14 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	client.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			up.logger.Debug("upstream receiving middleware", "upstream", up.ID(), "method", method)
+			// next first: the sdk drops its cached 2026 list there, and the
+			// manager re-lists as soon as it is notified
+			res, err := next(ctx, method, req)
 			if method == "notifications/tools/list_changed" || method == "notifications/prompts/list_changed" {
 				up.logger.Debug("upstream notification received", "upstream", up.ID(), "notification", method)
 				up.notify(method)
 			}
-			return next(ctx, method, req)
+			return res, err
 		}
 	})
 
@@ -714,17 +734,17 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
 	// push notifications. 2026 upstreams push over the sdk's subscriptions/listen
 	// stream (see client options above), backed up by TTL-based polling; the sdk
-	// does not reopen that stream when it ends, so the next Connect replaces
-	// the session (see listenEndWatcher). a session-less 2025 upstream has no
-	// Mcp-Session-Id to key the standalone GET SSE stream on and relies on
-	// polling alone.
+	// does not restart that stream once push stops, so the session is replaced
+	// (see listenEndWatcher and OnSessionStale). a session-less 2025 upstream
+	// has no Mcp-Session-Id to key the standalone GET SSE stream on and relies
+	// on polling alone.
 	if !up.UsesStatelessProtocol() {
 		up.logger.Debug("starting GET SSE notification watcher", "upstream", up.ID(), "negotiated-protocol", negotiated)
 		up.startNotificationWatcher(ctx, httpC, session)
 	}
 
-	// register notification and connection-lost handlers after session is
-	// assigned so OnConnectionLost can start session.Wait() immediately
+	// register connection-lost and session-stale handlers after session is
+	// assigned so they watch this session from the start
 	onConnection()
 
 	return nil
@@ -818,11 +838,10 @@ func (up *MCPServer) notify(method string) {
 
 // OnConnectionLost registers a connection lost handler.
 // In the official SDK, connection loss is observed via session.Wait().
-// upstreams that return no Mcp-Session-Id from initialize do not need
-// connection-loss monitoring: the SDK's subscriptions/listen stream
-// will fail immediately with an empty session ID, which is expected
-// and not a real connection loss. the ticker health check and ping
-// handle failure detection for these upstreams.
+// only upstreams that return an Mcp-Session-Id are watched: on stateless
+// ones this handler's immediate reconnect once looped tightly when the
+// sdk's subscriptions/listen died with an empty session ID. for those,
+// OnSessionStale reports a closed connection and the manager backs off.
 func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	session := up.currentSession()
 	if session == nil {
@@ -841,6 +860,27 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 				return
 			}
 			handler(err)
+		}
+	}()
+}
+
+// OnSessionStale registers a handler called once the current session goes
+// stale (see sessionStale), so the manager can have Connect replace it
+// without waiting for its next poll. only stateless upstreams are watched:
+// a session-ful upstream's session goes stale only when its connection
+// closes, which OnConnectionLost reports.
+func (up *MCPServer) OnSessionStale(handler func()) {
+	up.clientMu.RLock()
+	session, stale := up.session, up.sessionStale
+	up.clientMu.RUnlock()
+	if session == nil || session.ID() != "" {
+		return
+	}
+	go func() {
+		<-stale
+		// a planned Disconnect closes the session too; only report the current one
+		if up.currentSession() == session {
+			handler()
 		}
 	}()
 }

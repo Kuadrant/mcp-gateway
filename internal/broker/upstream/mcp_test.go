@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -597,6 +598,22 @@ func (w ackSpyWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 // are set. without them the broker only sees changes on the TTL poll.
 func TestConnect_2026ListChangedPushReachesBroker(t *testing.T) {
 	srv := newStateless2026Server()
+	// 2026 lists carry ttlMs, and the sdk client caches them for that long
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if err != nil {
+				return res, err
+			}
+			switch r := res.(type) {
+			case *mcp.ListToolsResult:
+				r.TTLMs = 60000
+			case *mcp.ListPromptsResult:
+				r.TTLMs = 60000
+			}
+			return res, nil
+		}
+	})
 	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
 		&mcp.StreamableHTTPOptions{Stateless: true})
 	acks := make(chan struct{}, 4)
@@ -608,12 +625,36 @@ func TestConnect_2026ListChangedPushReachesBroker(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
-	got := make(chan string, 16)
-	up.OnNotification(func(method string) { got <- method })
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	require.NoError(t, up.Connect(ctx, func() {}))
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	type listing struct {
+		method string
+		names  []string
+	}
+	got := make(chan listing, 16)
+	// the manager re-lists as soon as it is notified, so do the same inline:
+	// the pushed change must be visible then, not hidden by the sdk cache
+	up.OnNotification(func(method string) {
+		l := listing{method: method}
+		switch method {
+		case "notifications/tools/list_changed":
+			if res, err := up.ListTools(ctx); err == nil {
+				for _, tool := range res.Tools {
+					l.names = append(l.names, tool.Name)
+				}
+			}
+		case "notifications/prompts/list_changed":
+			if res, err := up.ListPrompts(ctx); err == nil {
+				for _, prompt := range res.Prompts {
+					l.names = append(l.names, prompt.Name)
+				}
+			}
+		}
+		got <- l
+	})
+	onConnection, stale := staleSignal(up)
+	require.NoError(t, up.Connect(ctx, onConnection))
 	defer func() { _ = up.Disconnect() }()
 	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
 
@@ -629,17 +670,28 @@ func TestConnect_2026ListChangedPushReachesBroker(t *testing.T) {
 	}
 	waitForListen()
 
-	waitFor := func(want string) {
+	// the manager's first tick lists both, filling the sdk cache
+	_, err := up.ListTools(ctx)
+	require.NoError(t, err)
+	_, err = up.ListPrompts(ctx)
+	require.NoError(t, err)
+
+	waitFor := func(method, name string) {
 		t.Helper()
 		deadline := time.After(5 * time.Second)
+		var last []string
 		for {
 			select {
-			case method := <-got:
-				if method == want {
+			case l := <-got:
+				if l.method != method {
+					continue
+				}
+				if slices.Contains(l.names, name) {
 					return
 				}
+				last = l.names
 			case <-deadline:
-				t.Fatalf("%s not delivered", want)
+				t.Fatalf("re-list after %s never showed %s, last saw %v", method, name, last)
 			}
 		}
 	}
@@ -650,40 +702,47 @@ func TestConnect_2026ListChangedPushReachesBroker(t *testing.T) {
 			})
 	}
 	addTool("t2")
-	waitFor("notifications/tools/list_changed")
+	waitFor("notifications/tools/list_changed", "t2")
 	srv.AddPrompt(&mcp.Prompt{Name: "p2"},
 		func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 			return &mcp.GetPromptResult{}, nil
 		})
-	waitFor("notifications/prompts/list_changed")
+	waitFor("notifications/prompts/list_changed", "p2")
 
 	// a live listen stream keeps the session
 	session := up.currentSession()
-	require.NoError(t, up.Connect(ctx, func() {}))
+	require.NoError(t, up.Connect(ctx, onConnection))
 	require.Same(t, session, up.currentSession())
 
 	// the sdk never reopens a listen stream that ends (upstream restart, idle
-	// timeout), so the next tick's Connect must replace the session to get
-	// push back
+	// timeout), so the session must report stale and be replaced to get push
+	// back
 	ts.CloseClientConnections()
-	reconnectEventually(ctx, t, up, session)
+	replaceStaleSession(ctx, t, up, onConnection, stale)
 	waitForListen()
 	addTool("t3")
-	waitFor("notifications/tools/list_changed")
+	waitFor("notifications/tools/list_changed", "t3")
 }
 
-// reconnectEventually calls Connect, as the manager's ticks would, until it
-// replaces stale. the stale signals arrive asynchronously.
-func reconnectEventually(ctx context.Context, t *testing.T, up *MCPServer, stale *mcp.ClientSession) {
+// staleSignal returns an onConnection that, like the manager's, watches each
+// new session for staleness, and the channel those signals arrive on.
+func staleSignal(up *MCPServer) (func(), <-chan struct{}) {
+	stale := make(chan struct{}, 4)
+	return func() { up.OnSessionStale(func() { stale <- struct{}{} }) }, stale
+}
+
+// replaceStaleSession waits for the current session to report stale, then
+// calls Connect as the manager's rescheduled tick would, which must replace it.
+func replaceStaleSession(ctx context.Context, t *testing.T, up *MCPServer, onConnection func(), stale <-chan struct{}) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for up.currentSession() == stale {
-		if time.Now().After(deadline) {
-			t.Fatal("Connect never replaced the stale session")
-		}
-		time.Sleep(10 * time.Millisecond)
-		require.NoError(t, up.Connect(ctx, func() {}))
+	session := up.currentSession()
+	select {
+	case <-stale:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session never reported stale")
 	}
+	require.NoError(t, up.Connect(ctx, onConnection))
+	require.NotSame(t, session, up.currentSession())
 }
 
 // regression (#1484): upstreams such as GitHub MCP and FastMCP 4.x answer
@@ -712,7 +771,8 @@ func TestConnect_2026ListenRejectedIsNonFatal(t *testing.T) {
 	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	require.NoError(t, up.Connect(ctx, func() {}))
+	onConnection, stale := staleSignal(up)
+	require.NoError(t, up.Connect(ctx, onConnection))
 	defer func() { _ = up.Disconnect() }()
 	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
 
@@ -725,18 +785,70 @@ func TestConnect_2026ListenRejectedIsNonFatal(t *testing.T) {
 
 	// the next tick's Connect must keep the live session, not recycle it
 	session := up.currentSession()
-	require.NoError(t, up.Connect(ctx, func() {}))
+	require.NoError(t, up.Connect(ctx, onConnection))
 	require.Same(t, session, up.currentSession())
 
 	// a plain-text 4xx on a call makes the sdk fail the connection. with no
-	// listen stream to watch, the next tick's Connect must still replace it
+	// listen stream to watch, the session must still report stale and be
+	// replaced
 	failList.Store(true)
 	_, err = up.ListTools(ctx)
 	require.Error(t, err)
-	reconnectEventually(ctx, t, up, session)
+	replaceStaleSession(ctx, t, up, onConnection, stale)
 	tools, err = up.ListTools(ctx)
 	require.NoError(t, err)
 	require.Len(t, tools.Tools, 1)
+}
+
+// unlike a 404, a listen that fails for a reason that may pass (the upstream
+// restarting, a dropped connection) is worth retrying. the sdk treats it as
+// non-fatal and never retries it, so the session must be replaced to get push.
+func TestConnect_2026ListenTemporaryFailureReconnects(t *testing.T) {
+	for name, fail := range map[string]func(http.ResponseWriter){
+		"503": func(w http.ResponseWriter) {
+			http.Error(w, "upstream restarting", http.StatusServiceUnavailable)
+		},
+		"dropped connection": func(w http.ResponseWriter) {
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := newStateless2026Server()
+			inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+				&mcp.StreamableHTTPOptions{Stateless: true})
+			var failed atomic.Bool
+			ackCh := make(chan struct{}, 4)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Mcp-Method") == "subscriptions/listen" {
+					if failed.CompareAndSwap(false, true) {
+						fail(w)
+						return
+					}
+					w = ackSpyWriter{ResponseWriter: w, onAck: func() { ackCh <- struct{}{} }}
+				}
+				inner.ServeHTTP(w, r)
+			}))
+			defer ts.Close()
+
+			up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			onConnection, stale := staleSignal(up)
+			require.NoError(t, up.Connect(ctx, onConnection))
+			defer func() { _ = up.Disconnect() }()
+			require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
+			require.True(t, failed.Load(), "broker never sent subscriptions/listen")
+
+			replaceStaleSession(ctx, t, up, onConnection, stale)
+			select {
+			case <-ackCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the replacement session's listen was never acknowledged")
+			}
+		})
+	}
 }
 
 // an upstream that sends SSE event IDs on its listen stream (e.g. a resumable
