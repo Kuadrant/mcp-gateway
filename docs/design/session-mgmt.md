@@ -96,7 +96,9 @@ This approach has two main considerations.
 -  sharing the sessions across instances of the router in a scaled environment.
 -  allowing more advanced MCP servers to respond with a "filtered" list based on the client identity rather than the brokers identity.
 
-To solve the first issue, we will introduce the capability of connecting the gateway to shared redis store where the session mappings will be stored and accessible to other instances.
+A shared Redis-compatible store makes session mappings accessible to other gateway instances. The session cache, request-ID map, and elicitation map share a `redis.UniversalClient`. Standalone mode constructs `redis.NewClient`, Sentinel constructs `redis.NewFailoverClient`, and Cluster constructs `redis.NewClusterClient`. The controller and broker-router use the same configuration parser; an absent `CACHE_MODE` preserves the existing standalone connection-string behavior.
+
+Redis Cluster can place a session hash and its metadata in different hash slots. Session cleanup pipelines one `DEL` per key instead of issuing a cross-slot multi-key `DEL`, preserving the existing key layout. See [Scaling the MCP Gateway](../guides/scaling.md) for mode-specific Secret configuration.
 
 To solve the second issue, we will allow an MCP server to indicate that it provides per client listing capabilities. In this case, the MCP Broker will not do a tools/list but instead when a tools/list call comes in, it will use the client identity to make the tools/list call against only the MCP servers that provide this capability and then aggregate the tools list with the client specific response in to a session based cache.
 

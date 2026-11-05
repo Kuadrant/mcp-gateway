@@ -66,7 +66,9 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 
 | **Field** | **Type** | **Required** | **Description** |
 |-----------|----------|:------------:|-----------------|
-| `secretName` | String | Yes | Name of the secret containing a `CACHE_CONNECTION_STRING` data entry. The value should be a redis connection string (`redis://<user>:<pass>@<host>:<port>/<db>`). The secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Injected as `CACHE_CONNECTION_STRING` env var into the broker-router deployment |
+| `secretName` | String | Yes | Name of the Secret containing standalone, Sentinel, or Cluster Redis settings. The Secret must exist in the MCPGatewayExtension namespace and must have the label `mcp.kuadrant.io/secret: "true"`. Redis settings are injected as environment variables into the broker-router deployment |
+
+Standalone uses `CACHE_CONNECTION_STRING` by default. Set `CACHE_MODE` to `sentinel` or `cluster` to select an HA backend. See [Scaling the MCP Gateway](../guides/scaling.md) for the required address, authentication, and TLS settings for each mode.
 
 ## OAuthProtectedResource
 
@@ -99,7 +101,7 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | `ReferenceGrantRequired` | A ReferenceGrant is missing for a cross-namespace Gateway reference |
 | `DeploymentNotReady` | The broker-router deployment is not ready |
 | `SecretNotFound` | A referenced secret is missing (trusted headers, session store, or CA cert bundle) |
-| `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle) |
+| `SecretInvalid` | A referenced secret has missing or invalid data (including mode-specific Redis settings), lacks the required label, or contains invalid PEM data (CA cert bundle) |
 
 ## Managed NetworkPolicy
 

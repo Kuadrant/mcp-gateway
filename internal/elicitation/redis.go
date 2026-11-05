@@ -14,11 +14,11 @@ import (
 const tokenElicitationPrefix = "tokenelicitation:"
 
 type redisMap struct {
-	client   *redis.Client
+	client   redis.UniversalClient
 	entryTTL time.Duration
 }
 
-func newRedisMap(client *redis.Client, entryTTL time.Duration) *redisMap {
+func newRedisMap(client redis.UniversalClient, entryTTL time.Duration) *redisMap {
 	return &redisMap{client: client, entryTTL: entryTTL}
 }
 

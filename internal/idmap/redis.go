@@ -19,11 +19,11 @@ const (
 )
 
 type redisMap struct {
-	client   *redis.Client
+	client   redis.UniversalClient
 	entryTTL time.Duration
 }
 
-func newRedisMapFromClient(client *redis.Client, entryTTL time.Duration) *redisMap {
+func newRedisMapFromClient(client redis.UniversalClient, entryTTL time.Duration) *redisMap {
 	if entryTTL <= 0 {
 		entryTTL = defaultEntryTTL
 	}

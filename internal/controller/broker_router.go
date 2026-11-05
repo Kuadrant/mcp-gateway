@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/redisconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -70,16 +71,15 @@ var managedVolumeNames = []string{
 
 // managedEnvVarNames are the env var names the controller owns and reconciles.
 // Any env var not in this list is user-managed and preserved as-is.
-var managedEnvVarNames = []string{
+var managedEnvVarNames = slices.Concat([]string{
 	"TRUSTED_HEADER_PUBLIC_KEY",
-	"CACHE_CONNECTION_STRING",
 	sessionSigningKeyEnvVar,
 	"OAUTH_RESOURCE_NAME",
 	"OAUTH_RESOURCE",
 	"OAUTH_AUTHORIZATION_SERVERS",
 	"OAUTH_BEARER_METHODS_SUPPORTED",
 	"OAUTH_SCOPES_SUPPORTED",
-}
+}, redisconfig.Keys)
 
 // logLevelFlagValues maps spec.logLevel to the numeric value expected by the
 // broker-router's --log-level flag, following Go's slog level convention
@@ -147,17 +147,20 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 		})
 	}
 	if mcpExt.Spec.SessionStore != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "CACHE_CONNECTION_STRING",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: mcpExt.Spec.SessionStore.SecretName,
+		for _, key := range redisconfig.Keys {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: key,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: mcpExt.Spec.SessionStore.SecretName,
+						},
+						Key:      key,
+						Optional: ptr.To(true),
 					},
-					Key: "CACHE_CONNECTION_STRING",
 				},
-			},
-		})
+			})
+		}
 	}
 	if opr := mcpExt.Spec.OAuthProtectedResource; opr != nil {
 		resourceName := "MCP Server"
@@ -676,7 +679,7 @@ func deploymentNeedsUpdate(desired, existing *appsv1.Deployment) (bool, string) 
 	desiredEnv := filterManagedEnvVars(desiredContainer.Env)
 	existingEnv := filterManagedEnvVars(existingContainer.Env)
 	if !equality.Semantic.DeepEqual(desiredEnv, existingEnv) {
-		return true, fmt.Sprintf("env changed: %+v -> %+v", existingEnv, desiredEnv)
+		return true, "managed environment changed"
 	}
 	return false, ""
 }

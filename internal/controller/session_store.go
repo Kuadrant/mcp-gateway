@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
+	"github.com/Kuadrant/mcp-gateway/internal/redisconfig"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -12,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// validateSessionStore checks that the session store secret exists and contains the CACHE_CONNECTION_STRING key.
+// validateSessionStore checks that the session store secret contains a valid Redis configuration.
 func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context, mcpExt *mcpv1.MCPGatewayExtension) error {
 	if mcpExt.Spec.SessionStore == nil {
 		return nil
@@ -36,14 +37,13 @@ func (r *MCPGatewayExtensionReconciler) validateSessionStore(ctx context.Context
 		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
 			fmt.Sprintf("session store secret %s has no data", secretName))
 	}
-	val, ok := secret.Data["CACHE_CONNECTION_STRING"]
-	if !ok {
+	cfg, err := redisconfig.Parse(func(key string) string { return string(secret.Data[key]) })
+	if err != nil {
 		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
-			fmt.Sprintf("session store secret %s is missing required data entry \"CACHE_CONNECTION_STRING\"", secretName))
+			fmt.Sprintf("session store secret %s has invalid Redis configuration: %v", secretName, err))
 	}
-	if len(val) == 0 {
-		return newValidationError(mcpv1.ConditionReasonSecretInvalid,
-			fmt.Sprintf("session store secret %s has empty \"CACHE_CONNECTION_STRING\" value", secretName))
+	if len(cfg.Ignored) > 0 {
+		r.log.Warn("session store secret has keys ignored for its mode", "secret", secretName, "mode", cfg.Mode, "keys", cfg.Ignored)
 	}
 
 	return nil

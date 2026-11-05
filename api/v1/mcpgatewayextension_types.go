@@ -125,9 +125,9 @@ type MCPGatewayExtensionSpec struct {
 	// +optional
 	LogLevel LogLevel `json:"logLevel,omitempty"`
 
-	// sessionStore references a secret for redis-based session storage.
-	// The secret must exist in the MCPGatewayExtension namespace and contain a CACHE_CONNECTION_STRING key.
-	// The value is injected as CACHE_CONNECTION_STRING into the broker-router deployment.
+	// sessionStore references a secret containing Redis client configuration.
+	// The secret must exist in the MCPGatewayExtension namespace.
+	// Its Redis settings are injected as environment variables into the broker-router deployment.
 	// When not set, in-memory session storage is used.
 	// +optional
 	SessionStore *SessionStore `json:"sessionStore,omitempty"`
@@ -215,10 +215,10 @@ type CACertBundleReference struct {
 	Key string `json:"key,omitempty"`
 }
 
-// SessionStore references a secret containing a redis connection string for session storage.
+// SessionStore references a secret containing Redis client configuration for session storage.
 type SessionStore struct {
-	// secretName is the name of the secret containing the CACHE_CONNECTION_STRING key.
-	// The value should be a redis connection string: redis://<user>:<pass>@<host>:<port>/<db>
+	// secretName is the name of the secret containing Redis client settings.
+	// Use CACHE_CONNECTION_STRING for standalone Redis; CACHE_MODE selects Sentinel or Cluster.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName,omitempty"`

@@ -15,8 +15,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -528,107 +526,20 @@ var _ = Describe("MCP Gateway Registration Happy Path", func() {
 	})
 
 	It("[Full] Redis session cache persists backend sessions across pod restarts", Serial, func() {
-		testResources := []client.Object{}
-		deferCleanupResources(&testResources)
-		mcpGatewayClient := newTestGatewayClient()
-
-		deploymentName := "mcp-gateway"
-		redisSecretName := "redis-session-store"
-		redisConnectionString := fmt.Sprintf("redis://redis.%s.svc.cluster.local:6379", SystemNamespace)
-
-		By("Creating Redis session store secret")
-		redisSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      redisSecretName,
-				Namespace: SystemNamespace,
-				Labels: map[string]string{
-					"mcp.kuadrant.io/secret": "true",
-					"e2e":                    "test",
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"CACHE_CONNECTION_STRING": redisConnectionString,
-			},
-		}
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, redisSecret))).To(Succeed())
-
-		DeferCleanup(func() {
-			By("Cleanup: removing sessionStore from MCPGatewayExtension")
-			Eventually(func(g Gomega) {
-				ext := &mcpv1.MCPGatewayExtension{}
-				g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
-				ext.Spec.SessionStore = nil
-				g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
-			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-			Expect(WaitForDeploymentReady(ctx, SystemNamespace, deploymentName)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, redisSecret)).To(Succeed())
+		verifyRedisSessionPersistence("redis-session-store", "redis-session", map[string]string{
+			"CACHE_CONNECTION_STRING": fmt.Sprintf("redis://redis.%s.svc.cluster.local:6379", SystemNamespace),
 		})
+	})
 
-		By("Registering an MCP server")
-		registration := NewMCPServerResourcesWithDefaults("redis-session", k8sClient).WithPrefix("redis_").Build()
-		testResources = append(testResources, registration.GetObjects()...)
-		registeredServer := registration.Register(ctx)
+	It("[Full] Redis Sentinel session cache persists backend sessions across pod restarts", Serial, func() {
+		By("Deploying a Sentinel that monitors the CI Redis")
+		sentinelAddr := deployRedisSentinel(ctx, "redis-sentinel", "mymaster")
 
-		By("Ensuring the gateway has registered the server")
-		Eventually(func(g Gomega) {
-			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, registeredServer.Name, registeredServer.Namespace)).To(BeNil())
-		}, TestTimeoutLong, TestRetryInterval).To(Succeed())
-
-		By("Ensuring the gateway has the tools")
-		WaitForToolsWithPrefix(ctx, mcpGatewayClient, registeredServer.Spec.Prefix)
-
-		gen, err := GetDeploymentGeneration(ctx, SystemNamespace, deploymentName)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("Enabling Redis session cache via sessionStore on MCPGatewayExtension")
-		Eventually(func(g Gomega) {
-			ext := &mcpv1.MCPGatewayExtension{}
-			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: MCPExtensionName, Namespace: SystemNamespace}, ext)).To(Succeed())
-			ext.Spec.SessionStore = &mcpv1.SessionStore{SecretName: redisSecretName}
-			g.Expect(k8sClient.Update(ctx, ext)).To(Succeed())
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-		By("Waiting for gateway rollout after enabling Redis")
-		Expect(WaitForDeploymentReplicas(ctx, SystemNamespace, deploymentName, 1, gen)).To(Succeed())
-
-		By("Initializing a raw HTTP session with the gateway")
-		var sessionID string
-		Eventually(func(g Gomega) {
-			var initErr error
-			sessionID, initErr = mcpInitialize(ctx, gatewayURL, nil)
-			g.Expect(initErr).NotTo(HaveOccurred())
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		GinkgoWriter.Println("client session ID:", sessionID)
-
-		Expect(mcpNotifyInitialized(ctx, gatewayURL, sessionID, nil)).To(Succeed())
-
-		By("Calling headers tool to establish a backend session")
-		toolName := fmt.Sprintf("%s%s", registeredServer.Spec.Prefix, "headers")
-		var backendSessionID string
-		Eventually(func(g Gomega) {
-			_, content, callErr := mcpCallTool(ctx, gatewayURL, sessionID, toolName, nil, nil)
-			g.Expect(callErr).NotTo(HaveOccurred())
-			backendSessionID = extractBackendSession(content)
-			g.Expect(backendSessionID).NotTo(BeEmpty(), "expected backend Mcp-Session-Id in tool response")
-		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-		GinkgoWriter.Println("backend session before restart:", backendSessionID)
-
-		By("Restarting the mcp-gateway deployment and waiting for rollout")
-		Expect(RestartDeploymentAndWait(ctx, SystemNamespace, deploymentName)).To(Succeed())
-
-		By("Calling headers tool with same session ID to verify Redis restored the backend session")
-		var restoredSessionID string
-		Eventually(func(g Gomega) {
-			_, content, callErr := mcpCallTool(ctx, gatewayURL, sessionID, toolName, nil, nil)
-			g.Expect(callErr).NotTo(HaveOccurred())
-			restoredSessionID = extractBackendSession(content)
-			g.Expect(restoredSessionID).NotTo(BeEmpty(), "expected backend Mcp-Session-Id in tool response")
-		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-
-		GinkgoWriter.Println("backend session after restart:", restoredSessionID)
-		Expect(restoredSessionID).To(Equal(backendSessionID),
-			"backend session should be restored from Redis after pod restart")
+		verifyRedisSessionPersistence("redis-sentinel-session-store", "redis-sentinel-session", map[string]string{
+			"CACHE_MODE":            "sentinel",
+			"CACHE_SENTINEL_MASTER": "mymaster",
+			"CACHE_SENTINEL_ADDRS":  sentinelAddr,
+		})
 	})
 
 	It("[Happy] should assign unique mcp-session-ids to concurrent clients and new session on reconnect", func() {

@@ -19,7 +19,7 @@ const userTokenFieldPrefix = "token:"
 type Cache struct {
 	inmemory      *sync.Map
 	innerMu       sync.Mutex // serializes copy-on-write mutations on inner map[string]string values
-	extClient     *redis.Client
+	extClient     redis.UniversalClient
 	encryptionKey []byte
 }
 
@@ -63,11 +63,17 @@ func (c *Cache) DeleteSessions(ctx context.Context, key ...string) error {
 		}
 		return nil
 	}
-	allKeys := make([]string, 0, len(key)*2)
-	for _, k := range key {
-		allKeys = append(allKeys, k, clientElicitationPrefix+k)
+	if len(key) == 0 {
+		return nil
 	}
-	return c.extClient.Del(ctx, allKeys...).Err()
+	// individual commands let the cluster client route keys in different slots.
+	pipe := c.extClient.Pipeline()
+	for _, k := range key {
+		pipe.Del(ctx, k)
+		pipe.Del(ctx, clientElicitationPrefix+k)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // AddSession will add a session under the key. If the key exists it will append that session.
@@ -263,7 +269,7 @@ func NewCache(opts ...func(*Cache)) (*Cache, error) {
 }
 
 // WithRedisClient configures the cache to use an existing redis client
-func WithRedisClient(client *redis.Client) func(c *Cache) {
+func WithRedisClient(client redis.UniversalClient) func(c *Cache) {
 	return func(c *Cache) {
 		if client != nil {
 			c.extClient = client

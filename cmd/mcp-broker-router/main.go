@@ -23,6 +23,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/idmap"
 	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
 	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
+	"github.com/Kuadrant/mcp-gateway/internal/redisconfig"
 	"github.com/Kuadrant/mcp-gateway/internal/session"
 	goenv "github.com/caitlinelfring/go-env-default"
 	"github.com/fsnotify/fsnotify"
@@ -42,6 +43,7 @@ type commonConfig struct {
 	logFormat             string
 	gatewaySigningKey     string
 	cacheConnectionString string
+	cacheMode             string
 	sessionDurationMins   int64
 	publicHost            string
 	privateHost           string
@@ -77,7 +79,7 @@ type app struct {
 	configMu       sync.RWMutex
 	logger         *slog.Logger
 	otelShutdown   func(context.Context) error
-	redisClient    *redis.Client
+	redisClient    redis.UniversalClient
 	sessionCache   *session.Cache
 	jwtMgr         *session.JWTManager
 	elicitMap      idmap.Map
@@ -140,7 +142,9 @@ func parseFlags() *app {
 		"Deprecated alias for gateway-signing-key")
 	flag.StringVar(&bc.cacheConnectionString, "cache-connection-string",
 		goenv.GetDefault("CACHE_CONNECTION_STRING", ""),
-		"redis based cache connection string redis://<user>:<pass>@localhost:6379/<db> (env: CACHE_CONNECTION_STRING). If not set defaults to  in memory storage")
+		"Redis URL for standalone session storage (env: CACHE_CONNECTION_STRING). With no cache mode or URL, storage is in memory")
+	flag.StringVar(&bc.cacheMode, "cache-mode", goenv.GetDefault("CACHE_MODE", ""),
+		"Redis session store mode: standalone, sentinel or cluster (env: CACHE_MODE). HA connection settings use CACHE_* environment variables")
 
 	// broker-specific flags
 	flag.StringVar(&bc.addr, "mcp-broker-public-address", "0.0.0.0:8080", "The public address for MCP broker")
@@ -197,13 +201,25 @@ func (a *app) setupTelemetry(ctx context.Context, logOpts *slog.HandlerOptions, 
 }
 
 func (a *app) setupSessionInfra(ctx context.Context) {
-	if a.brokerCfg.cacheConnectionString != "" {
-		a.logger.Info("cache using external redis store")
-		redisOpt, err := redis.ParseURL(a.brokerCfg.cacheConnectionString)
+	if a.brokerCfg.cacheConnectionString != "" || a.brokerCfg.cacheMode != "" {
+		redisCfg, err := redisconfig.Parse(func(key string) string {
+			switch key {
+			case "CACHE_MODE":
+				return a.brokerCfg.cacheMode
+			case "CACHE_CONNECTION_STRING":
+				return a.brokerCfg.cacheConnectionString
+			default:
+				return os.Getenv(key)
+			}
+		})
 		if err != nil {
-			panic("failed to parse redis connection string: " + err.Error())
+			panic("invalid session store configuration: " + err.Error())
 		}
-		a.redisClient = redis.NewClient(redisOpt)
+		a.logger.Info("cache using external redis store", "mode", redisCfg.Mode)
+		if len(redisCfg.Ignored) > 0 {
+			a.logger.Warn("session store settings ignored for mode", "mode", redisCfg.Mode, "keys", redisCfg.Ignored)
+		}
+		a.redisClient = redisCfg.NewClient()
 		if err := a.redisClient.Ping(ctx).Err(); err != nil {
 			panic("failed to connect to redis: " + err.Error())
 		}

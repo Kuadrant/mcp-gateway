@@ -52,7 +52,7 @@ Confirm the MCPGatewayExtension has no `sessionStore` field:
 kubectl get mcpgatewayextension mcp-gateway-extension -n mcp-system -o jsonpath='{.spec.sessionStore}'
 ```
 
-The output should be empty. If it returns a value, Redis is already configured — the gateway is on the 2025-11-25 or mixed path, so follow [Scaling a 2025-11-25 or mixed gateway](#scaling-a-2025-11-25-or-mixed-gateway-redis-required) instead. This command only confirms whether a session store is configured; whether your traffic is 2026-07-28-only depends on the protocol versions your clients and backends negotiate, which you determine from the [Do I need Redis?](#do-i-need-redis) table above.
+The output is empty when no session store is configured. A nonempty value means that Redis is configured, not that the gateway uses a particular protocol. Determine the protocol versions from your clients and backends before removing a session store. A configured store is still contacted at startup even when all requests use 2026-07-28.
 
 ### Step 2: Scale the Deployment
 
@@ -78,7 +78,7 @@ If any of your clients or backends use the 2025-11-25 protocol, configure an ext
 
 ### Step 1: Deploy a Redis-based Datastore
 
-If you don't already have a Redis-based datastore available, deploy one in your cluster. Any Redis-compatible deployment will work. For example, to deploy Redis:
+The gateway supports standalone Redis or Valkey, Sentinel, and Cluster. Sentinel provides primary failover; Cluster distributes keys across shards and can promote replicas when a primary fails. Deploy the datastore separately from the gateway. The following single-node example is for testing and does not provide high availability:
 
 ```bash
 kubectl apply -n your-namespace -f - <<EOF
@@ -133,9 +133,13 @@ kubectl rollout status deployment/redis -n your-namespace
 
 ### Step 2: Create the Redis Credentials Secret
 
-Create a secret containing the Redis connection URL. The secret must have the `mcp.kuadrant.io/secret: "true"` label — without it, the MCPGatewayExtension will fail validation.
+Create one Secret for your Redis mode. It must have the `mcp.kuadrant.io/secret: "true"` label; the MCPGatewayExtension fails validation without it. Replace the example endpoints and credentials with the values for your deployment.
 
-> **Note:** The secret must be created in the **same namespace as the MCPGatewayExtension**. The Redis deployment itself can run in any namespace — just ensure the connection string in the secret points to it correctly.
+> **Note:** The Secret must be in the **same namespace as the MCPGatewayExtension**. Redis can run in another namespace, provided the gateway can reach its endpoints.
+
+**Standalone (default)**
+
+Existing `CACHE_CONNECTION_STRING` Secrets work unchanged. An absent `CACHE_MODE` selects standalone mode.
 
 ```bash
 kubectl apply -n mcp-system -f - <<EOF
@@ -159,6 +163,62 @@ redis://<user>:<password>@<host>:<port>/<db>
 
 For an instance without authentication in the same cluster, the host is typically `<service-name>.<namespace>.svc.cluster.local`.
 
+**Sentinel**
+
+Provide Sentinel discovery addresses and the monitored primary name. `CACHE_SENTINEL_PASSWORD` authenticates to Sentinel; `CACHE_PASSWORD` authenticates to the Redis data nodes. The username and password settings are optional when the corresponding service does not require authentication.
+
+```bash
+kubectl apply -n mcp-system -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-credentials
+  labels:
+    mcp.kuadrant.io/secret: "true"
+type: Opaque
+stringData:
+  CACHE_MODE: "sentinel"
+  CACHE_SENTINEL_MASTER: "mymaster"
+  CACHE_SENTINEL_ADDRS: "sentinel-0.redis.your-namespace.svc.cluster.local:26379,sentinel-1.redis.your-namespace.svc.cluster.local:26379,sentinel-2.redis.your-namespace.svc.cluster.local:26379"
+  CACHE_SENTINEL_USERNAME: "default"
+  CACHE_SENTINEL_PASSWORD: "replace-with-sentinel-password"
+  CACHE_USERNAME: "default"
+  CACHE_PASSWORD: "replace-with-redis-password"
+  CACHE_DB: "0"
+EOF
+```
+
+The Redis client discovers the current primary and reconnects after a promotion. Sentinel must advertise data-node addresses that the gateway can reach.
+
+**Cluster**
+
+Provide one or more cluster seed addresses. Multiple seeds allow discovery when a seed is unavailable. The client discovers the shard topology and routes requests to the node responsible for each key. All advertised data-node addresses must be reachable from the gateway.
+
+```bash
+kubectl apply -n mcp-system -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-credentials
+  labels:
+    mcp.kuadrant.io/secret: "true"
+type: Opaque
+stringData:
+  CACHE_MODE: "cluster"
+  CACHE_CLUSTER_ADDRS: "redis-0.redis.your-namespace.svc.cluster.local:6379,redis-1.redis.your-namespace.svc.cluster.local:6379,redis-2.redis.your-namespace.svc.cluster.local:6379"
+  CACHE_USERNAME: "default"
+  CACHE_PASSWORD: "replace-with-redis-password"
+EOF
+```
+
+Cluster supports only database `0`; omit `CACHE_DB` or set it to `"0"`.
+
+**TLS**
+
+Use a `rediss://` connection string for standalone TLS, or add `CACHE_TLS_ENABLED: "true"` to a Sentinel or Cluster Secret. Certificates must validate against the broker-router system trust store. In Sentinel mode, TLS applies to both Sentinel and the data nodes.
+
+Failover can briefly delay or fail requests. Redis replication is asynchronous, so a primary failure can lose recent writes.
+
 ### Step 3: Configure the MCPGatewayExtension
 
 Add the `sessionStore` field to your MCPGatewayExtension to reference the Redis credentials secret:
@@ -169,7 +229,7 @@ spec:
     secretName: redis-credentials
 ```
 
-The operator will inject the Redis connection string as the `CACHE_CONNECTION_STRING` env var into the broker-router deployment.
+The operator validates the selected mode and injects its Secret-backed Redis settings into the broker-router deployment. HA modes do not require `CACHE_CONNECTION_STRING`.
 
 ### Step 4: Scale the Gateway
 
@@ -187,7 +247,7 @@ kubectl rollout status deployment/mcp-gateway -n mcp-system
 
 ### Step 5: Verify Session Sharing
 
-Confirm that the external store is active by checking the gateway logs. You should see `cache using external redis store` on startup:
+Confirm the selected external store mode in the startup logs. The gateway logs `cache using external redis store` with `mode=standalone`, `mode=sentinel`, or `mode=cluster`, then checks connectivity. Startup fails if Redis cannot be reached; it does not fall back to in-memory storage.
 
 ```bash
 kubectl logs -n mcp-system deployment/mcp-gateway | grep "cache using external"

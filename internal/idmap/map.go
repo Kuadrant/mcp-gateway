@@ -28,7 +28,7 @@ type Entry struct {
 }
 
 type mapConfig struct {
-	redisClient *redis.Client
+	redisClient redis.UniversalClient
 	entryTTL    time.Duration
 }
 
@@ -46,7 +46,7 @@ func New(opts ...func(*mapConfig)) (Map, error) {
 }
 
 // WithRedisClient configures the Map to use an existing Redis client.
-func WithRedisClient(client *redis.Client) func(*mapConfig) {
+func WithRedisClient(client redis.UniversalClient) func(*mapConfig) {
 	return func(c *mapConfig) {
 		c.redisClient = client
 	}

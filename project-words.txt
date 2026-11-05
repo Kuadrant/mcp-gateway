@@ -475,3 +475,10 @@ limitador
 linkset
 unpoliced
 rebindable
+ADDRS
+mymaster
+redisconfig
+alicebob
+miniredis
+rediss
+tolower

@@ -181,15 +181,17 @@ spec:
     secretName: trusted-headers-key
     generate: true
 
-  # references a secret for redis-based session storage
-  # secret must exist in the MCPGatewayExtension namespace and contain a CACHE_CONNECTION_STRING key
+  # references a secret containing standalone, Sentinel, or Cluster Redis settings
+  # secret must exist in the MCPGatewayExtension namespace
   # secret must have label mcp.kuadrant.io/secret: "true" (see Secret Label Requirement below)
-  # value is injected as CACHE_CONNECTION_STRING env var into the broker-router deployment
+  # Redis settings are injected as environment variables into the broker-router deployment
   # when not set, in-memory session storage is used
   # +optional
   sessionStore:
     secretName: redis-credentials
 ```
+
+See [Scaling the MCP Gateway](../guides/scaling.md) for the Secret keys required by each Redis mode.
 
 #### Secret Label Requirement
 
