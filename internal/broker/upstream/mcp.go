@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -57,7 +58,7 @@ type MCPServer struct {
 	*config.MCPServer
 	client           *mcp.Client
 	session          *mcp.ClientSession
-	sessionDone      <-chan struct{} // closed when session's connection ends
+	sessionStale     <-chan struct{} // closed when session's connection or listen stream ends
 	clientMu         sync.RWMutex
 	headers          map[string]string
 	init             *mcp.InitializeResult
@@ -226,6 +227,39 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 		t.up.invalidateTokenSource()
 	}
 	return resp, err
+}
+
+// listenEndWatcher calls onEnd once an accepted subscriptions/listen stream
+// stops. the sdk drains the body on every exit, so each ending reaches Read
+// as an error. the sdk never reopens that stream, so push from the upstream
+// stays off until the session is replaced.
+type listenEndWatcher struct {
+	base  http.RoundTripper
+	onEnd func()
+}
+
+func (w *listenEndWatcher) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := w.base.RoundTrip(req)
+	if err != nil || req.Header.Get("Mcp-Method") != "subscriptions/listen" ||
+		resp.StatusCode != http.StatusOK ||
+		!strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		return resp, err
+	}
+	resp.Body = &listenBody{ReadCloser: resp.Body, onEnd: w.onEnd}
+	return resp, nil
+}
+
+type listenBody struct {
+	io.ReadCloser
+	onEnd func()
+}
+
+func (b *listenBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.onEnd()
+	}
+	return n, err
 }
 
 // dynamicTokenSource resolves the upstream's source per request instead of
@@ -562,16 +596,17 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.clientMu.RLock()
 	connected := up.session != nil
-	sessionDone := up.sessionDone
+	sessionStale := up.sessionStale
 	up.clientMu.RUnlock()
 	if connected {
 		select {
-		case <-sessionDone:
+		case <-sessionStale:
 			// the sdk already closed the connection (e.g. a plain-text 4xx, or a
-			// refused resume of a listen stream that sent an event id). stateless
-			// upstreams have no connection-lost watcher, so reconnect here; the
-			// close error of a dead session carries nothing new
-			up.logger.Debug("upstream session closed, reconnecting", "upstream", up.ID())
+			// refused resume of a listen stream that sent an event id), or the
+			// listen stream ended (upstream restart, idle timeout) and the sdk
+			// will not reopen it. stateless upstreams have no connection-lost
+			// watcher, so reconnect here; the close error carries nothing new
+			up.logger.Debug("upstream session stale, reconnecting", "upstream", up.ID())
 			_ = up.Disconnect()
 		default:
 			up.tokenMu.Lock()
@@ -593,6 +628,10 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
+	stale := make(chan struct{})
+	var staleOnce sync.Once
+	markStale := func() { staleOnce.Do(func() { close(stale) }) }
+	httpC.Transport = &listenEndWatcher{base: httpC.Transport, onEnd: markStale}
 	streamTransport := &mcp.StreamableClientTransport{
 		Endpoint:   up.URL,
 		HTTPClient: httpC,
@@ -649,12 +688,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		return fmt.Errorf("failed to connect client for upstream %s : %w", up.ID(), err)
 	}
 
-	done := make(chan struct{})
-	go func() { _ = session.Wait(); close(done) }()
+	go func() { _ = session.Wait(); markStale() }()
 
 	up.clientMu.Lock()
 	up.session = session
-	up.sessionDone = done
+	up.sessionStale = stale
 	up.clientMu.Unlock()
 
 	// store the initialize result
@@ -676,8 +714,8 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
 	// push notifications. 2026 upstreams push over the sdk's subscriptions/listen
 	// stream (see client options above), backed up by TTL-based polling; the sdk
-	// does not reopen that stream if the upstream restarts, so push stays off
-	// until the broker reconnects. a session-less 2025 upstream has no
+	// does not reopen that stream when it ends, so the next Connect replaces
+	// the session (see listenEndWatcher). a session-less 2025 upstream has no
 	// Mcp-Session-Id to key the standalone GET SSE stream on and relies on
 	// polling alone.
 	if !up.UsesStatelessProtocol() {
