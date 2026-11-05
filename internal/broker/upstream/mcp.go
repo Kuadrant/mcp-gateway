@@ -57,6 +57,7 @@ type MCPServer struct {
 	*config.MCPServer
 	client           *mcp.Client
 	session          *mcp.ClientSession
+	sessionDone      <-chan struct{} // closed when session's connection ends
 	clientMu         sync.RWMutex
 	headers          map[string]string
 	init             *mcp.InitializeResult
@@ -561,16 +562,27 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.clientMu.RLock()
 	connected := up.session != nil
+	sessionDone := up.sessionDone
 	up.clientMu.RUnlock()
 	if connected {
-		up.tokenMu.Lock()
-		rejected := up.tokenRejected
-		up.tokenMu.Unlock()
-		if !rejected {
-			return nil
-		}
-		if err := up.Disconnect(); err != nil {
-			return fmt.Errorf("failed to disconnect rejected upstream session: %w", err)
+		select {
+		case <-sessionDone:
+			// the sdk already closed the connection (e.g. a plain-text 4xx, or a
+			// refused resume of a listen stream that sent an event id). stateless
+			// upstreams have no connection-lost watcher, so reconnect here; the
+			// close error of a dead session carries nothing new
+			up.logger.Debug("upstream session closed, reconnecting", "upstream", up.ID())
+			_ = up.Disconnect()
+		default:
+			up.tokenMu.Lock()
+			rejected := up.tokenRejected
+			up.tokenMu.Unlock()
+			if !rejected {
+				return nil
+			}
+			if err := up.Disconnect(); err != nil {
+				return fmt.Errorf("failed to disconnect rejected upstream session: %w", err)
+			}
 		}
 	}
 	up.tokenMu.Lock()
@@ -637,8 +649,12 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		return fmt.Errorf("failed to connect client for upstream %s : %w", up.ID(), err)
 	}
 
+	done := make(chan struct{})
+	go func() { _ = session.Wait(); close(done) }()
+
 	up.clientMu.Lock()
 	up.session = session
+	up.sessionDone = done
 	up.clientMu.Unlock()
 
 	// store the initialize result

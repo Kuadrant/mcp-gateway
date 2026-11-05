@@ -683,6 +683,72 @@ func TestConnect_2026ListenRejectedIsNonFatal(t *testing.T) {
 	tools, err := up.ListTools(ctx)
 	require.NoError(t, err, "a rejected listen must not break the connection")
 	require.Len(t, tools.Tools, 1)
+
+	// the next tick's Connect must keep the live session, not recycle it
+	session := up.currentSession()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	require.Same(t, session, up.currentSession())
+}
+
+// an upstream that sends SSE event IDs on its listen stream (e.g. a resumable
+// server's SEP-1699 priming event) and then closes it makes the sdk try to
+// resume with a GET. when that GET is refused the sdk fails the connection;
+// the upstream must still be listable, directly or after the next tick's
+// Connect.
+func TestConnect_2026ListenEndedWithEventIDDoesNotStickUpstream(t *testing.T) {
+	srv := newStateless2026Server()
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	var listens atomic.Int32
+	resumed := make(chan struct{}, 8)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("Mcp-Method") == "subscriptions/listen":
+			listens.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// retry keeps the sdk's resume delay short
+			_, _ = io.WriteString(w, "id: 1\nretry: 10\ndata: \n\n")
+		case r.Method == http.MethodGet:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			resumed <- struct{}{}
+		default:
+			inner.ServeHTTP(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	require.Equal(t, protocol.Version2026, up.ProtocolInfo().ProtocolVersion)
+	require.Positive(t, listens.Load(), "broker never sent subscriptions/listen")
+
+	select {
+	case <-resumed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sdk never tried to resume the listen stream")
+	}
+	// the sdk acts on the refused GET asynchronously; give it time to fail
+	// the connection, if it is going to, before listing
+	closed := make(chan struct{})
+	go func() { _ = up.currentSession().Wait(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+	}
+
+	tools, err := up.ListTools(ctx)
+	if err != nil {
+		t.Logf("ListTools after the listen stream ended: %v", err)
+		// the manager's next tick: Connect, then list again
+		require.NoError(t, up.Connect(ctx, func() {}))
+		tools, err = up.ListTools(ctx)
+	}
+	require.NoError(t, err, "upstream stuck after its listen stream ended with an event ID")
+	require.Len(t, tools.Tools, 1)
 }
 
 func TestBuildHTTPClient_GatewayCACertBundle(t *testing.T) {
