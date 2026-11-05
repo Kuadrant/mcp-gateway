@@ -51,6 +51,7 @@ type MockMCP struct {
 	connected           atomic.Bool
 	disconnectCount     atomic.Int32
 	notificationHandler func(method string)
+	staleHandler        func()
 	toolsCacheMeta      CacheMetadata
 	promptsCacheMeta    CacheMetadata
 }
@@ -149,6 +150,10 @@ func (m *MockMCP) OnNotification(handler func(method string)) {
 }
 
 func (m *MockMCP) OnConnectionLost(_ func(err error)) {}
+
+func (m *MockMCP) OnSessionStale(handler func()) {
+	m.staleHandler = handler
+}
 
 func (m *MockMCP) Ping(_ context.Context) error {
 	return m.pingErr
@@ -2202,6 +2207,48 @@ func TestMCPManager_resetBackoff_UsesTTLJitter(t *testing.T) {
 	assert.Equal(t, base, jitterBase)
 	assert.Equal(t, ttlPollJitter, jitterFactor)
 	assert.Equal(t, base+base/20, ticker.resetInterval)
+}
+
+// a stale session reschedules the next manage after a backoff, not the poll
+// interval. the backoff grows while sessions keep going stale soon after
+// connecting, so an upstream that keeps closing its listen stream cannot
+// drive a reconnect loop, and resets once a session lasts.
+func TestMCPManager_SessionStaleBacksOffReconnect(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.protocolVersion = "2026-07-28"
+	mock.tools = []mcp.Tool{validTool("tool1")}
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+
+	manager.manage(context.Background(), eventTypeTimer)
+	require.NotNil(t, mock.staleHandler, "manager never watched the session for staleness")
+	ticker := &recordingTicker{channel: make(chan time.Time, 1)}
+	manager.ticker.Stop()
+	manager.ticker = ticker
+
+	mock.staleHandler()
+	var lived time.Duration
+	select {
+	case lived = <-manager.staleEvents:
+	default:
+		t.Fatal("stale handler did not signal the event loop")
+	}
+	require.Less(t, lived, staleBackoffReset)
+
+	requireDelay := func(base time.Duration) {
+		t.Helper()
+		require.GreaterOrEqual(t, ticker.resetInterval, base)
+		require.LessOrEqual(t, ticker.resetInterval, base+base/10, "beyond backoff jitter")
+	}
+	manager.handleSessionStale(lived)
+	requireDelay(time.Second)
+	manager.handleSessionStale(0)
+	requireDelay(2 * time.Second)
+	manager.handleSessionStale(0)
+	requireDelay(4 * time.Second)
+	manager.handleSessionStale(staleBackoffReset)
+	requireDelay(time.Second)
 }
 
 func TestMCPManager_manage_LargeTTLDoesNotPanic(t *testing.T) {
