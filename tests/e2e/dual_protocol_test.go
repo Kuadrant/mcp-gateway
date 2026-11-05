@@ -21,7 +21,8 @@ import (
 const (
 	dualProtoExtName   = "dual-proto-ext"
 	dualProtoNamespace = "mcp-dual-protocol"
-	// well below the broker's 60s minimum poll interval, so only a pushed change arrives in time
+	// the broker polls a 2026 upstream at most once a minute, so a poll can land in
+	// at most one of two back-to-back windows this long; push must fill the other
 	pushNotificationTimeout = 20 * time.Second
 )
 
@@ -790,45 +791,49 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			defer func() { _ = c.Close() }()
 
 			waitForToolsWithPrefix(c, "sl_")
-			// the initial sl_ tool load also notifies; drop it so the check below
-			// only passes on add_tool's notification
-			select {
-			case <-notifCh:
-			default:
+
+			// two rounds back to back: one poll can satisfy at most one of them
+			for round := 1; round <= 2; round++ {
+				// drop the notification from the initial sl_ tool load or the
+				// previous round, so the check below only passes on this add_tool
+				select {
+				case <-notifCh:
+				default:
+				}
+
+				By(fmt.Sprintf("round %d: calling add_tool on the backend server to trigger notifications/tools/list_changed", round))
+				// unique per run: the shared upstream keeps added tools, and re-adding
+				// a name leaves the broker's list unchanged, so no client notification
+				dynamicTool := fmt.Sprintf("e2e_dynamic_tool_%d", time.Now().UnixNano())
+				addToolName := "sl_add_tool"
+				var res *mcp.CallToolResult
+				Eventually(func(g Gomega) {
+					var callErr error
+					res, callErr = c.CallTool(ctx, &mcp.CallToolParams{
+						Name: addToolName,
+						Arguments: map[string]any{
+							"name":        dynamicTool,
+							"description": "dynamically added tool for notification test",
+						},
+					})
+					g.Expect(callErr).NotTo(HaveOccurred())
+					g.Expect(res).NotTo(BeNil())
+					g.Expect(res.IsError).To(BeFalse(), "add_tool should succeed")
+				}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+				By(fmt.Sprintf("round %d: verifying the client receives a tools/list_changed notification", round))
+				Eventually(notifCh, pushNotificationTimeout, TestRetryInterval).Should(Receive(),
+					"2026 client should receive tools/list_changed after upstream adds a tool")
+
+				By(fmt.Sprintf("round %d: verifying the new tool appears in tools/list", round))
+				Eventually(func(g Gomega) {
+					result, listErr := c.ListTools(ctx, nil)
+					g.Expect(listErr).NotTo(HaveOccurred())
+					g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
+						return n == "sl_"+dynamicTool
+					})).To(BeTrue(), "new tool sl_%s should appear in tools/list", dynamicTool)
+				}, pushNotificationTimeout, TestRetryInterval).Should(Succeed())
 			}
-
-			By("calling add_tool on the backend server to trigger notifications/tools/list_changed")
-			// unique per run: the shared upstream keeps added tools, and re-adding
-			// a name leaves the broker's list unchanged, so no client notification
-			dynamicTool := fmt.Sprintf("e2e_dynamic_tool_%d", time.Now().UnixNano())
-			addToolName := "sl_add_tool"
-			var res *mcp.CallToolResult
-			Eventually(func(g Gomega) {
-				var callErr error
-				res, callErr = c.CallTool(ctx, &mcp.CallToolParams{
-					Name: addToolName,
-					Arguments: map[string]any{
-						"name":        dynamicTool,
-						"description": "dynamically added tool for notification test",
-					},
-				})
-				g.Expect(callErr).NotTo(HaveOccurred())
-				g.Expect(res).NotTo(BeNil())
-				g.Expect(res.IsError).To(BeFalse(), "add_tool should succeed")
-			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
-
-			By("verifying the client receives a tools/list_changed notification")
-			Eventually(notifCh, pushNotificationTimeout, TestRetryInterval).Should(Receive(),
-				"2026 client should receive tools/list_changed after upstream adds a tool")
-
-			By("verifying the new tool appears in tools/list")
-			Eventually(func(g Gomega) {
-				result, listErr := c.ListTools(ctx, nil)
-				g.Expect(listErr).NotTo(HaveOccurred())
-				g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
-					return n == "sl_"+dynamicTool
-				})).To(BeTrue(), "new tool sl_%s should appear in tools/list", dynamicTool)
-			}, pushNotificationTimeout, TestRetryInterval).Should(Succeed())
 		})
 	})
 })
