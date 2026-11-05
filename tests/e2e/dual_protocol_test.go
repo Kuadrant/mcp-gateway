@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
@@ -20,6 +21,8 @@ import (
 const (
 	dualProtoExtName   = "dual-proto-ext"
 	dualProtoNamespace = "mcp-dual-protocol"
+	// well below the broker's 60s minimum poll interval, so only a pushed change arrives in time
+	pushNotificationTimeout = 20 * time.Second
 )
 
 // tests prove the gateway is protocol-agnostic: a single instance serves both
@@ -787,9 +790,17 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			defer func() { _ = c.Close() }()
 
 			waitForToolsWithPrefix(c, "sl_")
+			// the initial sl_ tool load also notifies; drop it so the check below
+			// only passes on add_tool's notification
+			select {
+			case <-notifCh:
+			default:
+			}
 
 			By("calling add_tool on the backend server to trigger notifications/tools/list_changed")
-			dynamicTool := "e2e_dynamic_tool"
+			// unique per run: the shared upstream keeps added tools, and re-adding
+			// a name leaves the broker's list unchanged, so no client notification
+			dynamicTool := fmt.Sprintf("e2e_dynamic_tool_%d", time.Now().UnixNano())
 			addToolName := "sl_add_tool"
 			var res *mcp.CallToolResult
 			Eventually(func(g Gomega) {
@@ -807,7 +818,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 
 			By("verifying the client receives a tools/list_changed notification")
-			Eventually(notifCh, TestTimeoutMedium, TestRetryInterval).Should(Receive(),
+			Eventually(notifCh, pushNotificationTimeout, TestRetryInterval).Should(Receive(),
 				"2026 client should receive tools/list_changed after upstream adds a tool")
 
 			By("verifying the new tool appears in tools/list")
@@ -817,7 +828,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(slices.ContainsFunc(toolNames(result.Tools), func(n string) bool {
 					return n == "sl_"+dynamicTool
 				})).To(BeTrue(), "new tool sl_%s should appear in tools/list", dynamicTool)
-			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+			}, pushNotificationTimeout, TestRetryInterval).Should(Succeed())
 		})
 	})
 })
