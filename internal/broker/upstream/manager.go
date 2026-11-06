@@ -94,6 +94,10 @@ type MCP interface {
 	SupportsResources() bool
 	OnNotification(func(method string))
 	OnConnectionLost(func(err error))
+	// OnSessionStale registers a handler called once a stateless upstream's
+	// current session needs replacing: its connection closed or its push over
+	// subscriptions/listen stopped.
+	OnSessionStale(func())
 	Ping(context.Context) error
 	// IsEnabled returns true if the server should be connected to and have its tools registered.
 	IsEnabled() bool
@@ -219,6 +223,9 @@ type MCPManager struct {
 	configuredInterval time.Duration
 	// backoff is used to calculate the next interval on failure
 	backoff wait.Backoff
+	// staleBackoff spaces reconnects after a stateless upstream's session goes
+	// stale; see staleReconnectDelay
+	staleBackoff wait.Backoff
 	// baseBackoff stores the initial backoff configuration for resets
 	baseBackoff   wait.Backoff
 	gatewayServer ToolsAdderDeleter
@@ -259,13 +266,15 @@ type MCPManager struct {
 	onConnect    func()
 	lastVersions []string
 
-	// toolEvents, promptEvents, and reconnectEvents funnel notifications into
-	// the Start() loop. Separate channels with buffer of 1 each ensure one
-	// event type cannot block another while still coalescing rapid same-type
-	// notifications.
+	// toolEvents, promptEvents, reconnectEvents, and staleEvents funnel
+	// notifications into the Start() loop. Separate channels with buffer of 1
+	// each ensure one event type cannot block another while still coalescing
+	// rapid same-type notifications. staleEvents carries how long the stale
+	// session lasted.
 	toolEvents      chan struct{}
 	promptEvents    chan struct{}
 	reconnectEvents chan struct{}
+	staleEvents     chan time.Duration
 	done            chan struct{} // closed when the event loop exits
 	status          ServerValidationStatus
 
@@ -287,6 +296,14 @@ const ttlPollJitter = 0.1
 
 // maxTTLInterval leaves ample room for upward jitter before duration overflow.
 const maxTTLInterval = time.Duration(1<<62 - 1)
+
+// staleBackoffReset is how long a session must last before going stale for
+// the stale backoff to reset. a session that lasts this long went stale for a
+// one-off reason, such as an upstream restart or a proxy idle timeout; ones
+// that keep going stale sooner back off up to the configured poll interval,
+// so an upstream that keeps closing its listen stream cannot drive a
+// reconnect loop.
+const staleBackoffReset = 10 * time.Second
 
 // maxConsecutiveFailures is the number of consecutive connect/ping failures
 // tolerated before cached tools and prompts are dropped from the gateway.
@@ -361,12 +378,14 @@ func NewUpstreamMCPManager(upstream MCP, gatewayServer ToolsAdderDeleter, prompt
 		ticker:             &realHealthTicker{time.NewTicker(tickerInterval)},
 		jitter:             wait.Jitter,
 		backoff:            bo,
+		staleBackoff:       bo,
 		baseBackoff:        bo,
 		logger:             logger,
 		invalidToolPolicy:  policy,
 		toolEvents:         make(chan struct{}, 1),
 		promptEvents:       make(chan struct{}, 1),
 		reconnectEvents:    make(chan struct{}, 1),
+		staleEvents:        make(chan time.Duration, 1),
 		done:               make(chan struct{}),
 		toolsMap:           map[string]*mcp.Tool{},
 		servedToolsMap:     map[string]*mcp.Tool{},
@@ -401,6 +420,10 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 
 	go func() {
 		man.manage(ctx, eventTypeTimer)
+		// fires once a stale session's backoff has passed; nil, so never ready,
+		// while the session is live. kept off the poll ticker, which every
+		// manage re-arms
+		var staleReconnect <-chan time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -416,6 +439,11 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				return
 			case <-man.ticker.Chan():
 				man.logger.DebugContext(ctx, "health check tick", "upstream mcp server", man.mcp.ID())
+				if staleReconnect != nil {
+					// a poll is due anyway; replace the stale session now
+					staleReconnect = nil
+					_ = man.mcp.Disconnect()
+				}
 				man.manage(ctx, eventTypeTimer)
 			case <-man.toolEvents:
 				man.logger.DebugContext(ctx, "received tool notification", "upstream mcp server", man.mcp.ID())
@@ -425,6 +453,14 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				man.manage(ctx, eventTypePromptNotification)
 			case <-man.reconnectEvents:
 				man.logger.Info("reconnecting after connection loss", "upstream mcp server", man.mcp.ID())
+				man.manage(ctx, eventTypeTimer)
+			case lived := <-man.staleEvents:
+				staleReconnect = time.After(man.staleReconnectDelay(lived))
+			case <-staleReconnect:
+				man.logger.Info("replacing stale upstream session", "upstream mcp server", man.mcp.ID())
+				staleReconnect = nil
+				// the close error of a stale session carries nothing new
+				_ = man.mcp.Disconnect()
 				man.manage(ctx, eventTypeTimer)
 			}
 		}
@@ -489,11 +525,18 @@ func (man *MCPManager) registerCallbacks() func() {
 		}
 	})
 	return func() {
+		connectedAt := time.Now()
 		man.mcp.OnConnectionLost(func(err error) {
 			man.logger.Warn("connection lost, clearing session for reconnect", "upstream mcp server", man.mcp.ID(), "error", err)
 			_ = man.mcp.Disconnect()
 			select {
 			case man.reconnectEvents <- struct{}{}:
+			default:
+			}
+		})
+		man.mcp.OnSessionStale(func() {
+			select {
+			case man.staleEvents <- time.Since(connectedAt):
 			default:
 			}
 		})
@@ -703,7 +746,7 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		}
 	}
 	// adjust tick interval for 2026 upstreams based on upstream TTL hints.
-	// without notification handlers, polling is the only freshness mechanism.
+	// polling backs up subscriptions/listen push, which can be rejected or lost.
 	// gated on the negotiated version, not UsesStatelessProtocol: a
 	// session-less 2025 upstream sends no TTL hint, so adjusting would
 	// only overwrite the configured interval with the default.
@@ -820,6 +863,19 @@ func (man *MCPManager) applyBackoff() {
 	man.resetTicker(duration)
 }
 
+// staleReconnectDelay returns how long the event loop waits before replacing
+// a stale session: the stale backoff rather than the full poll interval, which
+// can be as long as the upstream's ttlMs. only called from the event loop
+// goroutine.
+func (man *MCPManager) staleReconnectDelay(lived time.Duration) time.Duration {
+	if lived >= staleBackoffReset {
+		man.staleBackoff = man.baseBackoff
+	}
+	delay := man.staleBackoff.Step()
+	man.logger.Info("upstream session stale, scheduling reconnect", "upstream mcp server", man.mcp.ID(), "lived", lived, "delay", delay)
+	return delay
+}
+
 // resetTicker re-arms the ticker and drops a tick that fired while manage
 // was in flight, so the new interval applies instead of an immediate
 // re-run. only called from the event loop goroutine.
@@ -834,7 +890,7 @@ func (man *MCPManager) resetTicker(d time.Duration) {
 // adjustTickerFromTTL sets the poll interval from the shortest TTLMs hint
 // across the upstream's tools/list and, when served, prompts/list responses.
 // a TTL of 0 means immediately stale and wins. only applied for 2026 upstreams
-// where polling replaces push notifications. clamped between a safe maximum
+// where polling backs up subscriptions/listen push. clamped between a safe maximum
 // and DefaultTickerInterval minimum to avoid overflow with jitter and
 // hot-looping on low TTLs.
 func (man *MCPManager) adjustTickerFromTTL() {

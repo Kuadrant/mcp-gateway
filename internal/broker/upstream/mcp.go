@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -57,6 +58,7 @@ type MCPServer struct {
 	*config.MCPServer
 	client           *mcp.Client
 	session          *mcp.ClientSession
+	sessionStale     <-chan struct{} // closed when session's connection closes or its listen push stops
 	clientMu         sync.RWMutex
 	headers          map[string]string
 	init             *mcp.InitializeResult
@@ -225,6 +227,53 @@ func (t *tokenInvalidator) RoundTrip(req *http.Request) (*http.Response, error) 
 		t.up.invalidateTokenSource()
 	}
 	return resp, err
+}
+
+// listenEndWatcher calls onEnd once push over subscriptions/listen stops: an
+// accepted stream ends, or the listen fails for a reason that may pass (a
+// transport error, 429 or a 5xx other than 501). the sdk never reopens or
+// retries that stream, so push from the upstream stays off until the session
+// is replaced. it drains the body on every exit, so each stream ending
+// reaches Read as an error. other rejections, such as a 404 from an upstream
+// without listen, leave the session alone: a new one would be rejected the
+// same way.
+type listenEndWatcher struct {
+	base  http.RoundTripper
+	onEnd func()
+}
+
+func (w *listenEndWatcher) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := w.base.RoundTrip(req)
+	if req.Header.Get("Mcp-Method") != "subscriptions/listen" {
+		return resp, err
+	}
+	switch {
+	case err != nil || isTemporaryStatus(resp.StatusCode):
+		w.onEnd()
+	case resp.StatusCode == http.StatusOK && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream"):
+		resp.Body = &listenBody{ReadCloser: resp.Body, onEnd: w.onEnd}
+	}
+	return resp, err
+}
+
+// isTemporaryStatus matches statuses that may pass on retry: 429 and every
+// 5xx, including proxy codes such as cloudflare's 520-524, except 501 (not
+// implemented).
+func isTemporaryStatus(code int) bool {
+	return code == http.StatusTooManyRequests || (code >= 500 && code != http.StatusNotImplemented)
+}
+
+type listenBody struct {
+	io.ReadCloser
+	onEnd func()
+}
+
+func (b *listenBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.onEnd()
+	}
+	return n, err
 }
 
 // dynamicTokenSource resolves the upstream's source per request instead of
@@ -557,7 +606,10 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 }
 
 // Connect establishes a connection to the upstream MCP server using the
-// official SDK's Client+ClientSession pattern.
+// official SDK's Client+ClientSession pattern. it keeps a stale session (see
+// OnSessionStale): a list-changed push also runs Connect, so replacing it here
+// would let an upstream that pushes and then ends every listen bypass the
+// manager's stale backoff.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.clientMu.RLock()
 	connected := up.session != nil
@@ -581,6 +633,10 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	if err != nil {
 		return fmt.Errorf("failed to build HTTP client: %w", err)
 	}
+	stale := make(chan struct{})
+	var staleOnce sync.Once
+	markStale := func() { staleOnce.Do(func() { close(stale) }) }
+	httpC.Transport = &listenEndWatcher{base: httpC.Transport, onEnd: markStale}
 	streamTransport := &mcp.StreamableClientTransport{
 		Endpoint:   up.URL,
 		HTTPClient: httpC,
@@ -605,22 +661,26 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 			RootsV2:     &mcp.RootCapabilities{ListChanged: true}, //nolint:staticcheck // deliberate parity with mark3labs
 			Elicitation: &mcp.ElicitationCapabilities{},
 		},
-		// go-sdk <= v1.7.0 opens subscriptions/listen during Connect when these
-		// handlers are set. servers that return 404 for subscriptions/listen
-		// (e.g. GitHub MCP, FastMCP 4.x) cause Connect to fail fatally.
-		// re-add once go-sdk >= v1.8.0 is adopted (PR #1193 wraps the failure).
-		// without handlers the broker relies on TTL-based polling for freshness.
+		// no-ops: setting them makes the sdk open subscriptions/listen on 2026
+		// upstreams; dispatch happens in the receiving middleware below. since
+		// go-sdk v1.8.0 a rejected listen (e.g. a 404 from GitHub MCP or FastMCP
+		// 4.x) is non-fatal and the TTL poll covers freshness.
+		ToolListChangedHandler:   func(context.Context, *mcp.ToolListChangedRequest) {},
+		PromptListChangedHandler: func(context.Context, *mcp.PromptListChangedRequest) {},
 	})
 	// wire the notification handler before the session exists so nothing
 	// arriving during or right after the handshake is missed
 	client.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			up.logger.Debug("upstream receiving middleware", "upstream", up.ID(), "method", method)
+			// next first: the sdk drops its cached 2026 list there, and the
+			// manager re-lists as soon as it is notified
+			res, err := next(ctx, method, req)
 			if method == "notifications/tools/list_changed" || method == "notifications/prompts/list_changed" {
 				up.logger.Debug("upstream notification received", "upstream", up.ID(), "notification", method)
 				up.notify(method)
 			}
-			return next(ctx, method, req)
+			return res, err
 		}
 	})
 
@@ -636,8 +696,11 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		return fmt.Errorf("failed to connect client for upstream %s : %w", up.ID(), err)
 	}
 
+	go func() { _ = session.Wait(); markStale() }()
+
 	up.clientMu.Lock()
 	up.session = session
+	up.sessionStale = stale
 	up.clientMu.Unlock()
 
 	// store the initialize result
@@ -657,17 +720,19 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
-	// push notifications. stateless upstreams rely on TTL-based polling: 2026
-	// has no notification handlers until go-sdk >= v1.8.0 (see client options
-	// above), and a session-less 2025 upstream has no Mcp-Session-Id to key the
-	// standalone GET SSE stream on.
+	// push notifications. 2026 upstreams push over the sdk's subscriptions/listen
+	// stream (see client options above), backed up by TTL-based polling; the sdk
+	// does not restart that stream once push stops, so the session is replaced
+	// (see listenEndWatcher and OnSessionStale). a session-less 2025 upstream
+	// has no Mcp-Session-Id to key the standalone GET SSE stream on and relies
+	// on polling alone.
 	if !up.UsesStatelessProtocol() {
 		up.logger.Debug("starting GET SSE notification watcher", "upstream", up.ID(), "negotiated-protocol", negotiated)
 		up.startNotificationWatcher(ctx, httpC, session)
 	}
 
-	// register notification and connection-lost handlers after session is
-	// assigned so OnConnectionLost can start session.Wait() immediately
+	// register connection-lost and session-stale handlers after session is
+	// assigned so they watch this session from the start
 	onConnection()
 
 	return nil
@@ -761,18 +826,17 @@ func (up *MCPServer) notify(method string) {
 
 // OnConnectionLost registers a connection lost handler.
 // In the official SDK, connection loss is observed via session.Wait().
-// upstreams that return no Mcp-Session-Id from initialize do not need
-// connection-loss monitoring: the SDK's subscriptions/listen stream
-// will fail immediately with an empty session ID, which is expected
-// and not a real connection loss. the ticker health check and ping
-// handle failure detection for these upstreams.
+// only session-ful upstreams are watched: on stateless ones this handler's
+// immediate reconnect once looped tightly when the sdk's subscriptions/listen
+// died with an empty session ID. for those, OnSessionStale reports a closed
+// connection and the manager backs off.
 func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 	session := up.currentSession()
 	if session == nil {
 		return
 	}
-	if session.ID() == "" {
-		up.logger.Debug("skipping connection-lost watcher, no session ID from upstream", "upstream", up.ID())
+	if up.UsesStatelessProtocol() {
+		up.logger.Debug("skipping connection-lost watcher for stateless upstream", "upstream", up.ID())
 		return
 	}
 	go func() {
@@ -784,6 +848,28 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 				return
 			}
 			handler(err)
+		}
+	}()
+}
+
+// OnSessionStale registers a handler called once the current session goes
+// stale (see sessionStale), so the manager can replace it without waiting
+// for its next poll. only stateless upstreams are watched,
+// including 2026 ones that send an Mcp-Session-Id: a session-ful upstream's
+// session goes stale only when its connection closes, which OnConnectionLost
+// reports.
+func (up *MCPServer) OnSessionStale(handler func()) {
+	up.clientMu.RLock()
+	session, stale := up.session, up.sessionStale
+	up.clientMu.RUnlock()
+	if session == nil || !up.UsesStatelessProtocol() {
+		return
+	}
+	go func() {
+		<-stale
+		// a planned Disconnect closes the session too; only report the current one
+		if up.currentSession() == session {
+			handler()
 		}
 	}()
 }
