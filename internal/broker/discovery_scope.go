@@ -85,10 +85,7 @@ func (s *scopeStore) setScope(sessionID string, tools []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// enforce size cap by evicting oldest if at limit
-	if len(s.scopes) >= s.maxSize {
-		s.evictOldestLocked()
-	}
+	s.reserveLocked(sessionID)
 
 	toolSet := make(map[string]struct{}, len(tools))
 	for _, t := range tools {
@@ -106,10 +103,7 @@ func (s *scopeStore) resetScope(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// enforce size cap by evicting oldest if at limit (and this is a new entry)
-	if _, exists := s.scopes[sessionID]; !exists && len(s.scopes) >= s.maxSize {
-		s.evictOldestLocked()
-	}
+	s.reserveLocked(sessionID)
 
 	s.scopes[sessionID] = &sessionScope{
 		state:    scopeAll,
@@ -154,6 +148,14 @@ func (s *scopeStore) size() int {
 // stop shuts down the eviction goroutine. safe to call multiple times.
 func (s *scopeStore) stop() {
 	s.closeOnce.Do(func() { close(s.done) })
+}
+
+// reserveLocked enforces the size cap before a write. updates to an existing
+// session cannot grow the map, so they never evict. caller must hold mu.
+func (s *scopeStore) reserveLocked(sessionID string) {
+	if _, exists := s.scopes[sessionID]; !exists && len(s.scopes) >= s.maxSize {
+		s.evictOldestLocked()
+	}
 }
 
 // evictOldestLocked evicts the entry with the earliest expiry. caller must hold mu.
