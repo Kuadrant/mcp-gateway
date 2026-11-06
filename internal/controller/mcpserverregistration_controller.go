@@ -882,12 +882,16 @@ func isValidHostname(hostname string) bool {
 	return u.Host == hostname
 }
 
+// maxRouteParents is the Gateway API maxItems for HTTPRoute status.parents, shared by all controllers.
+const maxRouteParents = 32
+
 // desiredRouteParents prunes legacy Programmed conditions and manages MCP's own entries.
 // only accepted parents matching mcpRefs get an entry; empty mcpRefs removes them all.
-// it never mutates parents and always returns a non-nil slice.
+// new MCP entries are only added while there is room under maxRouteParents; skipped
+// reports how many were left out. it never mutates parents and always returns a non-nil slice.
 func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace string,
-	generation int64, now metav1.Time, mcpRefs []gatewayv1.ParentReference) []gatewayv1.RouteParentStatus {
-	out := make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
+	generation int64, now metav1.Time, mcpRefs []gatewayv1.ParentReference) (out []gatewayv1.RouteParentStatus, skipped int) {
+	out = make([]gatewayv1.RouteParentStatus, 0, len(parents)+2)
 	for i := range parents {
 		p := parents[i].DeepCopy()
 		if p.ControllerName != MCPControllerName {
@@ -935,15 +939,18 @@ func desiredRouteParents(parents []gatewayv1.RouteParentStatus, routeNamespace s
 		index := slices.IndexFunc(out, func(p gatewayv1.RouteParentStatus) bool {
 			return p.ControllerName == MCPControllerName && sameParentRef(p.ParentRef, relevant[i], routeNamespace)
 		})
-		if index >= 0 {
+		switch {
+		case index >= 0:
 			meta.SetStatusCondition(&out[index].Conditions, condition)
-		} else {
+		case len(out) >= maxRouteParents:
+			skipped++
+		default:
 			out = append(out, gatewayv1.RouteParentStatus{
 				ParentRef: relevant[i], ControllerName: MCPControllerName, Conditions: []metav1.Condition{condition},
 			})
 		}
 	}
-	return out
+	return out, skipped
 }
 
 func acceptedParentRefs(parents []gatewayv1.RouteParentStatus) []gatewayv1.ParentReference {
@@ -999,7 +1006,12 @@ func (r *MCPReconciler) updateHTTPRouteStatus(ctx context.Context, mcpsr *mcpv1.
 		return fmt.Errorf("failed to get HTTPRoute: %w", err)
 	}
 
-	parents := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), mcpRefs)
+	parents, skipped := desiredRouteParents(httpRoute.Status.Parents, httpRoute.Namespace, httpRoute.Generation, metav1.Now(), mcpRefs)
+	if skipped > 0 {
+		logf.FromContext(ctx).Info("HTTPRoute status.parents is full, skipping MCP parent entries",
+			"HTTPRoute", httpRoute.Name, "namespace", httpRoute.Namespace,
+			"skipped", skipped, "limit", maxRouteParents)
+	}
 	if equality.Semantic.DeepEqual(httpRoute.Status.Parents, parents) {
 		return nil
 	}
