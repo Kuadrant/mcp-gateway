@@ -3,13 +3,13 @@
 
 # Image configuration for mcp-gateway broker-router (deployed by controller)
 image:
-  repository: ghcr.io/kuadrant/mcp-gateway
+  repository: quay.io/kuadrant/mcp-gateway
   # tag defaults to Chart.appVersion if empty
   tag: ""
 
 # Image configuration for mcp-controller
 imageController:
-  repository: ghcr.io/kuadrant/mcp-controller
+  repository: quay.io/kuadrant/mcp-controller
   # tag defaults to Chart.appVersion if empty
   tag: ""
   pullPolicy: IfNotPresent

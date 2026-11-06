@@ -40,7 +40,7 @@ else
 IMAGE_TAG ?= $(DEFAULT_IMAGE_TAG)
 endif
 
-REGISTRY ?= ghcr.io
+REGISTRY ?= quay.io
 ORG ?= kuadrant
 IMAGE_TAG_BASE ?= $(REGISTRY)/$(ORG)/mcp-controller
 GATEWAY_IMG ?= $(REGISTRY)/$(ORG)/mcp-gateway:$(IMAGE_TAG)

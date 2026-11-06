@@ -149,8 +149,8 @@ Give the user this to run after workflows complete:
 ```bash
 VERSION={VERSION}
 for image in \
-  ghcr.io/kuadrant/mcp-gateway:v${VERSION} \
-  ghcr.io/kuadrant/mcp-controller:v${VERSION}; do
+  quay.io/kuadrant/mcp-gateway:v${VERSION} \
+  quay.io/kuadrant/mcp-controller:v${VERSION}; do
   docker manifest inspect "$image" > /dev/null 2>&1 \
     && echo "OK $image" || echo "MISSING $image"
 done
