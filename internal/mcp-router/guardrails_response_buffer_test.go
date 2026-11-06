@@ -182,9 +182,41 @@ func TestGuardrailsResponseBuffer_SSE_FlushResolvesUndispatchedTrailer(t *testin
 	out := buf.Process(context.Background(), event)
 	require.Empty(t, out, "no blank line yet - nothing forwarded")
 
+	// the missing blank-line delimiter is added so the client can dispatch it
+	terminated := string(event) + "\n"
 	out = buf.Flush(context.Background())
-	require.Equal(t, string(event), string(out))
-	require.Equal(t, string(event), string(checkedBody))
+	require.Equal(t, terminated, string(out))
+	require.Equal(t, terminated, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSE_FlushNormalizesUndispatchedTrailerID(t *testing.T) {
+	var checkedBody []byte
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+		checkedBody = body
+		return nil
+	})
+
+	event := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[]}}")
+	require.Empty(t, buf.Process(context.Background(), event))
+
+	want := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"
+	out := buf.Flush(context.Background())
+	require.Equal(t, want, string(out), "upstream id must be replaced with the client's")
+	require.Equal(t, want, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSE_FlushTruncatedTrailerStillChecked(t *testing.T) {
+	// an event cut off mid-JSON is not a parseable result; it must still go
+	// through the check, which fails closed on undecodable bodies.
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return []byte("replaced")
+	})
+
+	require.Empty(t, buf.Process(context.Background(), []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"res")))
+	require.Equal(t, "replaced", string(buf.Flush(context.Background())))
+	require.Equal(t, 1, checked)
 }
 
 func TestGuardrailsResponseBuffer_JSON_WithheldUntilFlush(t *testing.T) {
@@ -360,9 +392,32 @@ func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_WithheldInFull(t *te
 	require.Empty(t, out, "raw JSON body must be withheld in full, not forwarded piecemeal at the embedded blank line")
 	require.Nil(t, checkedBody, "not checked until Flush")
 
+	// re-framed as one SSE event so it matches the declared content-type
+	want := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}\n\n"
 	out = buf.Flush(context.Background())
-	require.Equal(t, string(body), string(out))
-	require.Equal(t, string(body), string(checkedBody))
+	require.Equal(t, want, string(out))
+	require.Equal(t, want, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_IDNormalized(t *testing.T) {
+	buf := newGuardrailsResponseBuffer(true, "client-1", func(_ context.Context, _ []byte) []byte { return nil })
+
+	require.Empty(t, buf.Process(context.Background(), []byte(`{"jsonrpc":"2.0","id":99,"result":{"content":[]}}`)))
+	out := buf.Flush(context.Background())
+	require.Equal(t, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"client-1\",\"result\":{\"content\":[]}}\n\n", string(out))
+}
+
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_UnparseableStillChecked(t *testing.T) {
+	var checkedBody []byte
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+		checkedBody = body
+		return []byte("replaced")
+	})
+
+	body := []byte(`{"jsonrpc":"2.0","id":99,"res`)
+	require.Empty(t, buf.Process(context.Background(), body))
+	require.Equal(t, "replaced", string(buf.Flush(context.Background())))
+	require.Equal(t, string(body), string(checkedBody), "unparseable body is checked as-is and fails closed there")
 }
 
 func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DetectedAcrossChunks(t *testing.T) {
@@ -384,7 +439,7 @@ func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DetectedAcrossChunks
 
 	out = buf.Flush(context.Background())
 	require.Equal(t, 1, checked)
-	require.Equal(t, "   "+string(body), string(out))
+	require.Equal(t, "event: message\ndata: "+string(body)+"\n\n", string(out))
 }
 
 func TestIDsEqual(t *testing.T) {

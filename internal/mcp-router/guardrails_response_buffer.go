@@ -13,6 +13,7 @@ import (
 type guardrailsResponseBuffer struct {
 	sse         bool
 	sseDetected bool // true once the first non-whitespace byte has settled sse's real framing
+	rawJSON     bool // declared sse, but the body is a bare JSON document
 
 	unconsumed []byte // bytes not yet forming a complete '\n'-terminated line
 	eventBytes []byte // raw bytes of lines in the currently open (undispatched) SSE event
@@ -116,7 +117,11 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 
 // Flush returns any bytes still withheld when the stream ends. Safe to call
 // multiple times; subsequent calls are no-ops. Once done, nothing further is
-// forwarded - see Process's doc comment.
+// forwarded - see Process's doc comment. Malformed framing on a declared SSE
+// response (a bare JSON body, or a final event missing its blank-line
+// delimiter) is re-framed as a complete SSE event carrying the client's
+// request id before the check; anything that still can't be parsed fails
+// closed in the check.
 func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	if g.done {
 		return nil
@@ -131,7 +136,42 @@ func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	if len(remaining) == 0 {
 		return nil
 	}
+	switch {
+	case g.rawJSON:
+		remaining = g.frameRawJSON(remaining)
+	case g.sse:
+		remaining = g.terminateEvent(remaining)
+	}
 	return g.resolve(ctx, remaining)
+}
+
+// frameRawJSON wraps a bare JSON-RPC body from a declared SSE response in an
+// SSE event with the client's request id. body is returned unchanged if it
+// does not parse.
+func (g *guardrailsResponseBuffer) frameRawJSON(body []byte) []byte {
+	var msg jsonRPCMessage
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return body
+	}
+	msg.ID = g.requestID
+	rewritten, err := json.Marshal(&msg)
+	if err != nil {
+		return body
+	}
+	return append(append([]byte("event: message\ndata: "), rewritten...), '\n', '\n')
+}
+
+// terminateEvent completes an event cut off before its blank-line delimiter
+// and, if it is the tool result, normalizes its id.
+func (g *guardrailsResponseBuffer) terminateEvent(event []byte) []byte {
+	if !bytes.HasSuffix(event, []byte("\n")) {
+		event = append(event, '\n')
+	}
+	event = append(event, '\n')
+	if respID, ok := g.isTerminalResult(event); ok {
+		return g.normalizeID(event, respID)
+	}
+	return event
 }
 
 // detectRawJSON checks if a response marked as SSE is actually plain JSON
@@ -148,7 +188,7 @@ func (g *guardrailsResponseBuffer) detectRawJSON(chunk []byte) {
 	}
 	g.sseDetected = true
 	if trimmed[0] == '{' {
-		g.sse = false
+		g.sse, g.rawJSON = false, true
 	}
 }
 
