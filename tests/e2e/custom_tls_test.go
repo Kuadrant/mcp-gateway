@@ -285,7 +285,7 @@ var _ = Describe("HTTPS External Backends", func() {
 		testResources = nil
 	})
 
-	It("[HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS", func() {
+	It("[HTTPS] [HTTPS_EXTERNAL] External GitHub MCP server discovers tools over public TLS", SpecPriority(100), func() {
 		pat := os.Getenv("GITHUB_MCP_PAT")
 		if pat == "" {
 			Skip("GITHUB_MCP_PAT not set — skipping external GitHub MCP test")
@@ -343,6 +343,24 @@ var _ = Describe("HTTPS External Backends", func() {
 			g.Expect(configStr).To(ContainSubstring("https://"),
 				"GitHub MCP server should have an https:// URL in config")
 		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		By("Connecting to the MCP gateway")
+		var mcpClient *NotifyingMCPClient
+		Eventually(func(g Gomega) {
+			var err error
+			mcpClient, err = NewStatefulClientWithNotifications(ctx, gatewayURL, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+		defer func() { _ = mcpClient.Close() }()
+
+		By("Verifying tools/list contains GitHub tools")
+		Eventually(func(g Gomega) {
+			toolsList, err := mcpClient.ListTools(ctx, nil)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(toolsList).NotTo(BeNil())
+			g.Expect(verifyMCPServerRegistrationToolsPresent("github_", toolsList)).To(BeTrue(),
+				"expected to find at least one github_ prefixed tool")
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[HTTPS] [HTTPS_EXTERNAL] In-cluster MCP server accessible over public TLS via real certs", func() {
