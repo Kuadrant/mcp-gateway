@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -95,23 +96,32 @@ func GuardrailsConfigured(cfg *config.MCPServersConfig, serverIDs []string) bool
 }
 
 // checkToolCall extracts tool arguments, runs the guardrails check, and
-// applies any modification onto mcpReq in place. modified is true when
-// arguments were rewritten (callers that buffer the body must re-marshal).
+// applies any modification onto mcpReq in place. When guardrails is
+// configured the arguments are first canonicalized and the canonical form is
+// what gets checked and forwarded. modified is true when arguments were
+// rewritten (callers that buffer the body must re-marshal).
 func (g *guardrailsCheck) checkToolCall(ctx context.Context, mcpReq *MCPRequest, toolName string) (modified bool, blocked *Decision) {
 	var requestID any
+	var params *Params
 	if mcpReq != nil {
 		requestID = mcpReq.ID
+		params = mcpReq.Params
 	}
-	args, blocked := g.toolCallArguments(ctx, mcpReq, requestID)
+	if g.configured() && params != nil && params.Arguments != nil {
+		canon, err := canonicalJSON(params.Arguments)
+		if err != nil {
+			g.logError(ctx, "guardrails canonicalize arguments failed", toolName, err)
+			return false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		}
+		modified = !bytes.Equal(canon, params.Arguments)
+		params.Arguments = canon
+	}
+	content, isModified, blocked := g.request(ctx, toolName, toolCallArguments(params), requestID)
 	if blocked != nil {
 		return false, blocked
 	}
-	content, blocked := g.request(ctx, toolName, args, requestID)
-	if blocked != nil {
-		return false, blocked
-	}
-	if content == "" {
-		return false, nil
+	if !isModified {
+		return modified, nil
 	}
 	if blocked := g.applyModifiedArguments(ctx, mcpReq, content, requestID); blocked != nil {
 		return false, blocked
@@ -218,24 +228,25 @@ func (g *guardrailsCheck) checkElicitationAccept(ctx context.Context, mcpReq *MC
 		g.logError(ctx, "guardrails elicitation arguments failed", elicitationActionAccept, err)
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
-	content, blocked := g.request(ctx, elicitationActionAccept, args, requestID)
-	if blocked != nil {
+	content, isModified, blocked := g.request(ctx, elicitationActionAccept, args, requestID)
+	if blocked != nil || !isModified {
 		return blocked
 	}
 	return g.applyModifiedElicitation(ctx, mcpReq, content, requestID)
 }
 
 // request runs the guardrails check for name/arguments. blocked is non-nil
-// when the request must not proceed. modified content is returned when the
-// verdict is StatusModified. Empty merged config IDs skip the check.
-// Non-empty IDs with no Checker fail closed (503).
-func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, blocked *Decision) {
+// when the request must not proceed. isModified is true when the verdict is
+// StatusModified, with modified holding the replacement content (possibly
+// empty). Empty merged config IDs skip the check. Non-empty IDs with no
+// Checker fail closed (503).
+func (g *guardrailsCheck) request(ctx context.Context, name string, arguments json.RawMessage, requestID any) (modified string, isModified bool, blocked *Decision) {
 	if !g.configured() {
-		return "", nil
+		return "", false, nil
 	}
 
 	if g.checker == nil {
-		return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
+		return "", false, g.errorDecision(503, requestID, guardrailsUnavailableMessage)
 	}
 
 	decision, checkErr := g.checker.CheckRequest(ctx, name, arguments, g.serverIDs)
@@ -244,34 +255,34 @@ func (g *guardrailsCheck) request(ctx context.Context, name string, arguments js
 		// apply. checkErr can carry internal transport/provider detail, so
 		// it's logged rather than returned to the client.
 		g.logError(ctx, "guardrails request translation failed", name, checkErr)
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 
 	if decision == nil {
 		g.logError(ctx, "guardrails returned nil decision", name, fmt.Errorf("nil decision"))
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 
 	switch decision.Status {
 	case api.StatusBlocked:
 		if decision.Err != nil {
 			g.logError(ctx, "guardrails check unavailable, failing closed", name, decision.Err)
-			return "", g.errorDecision(503, requestID, guardrailsUnavailableMessage)
+			return "", false, g.errorDecision(503, requestID, guardrailsUnavailableMessage)
 		}
 		if g.logger != nil {
 			g.logger.InfoContext(ctx, "guardrails blocked request", "tool", name, "reason", decision.Reason)
 		}
-		return "", g.errorDecision(403, requestID, guardrailsBlockedMessage)
+		return "", false, g.errorDecision(403, requestID, guardrailsBlockedMessage)
 	case api.StatusAllowed:
 		if decision.Err != nil && g.logger != nil {
 			g.logger.ErrorContext(ctx, "guardrails check failed open", "tool", name, "error", decision.Err)
 		}
-		return "", nil
+		return "", false, nil
 	case api.StatusModified:
-		return decision.Content, nil
+		return decision.Content, true, nil
 	default:
 		g.logError(ctx, "guardrails returned unrecognized status", name, fmt.Errorf("status %q", decision.Status))
-		return "", g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
+		return "", false, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
 }
 
@@ -296,33 +307,24 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 	}
 }
 
-func (g *guardrailsCheck) toolCallArguments(ctx context.Context, mcpReq *MCPRequest, requestID any) (json.RawMessage, *Decision) {
-	if mcpReq == nil {
-		return nil, nil
-	}
-	args, err := toolCallArguments(mcpReq.Params)
-	if err != nil {
-		g.logError(ctx, "guardrails tool arguments failed", "", err)
-		return nil, g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
-	}
-	return args, nil
-}
-
 func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
-	if mcpReq == nil || modified == "" {
+	if mcpReq == nil {
 		return nil
 	}
-	params, err := replaceMapJSON(mcpReq.Params, "arguments", modified)
-	if err != nil {
-		g.logError(ctx, "guardrails apply modified arguments failed", "", err)
+	args := json.RawMessage(modified)
+	if !json.Valid(args) {
+		g.logError(ctx, "guardrails apply modified arguments failed", "", fmt.Errorf("modified arguments are not valid json"))
 		return g.errorDecision(400, requestID, guardrailsCheckFailedMessage)
 	}
-	mcpReq.Params = params
+	if mcpReq.Params == nil {
+		mcpReq.Params = &Params{}
+	}
+	mcpReq.Params.Arguments = args
 	return nil
 }
 
 func (g *guardrailsCheck) applyModifiedElicitation(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
-	if mcpReq == nil || modified == "" {
+	if mcpReq == nil {
 		return nil
 	}
 	result, err := replaceElicitationContent(mcpReq.Result, modified)
@@ -338,20 +340,31 @@ func isElicitationAccept(req *MCPRequest) bool {
 	return req != nil && req.IsElicitationResponse() && elicitationAction(req.Result) == elicitationActionAccept
 }
 
-// toolCallArguments JSON-encodes params["arguments"]. Missing or nil becomes {}.
-func toolCallArguments(params map[string]any) (json.RawMessage, error) {
-	if params == nil {
-		return json.RawMessage(`{}`), nil
+// toolCallArguments returns params.arguments as received. Missing or null becomes {}.
+func toolCallArguments(p *Params) json.RawMessage {
+	if p == nil || len(p.Arguments) == 0 || string(p.Arguments) == "null" {
+		return json.RawMessage(`{}`)
 	}
-	args, ok := params["arguments"]
-	if !ok || args == nil {
-		return json.RawMessage(`{}`), nil
+	return p.Arguments
+}
+
+// canonicalJSON decodes and re-encodes raw so guardrails sees what an upstream
+// parses: escapes decoded, duplicate keys collapsed (last wins), invalid utf-8
+// replaced. Numbers keep their original text; html is left unescaped.
+func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
 	}
-	raw, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tool arguments: %w", err)
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
 	}
-	return raw, nil
+	return bytes.TrimSuffix(b.Bytes(), []byte{'\n'}), nil
 }
 
 // elicitationArguments is result minus "action", JSON-encoded.
@@ -385,19 +398,6 @@ func elicitationAction(result map[string]any) string {
 		return ""
 	}
 	return action
-}
-
-// replaceMapJSON unmarshals content and stores it at key. Returns a new-or-same map.
-func replaceMapJSON(m map[string]any, key, content string) (map[string]any, error) {
-	var v any
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
-		return nil, fmt.Errorf("unmarshal modified %s: %w", key, err)
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	m[key] = v
-	return m, nil
 }
 
 func replaceElicitationContent(result map[string]any, content string) (map[string]any, error) {

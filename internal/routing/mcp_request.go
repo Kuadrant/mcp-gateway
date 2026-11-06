@@ -1,11 +1,14 @@
 package routing
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	sharedheaders "github.com/Kuadrant/mcp-gateway/internal/headers"
 )
@@ -86,7 +89,7 @@ type MCPRequest struct {
 	ID                  any               `json:"id"`
 	JSONRPC             string            `json:"jsonrpc"`
 	Method              string            `json:"method,omitempty"`
-	Params              map[string]any    `json:"params,omitempty"`
+	Params              *Params           `json:"params,omitempty"`
 	Result              map[string]any    `json:"result,omitempty"`
 	Headers             map[string]string `json:"-"`
 	SessionID           string            `json:"-"`
@@ -95,6 +98,122 @@ type MCPRequest struct {
 	BackendSessionID    string            `json:"-"`
 	ClientElicitation   bool              `json:"-"`
 	GuardrailsConfigIDs []string          `json:"-"` // per-server IDs for response guardrails check
+}
+
+// Params is a json-rpc params object. Name and URI are set only when the key
+// holds a non-empty string; arguments and capabilities stay raw. Every other
+// key is kept as received in Extra so re-marshaling loses nothing.
+type Params struct {
+	Name         string
+	URI          string
+	Arguments    json.RawMessage
+	Capabilities json.RawMessage
+	Extra        map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes params shallowly; values other than name and uri stay as raw bytes
+func (p *Params) UnmarshalJSON(data []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	p.Name = takeString(m, "name")
+	p.URI = takeString(m, "uri")
+	p.Arguments = m["arguments"]
+	p.Capabilities = m["capabilities"]
+	delete(m, "arguments")
+	delete(m, "capabilities")
+	p.Extra = m
+	return nil
+}
+
+// MarshalJSON merges Extra with the typed fields that are set, typed fields
+// winning. Keys are sorted to match encoding/json map output.
+func (p Params) MarshalJSON() ([]byte, error) {
+	var arr [8]string
+	keys := arr[:0]
+	n := 64 + len(p.Name) + len(p.URI) + len(p.Arguments) + len(p.Capabilities)
+	for k, v := range p.Extra {
+		keys = append(keys, k)
+		n += len(k) + len(v) + 4
+	}
+	for _, k := range [...]string{"name", "uri", "arguments", "capabilities"} {
+		if _, dup := p.Extra[k]; !dup && p.typedSet(k) {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+
+	b := make([]byte, 0, n)
+	b = append(b, '{')
+	for i, k := range keys {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendString(b, k)
+		b = append(b, ':')
+		switch {
+		case !p.typedSet(k):
+			b = append(b, p.Extra[k]...)
+		case k == "name":
+			b = appendString(b, p.Name)
+		case k == "uri":
+			b = appendString(b, p.URI)
+		case k == "arguments":
+			b = append(b, p.Arguments...)
+		default:
+			b = append(b, p.Capabilities...)
+		}
+	}
+	return append(b, '}'), nil
+}
+
+// typedSet reports whether key k is held by a typed field that is set
+func (p *Params) typedSet(k string) bool {
+	switch k {
+	case "name":
+		return p.Name != ""
+	case "uri":
+		return p.URI != ""
+	case "arguments":
+		return p.Arguments != nil
+	case "capabilities":
+		return p.Capabilities != nil
+	}
+	return false
+}
+
+// appendString appends s as a json string; non-ascii and escapes go through encoding/json
+func appendString(b []byte, s string) []byte {
+	for i := range len(s) {
+		if c := s[i]; c < 0x20 || c == '"' || c == '\\' || c >= utf8.RuneSelf {
+			q, _ := json.Marshal(s)
+			return append(b, q...)
+		}
+	}
+	b = append(b, '"')
+	b = append(b, s...)
+	return append(b, '"')
+}
+
+// takeString removes and returns m[key] when it is a non-empty json string
+func takeString(m map[string]json.RawMessage, key string) string {
+	raw, ok := m[key]
+	if !ok || len(raw) < 3 || raw[0] != '"' {
+		return ""
+	}
+	var s string
+	if bytes.IndexByte(raw, '\\') < 0 && utf8.Valid(raw) {
+		s = string(raw[1 : len(raw)-1]) // nothing to unescape
+	} else {
+		var u string // separate var: &u escapes to the heap, s stays on the stack
+		if json.Unmarshal(raw, &u) != nil {
+			return ""
+		}
+		s = u
+	}
+	delete(m, key)
+	return s
 }
 
 // GetSingleHeaderValue returns header value by key
@@ -147,15 +266,11 @@ func (mr *MCPRequest) ClientSupportsElicitation() bool {
 	if mr.Method != MethodInitialize || mr.Params == nil {
 		return false
 	}
-	caps, ok := mr.Params["capabilities"]
-	if !ok {
+	var caps map[string]json.RawMessage
+	if json.Unmarshal(mr.Params.Capabilities, &caps) != nil {
 		return false
 	}
-	capsMap, ok := caps.(map[string]any)
-	if !ok {
-		return false
-	}
-	_, hasElicitation := capsMap["elicitation"]
+	_, hasElicitation := caps["elicitation"]
 	return hasElicitation
 }
 
@@ -177,26 +292,18 @@ func (mr *MCPRequest) IsElicitationResponse() bool {
 
 // ToolName extracts tool name from tools/call params
 func (mr *MCPRequest) ToolName() string {
-	if !mr.IsToolCall() {
+	if !mr.IsToolCall() || mr.Params == nil {
 		return ""
 	}
-	tool, ok := mr.Params["name"]
-	if !ok {
-		return ""
-	}
-	t, ok := tool.(string)
-	if !ok {
-		return ""
-	}
-	return t
+	return mr.Params.Name
 }
 
 // ReWriteToolName replaces tool name in params
 func (mr *MCPRequest) ReWriteToolName(actualTool string) {
 	if mr.Params == nil {
-		mr.Params = map[string]any{}
+		mr.Params = &Params{}
 	}
-	mr.Params["name"] = actualTool
+	mr.Params.Name = actualTool
 }
 
 // IsPromptGet checks if method is prompts/get
@@ -206,26 +313,18 @@ func (mr *MCPRequest) IsPromptGet() bool {
 
 // PromptName extracts prompt name from prompts/get params
 func (mr *MCPRequest) PromptName() string {
-	if !mr.IsPromptGet() {
+	if !mr.IsPromptGet() || mr.Params == nil {
 		return ""
 	}
-	prompt, ok := mr.Params["name"]
-	if !ok {
-		return ""
-	}
-	p, ok := prompt.(string)
-	if !ok {
-		return ""
-	}
-	return p
+	return mr.Params.Name
 }
 
 // ReWritePromptName replaces prompt name in params
 func (mr *MCPRequest) ReWritePromptName(actualPrompt string) {
 	if mr.Params == nil {
-		mr.Params = map[string]any{}
+		mr.Params = &Params{}
 	}
-	mr.Params["name"] = actualPrompt
+	mr.Params.Name = actualPrompt
 }
 
 // IsResourceRead checks if method is resources/read
@@ -235,26 +334,18 @@ func (mr *MCPRequest) IsResourceRead() bool {
 
 // ResourceURI extracts the resource uri from resources/read params
 func (mr *MCPRequest) ResourceURI() string {
-	if !mr.IsResourceRead() {
+	if !mr.IsResourceRead() || mr.Params == nil {
 		return ""
 	}
-	uri, ok := mr.Params["uri"]
-	if !ok {
-		return ""
-	}
-	u, ok := uri.(string)
-	if !ok {
-		return ""
-	}
-	return u
+	return mr.Params.URI
 }
 
 // ReWriteResourceURI replaces the resource uri in params
 func (mr *MCPRequest) ReWriteResourceURI(actualURI string) {
 	if mr.Params == nil {
-		mr.Params = map[string]any{}
+		mr.Params = &Params{}
 	}
-	mr.Params["uri"] = actualURI
+	mr.Params.URI = actualURI
 }
 
 // ToBytes marshals request to json

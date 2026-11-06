@@ -1,7 +1,12 @@
 package routing
 
 import (
+	"encoding/json"
+	"maps"
+	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestInjectResourcePrefix(t *testing.T) {
@@ -86,6 +91,125 @@ func TestStripAuthorityPrefix(t *testing.T) {
 			if got != tt.wantAuthority {
 				t.Errorf("got %q, want %q", got, tt.wantAuthority)
 			}
+		})
+	}
+}
+
+func TestParamsJSONRoundTrip(t *testing.T) {
+	tests := []struct {
+		name      string
+		in        string // compact with sorted top-level keys, so output must match byte for byte
+		wantName  string
+		wantURI   string
+		wantArgs  string
+		wantCaps  string
+		wantExtra []string
+	}{
+		{
+			name:      "all fields with _meta, unknown key and large int",
+			in:        `{"_meta":{"progressToken":7},"arguments":{"id":12345678901234567890,"a":1.50},"capabilities":{"elicitation":{}},"name":"weather","uri":"ui://app/x","x-custom":{"a":1}}`,
+			wantName:  "weather",
+			wantURI:   "ui://app/x",
+			wantArgs:  `{"id":12345678901234567890,"a":1.50}`,
+			wantCaps:  `{"elicitation":{}}`,
+			wantExtra: []string{"_meta", "x-custom"},
+		},
+		{name: "non-string name stays in extra", in: `{"name":42}`, wantExtra: []string{"name"}},
+		{name: "empty name stays in extra", in: `{"name":""}`, wantExtra: []string{"name"}},
+		{name: "non-string uri stays in extra", in: `{"uri":42}`, wantExtra: []string{"uri"}},
+		{name: "missing arguments", in: `{"name":"t"}`, wantName: "t"},
+		{name: "null arguments", in: `{"arguments":null,"name":"t"}`, wantName: "t", wantArgs: "null"},
+		{name: "empty params", in: `{}`},
+		{name: "extra key that needs escaping", in: `{"a\"b":1}`, wantExtra: []string{`a"b`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var p Params
+			require.NoError(t, json.Unmarshal([]byte(tt.in), &p))
+			require.Equal(t, tt.wantName, p.Name)
+			require.Equal(t, tt.wantURI, p.URI)
+			require.Equal(t, tt.wantArgs, string(p.Arguments))
+			require.Equal(t, tt.wantCaps, string(p.Capabilities))
+			require.ElementsMatch(t, tt.wantExtra, slices.Collect(maps.Keys(p.Extra)))
+
+			out, err := json.Marshal(&p)
+			require.NoError(t, err)
+			// byte comparison, not JSONEq: JSONEq decodes numbers as float64 and hides corruption
+			require.Equal(t, tt.in, string(out))
+		})
+	}
+}
+
+func TestParamsNameEncoding(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "escapes", in: `{"name":"café \"x\""}`, want: `café "x"`},
+		{name: "raw non-ascii", in: `{"name":"café"}`, want: "café"},
+		{name: "invalid utf-8 is replaced", in: "{\"name\":\"a\xff\"}", want: "a�"},
+		{name: "whitespace around value", in: `{ "name" : "t" }`, want: "t"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var p Params
+			require.NoError(t, json.Unmarshal([]byte(tt.in), &p))
+			require.Equal(t, tt.want, p.Name)
+
+			out, err := json.Marshal(&p)
+			require.NoError(t, err)
+			want, err := json.Marshal(map[string]string{"name": tt.want})
+			require.NoError(t, err)
+			require.Equal(t, string(want), string(out))
+		})
+	}
+}
+
+func TestParamsRewriteName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "keeps other keys",
+			in:   `{"_meta":{"progressToken":"t1"},"arguments":{"id":12345678901234567890},"name":"prefix_weather"}`,
+			want: `{"_meta":{"progressToken":"t1"},"arguments":{"id":12345678901234567890},"name":"weather"}`,
+		},
+		{name: "replaces non-string name", in: `{"name":42}`, want: `{"name":"weather"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var p Params
+			require.NoError(t, json.Unmarshal([]byte(tt.in), &p))
+
+			p.Name = "weather"
+
+			out, err := json.Marshal(&p)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, string(out))
+		})
+	}
+}
+
+func TestMCPRequest_ClientSupportsElicitation(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "declared on initialize", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"elicitation":{}}}}`, want: true},
+		{name: "not initialize", in: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"capabilities":{"elicitation":{}}}}`},
+		{name: "no params", in: `{"jsonrpc":"2.0","id":1,"method":"initialize"}`},
+		{name: "no capabilities", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`},
+		{name: "capabilities without elicitation", in: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"sampling":{}}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mr MCPRequest
+			require.NoError(t, json.Unmarshal([]byte(tt.in), &mr))
+			require.Equal(t, tt.want, mr.ClientSupportsElicitation())
 		})
 	}
 }
