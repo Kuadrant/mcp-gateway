@@ -1232,8 +1232,8 @@ func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 		contentType string
 		blockedBody []byte
 	}{
-		{"SSE", "", []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))},
-		{"JSON", "application/json", []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))},
+		{"SSE", "", []byte(routing.BuildSSEToolExecutionError(1, "blocked by guardrails"))},
+		{"JSON", "application/json", []byte(routing.BuildJSONToolExecutionError(1, "blocked by guardrails"))},
 	}
 
 	for _, tc := range tests {
@@ -1309,7 +1309,7 @@ data: {"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{}}
 data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret"}]}}
 
 `)
-	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.BuildSSEToolExecutionError(1, "blocked by guardrails"))
 
 	steps := []mockProcessServerMessageAndErr{
 		requestHeadersStep(),
@@ -1455,7 +1455,7 @@ func TestProcess202607_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
 	// blockAllChecker blocks every response; adapter must send this replacement,
 	// framed as plain JSON (not an SSE event) for the 2026-07-28 protocol.
-	blockedBody := []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.BuildJSONToolExecutionError(1, "blocked by guardrails"))
 
 	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "application/json")...)
@@ -1488,7 +1488,7 @@ func TestProcess202607_GuardrailsBlocked_MissingContentTypeUsesJSON(t *testing.T
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
-	blockedBody := []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.BuildJSONToolExecutionError(1, "blocked by guardrails"))
 
 	for _, tc := range []struct {
 		name        string
@@ -1589,7 +1589,7 @@ func TestProcess_StatefulPathOverrides2026Header_UsesSSEReplacement(t *testing.T
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
-	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.BuildSSEToolExecutionError(1, "blocked by guardrails"))
 
 	steps := append([]mockProcessServerMessageAndErr{headers},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "")...)
