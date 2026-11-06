@@ -224,7 +224,7 @@ type MCPManager struct {
 	// backoff is used to calculate the next interval on failure
 	backoff wait.Backoff
 	// staleBackoff spaces reconnects after a stateless upstream's session goes
-	// stale; see handleSessionStale
+	// stale; see staleReconnectDelay
 	staleBackoff wait.Backoff
 	// baseBackoff stores the initial backoff configuration for resets
 	baseBackoff   wait.Backoff
@@ -420,6 +420,10 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 
 	go func() {
 		man.manage(ctx, eventTypeTimer)
+		// fires once a stale session's backoff has passed; nil, so never ready,
+		// while the session is live. kept off the poll ticker, which every
+		// manage re-arms
+		var staleReconnect <-chan time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -435,6 +439,11 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				return
 			case <-man.ticker.Chan():
 				man.logger.DebugContext(ctx, "health check tick", "upstream mcp server", man.mcp.ID())
+				if staleReconnect != nil {
+					// a poll is due anyway; replace the stale session now
+					staleReconnect = nil
+					_ = man.mcp.Disconnect()
+				}
 				man.manage(ctx, eventTypeTimer)
 			case <-man.toolEvents:
 				man.logger.DebugContext(ctx, "received tool notification", "upstream mcp server", man.mcp.ID())
@@ -446,7 +455,13 @@ func (man *MCPManager) Start(ctx context.Context) ActiveMCPServer {
 				man.logger.Info("reconnecting after connection loss", "upstream mcp server", man.mcp.ID())
 				man.manage(ctx, eventTypeTimer)
 			case lived := <-man.staleEvents:
-				man.handleSessionStale(lived)
+				staleReconnect = time.After(man.staleReconnectDelay(lived))
+			case <-staleReconnect:
+				man.logger.Info("replacing stale upstream session", "upstream mcp server", man.mcp.ID())
+				staleReconnect = nil
+				// the close error of a stale session carries nothing new
+				_ = man.mcp.Disconnect()
+				man.manage(ctx, eventTypeTimer)
 			}
 		}
 	}()
@@ -848,17 +863,17 @@ func (man *MCPManager) applyBackoff() {
 	man.resetTicker(duration)
 }
 
-// handleSessionStale schedules the next manage, whose Connect replaces the
-// stale session, after the stale backoff rather than the full poll interval,
-// which can be as long as the upstream's ttlMs. only called from the event
-// loop goroutine.
-func (man *MCPManager) handleSessionStale(lived time.Duration) {
+// staleReconnectDelay returns how long the event loop waits before replacing
+// a stale session: the stale backoff rather than the full poll interval, which
+// can be as long as the upstream's ttlMs. only called from the event loop
+// goroutine.
+func (man *MCPManager) staleReconnectDelay(lived time.Duration) time.Duration {
 	if lived >= staleBackoffReset {
 		man.staleBackoff = man.baseBackoff
 	}
 	delay := man.staleBackoff.Step()
 	man.logger.Info("upstream session stale, scheduling reconnect", "upstream mcp server", man.mcp.ID(), "lived", lived, "delay", delay)
-	man.resetTicker(delay)
+	return delay
 }
 
 // resetTicker re-arms the ticker and drops a tick that fired while manage

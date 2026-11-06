@@ -2223,9 +2223,6 @@ func TestMCPManager_SessionStaleBacksOffReconnect(t *testing.T) {
 
 	manager.manage(context.Background(), eventTypeTimer)
 	require.NotNil(t, mock.staleHandler, "manager never watched the session for staleness")
-	ticker := &recordingTicker{channel: make(chan time.Time, 1)}
-	manager.ticker.Stop()
-	manager.ticker = ticker
 
 	mock.staleHandler()
 	var lived time.Duration
@@ -2236,19 +2233,16 @@ func TestMCPManager_SessionStaleBacksOffReconnect(t *testing.T) {
 	}
 	require.Less(t, lived, staleBackoffReset)
 
-	requireDelay := func(base time.Duration) {
+	requireDelay := func(lived, base time.Duration) {
 		t.Helper()
-		require.GreaterOrEqual(t, ticker.resetInterval, base)
-		require.LessOrEqual(t, ticker.resetInterval, base+base/10, "beyond backoff jitter")
+		delay := manager.staleReconnectDelay(lived)
+		require.GreaterOrEqual(t, delay, base)
+		require.LessOrEqual(t, delay, base+base/10, "beyond backoff jitter")
 	}
-	manager.handleSessionStale(lived)
-	requireDelay(time.Second)
-	manager.handleSessionStale(0)
-	requireDelay(2 * time.Second)
-	manager.handleSessionStale(0)
-	requireDelay(4 * time.Second)
-	manager.handleSessionStale(staleBackoffReset)
-	requireDelay(time.Second)
+	requireDelay(lived, time.Second)
+	requireDelay(0, 2*time.Second)
+	requireDelay(0, 4*time.Second)
+	requireDelay(staleBackoffReset, time.Second)
 }
 
 func TestMCPManager_manage_LargeTTLDoesNotPanic(t *testing.T) {
