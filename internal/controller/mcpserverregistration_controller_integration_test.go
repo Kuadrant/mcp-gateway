@@ -1006,6 +1006,9 @@ var _ = Describe("MCPServerRegistration Controller", func() {
 			mcpsr := createTestMCPServerRegistration(resourceName, "default", "some-route", "cross_")
 			mcpsr.Spec.TargetRef.Namespace = "other-ns"
 			err := testK8sClient.Create(ctx, mcpsr)
+			if err == nil {
+				defer forceDeleteTestMCPServerRegistration(ctx, resourceName, "default")
+			}
 
 			Expect(err).To(HaveOccurred())
 			Expect(errors.IsInvalid(err)).To(BeTrue())
