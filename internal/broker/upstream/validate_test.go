@@ -337,3 +337,39 @@ func TestInvalidToolPolicyConstants(t *testing.T) {
 	assert.Equal(t, InvalidToolPolicy("FilterOut"), InvalidToolPolicyFilterOut)
 	assert.Equal(t, InvalidToolPolicy("RejectServer"), InvalidToolPolicyRejectServer)
 }
+
+func TestValidateTools_StripsSchemaDialect(t *testing.T) {
+	// The MCP TypeScript SDK stamps tool schemas with a draft-07 `$schema`,
+	// which 2020-12-only clients reject. ValidateTools must strip it from the
+	// tools it serves while leaving the tool valid and its constraints intact.
+	tools := []mcp.Tool{
+		{
+			Name: "stamped_tool",
+			InputSchema: map[string]any{
+				"$schema": "http://json-schema.org/draft-07/schema#",
+				"type":    "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+			},
+			OutputSchema: map[string]any{
+				"$schema": "http://json-schema.org/draft-07/schema#",
+				"type":    "object",
+			},
+		},
+	}
+
+	valid, invalid := ValidateTools(tools)
+	assert.Empty(t, invalid)
+	assert.Len(t, valid, 1)
+
+	in := valid[0].InputSchema.(map[string]any)
+	_, hasInputDialect := in["$schema"]
+	assert.False(t, hasInputDialect, "inputSchema $schema dialect must be stripped")
+	assert.Equal(t, "object", in["type"], "stripping $schema must leave other keywords intact")
+	assert.Contains(t, in, "properties")
+
+	out := valid[0].OutputSchema.(map[string]any)
+	_, hasOutputDialect := out["$schema"]
+	assert.False(t, hasOutputDialect, "outputSchema $schema dialect must be stripped")
+}

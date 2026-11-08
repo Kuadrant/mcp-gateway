@@ -134,6 +134,20 @@ func ValidatePrompts(prompts []mcp.Prompt) ([]mcp.Prompt, []InvalidPromptInfo) {
 	return valid, invalid
 }
 
+// stripSchemaDialect removes the top-level JSON Schema `$schema` dialect label
+// from a tool schema in place. The MCP TypeScript SDK (zod 4 path) stamps every
+// tool's inputSchema with a draft-07 `$schema`, and some MCP clients (e.g. Claude
+// Code / Claude Desktop) validate tool schemas as JSON Schema 2020-12 only and
+// silently drop any tool that declares draft-07. The dialect label imposes no
+// constraint of its own, so removing it lets those clients accept the otherwise
+// valid schema. Applied to the tools the broker serves so the aggregated set is
+// dialect-neutral regardless of which SDK an upstream was built with.
+func stripSchemaDialect(schema any) {
+	if m, ok := schema.(map[string]any); ok {
+		delete(m, "$schema")
+	}
+}
+
 // ValidateTools validates a list of tools and returns the valid tools and info about invalid ones.
 func ValidateTools(tools []mcp.Tool) ([]mcp.Tool, []InvalidToolInfo) {
 	var valid []mcp.Tool
@@ -144,6 +158,8 @@ func ValidateTools(tools []mcp.Tool) ([]mcp.Tool, []InvalidToolInfo) {
 		if len(info.Errors) > 0 {
 			invalid = append(invalid, info)
 		} else {
+			stripSchemaDialect(tool.InputSchema)
+			stripSchemaDialect(tool.OutputSchema)
 			valid = append(valid, tool)
 		}
 	}
