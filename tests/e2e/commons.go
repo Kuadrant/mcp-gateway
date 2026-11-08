@@ -109,6 +109,15 @@ var (
 	TestServerNameSpace = goenv.GetDefault("TEST_SERVER_NAMESPACE", "mcp-test")
 )
 
+// session store used by the [Full] session cache specs; ci deploys redis in the system namespace.
+// override to run against another redis-compatible store, e.g. valkey
+var (
+	SessionStoreConnectionString = goenv.GetDefault("SESSION_STORE_CONNECTION_STRING",
+		"redis://redis."+SystemNamespace+".svc.cluster.local:6379")
+	SessionStoreDeployment = goenv.GetDefault("SESSION_STORE_DEPLOYMENT", "redis")
+	SessionStoreNamespace  = goenv.GetDefault("SESSION_STORE_NAMESPACE", SystemNamespace)
+)
+
 // gateway TLS configuration
 var (
 	GatewayTLSSecret         = goenv.GetDefault("GATEWAY_TLS_SECRET", "mcp-gateway-tls-cert")

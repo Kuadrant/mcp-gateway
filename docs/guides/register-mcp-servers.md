@@ -263,7 +263,7 @@ You can temporarily disable a registered server without deleting it. Setting `st
 kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Disabled"}}'
 ```
 
-The status condition will show `Ready: False` with reason `Disabled`. To re-enable:
+The status condition will show `Ready: False` with reason `Disabled`. Disabled servers are left out of the broker's readiness check, so disabling every registered server keeps the gateway ready, the same as having no servers registered. To re-enable:
 
 ```bash
 kubectl patch mcpsr my-mcp-server -n mcp-test --type merge -p '{"spec":{"state":"Enabled"}}'

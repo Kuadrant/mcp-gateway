@@ -18,9 +18,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/yaml"
 
 	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
@@ -110,13 +113,18 @@ func RestartDeploymentAndWait(ctx context.Context, namespace, deploymentName str
 	return nil
 }
 
-// GetDeploymentLogs returns the logs of a deployment's pod.
-func GetDeploymentLogs(ctx context.Context, namespace, deploymentName string) (string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "logs", "deployment/"+deploymentName,
-		"-n", namespace, "--tail=-1")
+// brokerSelector matches the operator-deployed broker-router pods.
+const brokerSelector = "app.kubernetes.io/name=mcp-gateway,app.kubernetes.io/managed-by=mcp-gateway-controller"
+
+// GetBrokerLogs returns the logs of every broker-router pod in a namespace, each
+// line prefixed with its pod. kubectl logs deployment/... reads one arbitrary
+// pod, which misses what another replica logged.
+func GetBrokerLogs(ctx context.Context, namespace string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "logs", "-n", namespace, "-l", brokerSelector,
+		"--prefix", "--tail=-1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to get logs for deployment %s: %s: %w", deploymentName, string(output), err)
+		return "", fmt.Errorf("failed to get broker-router logs: %s: %w", string(output), err)
 	}
 	return string(output), nil
 }
@@ -290,12 +298,6 @@ func AddGatewayHTTPSListener(ctx context.Context, namespace, gatewayName, listen
 // trust pool; concatenate additional PEMs in this Secret when upstream CAs differ.
 func PatchBrokerCA(ctx context.Context, k8sClient client.Client, namespace string) {
 	ext := getSingleMCPGatewayExtension(ctx, k8sClient, namespace)
-	if ext.Spec.CACertBundleRef != nil && ext.Spec.CACertBundleRef.Name == "gateway-ca-bundle" {
-		existing := &corev1.Secret{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Name: "gateway-ca-bundle", Namespace: namespace}, existing); err == nil {
-			return
-		}
-	}
 
 	var caCertPEM []byte
 	if e2eDomain == defaultE2EDomain {
@@ -312,34 +314,50 @@ func PatchBrokerCA(ctx context.Context, k8sClient client.Client, namespace strin
 		data, ok := cm.Data["ca-bundle.crt"]
 		Expect(ok).To(BeTrue(), "%s should have ca-bundle.crt", GatewayCABundleConfigMap)
 		caCertPEM = []byte(data)
+		// the tls-server fixture (and its oauth2 token endpoint) is signed by the
+		// cert-manager private CA, which KIND trusts above; append it when deployed
+		caSecret := &corev1.Secret{}
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "private-ca-keypair", Namespace: "cert-manager"}, caSecret)
+		if err == nil {
+			privateCA, ok := caSecret.Data["ca.crt"]
+			Expect(ok).To(BeTrue(), "private-ca-keypair should have ca.crt")
+			caCertPEM = append(append(caCertPEM, '\n'), privateCA...)
+		} else if !apierrors.IsNotFound(err) {
+			Expect(err).NotTo(HaveOccurred())
+		}
 	}
 
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "gateway-ca-bundle",
-			Namespace: namespace,
-			Labels:    map[string]string{"mcp.kuadrant.io/secret": "true"},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"ca.crt": caCertPEM},
+	// a run cancelled before teardown can leave a stale bundle behind, so
+	// converge on the desired content. updated in place, not deleted and
+	// recreated, so a referenced bundle never briefly disappears
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ca-bundle", Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, k8sClient, secret, func() error {
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels["mcp.kuadrant.io/secret"] = "true"
+		secret.Data = map[string][]byte{"ca.crt": caCertPEM}
+		return nil
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	if ext.Spec.CACertBundleRef == nil || ext.Spec.CACertBundleRef.Name != "gateway-ca-bundle" {
+		patch := []byte(`{"spec":{"caCertBundleRef":{"name":"gateway-ca-bundle","key":"ca.crt"}}}`)
+		Expect(k8sClient.Patch(ctx, ext, client.RawPatch(types.MergePatchType, patch))).To(Succeed())
 	}
-	_ = k8sClient.Delete(ctx, secret)
-	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-	if ext.Spec.CACertBundleRef != nil && ext.Spec.CACertBundleRef.Name == "gateway-ca-bundle" {
-		return
-	}
-
-	patch := []byte(`{"spec":{"caCertBundleRef":{"name":"gateway-ca-bundle","key":"ca.crt"}}}`)
-	Expect(k8sClient.Patch(ctx, ext, client.RawPatch(types.MergePatchType, patch))).To(Succeed())
-
+	// compare the bundle itself: a stale one also has a gatewayCACertPEM key
 	Eventually(func(g Gomega) {
 		g.Expect(VerifyMCPGatewayExtensionReady(ctx, k8sClient, ext.Name, namespace)).To(Succeed())
 		cfg := &corev1.Secret{}
 		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "mcp-gateway-config", Namespace: namespace}, cfg)).To(Succeed())
 		configYAML, ok := cfg.Data["config.yaml"]
 		g.Expect(ok).To(BeTrue(), "config secret should have config.yaml")
-		g.Expect(string(configYAML)).To(ContainSubstring("gatewayCACertPEM"))
+		var parsed struct {
+			GatewayCACertPEM string `json:"gatewayCACertPEM"`
+		}
+		g.Expect(yaml.Unmarshal(configYAML, &parsed)).To(Succeed())
+		g.Expect(parsed.GatewayCACertPEM).To(Equal(string(caCertPEM)), "config should carry the current CA bundle")
 	}, TestTimeoutConfigSync, TestRetryInterval).Should(Succeed())
 }
 
@@ -504,4 +522,69 @@ func dumpClusterStateTo(ctx context.Context, w io.Writer, resources, namespaces 
 	}
 
 	p("=== END CLUSTER STATE DUMP ===\n")
+}
+
+// DumpBrokerErrors writes the broker-router pods and their ERROR/WARN log lines
+// since the current spec started to GinkgoWriter. the broker is shared with
+// parallel specs, so lines naming another upstream than match (e.g. a server
+// name) are dropped; empty matches all. unlike DumpClusterState's temp file,
+// GinkgoWriter output is kept in CI reports for failed specs. lines are prefixed
+// with the pod name so replicas can be told apart. each kubectl call is bounded
+// so a stalled one can't block the failed spec or starve the calls after it.
+func DumpBrokerErrors(ctx context.Context, namespace, match string) {
+	kubectl := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(ctx, TestTimeoutShort)
+		defer cancel()
+		return exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	}
+
+	pods, err := kubectl("get", "pods", "-n", namespace, "-l", brokerSelector, "-o", "wide")
+	GinkgoWriter.Printf("=== broker-router pods in %s ===\n%s", namespace, pods)
+	if err != nil {
+		GinkgoWriter.Printf("failed to list broker-router pods: %v\n", err)
+	}
+
+	// spec start is on the runner's clock; back off so a node clock that trails
+	// it doesn't drop the lines logged right after
+	since := CurrentSpecReport().StartTime.Add(-30 * time.Second).UTC().Format(time.RFC3339)
+	logs, err := kubectl("logs", "-n", namespace, "-l", brokerSelector,
+		"--prefix", "--tail=-1", "--since-time="+since)
+	if err != nil {
+		GinkgoWriter.Printf("failed to get broker-router logs: %s: %v\n", logs, err)
+	} else {
+		GinkgoWriter.Printf("=== broker-router ERROR/WARN logs for %q or no upstream since %s ===\n", match, since)
+		writeErrorLines(logs, match)
+	}
+
+	// a restarted container's cause is only in its previous instance, often a
+	// panic or fatal startup message with no level, so its tail is unfiltered.
+	// --previous with -l fails if any pod has none, so fetch per pod and skip those
+	names, err := kubectl("get", "pods", "-n", namespace, "-l", brokerSelector, "-o", "name")
+	if err != nil {
+		GinkgoWriter.Printf("failed to list broker-router pod names: %s: %v\n", names, err)
+		return
+	}
+	for name := range strings.Lines(string(names)) {
+		name = strings.TrimSpace(name)
+		prev, err := kubectl("logs", "-n", namespace, name, "--previous", "--tail=200", "--since-time="+since)
+		if err != nil {
+			continue
+		}
+		GinkgoWriter.Printf("=== %s previous container logs since %s (last 200 lines) ===\n%s", name, since, prev)
+	}
+}
+
+// writeErrorLines writes the ERROR/WARN lines that contain match or name no
+// upstream (request, router and session errors), in either the text or the
+// json (--log-format=json) log format.
+func writeErrorLines(logs []byte, match string) {
+	for line := range strings.Lines(string(logs)) {
+		if !strings.Contains(line, match) && strings.Contains(line, "upstream mcp server") {
+			continue
+		}
+		if strings.Contains(line, "level=ERROR") || strings.Contains(line, "level=WARN") ||
+			strings.Contains(line, `"level":"ERROR"`) || strings.Contains(line, `"level":"WARN"`) {
+			GinkgoWriter.Print(line)
+		}
+	}
 }

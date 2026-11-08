@@ -226,6 +226,11 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 									ContainerPort: brokerConfigPort,
 									Protocol:      corev1.ProtocolTCP,
 								},
+								{
+									Name:          "metrics",
+									ContainerPort: brokerMetricsPort,
+									Protocol:      corev1.ProtocolTCP,
+								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

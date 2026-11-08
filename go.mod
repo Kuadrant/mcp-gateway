@@ -8,19 +8,19 @@ go 1.26.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/alicebob/miniredis/v2 v2.39.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/caitlinelfring/go-env-default v1.1.0
-	github.com/envoyproxy/go-control-plane/envoy v1.39.0
+	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-logr/logr v1.4.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/onsi/ginkgo/v2 v2.33.0
+	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
-	github.com/prometheus/client_golang v1.24.1
-	github.com/redis/go-redis/v9 v9.22.0
+	github.com/prometheus/client_golang v1.25.0
+	github.com/redis/go-redis/v9 v9.23.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/bridges/otelslog v0.21.0
@@ -37,20 +37,20 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
 	go.uber.org/goleak v1.3.0
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.23.0
-	google.golang.org/grpc v1.84.0
+	golang.org/x/sync v0.24.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	istio.io/api v1.31.1
-	istio.io/client-go v1.31.1
-	k8s.io/api v0.37.1
-	k8s.io/apiextensions-apiserver v0.37.1
-	k8s.io/apimachinery v0.37.1
-	k8s.io/client-go v0.37.1
+	istio.io/api v1.32.0-rc.1
+	istio.io/client-go v1.31.3
+	k8s.io/api v0.37.2
+	k8s.io/apiextensions-apiserver v0.37.2
+	k8s.io/apimachinery v0.37.2
+	k8s.io/client-go v0.37.2
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	sigs.k8s.io/controller-runtime v0.25.2
-	sigs.k8s.io/gateway-api v1.6.2
+	sigs.k8s.io/gateway-api v1.6.3
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -111,16 +111,16 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/atomic v1.12.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect

@@ -15,6 +15,7 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	mcpotel "github.com/Kuadrant/mcp-gateway/internal/otel"
 	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"github.com/Kuadrant/mcp-gateway/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -180,8 +181,7 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	)
 	defer func() {
 		if retErr != nil {
-			span.SetStatus(codes.Error, retErr.Error())
-			span.RecordError(retErr)
+			mcpotel.SpanError(span, retErr, retErr.Error())
 		} else if result != nil {
 			span.SetAttributes(attribute.Int("mcp.user_specific.tools_count", len(result.tools)))
 		}
@@ -289,14 +289,14 @@ func (broker *mcpBrokerImpl) fetchToolsStateless(ctx context.Context, srv userSp
 
 	session, err := mcpClient.Connect(fetchCtx, t, nil)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		mcpotel.SpanError(span, err, err.Error())
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 	defer func() { _ = session.Close() }()
 
 	toolsResult, err := broker.listAllUserTools(fetchCtx, session)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		mcpotel.SpanError(span, err, err.Error())
 		return nil, fmt.Errorf("list tools: %w", err)
 	}
 
