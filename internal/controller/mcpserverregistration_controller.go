@@ -1186,8 +1186,11 @@ func setupIndexMCPRegistrationToHTTPRoute(ctx context.Context, indexer client.Fi
 		mcpsr := rawObj.(*mcpv1.MCPServerRegistration)
 		targetRef := mcpsr.Spec.TargetRef
 		if targetRef.Kind == "HTTPRoute" {
-			// targetRef is same-namespace only (enforced by CRD validation)
-			return []string{httpRouteIndexValue(mcpsr.Namespace, targetRef.Name)}
+			namespace := targetRef.Namespace
+			if namespace == "" {
+				namespace = mcpsr.Namespace
+			}
+			return []string{httpRouteIndexValue(namespace, targetRef.Name)}
 		}
 		return []string{}
 	}); err != nil {
