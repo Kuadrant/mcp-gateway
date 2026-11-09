@@ -12,6 +12,7 @@ This configures **broker-to-upstream authentication only**. It does not authenti
 - You have the client ID, client secret, HTTPS token endpoint URL, and any required scopes.
 - The broker can reach both the token endpoint and the upstream MCP endpoint. Their TLS certificates are trusted by the broker.
 - You have `kubectl`, `curl`, and `jq`, and permission to manage registrations and Secrets in the registration namespace.
+- In the MCPGatewayExtension namespace, your Kubernetes role can get the broker Service and Deployment, get and list Pods, create the `pods/portforward` subresource, and get `pods/log` for troubleshooting.
 
 Check that the installed CRD exposes the configuration:
 
@@ -25,7 +26,7 @@ The examples use `mcp-test` for the registration namespace, `my-mcp-server-route
 
 ## Step 1: Creating the credentials Secret
 
-Create the Secret in the **same namespace as the MCPServerRegistration**. The following Bash command prompts for the client secret without echoing it, writes it briefly to a private temporary directory, and removes that directory when the command exits. Replace `<client-id>` with the client ID from your authorization server. Use your approved secret manager instead if one is available.
+Create the Secret in the **same namespace as the MCPServerRegistration**. The following Bash command prompts for the client ID and secret, writes them briefly to a private temporary directory, and removes that directory when the command exits. The secret is not echoed or placed in shell command text. Use your approved secret manager instead if one is available.
 
 ```bash
 bash <<'EOF'
@@ -35,7 +36,13 @@ umask 077
 secret_dir=$(mktemp -d)
 trap 'rm -rf "$secret_dir"' EXIT
 
-printf '%s' '<client-id>' > "$secret_dir/clientID"
+read -r -p 'OAuth client ID: ' client_id </dev/tty
+if [ -z "$client_id" ]; then
+  printf 'The OAuth client ID cannot be empty.\n' >&2
+  exit 1
+fi
+printf '%s' "$client_id" > "$secret_dir/clientID"
+unset client_id
 read -r -s -p 'OAuth client secret: ' client_secret </dev/tty
 printf '\n'
 if [ -z "$client_secret" ]; then
@@ -96,7 +103,11 @@ spec:
 EOF
 ```
 
+The example uses `/mcp`. Set `path` to the path where the upstream exposes MCP, such as `/v1/mcp`, if it differs.
+
 `tokenURL` must use HTTPS. Token requests have a 10-second timeout and do not follow redirects; use the final endpoint URL. Restrict registration write access and broker network egress to trusted administrators and destinations: the broker sends the referenced client credentials to this endpoint.
+
+Using HTTPS for `tokenURL` protects the client credentials in the token request. It does not protect an HTTP MCP endpoint: the broker sends its bearer token on each MCP request. If that connection is not otherwise encrypted, a network observer can capture and reuse the token. Use HTTPS for the MCP endpoint or a separately encrypted transport.
 
 `credentialRef` and `oauth2ClientCredentials` are mutually exclusive. To migrate an existing registration from a static credential, remove `credentialRef` and add the OAuth configuration in the same update. For example, this merge patch leaves the existing route and prefix unchanged:
 
@@ -135,10 +146,12 @@ In another terminal, inspect the upstream entry in the broker status response:
 
 ```bash
 curl --fail --silent --show-error http://localhost:8080/status \
-  | jq '.servers[] | select(.name == "mcp-test/my-mcp-server") | {name, ready, totalTools, message}'
+  | jq '.servers[] | select(.name == "mcp-test/my-mcp-server") | {name, ready, totalTools, lastValidated, message}'
 ```
 
 Wait for `ready: true` and verify that `totalTools` matches the tools exposed to the configured service account. An absent entry means the broker has not loaded this registration; check the registration conditions and that you selected the correct gateway service. A `ready: false` entry contains a diagnostic `message`.
+
+`lastValidated` is the time of the broker's latest upstream validation. After a Secret update, do not treat an earlier `ready: true` or tool listing as proof that the new credentials were used. Wait for a new `lastValidated` value after the update.
 
 Connect your MCP client to the gateway using its normal client credentials and verify that the upstream tools are available with the `myserver_` prefix. Successful discovery does not prove that client tool calls are authorized: the broker does not attach its OAuth token to those calls.
 
@@ -148,7 +161,7 @@ Stop the port-forward with Ctrl+C when finished.
 
 The broker caches access tokens and obtains a new token through the client credentials grant when a request needs one near or after expiry. No refresh token or manual bearer-token replacement is required. An upstream HTTP 401 response discards the cached token so a subsequent request can obtain a new one; it does not guarantee that the failed request succeeds immediately.
 
-To rotate credentials, update `clientID` or `clientSecret` in the same labeled Secret using your Secret management workflow, or reapply the Secret from Step 1 with the new values. The controller reconciles registrations that reference the Secret, and the broker reloads the configuration and reconnects using the updated credentials without a pod restart. Repeat Step 3 to verify recovery after propagation.
+To rotate credentials, update `clientID` or `clientSecret` in the same labeled Secret using your Secret management workflow, or reapply the Secret from Step 1 with the new values. The controller reconciles registrations that reference the Secret, and the broker reloads the configuration and reconnects using the updated credentials without a pod restart. Check broker logs for `Server Config Changed removing manager` followed by `Starting manager for`, then confirm that `lastValidated` has advanced and `/status` reports `ready: true`. If the new credentials are invalid, `/status` reports `ready: false` and `failed to obtain access token`; broker logs include an OAuth error code such as `invalid_client`.
 
 ## Troubleshooting authentication failures
 

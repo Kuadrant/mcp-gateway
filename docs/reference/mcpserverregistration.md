@@ -57,7 +57,7 @@
 | `secretRef` | [ClientCredentialsSecretReference](#clientcredentialssecretreference) | Yes | Reference to a Secret containing the client ID and client secret |
 | `scopes` | []String | No | Scopes requested with the access token. Maximum 10 entries; each entry must be nonempty. The scope parameter is omitted from the token request when this list is absent or empty |
 
-The broker caches tokens and obtains a new token as needed near expiry. An upstream HTTP 401 response invalidates the cached token. Updating the referenced Secret triggers reconciliation and broker configuration reload without a pod restart.
+The broker caches tokens and obtains a new token as needed near expiry. An upstream HTTP 401 response invalidates the cached token. Updates to Secret data trigger reconciliation while the Secret retains the required label. Removing the label alone does not revoke credentials already copied into broker configuration. Revoke the OAuth client at the authorization server; to remove broker configuration, remove `oauth2ClientCredentials` from the registration while the Secret is still labeled, or delete the registration.
 
 Token requests use the upstream TLS trust pool: system roots, the gateway CA bundle, and the per-server CA bundle. These credentials do not authenticate MCP clients or replace client credentials on tool calls.
 

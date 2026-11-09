@@ -19,6 +19,8 @@ Both upstream layers are additive: the broker builds its trust pool from system 
 
 For [upstream OAuth authentication](./upstream-oauth.md), token requests use the same trust pool as the MCP connection. Include the token endpoint CA in the bundle if it differs from the upstream CA. If the MCP endpoint uses plain HTTP, use `caCertBundleRef` for token endpoint trust: setting `caCertSecretRef` also switches the MCP endpoint to HTTPS.
 
+CA bundles establish TLS trust; they do not encrypt a plain-HTTP MCP connection. When broker OAuth is enabled, an HTTP upstream receives the bearer token in plaintext. Use HTTPS for the MCP endpoint or another encrypted transport.
+
 | Approach | Field | Scope | When to use |
 |----------|-------|-------|-------------|
 | Gateway bundle | `caCertBundleRef` on MCPGatewayExtension | Upstream connections to all servers, **and** 2025-11-25 hairpin to the gateway HTTPS listener | Shared upstream CA, private gateway listener CA, or both PEMs in one Secret |

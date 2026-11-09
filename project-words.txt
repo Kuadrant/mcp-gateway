@@ -313,6 +313,7 @@ pflag
 pkill
 planetscale
 pmezard
+portforward
 printcolumn
 procv
 promptname
