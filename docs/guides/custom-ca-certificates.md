@@ -1,6 +1,6 @@
 # Custom CA Certificates
 
-This guide covers configuring MCP Gateway to trust private Certificate Authorities (CAs). This applies when the broker connects to upstream MCP servers, and when the 2025-11-25 protocol hairpin client connects to the gateway's own HTTPS listener.
+This guide covers configuring MCP Gateway to trust private Certificate Authorities (CAs). This applies when the broker connects to upstream MCP servers and OAuth token endpoints, and when the 2025-11-25 protocol hairpin client connects to the gateway's own HTTPS listener.
 
 ## Overview
 
@@ -13,16 +13,18 @@ By default, the MCP Gateway broker and hairpin client trust only publicly-truste
 Two fields address this:
 
 - **`caCertBundleRef`** on `MCPGatewayExtension` — a gateway-level CA bundle. The controller writes it once to the config Secret as `gatewayCACertPEM`. The broker uses it as the base trust pool for **all upstream MCP server connections**. The same PEM is also the trust pool for the **2025-11-25 protocol hairpin client** that initializes backends through the gateway HTTPS listener. Use when many servers share the same CA, when the gateway listener uses a private CA, or both (concatenate the PEMs in one Secret).
-- **`caCertSecretRef`** on `MCPServerRegistration` — a per-server CA for backends with unique CAs. This appends to the gateway bundle for that server's **upstream** connection only. It is not used for hairpin trust.
+- **`caCertSecretRef`** on `MCPServerRegistration` — a per-server CA for backends with unique CAs. This appends to the gateway bundle for that server's **upstream** connection and OAuth token endpoint, if configured. It is not used for hairpin trust.
 
 Both upstream layers are additive: the broker builds its trust pool from system roots, plus the gateway bundle (if set), plus the per-server CA (if set). Per-server CAs append to the gateway bundle, never replace it.
+
+For [upstream OAuth authentication](./upstream-oauth.md), token requests use the same trust pool as the MCP connection. Include the token endpoint CA in the bundle if it differs from the upstream CA. If the MCP endpoint uses plain HTTP, use `caCertBundleRef` for token endpoint trust: setting `caCertSecretRef` also switches the MCP endpoint to HTTPS.
 
 | Approach | Field | Scope | When to use |
 |----------|-------|-------|-------------|
 | Gateway bundle | `caCertBundleRef` on MCPGatewayExtension | Upstream connections to all servers, **and** 2025-11-25 hairpin to the gateway HTTPS listener | Shared upstream CA, private gateway listener CA, or both PEMs in one Secret |
 | Per-server CA | `caCertSecretRef` on MCPServerRegistration | Single upstream server (not hairpin) | Server has a unique CA not covered by the gateway bundle |
 
-> **Note:** `caCertBundleRef` is used for two TLS paths. (1) Broker to upstream MCP servers — tool discovery, session management, all protocol versions. (2) Hairpin initialize requests from the router back through the gateway HTTPS listener — **2025-11-25 protocol only**. The 2026-07-28 protocol does not hairpin; those `tools/call` requests are routed through Envoy without a gateway-listener TLS client in the broker-router. Client-facing TLS is configured on the Gateway listener, not by this bundle.
+> **Note:** `caCertBundleRef` covers broker connections to upstream MCP servers and OAuth token endpoints, plus hairpin initialize requests from the router back through the gateway HTTPS listener for the **2025-11-25 protocol only**. The 2026-07-28 protocol does not hairpin; those `tools/call` requests are routed through Envoy without a gateway-listener TLS client in the broker-router. Client-facing TLS is configured on the Gateway listener, not by this bundle.
 
 If the CA that signed the gateway listener certificate is not the same as the CA that signed upstream server certificates, put **both PEM blocks** in the Secret referenced by `caCertBundleRef`.
 

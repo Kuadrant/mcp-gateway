@@ -4,8 +4,10 @@
 - [MCPServerRegistrationSpec](#mcpserverregistrationspec)
 - [TargetReference](#targetreference)
 - [SecretReference](#secretreference)
+- [OAuth2ClientCredentialsConfig](#oauth2clientcredentialsconfig)
+- [ClientCredentialsSecretReference](#clientcredentialssecretreference)
 - [CACertSecretReference](#cacertsecretreference)
-- [TokenURLElicitationConfig](#tokenurelicitationconfig)
+- [TokenURLElicitationConfig](#tokenurlelicitationconfig)
 - [MCPServerRegistrationStatus](#mcpserverregistrationstatus)
 
 ## MCPServerRegistration
@@ -22,9 +24,10 @@
 | `targetRef` | [TargetReference](#targetreference) | Yes | An HTTPRoute that points to a backend MCP server. The controller discovers the backend service from this HTTPRoute and configures the broker to federate its tools |
 | `prefix` | String | No | Prefix added to all federated tools from referenced servers. Avoids naming conflicts when aggregating tools from multiple sources (e.g. `server1_search` and `server2_search`). Must match `^[a-z0-9][a-z0-9_]*$`. Immutable once set |
 | `path` | String | No | URL path where the MCP server endpoint is exposed. Default: `/mcp` |
-| `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing authentication credentials used exclusively by the broker for tool discovery and session management. Never injected into client `tools/call` requests. The secret must have the label `mcp.kuadrant.io/secret=true` |
+| `credentialRef` | [SecretReference](#secretreference) | No | Reference to a Secret containing static authentication credentials used exclusively by the broker for tool discovery and session management. Never injected into client `tools/call` requests. The Secret must have the label `mcp.kuadrant.io/secret=true`. Mutually exclusive with `oauth2ClientCredentials` |
+| `oauth2ClientCredentials` | [OAuth2ClientCredentialsConfig](#oauth2clientcredentialsconfig) | No | OAuth 2.0 client credentials configuration used exclusively by the broker to obtain and renew access tokens for upstream tool discovery and session management. Never injected into client `tools/call` requests. Mutually exclusive with `credentialRef`. See [upstream OAuth authentication](../guides/upstream-oauth.md) |
 | `state` | String | No | Desired operational state of the server. Enum: `Enabled` (default), `Disabled`. When set to `Disabled`, the broker stops connecting to the server and removes its tools from the gateway. The server can be re-enabled at any time by setting this field back to `Enabled` |
-| `caCertSecretRef` | [CACertSecretReference](#cacertsecretreference) | No | Reference to a Secret containing a PEM-encoded CA certificate bundle. The broker uses this CA to verify TLS connections to the upstream MCP server. The secret must have the label `mcp.kuadrant.io/secret=true`. CA cert data must not exceed 64 KiB |
+| `caCertSecretRef` | [CACertSecretReference](#cacertsecretreference) | No | Reference to a Secret containing a PEM-encoded CA certificate bundle. The broker uses this CA to verify TLS connections to the upstream MCP server and its OAuth token endpoint, if configured. The Secret must have the label `mcp.kuadrant.io/secret=true`. CA cert data must not exceed 64 KiB |
 | `tokenURLElicitation` | [TokenURLElicitationConfig](#tokenurlelicitationconfig) | No | Enables per-user token collection via URL elicitation (-32042 flow). When set, the router collects tokens from elicitation-capable clients at tool-call time. See [URL Elicitation guide](../guides/url-elicitation.md) |
 | `userSpecificList` | String (`Enabled` / `Disabled`) | No | When `Enabled`, the broker fetches tools from this server per-user using their session headers instead of caching the service account's tool list. When `Enabled`, the `prefix` field is required (enforced by CEL validation). Default: `Disabled` |
 | `category` | []String | No | One or more categories for tool discovery filtering. Used by `discover_tools` to let agents filter servers by category. Default: `["uncategorised"]`. Max 3 items, max 128 chars each |
@@ -46,6 +49,24 @@
 |-----------|----------|:------------:|-----------------|
 | `name` | String | Yes | Name of the Secret resource |
 | `key` | String | No | Key within the Secret that contains the credential value. Default: `token` |
+## OAuth2ClientCredentialsConfig
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `tokenURL` | String | Yes | Authorization server token endpoint. Must start with `https://`. Token requests have a 10-second timeout and do not follow redirects |
+| `secretRef` | [ClientCredentialsSecretReference](#clientcredentialssecretreference) | Yes | Reference to a Secret containing the client ID and client secret |
+| `scopes` | []String | No | Scopes requested with the access token. Maximum 10 entries; each entry must be nonempty. The scope parameter is omitted from the token request when this list is absent or empty |
+
+The broker caches tokens and obtains a new token as needed near expiry. An upstream HTTP 401 response invalidates the cached token. Updating the referenced Secret triggers reconciliation and broker configuration reload without a pod restart.
+
+Token requests use the upstream TLS trust pool: system roots, the gateway CA bundle, and the per-server CA bundle. These credentials do not authenticate MCP clients or replace client credentials on tool calls.
+
+## ClientCredentialsSecretReference
+
+| **Field** | **Type** | **Required** | **Description** |
+|-----------|----------|:------------:|-----------------|
+| `name` | String | Yes | Nonempty name of a Secret in the same namespace as the MCPServerRegistration. The Secret must have the label `mcp.kuadrant.io/secret=true` and contain nonempty `clientID` and `clientSecret` values. These key names are fixed; no key or namespace override is supported |
+
 
 ## CACertSecretReference
 
@@ -60,7 +81,7 @@
 |-----------|----------|:------------:|-----------------|
 | `url` | String | No | Overrides the default broker token page URL. When set, users are directed to this external URL instead of the built-in page. The gateway appends `?elicitation_id=<id>` to the URL |
 
-`tokenURLElicitation` and `credentialRef` serve different purposes: `credentialRef` provides the broker with credentials for tool discovery, while `tokenURLElicitation` collects per-user tokens at tool-call time.
+`tokenURLElicitation` and broker credentials serve different purposes: `credentialRef` or `oauth2ClientCredentials` provides the broker with credentials for tool discovery, whereas `tokenURLElicitation` collects per-user tokens at tool-call time.
 
 **Examples:**
 

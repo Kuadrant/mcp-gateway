@@ -2,6 +2,8 @@
 
 This guide covers configuring authentication for MCP Gateway using the Model Context Protocol (MCP) authorization specification.
 
+For the separate broker-to-upstream flow, see [authenticating the broker to upstream MCP servers](./upstream-oauth.md). That guide configures client credentials for tool discovery, not client access to the gateway.
+
 ## Overview
 
 MCP Gateway implements the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) which is based on OAuth 2.1. When authentication is enabled, the MCP Gateway broker acts as an OAuth 2.1 resource server, requiring valid access tokens for protected requests.

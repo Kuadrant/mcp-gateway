@@ -10,11 +10,13 @@ This guide shows how to connect MCP Gateway to an external MCP server so that to
 - Authentication credentials for the external server (if required)
 - **MCPGatewayExtension** targeting the Gateway (required for MCPServerRegistration to work)
 
-If you haven't created an MCPGatewayExtension yet, see [Configure MCP Servers](./register-mcp-servers.md#step-1-create-mcpgatewayextension) for instructions.
+If you haven't created an MCPGatewayExtension yet, see [Configure MCP Servers](./register-mcp-servers.md#step-1-ensure-mcpgatewayextension-exists) for instructions.
 
 ## Register an External MCP Server
 
 This section demonstrates how to register an external MCP server behind the gateway. The `credentialRef` provides a static credential used only by the broker to connect to the upstream server and discover available tools. User requests are handled separately using per-user authentication mechanisms.
+
+For servers that support the OAuth 2.0 client credentials grant, use [upstream OAuth authentication](./upstream-oauth.md) instead of the static Secret and `credentialRef` in Steps 4 and 5. The broker obtains and renews access tokens automatically; client tool-call authentication remains separate.
 
 ### Step 1: Create ServiceEntry
 
