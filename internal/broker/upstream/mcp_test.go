@@ -955,6 +955,51 @@ func TestManager_2026ListenNotifyThenCloseIsBackedOff(t *testing.T) {
 	require.LessOrEqual(t, listens.Load(), int32(2), "a list-changed push bypassed the stale backoff")
 }
 
+// regression: an upstream that rejects the broker's token on tools/list and
+// answers every listen with a list change. the re-list for that change must
+// not replace the token-rejected session, or each new session's listen drives
+// the next reconnect, and token mint, with no backoff.
+func TestManager_2026TokenRejectedPushIsBackedOff(t *testing.T) {
+	as, caPEM, asSeen := newTestAuthServer(t, 3600)
+	srv := newStateless2026Server()
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	var listens atomic.Int32
+	firstListen := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Mcp-Method") {
+		case "tools/list":
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		case "subscriptions/listen":
+			if listens.Add(1) == 1 {
+				close(firstListen)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\",\"params\":{}}\n\n")
+		default:
+			inner.ServeHTTP(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	up := newOAuth2Upstream(ts.URL, as.URL+"/token", caPEM)
+	man, err := NewUpstreamMCPManager(up, newMockToolsAdderDeleter(), nil, slog.New(slog.DiscardHandler), 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+	active := man.Start(t.Context())
+	select {
+	case <-firstListen:
+	case <-time.After(5 * time.Second):
+		active.Stop()
+		t.Fatal("broker never sent subscriptions/listen")
+	}
+	// the stale backoff allows one more listen about 1s after the first
+	time.Sleep(1500 * time.Millisecond)
+	active.Stop()
+	require.LessOrEqual(t, listens.Load(), int32(2), "a list-changed push reconnected a token-rejected session without backoff")
+	require.LessOrEqual(t, len(asSeen()), 2, "a list-changed push re-minted the token without backoff")
+}
+
 // a 2026 upstream may still send an Mcp-Session-Id. its push also runs over
 // subscriptions/listen, so a listen that ends must report the session stale
 // like any other 2026 session; OnConnectionLost only sees closed connections.

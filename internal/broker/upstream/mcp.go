@@ -611,19 +611,12 @@ func (up *MCPServer) SupportsToolsListChanged() bool {
 // would let an upstream that pushes and then ends every listen bypass the
 // manager's stale backoff.
 func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
-	up.clientMu.RLock()
-	connected := up.session != nil
-	up.clientMu.RUnlock()
-	if connected {
-		up.tokenMu.Lock()
-		rejected := up.tokenRejected
-		up.tokenMu.Unlock()
-		if !rejected {
-			return nil
-		}
-		if err := up.Disconnect(); err != nil {
-			return fmt.Errorf("failed to disconnect rejected upstream session: %w", err)
-		}
+	if !up.NeedsConnect() {
+		return nil
+	}
+	// a no-op without a session; otherwise the upstream rejected its token
+	if err := up.Disconnect(); err != nil {
+		return fmt.Errorf("failed to disconnect rejected upstream session: %w", err)
 	}
 	up.tokenMu.Lock()
 	up.tokenRejected = false
@@ -736,6 +729,18 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 	onConnection()
 
 	return nil
+}
+
+// NeedsConnect reports whether Connect would create or replace the session:
+// there is none, or the upstream rejected the broker's token since it was
+// created.
+func (up *MCPServer) NeedsConnect() bool {
+	if up.currentSession() == nil {
+		return true
+	}
+	up.tokenMu.Lock()
+	defer up.tokenMu.Unlock()
+	return up.tokenRejected
 }
 
 // startNotificationWatcher watches the upstream's standalone SSE stream

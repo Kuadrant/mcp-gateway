@@ -87,6 +87,9 @@ func (m *MockMCP) SupportsToolsListChanged() bool {
 	return m.hasToolsCap
 }
 
+// NeedsConnect is false: the mock's Connect never replaces a session
+func (m *MockMCP) NeedsConnect() bool { return false }
+
 func (m *MockMCP) Disconnect() error {
 	m.connected.Store(false)
 	m.disconnectCount.Add(1)

@@ -85,6 +85,8 @@ type MCP interface {
 	ID() config.UpstreamMCPID
 	GetPrefix() string
 	Connect(context.Context, func()) error
+	// NeedsConnect reports whether Connect would create or replace the session.
+	NeedsConnect() bool
 	Disconnect() error
 	ListTools(context.Context) (*mcp.ListToolsResult, error)
 	ListPrompts(context.Context) (*mcp.ListPromptsResult, error)
@@ -566,6 +568,15 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 		_ = man.mcp.Disconnect()
 		man.consecutiveFailures = 0
 		man.setStatus(fmt.Errorf("server is disabled"), 0, 0, nil, nil)
+		return
+	}
+
+	// a push never connects: only ticks back off, so a push that replaced a
+	// session, such as one whose token was rejected, could drive a reconnect
+	// loop. the next tick reconnects and re-lists both tools and prompts
+	if event != eventTypeTimer && man.mcp.NeedsConnect() {
+		man.logger.DebugContext(ctx, "deferring notification until reconnect", "upstream mcp server", man.mcp.ID(), "event type", event)
+		man.applyBackoff()
 		return
 	}
 
