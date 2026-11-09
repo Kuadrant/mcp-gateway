@@ -931,12 +931,15 @@ func TestManager_2026ListenNotifyThenCloseIsBackedOff(t *testing.T) {
 	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
 		&mcp.StreamableHTTPOptions{Stateless: true})
 	var listens atomic.Int32
+	firstListen := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Mcp-Method") != "subscriptions/listen" {
 			inner.ServeHTTP(w, r)
 			return
 		}
-		listens.Add(1)
+		if listens.Add(1) == 1 {
+			close(firstListen)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\",\"params\":{}}\n\n")
@@ -947,11 +950,17 @@ func TestManager_2026ListenNotifyThenCloseIsBackedOff(t *testing.T) {
 	man, err := NewUpstreamMCPManager(up, newMockToolsAdderDeleter(), nil, slog.New(slog.DiscardHandler), 0, InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 	active := man.Start(t.Context())
-	// the stale backoff allows the first listen and one more about 1s later;
-	// the next is at least 2s after that
+	// the initial connect runs async; time the backoff from the first listen
+	select {
+	case <-firstListen:
+	case <-time.After(5 * time.Second):
+		active.Stop()
+		t.Fatal("broker never sent subscriptions/listen")
+	}
+	// the stale backoff allows one more listen about 1s after the first; the
+	// next is at least 2s after that
 	time.Sleep(1500 * time.Millisecond)
 	active.Stop()
-	require.Positive(t, listens.Load(), "broker never sent subscriptions/listen")
 	require.LessOrEqual(t, listens.Load(), int32(2), "a list-changed push bypassed the stale backoff")
 }
 
