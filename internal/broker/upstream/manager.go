@@ -573,10 +573,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 
 	// a push never connects: only ticks back off, so a push that replaced a
 	// session, such as one whose token was rejected, could drive a reconnect
-	// loop. the next tick reconnects and re-lists both tools and prompts
+	// loop. the next tick reconnects and re-lists both tools and prompts; the
+	// push leaves it scheduled, or steady pushes would postpone it forever
 	if event != eventTypeTimer && man.mcp.NeedsConnect() {
 		man.logger.DebugContext(ctx, "deferring notification until reconnect", "upstream mcp server", man.mcp.ID(), "event type", event)
-		man.applyBackoff()
 		return
 	}
 

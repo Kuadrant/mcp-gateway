@@ -87,8 +87,7 @@ func (m *MockMCP) SupportsToolsListChanged() bool {
 	return m.hasToolsCap
 }
 
-// NeedsConnect is false: the mock's Connect never replaces a session
-func (m *MockMCP) NeedsConnect() bool { return false }
+func (m *MockMCP) NeedsConnect() bool { return !m.connected.Load() }
 
 func (m *MockMCP) Disconnect() error {
 	m.connected.Store(false)
@@ -1056,9 +1055,13 @@ func TestMCPManager_manage_FetchesOnTimerWhenToolsListChangeSupported(t *testing
 	manager, err := NewUpstreamMCPManager(mock, gateway, nil, logger, 0, InvalidToolPolicyFilterOut)
 	require.NoError(t, err)
 
-	// first call with notification - should fetch and add tools
+	// a notification never connects: it waits for the next timer event
 	manager.manage(context.Background(), eventTypeToolNotification)
-	assert.Equal(t, 1, gateway.addCalls, "should add tools on notification")
+	assert.False(t, mock.connected.Load(), "notification should not connect")
+	assert.Equal(t, 0, gateway.addCalls, "notification should not list before connecting")
+
+	manager.manage(context.Background(), eventTypeTimer)
+	assert.Equal(t, 1, gateway.addCalls, "timer should connect and add tools")
 	assert.Len(t, gateway.tools, 1)
 
 	// update mock tools - simulating a change on the server
@@ -2177,6 +2180,29 @@ func (ticker *recordingTicker) Reset(interval time.Duration) {
 }
 
 func (ticker *recordingTicker) Stop() {}
+
+// a notification deferred until reconnect must keep the scheduled retry: an
+// upstream that rejected the token but keeps pushing over a still-open listen
+// would otherwise postpone the reconnect indefinitely.
+func TestMCPManager_manage_DeferredNotificationKeepsRetry(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	mock := newMockMCP("test-server", "test_")
+	mock.connectErr = fmt.Errorf("connect error")
+	manager, err := NewUpstreamMCPManager(mock, newMockToolsAdderDeleter(), nil, logger, 0, InvalidToolPolicyFilterOut)
+	require.NoError(t, err)
+	ticker := &recordingTicker{channel: make(chan time.Time, 1)}
+	manager.ticker.Stop()
+	manager.ticker = ticker
+
+	manager.manage(context.Background(), eventTypeTimer)
+	retry := ticker.resetInterval
+	require.NotZero(t, retry, "failed connect did not schedule a retry")
+
+	for range 3 {
+		manager.manage(context.Background(), eventTypeToolNotification)
+	}
+	assert.Equal(t, retry, ticker.resetInterval, "deferred notification rescheduled the retry")
+}
 
 // resetBackoff must schedule the TTL-derived interval with upward jitter.
 func TestMCPManager_resetBackoff_UsesTTLJitter(t *testing.T) {
