@@ -616,7 +616,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 							buildToolError,
 							buildRedacted,
 						)
-					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody)
+					}).withLimit(int(s.RoutingConfig.Load().GetMaxBodyBytes()), oversizedBody).withLogger(s.Logger, mcpRequest.ServerName)
 				}
 			}
 

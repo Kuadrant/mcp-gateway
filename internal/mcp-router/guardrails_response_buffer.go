@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 )
+
+// maxLoggedIDLen caps upstream-controlled ids in debug logs.
+const maxLoggedIDLen = 64
 
 // guardrailsResponseBuffer holds back the final tool result so guardrails can
 // check it first, while letting earlier SSE events (like elicitation
@@ -24,6 +28,9 @@ type guardrailsResponseBuffer struct {
 
 	maxBytes  int    // upper bound on buffered bytes; 0 means unbounded
 	oversized []byte // forwarded in place of withheld content once maxBytes is exceeded
+
+	logger     *slog.Logger // optional; logs repaired upstream responses at debug
+	serverName string
 }
 
 // newGuardrailsResponseBuffer builds a buffer for one tools/call response.
@@ -43,6 +50,34 @@ func (g *guardrailsResponseBuffer) withLimit(maxBytes int, oversized []byte) *gu
 	g.maxBytes = maxBytes
 	g.oversized = oversized
 	return g
+}
+
+// withLogger enables debug logs when an upstream response is repaired, so a
+// misbehaving upstream is visible rather than silently masked.
+func (g *guardrailsResponseBuffer) withLogger(logger *slog.Logger, serverName string) *guardrailsResponseBuffer {
+	g.logger = logger
+	g.serverName = serverName
+	return g
+}
+
+// logRepair records that the upstream response was repaired before the check.
+func (g *guardrailsResponseBuffer) logRepair(ctx context.Context, msg string, upstreamID any) {
+	if g.logger == nil {
+		return
+	}
+	g.logger.DebugContext(ctx, msg, "server", g.serverName, "upstreamID", loggableID(upstreamID), "clientID", loggableID(g.requestID))
+}
+
+// loggableID renders a JSON-RPC id for logs, truncated because it is upstream controlled.
+func loggableID(id any) string {
+	b, err := json.Marshal(id)
+	if err != nil {
+		return "<unencodable>"
+	}
+	if len(b) > maxLoggedIDLen {
+		return string(b[:maxLoggedIDLen]) + "..."
+	}
+	return string(b)
 }
 
 // Process appends chunk and returns any bytes now safe to forward. Once
@@ -100,7 +135,7 @@ func (g *guardrailsResponseBuffer) Process(ctx context.Context, chunk []byte) []
 			continue
 		}
 
-		event = g.normalizeID(event, respID)
+		event = g.normalizeID(ctx, event, respID)
 		output = append(output, g.resolve(ctx, event)...)
 		g.done = true
 		// anything still buffered after the terminal event is unexpected
@@ -138,9 +173,9 @@ func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 	}
 	switch {
 	case g.rawJSON:
-		remaining = g.frameRawJSON(remaining)
+		remaining = g.frameRawJSON(ctx, remaining)
 	case g.sse:
-		remaining = g.terminateEvent(remaining)
+		remaining = g.terminateEvent(ctx, remaining)
 	}
 	return g.resolve(ctx, remaining)
 }
@@ -148,11 +183,12 @@ func (g *guardrailsResponseBuffer) Flush(ctx context.Context) []byte {
 // frameRawJSON wraps a bare JSON-RPC body from a declared SSE response in an
 // SSE event with the client's request id. body is returned unchanged if it
 // does not parse.
-func (g *guardrailsResponseBuffer) frameRawJSON(body []byte) []byte {
+func (g *guardrailsResponseBuffer) frameRawJSON(ctx context.Context, body []byte) []byte {
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return body
 	}
+	g.logRepair(ctx, "guardrails: re-framed bare JSON tool response as SSE", msg.ID)
 	msg.ID = g.requestID
 	rewritten, err := json.Marshal(&msg)
 	if err != nil {
@@ -163,13 +199,15 @@ func (g *guardrailsResponseBuffer) frameRawJSON(body []byte) []byte {
 
 // terminateEvent completes an event cut off before its blank-line delimiter
 // and, if it is the tool result, normalizes its id.
-func (g *guardrailsResponseBuffer) terminateEvent(event []byte) []byte {
+func (g *guardrailsResponseBuffer) terminateEvent(ctx context.Context, event []byte) []byte {
 	if !bytes.HasSuffix(event, []byte("\n")) {
 		event = append(event, '\n')
 	}
 	event = append(event, '\n')
-	if respID, ok := g.isTerminalResult(event); ok {
-		return g.normalizeID(event, respID)
+	respID, ok := g.isTerminalResult(event)
+	g.logRepair(ctx, "guardrails: terminated SSE tool response missing its blank-line delimiter", respID)
+	if ok {
+		return g.normalizeID(ctx, event, respID)
 	}
 	return event
 }
@@ -246,10 +284,11 @@ func (g *guardrailsResponseBuffer) isTerminalResult(event []byte) (id any, ok bo
 // already match id - the client is waiting on a response to its own
 // original request id, so a missing, mismatched, or differently-typed
 // upstream id must not reach it uncorrected.
-func (g *guardrailsResponseBuffer) normalizeID(event []byte, id any) []byte {
+func (g *guardrailsResponseBuffer) normalizeID(ctx context.Context, event []byte, id any) []byte {
 	if idsEqual(id, g.requestID) {
 		return event
 	}
+	g.logRepair(ctx, "guardrails: replaced upstream JSON-RPC id with the client request id", id)
 	data := sseEventData(event)
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(data, &msg); err != nil {

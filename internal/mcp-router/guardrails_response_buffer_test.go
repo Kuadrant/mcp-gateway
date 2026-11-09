@@ -3,6 +3,8 @@ package mcprouter
 import (
 	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -450,4 +452,55 @@ func TestIDsEqual(t *testing.T) {
 	require.False(t, idsEqual(nil, 1))
 	require.False(t, idsEqual(1, nil))
 	require.False(t, idsEqual(nil, nil))
+}
+
+func TestGuardrailsResponseBuffer_LogsRepairedResponses(t *testing.T) {
+	longID := strings.Repeat("x", 200)
+	tests := []struct {
+		name    string
+		body    string
+		wantLog string
+	}{
+		{
+			name:    "mismatched id",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[]}}\n\n",
+			wantLog: "replaced upstream JSON-RPC id",
+		},
+		{
+			name:    "bare JSON",
+			body:    `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`,
+			wantLog: "re-framed bare JSON",
+		},
+		{
+			name:    "missing delimiter",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n",
+			wantLog: "missing its blank-line delimiter",
+		},
+		{
+			name:    "long upstream id is truncated",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"" + longID + "\",\"result\":{\"content\":[]}}\n\n",
+			wantLog: "replaced upstream JSON-RPC id",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte { return nil }).withLogger(logger, "ns/server1")
+			buf.Process(context.Background(), []byte(tc.body))
+			buf.Flush(context.Background())
+			require.Contains(t, logs.String(), tc.wantLog)
+			require.Contains(t, logs.String(), "server=ns/server1")
+			require.NotContains(t, logs.String(), longID, "upstream ids are truncated")
+		})
+	}
+}
+
+func TestGuardrailsResponseBuffer_NoLogForWellFormedResponse(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	buf := newGuardrailsResponseBuffer(true, float64(1), func(_ context.Context, _ []byte) []byte { return nil }).withLogger(logger, "ns/server1")
+	buf.Process(context.Background(), []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"))
+	buf.Flush(context.Background())
+	require.Empty(t, logs.String())
 }
