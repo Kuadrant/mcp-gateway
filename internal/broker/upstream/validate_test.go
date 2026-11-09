@@ -6,6 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateTool(t *testing.T) {
@@ -173,6 +174,188 @@ func TestValidateTool(t *testing.T) {
 			expectValid: false,
 			errContains: "inputSchema must be a JSON object",
 		},
+		{
+			name: "property union type is valid",
+			tool: mcp.Tool{
+				Name: "union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"items": map[string]any{"type": []any{"array", "null"}},
+					},
+				},
+			},
+			expectValid: true,
+		},
+		{
+			name: "property union as []string is valid",
+			tool: mcp.Tool{
+				Name: "string_slice_union",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": []string{"string", "null"}},
+					},
+				},
+			},
+			expectValid: true,
+		},
+		{
+			name: "property union with invalid member rejected",
+			tool: mcp.Tool{
+				Name: "bad_union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"code": map[string]any{"type": []any{"string", "int"}},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: `inputSchema.properties["code"].type "int" is not a valid JSON Schema type`,
+		},
+		{
+			name: "property union with non-string member rejected",
+			tool: mcp.Tool{
+				Name: "numeric_union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"code": map[string]any{"type": []any{"string", 1}},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: `inputSchema.properties["code"].type 1 is not a valid JSON Schema type`,
+		},
+		{
+			name: "property empty type array rejected",
+			tool: mcp.Tool{
+				Name: "empty_union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": []any{}},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: `inputSchema.properties["x"].type must not be an empty array`,
+		},
+		{
+			name: "property union with duplicate member rejected",
+			tool: mcp.Tool{
+				Name: "dup_union_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": []any{"string", "string"}},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: `inputSchema.properties["x"].type "string" is listed more than once`,
+		},
+		{
+			name: "inputSchema without type rejected",
+			tool: mcp.Tool{
+				Name:        "untyped_input",
+				InputSchema: map[string]any{"properties": map[string]any{}},
+			},
+			expectValid: false,
+			errContains: `inputSchema.type must be "object", got no type`,
+		},
+		{
+			name: "property type neither string nor array rejected",
+			tool: mcp.Tool{
+				Name: "numeric_type_prop",
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": 42},
+					},
+				},
+			},
+			expectValid: false,
+			errContains: `inputSchema.properties["x"].type must be a string or array of strings, got int`,
+		},
+		{
+			name: "inputSchema union type rejected",
+			tool: mcp.Tool{
+				Name:        "nullable_input",
+				InputSchema: map[string]any{"type": []any{"object", "null"}},
+			},
+			expectValid: false,
+			errContains: `inputSchema.type must be "object", got ["object","null"]`,
+		},
+		{
+			name: "outputSchema union including object is valid",
+			tool: mcp.Tool{
+				Name:        "nullable_output",
+				InputSchema: map[string]any{"type": "object"},
+				OutputSchema: map[string]any{
+					"type": []any{"object", "null"},
+					"properties": map[string]any{
+						"items":       map[string]any{"type": []any{"array", "null"}},
+						"total_count": map[string]any{"type": "integer"},
+					},
+				},
+			},
+			expectValid: true,
+		},
+		{
+			name: "outputSchema non-object root type is valid",
+			tool: mcp.Tool{
+				Name:         "array_output",
+				InputSchema:  map[string]any{"type": "object"},
+				OutputSchema: map[string]any{"type": []any{"array", "null"}},
+			},
+			expectValid: true,
+		},
+		{
+			name: "outputSchema without type is valid",
+			tool: mcp.Tool{
+				Name:        "untyped_output",
+				InputSchema: map[string]any{"type": "object"},
+				OutputSchema: map[string]any{
+					"properties": map[string]any{"x": map[string]any{"type": "string"}},
+				},
+			},
+			expectValid: true,
+		},
+		{
+			name: "outputSchema union with invalid member rejected",
+			tool: mcp.Tool{
+				Name:         "bad_union_output",
+				InputSchema:  map[string]any{"type": "object"},
+				OutputSchema: map[string]any{"type": []any{"object", "nil"}},
+			},
+			expectValid: false,
+			errContains: `outputSchema.type "nil" is not a valid JSON Schema type`,
+		},
+		{
+			name: "outputSchema explicit null type rejected",
+			tool: mcp.Tool{
+				Name:         "null_type_output",
+				InputSchema:  map[string]any{"type": "object"},
+				OutputSchema: map[string]any{"type": nil},
+			},
+			expectValid: false,
+			errContains: "outputSchema.type must be a string or array of strings, got <nil>",
+		},
+		{
+			name: "outputSchema invalid property type rejected",
+			tool: mcp.Tool{
+				Name:        "bad_output_prop",
+				InputSchema: map[string]any{"type": "object"},
+				OutputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"x": map[string]any{"type": []any{"text"}}},
+				},
+			},
+			expectValid: false,
+			errContains: `outputSchema.properties["x"].type "text" is not a valid JSON Schema type`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -242,6 +425,7 @@ func TestValidateTools_SchemasThatPanicAddToolAreRejected(t *testing.T) {
 		{Name: "bool_schema", InputSchema: true},
 		{Name: "string_schema", InputSchema: "not a schema"},
 		{Name: "wrong_type_schema", InputSchema: map[string]any{"type": "string"}},
+		{Name: "union_type_schema", InputSchema: map[string]any{"type": []any{"object", "null"}}},
 	}
 
 	valid, invalid := ValidateTools(hostile)
@@ -259,12 +443,45 @@ func TestValidateTool_OutputSchema(t *testing.T) {
 	tool := mcp.Tool{
 		Name:         "with_output",
 		InputSchema:  map[string]any{"type": "object"},
-		OutputSchema: map[string]any{"type": "string"},
+		OutputSchema: map[string]any{"type": "text"},
 	}
 
 	info := ValidateTool(tool)
 	assert.NotEmpty(t, info.Errors)
-	assert.Contains(t, info.Errors[0], "outputSchema.type must be \"object\"")
+	assert.Contains(t, info.Errors[0], `outputSchema.type "text" is not a valid JSON Schema type`)
+}
+
+// regression for #1625: the union shapes validation now accepts must not
+// make AddTool panic
+func TestValidateTools_UnionTypesPassAddTool(t *testing.T) {
+	tools := []mcp.Tool{{
+		Name: "search_code",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": []any{"string", "null"}},
+			},
+		},
+		OutputSchema: map[string]any{
+			"type": []any{"object", "null"},
+			"properties": map[string]any{
+				"items": map[string]any{"type": []any{"array", "null"}},
+			},
+		},
+	}, {
+		Name:         "list_items",
+		InputSchema:  map[string]any{"type": "object"},
+		OutputSchema: map[string]any{"type": "array"},
+	}}
+
+	valid, invalid := ValidateTools(tools)
+	require.Empty(t, invalid)
+	require.Len(t, valid, len(tools))
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0.0.1"}, nil)
+	for i := range valid {
+		assert.NotPanics(t, func() { srv.AddTool(&valid[i], NoopToolHandler) }, valid[i].Name)
+	}
 }
 
 func TestValidatePrompt(t *testing.T) {

@@ -422,6 +422,29 @@ func (m *mcpBrokerImpl) tracingMiddleware() mcp.Middleware {
 	}
 }
 
+// stripNonObjectOutputSchemas drops outputSchemas whose root type is not
+// exactly "object" for pre-2026-07-28 clients: their spec requires it and
+// strict clients (the TS SDK) reject the whole tools/list otherwise. tools
+// are shared with the protocol cache, so affected ones are copied first.
+func (m *mcpBrokerImpl) stripNonObjectOutputSchemas(ctx context.Context, tools []*mcp.Tool) {
+	for i, t := range tools {
+		if t == nil || t.OutputSchema == nil || isObjectRootSchema(t.OutputSchema) {
+			continue
+		}
+		m.logger.DebugContext(ctx, "dropping non-object outputSchema for pre-2026 client", "tool", t.Name)
+		stripped := *t
+		stripped.OutputSchema = nil
+		tools[i] = &stripped
+	}
+}
+
+// isObjectRootSchema reports whether a schema declares type exactly "object".
+// upstream schemas are JSON-decoded, so they are always map[string]any.
+func isObjectRootSchema(schema any) bool {
+	m, ok := schema.(map[string]any)
+	return ok && m["type"] == "object"
+}
+
 // filteringMiddleware is a post-processing middleware: it calls next first
 // to let the SDK handler build the full result, then filters and enriches it
 // (protocol filtering, user-specific tools, auth, cache aggregation).
@@ -474,6 +497,9 @@ func (m *mcpBrokerImpl) filteringMiddleware() mcp.Middleware {
 				}
 
 				m.FilterTools(ctx, headers, sessionID, toolsResult)
+				if !isStateless {
+					m.stripNonObjectOutputSchemas(ctx, toolsResult.Tools)
+				}
 
 			case "prompts/list":
 				promptsResult, ok := result.(*mcp.ListPromptsResult)
