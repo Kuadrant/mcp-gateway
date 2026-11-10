@@ -3,6 +3,8 @@ package mcprouter
 import (
 	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -182,9 +184,41 @@ func TestGuardrailsResponseBuffer_SSE_FlushResolvesUndispatchedTrailer(t *testin
 	out := buf.Process(context.Background(), event)
 	require.Empty(t, out, "no blank line yet - nothing forwarded")
 
+	// the missing blank-line delimiter is added so the client can dispatch it
+	terminated := string(event) + "\n"
 	out = buf.Flush(context.Background())
-	require.Equal(t, string(event), string(out))
-	require.Equal(t, string(event), string(checkedBody))
+	require.Equal(t, terminated, string(out))
+	require.Equal(t, terminated, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSE_FlushNormalizesUndispatchedTrailerID(t *testing.T) {
+	var checkedBody []byte
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+		checkedBody = body
+		return nil
+	})
+
+	event := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[]}}")
+	require.Empty(t, buf.Process(context.Background(), event))
+
+	want := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"
+	out := buf.Flush(context.Background())
+	require.Equal(t, want, string(out), "upstream id must be replaced with the client's")
+	require.Equal(t, want, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSE_FlushTruncatedTrailerStillChecked(t *testing.T) {
+	// an event cut off mid-JSON is not a parseable result; it must still go
+	// through the check, which fails closed on undecodable bodies.
+	var checked int
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte {
+		checked++
+		return []byte("replaced")
+	})
+
+	require.Empty(t, buf.Process(context.Background(), []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"res")))
+	require.Equal(t, "replaced", string(buf.Flush(context.Background())))
+	require.Equal(t, 1, checked)
 }
 
 func TestGuardrailsResponseBuffer_JSON_WithheldUntilFlush(t *testing.T) {
@@ -360,9 +394,32 @@ func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_WithheldInFull(t *te
 	require.Empty(t, out, "raw JSON body must be withheld in full, not forwarded piecemeal at the embedded blank line")
 	require.Nil(t, checkedBody, "not checked until Flush")
 
+	// re-framed as one SSE event so it matches the declared content-type
+	want := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}\n\n"
 	out = buf.Flush(context.Background())
-	require.Equal(t, string(body), string(out))
-	require.Equal(t, string(body), string(checkedBody))
+	require.Equal(t, want, string(out))
+	require.Equal(t, want, string(checkedBody))
+}
+
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_IDNormalized(t *testing.T) {
+	buf := newGuardrailsResponseBuffer(true, "client-1", func(_ context.Context, _ []byte) []byte { return nil })
+
+	require.Empty(t, buf.Process(context.Background(), []byte(`{"jsonrpc":"2.0","id":99,"result":{"content":[]}}`)))
+	out := buf.Flush(context.Background())
+	require.Equal(t, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"client-1\",\"result\":{\"content\":[]}}\n\n", string(out))
+}
+
+func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_UnparseableStillChecked(t *testing.T) {
+	var checkedBody []byte
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+		checkedBody = body
+		return []byte("replaced")
+	})
+
+	body := []byte(`{"jsonrpc":"2.0","id":99,"res`)
+	require.Empty(t, buf.Process(context.Background(), body))
+	require.Equal(t, "replaced", string(buf.Flush(context.Background())))
+	require.Equal(t, string(body), string(checkedBody), "unparseable body is checked as-is and fails closed there")
 }
 
 func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DetectedAcrossChunks(t *testing.T) {
@@ -384,7 +441,7 @@ func TestGuardrailsResponseBuffer_SSEDeclaredButRawJSONBody_DetectedAcrossChunks
 
 	out = buf.Flush(context.Background())
 	require.Equal(t, 1, checked)
-	require.Equal(t, "   "+string(body), string(out))
+	require.Equal(t, "event: message\ndata: "+string(body)+"\n\n", string(out))
 }
 
 func TestIDsEqual(t *testing.T) {
@@ -395,4 +452,55 @@ func TestIDsEqual(t *testing.T) {
 	require.False(t, idsEqual(nil, 1))
 	require.False(t, idsEqual(1, nil))
 	require.False(t, idsEqual(nil, nil))
+}
+
+func TestGuardrailsResponseBuffer_LogsRepairedResponses(t *testing.T) {
+	longID := strings.Repeat("x", 200)
+	tests := []struct {
+		name    string
+		body    string
+		wantLog string
+	}{
+		{
+			name:    "mismatched id",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[]}}\n\n",
+			wantLog: "replaced upstream JSON-RPC id",
+		},
+		{
+			name:    "bare JSON",
+			body:    `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`,
+			wantLog: "re-framed bare JSON",
+		},
+		{
+			name:    "missing delimiter",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n",
+			wantLog: "missing its blank-line delimiter",
+		},
+		{
+			name:    "long upstream id is truncated",
+			body:    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"" + longID + "\",\"result\":{\"content\":[]}}\n\n",
+			wantLog: "replaced upstream JSON-RPC id",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, _ []byte) []byte { return nil }).withLogger(logger, "ns/server1")
+			buf.Process(context.Background(), []byte(tc.body))
+			buf.Flush(context.Background())
+			require.Contains(t, logs.String(), tc.wantLog)
+			require.Contains(t, logs.String(), "server=ns/server1")
+			require.NotContains(t, logs.String(), longID, "upstream ids are truncated")
+		})
+	}
+}
+
+func TestGuardrailsResponseBuffer_NoLogForWellFormedResponse(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	buf := newGuardrailsResponseBuffer(true, float64(1), func(_ context.Context, _ []byte) []byte { return nil }).withLogger(logger, "ns/server1")
+	buf.Process(context.Background(), []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n"))
+	buf.Flush(context.Background())
+	require.Empty(t, logs.String())
 }

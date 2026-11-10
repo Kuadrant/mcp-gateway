@@ -1211,7 +1211,7 @@ func TestProcess_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
 
 	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
-		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "")...)
+		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "application/json")...)
 	mock := makeMockProcessServer(t, steps)
 
 	err = srv.Process(mock)
@@ -1263,6 +1263,77 @@ func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 
 			err = srv.Process(mock)
 			require.NoError(t, err)
+			mock.verifyAllResponsesConsumed()
+		})
+	}
+}
+
+// verifies malformed framing on a declared SSE response reaches the client as
+// a complete SSE event with the client's request id, and that an unparseable
+// body fails closed (issue #1542).
+func TestProcess_GuardrailsMalformedSSE(t *testing.T) {
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	framed := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n\n")
+
+	bareJSON := []byte(`{"jsonrpc":"2.0","id":99,"result":{"content":[{"type":"text","text":"hi"}]}}`)
+
+	tests := []struct {
+		name         string
+		contentType  string
+		responseBody []byte
+		wantBody     []byte
+	}{
+		{
+			name:         "bare JSON with upstream id",
+			contentType:  "text/event-stream",
+			responseBody: bareJSON,
+			wantBody:     framed,
+		},
+		{
+			// a missing content-type is treated as SSE, matching the SSE
+			// error replacements the router already sends in that case
+			name:         "bare JSON with missing content-type",
+			responseBody: bareJSON,
+			wantBody:     framed,
+		},
+		{
+			name:         "event missing blank-line delimiter",
+			contentType:  "text/event-stream",
+			responseBody: []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n"),
+			wantBody:     framed,
+		},
+		{
+			name:         "event truncated mid-JSON",
+			contentType:  "text/event-stream",
+			responseBody: []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"res"),
+			wantBody:     routing.GuardrailsExtractionFailed(1, routing.BuildSSEToolError),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cache, err := session.NewCache()
+			require.NoError(t, err)
+
+			cfg := &config.MCPServersConfig{}
+			cfg.ApplyReload([]*config.MCPServer{{
+				Name:                "s1",
+				GuardrailsConfigIDs: []string{"cfg-1"},
+			}}, nil, "", 0, nil, &allowAllChecker{})
+
+			srv := &ExtProcServer{
+				Logger:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+				SessionCache:    cache,
+				Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+				ResponseHandler: &bufferedResponseHandler{},
+			}
+			srv.RoutingConfig.Store(cfg)
+
+			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+				guardrailsResponseSteps(toolCallBody, tc.responseBody, tc.wantBody, tc.contentType)...)
+			mock := makeMockProcessServer(t, steps)
+
+			require.NoError(t, srv.Process(mock))
 			mock.verifyAllResponsesConsumed()
 		})
 	}
