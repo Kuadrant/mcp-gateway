@@ -507,7 +507,10 @@ func (a *app) applyConfigSnapshot(ctx context.Context, snap *configSnapshot) err
 		if err != nil {
 			return fmt.Errorf("building guardrails TLS config: %w", err)
 		}
-		checker = guardrails.NewChecker(snap.globalGuardrails, tlsConfig, 0, snap.maxBodyBytes)
+		checker, err = guardrails.NewChecker(snap.globalGuardrails, tlsConfig, 0, snap.maxBodyBytes)
+		if err != nil {
+			return fmt.Errorf("building guardrails checker: %w", err)
+		}
 		a.logger.InfoContext(ctx, "guardrails checker created")
 	}
 

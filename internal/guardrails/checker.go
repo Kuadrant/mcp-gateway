@@ -8,12 +8,19 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/api"
 	"github.com/Kuadrant/mcp-gateway/internal/guardrails/external/nemo"
@@ -66,6 +73,48 @@ const dialTimeout = 1 * time.Second
 // concurrency hint.
 const defaultMaxIdleConnsPerHost = 100
 
+// instrumentationName names the tracer and meter which matches the router.
+const instrumentationName = "mcp-router"
+
+const checkSpanName = "mcp-guardrails.nemo.check"
+
+// phase is the tools/call side being checked.
+type phase int
+
+const (
+	phaseRequest phase = iota
+	phaseResponse
+	phaseCount
+)
+
+var phaseNames = [phaseCount]string{"request", "response"}
+
+func (p phase) String() string { return phaseNames[p] }
+
+// attributes for the guardrails check span.
+const (
+	phaseKey   = attribute.Key("guardrails.phase")
+	outcomeKey = attribute.Key("guardrails.outcome")
+)
+
+var (
+	phaseAttrs       = [phaseCount]attribute.KeyValue{phaseKey.String("request"), phaseKey.String("response")}
+	outcomeErrorAttr = outcomeKey.String(outcomeError)
+)
+
+// errorKind classifies a check failure for telemetry.
+type errorKind string
+
+const (
+	errKindTranslation errorKind = "translation"
+	errKindTimeout     errorKind = "timeout"
+	errKindCanceled    errorKind = "canceled"
+	errKindTransport   errorKind = "transport"
+	errKindHTTP        errorKind = "http_status"
+	errKindBodyLimit   errorKind = "body_limit"
+	errKindParse       errorKind = "parse"
+)
+
 // defaultMaxBodyBytes bounds the guardrails server's check response when the
 // caller doesn't specify a limit, matching the MCPGatewayExtension
 // maxBodyBytes default (1 MiB).
@@ -114,6 +163,7 @@ type nemoChecker struct {
 	failMode        string
 	maxBodyBytes    int64
 	provider        provider
+	metrics         *checkMetrics
 }
 
 var _ Checker = (*nemoChecker)(nil)
@@ -127,12 +177,17 @@ func (c *nemoChecker) Close() error {
 // NewChecker constructs a Checker for the given resolved guardrails config.
 // maxBodyBytes bounds the guardrails server's check response; non-positive
 // values fall back to defaultMaxBodyBytes.
-func NewChecker(cfg *Config, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) Checker {
+func NewChecker(cfg *Config, tlsConfig *tls.Config, maxIdleConnsPerHost int, maxBodyBytes int64) (Checker, error) {
 	if maxIdleConnsPerHost <= 0 {
 		maxIdleConnsPerHost = defaultMaxIdleConnsPerHost
 	}
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = defaultMaxBodyBytes
+	}
+
+	metrics, err := newCheckMetrics()
+	if err != nil {
+		return nil, err
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -149,79 +204,119 @@ func NewChecker(cfg *Config, tlsConfig *tls.Config, maxIdleConnsPerHost int, max
 		failMode:        normalizeFailMode(cfg.FailMode),
 		maxBodyBytes:    maxBodyBytes,
 		provider:        &nemoProvider{Transformer: nemo.NewTransformer(cfg.Model)},
-	}
+		metrics:         metrics,
+	}, nil
 }
 
 // CheckRequest translates and checks a tools/call request. A translation
 // failure is always a hard deny regardless of failMode; a transport failure
 // or an unparseable guardrails response falls back to failMode instead.
 func (c *nemoChecker) CheckRequest(ctx context.Context, toolName string, arguments json.RawMessage, configIDs []string) (*Decision, error) {
-	body, err := c.provider.TransformRequest(toolName, arguments, mergeConfigIDs(c.globalConfigIDs, configIDs))
-	if err != nil {
-		return nil, fmt.Errorf("guardrails: request translation failed: %w", err)
-	}
-	return c.check(ctx, body)
+	return c.check(ctx, phaseRequest, func() ([]byte, error) {
+		return c.provider.TransformRequest(toolName, arguments, mergeConfigIDs(c.globalConfigIDs, configIDs))
+	})
 }
 
 // CheckResponse translates and checks a tools/call response's text content.
 // Same failure semantics as CheckRequest.
 func (c *nemoChecker) CheckResponse(ctx context.Context, toolName string, content []byte, configIDs []string) (*Decision, error) {
-	body, err := c.provider.TransformResponse(toolName, content, mergeConfigIDs(c.globalConfigIDs, configIDs))
-	if err != nil {
-		return nil, fmt.Errorf("guardrails: response translation failed: %w", err)
-	}
-	return c.check(ctx, body)
+	return c.check(ctx, phaseResponse, func() ([]byte, error) {
+		return c.provider.TransformResponse(toolName, content, mergeConfigIDs(c.globalConfigIDs, configIDs))
+	})
 }
 
-// check performs the guardrails HTTP round trip and maps the outcome to a
-// Decision. Non-2xx, transport errors, oversized bodies, and unparseable
+// check translates, performs the guardrails HTTP round trip,
+// and maps the outcome to a Decision, recording one span and one set of
+// metrics. Non-2xx, transport errors, oversized bodies, and unparseable
 // responses all fall back to failMode rather than propagating an error —
-// only a translation failure (handled by the caller) skips failMode
-// entirely.
-func (c *nemoChecker) check(ctx context.Context, body []byte) (*Decision, error) {
-	decision, err := c.checkResponse(ctx, body)
+// only a translation failure skips failMode entirely. A failMode fallback
+// is a telemetry failure even when it allows.
+func (c *nemoChecker) check(ctx context.Context, p phase, translate func() ([]byte, error)) (*Decision, error) {
+	start := time.Now()
+	ctx, span := otel.Tracer(instrumentationName).Start(ctx, checkSpanName,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(phaseAttrs[p]),
+	)
+	defer span.End()
+
+	body, err := translate()
 	if err != nil {
+		c.recordFailure(ctx, span, p, errKindTranslation, start)
+		return nil, fmt.Errorf("guardrails: %s translation failed: %w", p, err)
+	}
+
+	decision, kind, err := c.checkResponse(ctx, span, body)
+	if err != nil {
+		c.recordFailure(ctx, span, p, kind, start)
 		return c.failModeDecision(err), nil
 	}
+
+	span.SetAttributes(outcomeKey.String(string(decision.Status)))
+	c.metrics.record(ctx, p, string(decision.Status), start)
 	return decision, nil
 }
 
-func (c *nemoChecker) checkResponse(ctx context.Context, body []byte) (*Decision, error) {
+// recordFailure marks span failed with a fixed message and counts the
+// failure; raw error text may echo server output or URLs, so it is not
+// recorded.
+func (c *nemoChecker) recordFailure(ctx context.Context, span trace.Span, p phase, kind errorKind, start time.Time) {
+	span.SetAttributes(outcomeErrorAttr, semconv.ErrorTypeKey.String(string(kind)))
+	span.SetStatus(codes.Error, "guardrails check failed: "+string(kind))
+	c.metrics.recordFailure(ctx, p, kind, start)
+}
+
+// transportErrorKind separates timeouts (checkTimeout, dialTimeout, or the
+// caller's deadline) and caller cancellation, e.g. a client disconnect, from
+// guardrails server transport failures.
+func transportErrorKind(err error) errorKind {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
+		return errKindTimeout
+	case errors.Is(err, context.Canceled):
+		return errKindCanceled
+	default:
+		return errKindTransport
+	}
+}
+
+func (c *nemoChecker) checkResponse(ctx context.Context, span trace.Span, body []byte) (*Decision, errorKind, error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+checksPath, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("guardrails: failed to build check request: %w", err)
+		return nil, errKindTransport, fmt.Errorf("guardrails: failed to build check request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("guardrails: request failed: %w", err)
+		return nil, transportErrorKind(err), fmt.Errorf("guardrails: request failed: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close, response already consumed
+	span.SetAttributes(semconv.HTTPResponseStatusCode(resp.StatusCode))
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, c.maxBodyBytes+1))
-		return nil, fmt.Errorf("guardrails: server returned status %d", resp.StatusCode)
+		return nil, errKindHTTP, fmt.Errorf("guardrails: server returned status %d", resp.StatusCode)
 	}
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBodyBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("guardrails: failed to read response: %w", err)
+		return nil, transportErrorKind(err), fmt.Errorf("guardrails: failed to read response: %w", err)
 	}
 	if int64(len(respBody)) > c.maxBodyBytes {
-		return nil, fmt.Errorf("guardrails: response exceeds %d byte limit", c.maxBodyBytes)
+		return nil, errKindBodyLimit, fmt.Errorf("guardrails: response exceeds %d byte limit", c.maxBodyBytes)
 	}
 
 	status, content, reason, err := c.provider.ParseCheckResponse(respBody)
 	if err != nil {
-		return nil, fmt.Errorf("guardrails: malformed response: %w", err)
+		return nil, errKindParse, fmt.Errorf("guardrails: malformed response: %w", err)
 	}
 
-	return &Decision{Status: status, Content: content, Reason: reason}, nil
+	return &Decision{Status: status, Content: content, Reason: reason}, "", nil
 }
 
 // failModeDecision resolves a transport failure or unparseable response
