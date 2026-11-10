@@ -116,7 +116,7 @@ EOF
 
 The example uses `/mcp`. Set `path` to the path where the upstream exposes MCP, such as `/v1/mcp`, if it differs.
 
-`tokenURL` must use HTTPS. Token requests have a 10-second timeout and do not follow redirects; use the final endpoint URL. Restrict registration write access and broker network egress to trusted administrators and destinations: the broker sends the referenced client credentials to this endpoint.
+`tokenURL` must use HTTPS. Token requests have a 10-second timeout and do not follow redirects; use the final endpoint URL. The broker sends the referenced client credentials to this endpoint.
 
 Using HTTPS for `tokenURL` protects the client credentials in the token request. It does not protect an HTTP MCP endpoint: the broker sends its bearer token on each MCP request. If that connection is not otherwise encrypted, a network observer can capture and reuse the token. Use HTTPS for the MCP endpoint or a separately encrypted transport.
 
