@@ -26,44 +26,55 @@ The examples use `mcp-test` for the registration namespace, `my-mcp-server-route
 
 ## Step 1: Creating the credentials Secret
 
-Create the Secret in the **same namespace as the MCPServerRegistration**. The following Bash command prompts for the client ID and secret, writes them briefly to a private temporary directory, and removes that directory when the command exits. The secret is not echoed or placed in shell command text. Use your approved secret manager instead if one is available.
+Create the Secret in the **same namespace as the MCPServerRegistration**. Run the following commands one at a time in the same interactive Bash shell so that `secret_dir` stays set. If your terminal defaults to zsh, start Bash first by running `bash`. The client ID appears as you enter it; the client secret is entered without echo. Neither value is part of the command text or shell history.
+
+Create a private temporary directory for the credential files:
 
 ```bash
-bash <<'EOF'
-set +x
-set -eu
 umask 077
 secret_dir=$(mktemp -d)
-trap 'rm -rf "$secret_dir"' EXIT
+```
 
-read -r -p 'OAuth client ID: ' client_id </dev/tty
-if [ -z "$client_id" ]; then
-  printf 'The OAuth client ID cannot be empty.\n' >&2
-  exit 1
-fi
+Enter the client ID and write it to the temporary file:
+
+```bash
+read -r -p 'OAuth client ID: ' client_id
 printf '%s' "$client_id" > "$secret_dir/clientID"
 unset client_id
-read -r -s -p 'OAuth client secret: ' client_secret </dev/tty
+```
+
+Enter the client secret. The `read -s` option suppresses terminal echo:
+
+```bash
+read -r -s -p 'OAuth client secret: ' client_secret
 printf '\n'
-if [ -z "$client_secret" ]; then
-  printf 'The OAuth client secret cannot be empty.\n' >&2
-  exit 1
-fi
 printf '%s' "$client_secret" > "$secret_dir/clientSecret"
 unset client_secret
+```
 
+Create the Secret and apply its required management label:
+
+```bash
 kubectl create secret generic my-mcp-server-oauth \
   --namespace=mcp-test \
   --from-file=clientID="$secret_dir/clientID" \
   --from-file=clientSecret="$secret_dir/clientSecret" \
-  --dry-run=client -o yaml > "$secret_dir/secret.yaml"
-kubectl apply -f "$secret_dir/secret.yaml"
+  --dry-run=client -o yaml |
+  kubectl apply -f -
+
 kubectl label secret my-mcp-server-oauth -n mcp-test \
   mcp.kuadrant.io/secret=true --overwrite
-EOF
 ```
 
-The command applies the `mcp.kuadrant.io/secret=true` label required by the controller. Both `clientID` and `clientSecret` must be nonempty; these key names are fixed. Supply the raw client secret, not an access token or a value prefixed with `Bearer`. The script does not place the secret in the command text or shell history. Do not enable shell tracing while entering credentials.
+Remove the temporary credential files after the Secret is created:
+
+```bash
+rm "$secret_dir/clientID" "$secret_dir/clientSecret"
+rmdir "$secret_dir"
+unset secret_dir
+```
+
+Both values must be nonempty. These Secret key names are fixed. Supply the raw client secret, not an access token or a value prefixed with `Bearer`. Do not enable shell tracing while entering credentials. If a command fails, remove the temporary files before retrying.
 
 Verify the Secret exists and contains the expected keys without printing their values:
 
