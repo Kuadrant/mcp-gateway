@@ -50,26 +50,6 @@ Find your Gateway name and namespace, then install from GitHub Container Registr
 kubectl get gateway -A
 ```
 
-> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`:
->
-> ```bash
-> kubectl apply -f - <<EOF
-> apiVersion: v1
-> kind: ConfigMap
-> metadata:
->   name: gateway-options
->   namespace: gateway-system
-> data:
->   service: |
->     spec:
->       type: ClusterIP
-> EOF
-> kubectl patch gateway your-gateway -n gateway-system --type merge \
->   -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"gateway-options"}}}}'
-> ```
->
-> Then reach the gateway with `kubectl port-forward` or your own ingress.
-
 ```bash
 helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
   --version ${MCP_GATEWAY_VERSION} \
@@ -93,6 +73,30 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 - **EnvoyFilter** - Configures Istio to route requests through the external processor (created in the Gateway's namespace)
 - **ServiceAccount** - For the broker/router pods
 - **Configuration Secret** - `mcp-gateway-config` containing server configuration
+
+> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`:
+>
+> ```bash
+> kubectl apply -f - <<EOF
+> apiVersion: v1
+> kind: ConfigMap
+> metadata:
+>   name: gateway-options
+>   namespace: gateway-system
+> data:
+>   service: |
+>     spec:
+>       type: ClusterIP
+> EOF
+> kubectl patch gateway your-gateway -n gateway-system --type merge \
+>   -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"gateway-options"}}}}'
+> ```
+>
+> Then reach the gateway with `kubectl port-forward` or your own ingress. For example, for an HTTP listener on port `8080`, run the following and use `MCP_URL="http://localhost:8080/mcp"` in [Verify the Installation](#verify-the-installation):
+>
+> ```bash
+> kubectl port-forward -n gateway-system svc/your-gateway-istio 8080:8080
+> ```
 
 ### What the Controller Configures
 
@@ -200,16 +204,16 @@ MCP_URL="http://your-hostname.example.com:8080/mcp"
 4. Call one of those tools. Replace `<tool-name>` and `arguments` with a prefixed tool from the `tools/list` response and its input (not `discover_tools` or `select_tools`, which the gateway answers itself):
 
    ```bash
-   curl -s -X POST "$MCP_URL" \
+   curl -s -w '\nHTTP %{http_code}\n' -X POST "$MCP_URL" \
      -H "Content-Type: application/json" \
      -H "Accept: application/json, text/event-stream" \
      -H "mcp-session-id: $SESSION_ID" \
      -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "<tool-name>", "arguments": {}}}'
    ```
 
-   The response should contain a `result`, not an `error`. Depending on the server, it comes back as plain JSON or as a `data:` line in an event stream. If the call fails, see [tools/list Works but tools/call Fails](./troubleshooting.md#toolslist-works-but-toolscall-fails).
+   The response should contain a `result` without `"isError": true`, and end with `HTTP 200`. Depending on the server, the body comes back as plain JSON or as a `data:` line in an event stream. If the call fails, note the HTTP status and see [tools/list Works but tools/call Fails](./troubleshooting.md#toolslist-works-but-toolscall-fails).
 
-> **Note:** Don't stop at `tools/list`. The broker answers `initialize` and `tools/list` itself, so both succeed even when the Gateway listener layout or the private host is wrong. Only `tools/call` is routed through your server's HTTPRoute, and for `2025-11-25` sessions the router first hairpins an `initialize` request through the private host. That's why this check uses `2025-11-25`: with `2026-07-28` there is no hairpin, so a wrong private host would go unnoticed.
+> **Note:** Don't stop at `tools/list`. The broker answers `initialize` and `tools/list` itself, so both succeed even when the Gateway listener layout or the private host is wrong. `tools/call` (like `prompts/get` and `resources/read`) is routed through your server's HTTPRoute, and for `2025-11-25` sessions the router first hairpins an `initialize` request through the private host. That's why this check uses `2025-11-25`: with `2026-07-28` there is no hairpin, so a wrong private host would go unnoticed.
 
 ## API Reference
 

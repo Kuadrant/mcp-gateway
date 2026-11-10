@@ -157,7 +157,7 @@ kubectl exec -n <gateway-namespace> deploy/<gateway-name>-istio -- curl localhos
 
 ### tools/list Works but tools/call Fails
 
-**Symptom**: A server's tools appear in `tools/list`, but `tools/call` on them fails. The broker answers `initialize` and `tools/list` itself, so those succeed even when the gateway can't reach the server. Only `tools/call` goes through the server's HTTPRoute.
+**Symptom**: A server's tools appear in `tools/list`, but `tools/call` on them fails. The broker answers `initialize` and `tools/list` itself, so those succeed even when the gateway can't reach the server. `tools/call` (like `prompts/get` and `resources/read`) goes through the server's HTTPRoute.
 
 ```bash
 # Listener the server's HTTPRoute attaches to (sectionName)
