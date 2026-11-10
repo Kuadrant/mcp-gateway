@@ -81,13 +81,15 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 | Flag | Value | Source |
 |------|-------|--------|
 | `--mcp-broker-public-address` | `0.0.0.0:8080` | Fixed |
-| `--mcp-gateway-private-host` | `<gateway>-istio.<namespace>.svc.cluster.local:<listener-port>` | Listener port + Gateway name/namespace |
+| `--mcp-gateway-private-host` | `<gateway>-<gatewayClassName>.<gateway-namespace>.svc.cluster.local:<listener-port>` (with `https://` for HTTPS listeners) | Gateway name, namespace, `gatewayClassName`, listener port and protocol |
 | `--mcp-gateway-public-host` | Listener hostname (wildcards like `*.example.com` become `mcp.example.com`) | Listener hostname |
 | `--mcp-gateway-config` | `/config/config.yaml` | Fixed |
 
 > **Note:** The router authenticates its own hairpin backend-init requests with a short-lived JWT signed by the same HMAC key as client session JWTs (`GATEWAY_SIGNING_KEY`). There is no separate router-key secret to manage; the previous `--mcp-router-key` flag has been removed.
 
 The `--mcp-gateway-private-host` flag enables hair-pinning for **2025-11-25** protocol `tools/call`: the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec. **2026-07-28** calls do not hairpin.
+
+This address is the Service the Gateway controller creates for your Gateway, for example `mcp-gateway-istio.gateway-system.svc.cluster.local:8080` for a Gateway named `mcp-gateway` in `gateway-system` with class `istio` and listener port `8080`. Setting `spec.privateHost` on the MCPGatewayExtension overrides it exactly as written, so add `https://` yourself for HTTPS listeners.
 
 #### HTTPS Listeners and `caCertBundleRef`
 
