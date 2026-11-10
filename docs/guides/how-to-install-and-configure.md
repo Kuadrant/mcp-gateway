@@ -136,6 +136,61 @@ After installation, the controller automatically creates the HTTPRoute for gatew
 
 If you need to customize the HTTPRoute (e.g. add CORS headers), see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
 
+## Verify the Installation
+
+After registering at least one MCP server (see [Register MCP Servers](./register-mcp-servers.md)), check that the gateway serves tool calls end to end.
+
+Set `MCP_URL` to your Gateway listener's scheme, public hostname and port:
+
+```bash
+MCP_URL="http://your-hostname.example.com:8080/mcp"
+```
+
+1. Initialize a session with protocol version `2025-11-25` and save the session ID:
+
+   ```bash
+   curl -s -D /tmp/mcp_headers -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
+
+   SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
+   ```
+
+2. Check that your MCPServerRegistration is ready:
+
+   ```bash
+   kubectl get mcpsr -A
+   ```
+
+   The `READY` column should show `True`.
+
+3. List tools:
+
+   ```bash
+   curl -s -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "mcp-session-id: $SESSION_ID" \
+     -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
+   ```
+
+   The response should include your server's tools, prefixed with the `prefix` from its MCPServerRegistration.
+
+4. Call one of those tools. Replace `<tool-name>` and `arguments` with a prefixed tool from the `tools/list` response and its input (not `discover_tools` or `select_tools`, which the gateway answers itself):
+
+   ```bash
+   curl -s -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "mcp-session-id: $SESSION_ID" \
+     -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "<tool-name>", "arguments": {}}}'
+   ```
+
+   The response should contain a `result`, not an `error`. Depending on the server, it comes back as plain JSON or as a `data:` line in an event stream.
+
+> **Note:** Don't stop at `tools/list`. The broker answers `initialize` and `tools/list` itself, so both succeed even when the Gateway listener layout or the private host is wrong. Only `tools/call` is routed through your server's HTTPRoute, and for `2025-11-25` sessions the router first hairpins an `initialize` request through the private host. That's why this check uses `2025-11-25`: with `2026-07-28` there is no hairpin, so a wrong private host would go unnoticed.
+
 ## API Reference
 
 - [MCPGatewayExtension](../reference/mcpgatewayextension.md)
