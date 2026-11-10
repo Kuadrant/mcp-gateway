@@ -155,6 +155,43 @@ kubectl exec -n <gateway-namespace> deploy/<gateway-name>-istio -- curl localhos
 - Check port number matches Gateway listener port (default: 8080)
 - Restart Istio gateway to force config reload: `kubectl rollout restart deployment/<gateway-name>-istio -n <gateway-namespace>`
 
+### tools/list Works but tools/call Fails
+
+**Symptom**: A server's tools appear in `tools/list`, but `tools/call` on them fails. The broker answers `initialize` and `tools/list` itself, so those succeed even when the gateway can't reach the server. Only `tools/call` goes through the server's HTTPRoute.
+
+```bash
+# Listener the server's HTTPRoute attaches to (sectionName)
+kubectl get httproute <route-name> -n <namespace> -o jsonpath='{.spec.parentRefs}'
+
+# Gateway listeners: name, hostname, port, protocol
+kubectl get gateway <gateway-name> -n <gateway-namespace> \
+  -o jsonpath='{range .spec.listeners[*]}{.name}{"\t"}{.hostname}{"\t"}{.port}{"\t"}{.protocol}{"\n"}{end}'
+
+# Router errors from the private host hairpin
+kubectl logs -n mcp-system deploy/mcp-gateway | grep "failed to get remote session"
+
+# Private host the router uses, and the Gateway's Services
+kubectl get deploy mcp-gateway -n mcp-system -o yaml | grep private-host
+kubectl get svc -n <gateway-namespace>
+```
+
+**Common Reasons**:
+
+- **Server HTTPRoute on a separate HTTPS listener**: the client gets HTTP `404` with an empty body, and the router logs no `failed to get remote session` error. Each HTTPS listener has its own route table, so the router can only send `tools/call` to routes on the listener the client connected to. The MCPServerRegistration still shows `Ready`. With HTTP this doesn't happen: listeners on the same port share a route table, and the controller rejects a route on a different port (the MCPServerRegistration shows `no matching mcpgatewayextensions for attached listener` and its tools never appear in `tools/list`).
+- **Wrong private host** (`2025-11-25` sessions only): before the first `tools/call` to a server, the router sends an `initialize` back through the gateway at the private host. If that address doesn't resolve, the client gets HTTP `500`:
+  ```
+  failed to create session for mcp server: failed to create client: calling "initialize": sending "initialize": rejected by transport: Post "http://wrong-gateway.gateway-system.svc.cluster.local:8080/mcp": dial tcp: lookup wrong-gateway.gateway-system.svc.cluster.local on 10.96.0.10:53: no such host
+  ```
+  and the router logs:
+  ```
+  level=ERROR msg="failed to get remote session " component=router-202511 error="failed to create client: calling \"initialize\": ... no such host"
+  ```
+  A wrong port gives `connect: connection refused` instead of `no such host`. `2026-07-28` sessions don't use the private host.
+
+**Solutions**:
+- Separate HTTPS listener: use a single HTTPS listener with a wildcard hostname for both the gateway and your servers, and attach each server's HTTPRoute to it with a matching hostname. See [HTTPS listener count](./how-to-install-and-configure.md#https-listener-count) and [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
+- Wrong private host: compare the `--mcp-gateway-private-host` value with the Gateway's Service from `kubectl get svc`. It should be `<service-name>.<gateway-namespace>.svc.cluster.local:<listener-port>`, with `https://` for HTTPS listeners. If you set `spec.privateHost` on the MCPGatewayExtension, fix it or remove it to use the default. See [What the Controller Configures](./how-to-install-and-configure.md#what-the-controller-configures).
+
 ## MCPGatewayExtension Issues
 
 ### MCPGatewayExtension Not Ready

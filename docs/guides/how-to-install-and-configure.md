@@ -207,7 +207,7 @@ MCP_URL="http://your-hostname.example.com:8080/mcp"
      -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "<tool-name>", "arguments": {}}}'
    ```
 
-   The response should contain a `result`, not an `error`. Depending on the server, it comes back as plain JSON or as a `data:` line in an event stream.
+   The response should contain a `result`, not an `error`. Depending on the server, it comes back as plain JSON or as a `data:` line in an event stream. If the call fails, see [tools/list Works but tools/call Fails](./troubleshooting.md#toolslist-works-but-toolscall-fails).
 
 > **Note:** Don't stop at `tools/list`. The broker answers `initialize` and `tools/list` itself, so both succeed even when the Gateway listener layout or the private host is wrong. Only `tools/call` is routed through your server's HTTPRoute, and for `2025-11-25` sessions the router first hairpins an `initialize` request through the private host. That's why this check uses `2025-11-25`: with `2026-07-28` there is no hairpin, so a wrong private host would go unnoticed.
 
