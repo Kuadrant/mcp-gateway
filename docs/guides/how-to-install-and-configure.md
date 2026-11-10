@@ -50,6 +50,26 @@ Find your Gateway name and namespace, then install from GitHub Container Registr
 kubectl get gateway -A
 ```
 
+> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`:
+>
+> ```bash
+> kubectl apply -f - <<EOF
+> apiVersion: v1
+> kind: ConfigMap
+> metadata:
+>   name: gateway-options
+>   namespace: gateway-system
+> data:
+>   service: |
+>     spec:
+>       type: ClusterIP
+> EOF
+> kubectl patch gateway your-gateway -n gateway-system --type merge \
+>   -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"gateway-options"}}}}'
+> ```
+>
+> Then reach the gateway with `kubectl port-forward` or your own ingress.
+
 ```bash
 helm upgrade -i mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
   --version ${MCP_GATEWAY_VERSION} \
