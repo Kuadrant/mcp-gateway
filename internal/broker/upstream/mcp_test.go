@@ -209,12 +209,17 @@ func TestBuildHTTPClient_NoCACert(t *testing.T) {
 	require.True(t, ok, "discoverCapture base should be *toolHintsTee")
 	hrt, ok := tee.base.(*transport.HeaderRoundTripper)
 	require.True(t, ok, "tee base should be *transport.HeaderRoundTripper")
-	tr, ok := hrt.Base.(*http.Transport)
+	lr, ok := hrt.Base.(*listenRouter)
+	require.True(t, ok, "header round tripper base should be *listenRouter")
+	tr, ok := lr.base.(*http.Transport)
 	require.True(t, ok, "base transport should be *http.Transport")
 	require.Equal(t, defaultTLSHandshakeTimeout, tr.TLSHandshakeTimeout)
 	// bounds header wait only; SSE bodies stream untouched. zero here lets a
 	// silent upstream wedge the manager on any POST (initialize, tools/list).
 	require.Equal(t, defaultResponseHeaderTimeout, tr.ResponseHeaderTimeout)
+	listen, ok := lr.listen.(*http.Transport)
+	require.True(t, ok, "listen transport should be *http.Transport")
+	require.Equal(t, defaultListenHeaderTimeout, listen.ResponseHeaderTimeout)
 }
 
 // regression: the sdk opens a standalone GET SSE stream synchronously inside
@@ -559,6 +564,46 @@ func TestOnConnectionLost_SkippedForStatelessUpstream(t *testing.T) {
 	}
 }
 
+// regression: a closed session with an ID belongs to the connection-lost
+// watcher. if Connect also replaced it, the watcher's Disconnect, which the
+// manager runs unconditionally, would close the replacement.
+func TestConnect_LeavesClosedSessionToConnectionLostWatcher(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "stateful", Version: "0.0.1"}, nil)
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, nil)
+	var fail atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && fail.Load() {
+			http.Error(w, "404 page not found", http.StatusNotFound)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	up := NewUpstreamMCP(&config.MCPServer{Name: "stateful", URL: ts.URL}, "", nil)
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	session := up.currentSession()
+	require.NotEmpty(t, session.ID(), "upstream must issue a session ID")
+
+	lost := make(chan struct{})
+	up.OnConnectionLost(func(error) { close(lost) })
+	fail.Store(true)
+	_, err := up.ListTools(ctx)
+	require.Error(t, err)
+	select {
+	case <-lost:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection-lost watcher never fired")
+	}
+	fail.Store(false)
+
+	require.NoError(t, up.Connect(ctx, func() {}))
+	require.Same(t, session, up.currentSession(), "Connect must leave the closed session to the watcher")
+}
+
 // newStateless2026Server returns a go-sdk server that only speaks 2026,
 // seeded with one tool and one prompt so it advertises listChanged for both.
 func newStateless2026Server() *mcp.Server {
@@ -746,15 +791,63 @@ func TestConnect_2026ListenRejectedIsNonFatal(t *testing.T) {
 
 	// a plain-text 4xx on a call makes the sdk close the session. a stateless
 	// upstream has no connection-lost watcher, so the next tick's Connect must
-	// replace it. the sdk closes it asynchronously, so retry as the ticks would
+	// replace it. the sdk closes it asynchronously, so retry as the ticks would.
+	// broker request goroutines keep reading capabilities meanwhile (-race)
+	stop, readerDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = up.SupportsResources()
+			}
+		}
+	}()
 	failList.Store(true)
 	_, err = up.ListTools(ctx)
 	require.Error(t, err)
 	require.Eventually(t, func() bool {
 		return up.Connect(ctx, func() {}) == nil && up.currentSession() != session
 	}, 5*time.Second, 10*time.Millisecond, "Connect never replaced the closed session")
+	close(stop)
+	<-readerDone
 	tools, err = up.ListTools(ctx)
 	require.NoError(t, err)
+	require.Len(t, tools.Tools, 1)
+}
+
+// regression: a proxy that buffers SSE never sends the listen's response
+// headers. the sdk sends the listen inside Connect on a detached context, so
+// without its own header timeout it held Connect for ResponseHeaderTimeout.
+func TestConnect_2026ListenWithoutHeadersDoesNotBlock(t *testing.T) {
+	oldHeader, oldListen := defaultResponseHeaderTimeout, defaultListenHeaderTimeout
+	defaultResponseHeaderTimeout, defaultListenHeaderTimeout = 10*time.Second, 100*time.Millisecond
+	defer func() { defaultResponseHeaderTimeout, defaultListenHeaderTimeout = oldHeader, oldListen }()
+
+	srv := newStateless2026Server()
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Method") == "subscriptions/listen" {
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	up := NewUpstreamMCP(&config.MCPServer{Name: "up", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+	require.Less(t, time.Since(start), 5*time.Second, "Connect waited on the listen response headers")
+	tools, err := up.ListTools(ctx)
+	require.NoError(t, err, "a timed-out listen must not break the connection")
 	require.Len(t, tools.Tools, 1)
 }
 

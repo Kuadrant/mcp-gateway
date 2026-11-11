@@ -30,6 +30,9 @@ var (
 	defaultTLSHandshakeTimeout   = 10 * time.Second
 	defaultResponseHeaderTimeout = 30 * time.Second
 	defaultExpectContinueTimeout = 1 * time.Second
+	// the sdk sends subscriptions/listen inside Connect on a context detached
+	// from ours, so only the header timeout bounds how long it holds Connect
+	defaultListenHeaderTimeout = 5 * time.Second
 )
 
 // tokenRequestTimeout bounds a single token-endpoint round trip. the source is
@@ -57,7 +60,7 @@ type MCPServer struct {
 	*config.MCPServer
 	client           *mcp.Client
 	session          *mcp.ClientSession
-	sessionDone      <-chan struct{} // closed when session's connection ends
+	sessionDone      <-chan struct{} // closed when a session without an ID ends; nil otherwise
 	clientMu         sync.RWMutex
 	headers          map[string]string
 	init             *mcp.InitializeResult
@@ -184,16 +187,19 @@ func (up *MCPServer) buildHTTPClient(ctx context.Context) (*http.Client, error) 
 		return nil, err
 	}
 
+	listen := base.Clone()
+	listen.ResponseHeaderTimeout = defaultListenHeaderTimeout
+
 	// the token source sits below the header injector so oauth2.Transport sets
 	// Authorization last and wins over anything in up.headers
-	var inner http.RoundTripper = base
+	var inner http.RoundTripper = &listenRouter{base: base, listen: listen}
 	if up.OAuth2 != nil {
 		// resolve once so a bad token URL fails the connect rather than the
 		// first request. the transport holds the indirection, not this source
 		if _, err := up.tokenSource(ctx); err != nil {
 			return nil, err
 		}
-		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up, ctx: ctx}, Base: base}, up: up}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up, ctx: ctx}, Base: inner}, up: up}
 	}
 
 	up.dc = &discoverCapture{
@@ -208,6 +214,22 @@ func (up *MCPServer) buildHTTPClient(ctx context.Context) (*http.Client, error) 
 			return fmt.Errorf("upstream %s returned a redirect", up.Name)
 		},
 	}, nil
+}
+
+// listenRouter sends subscriptions/listen over a transport with a shorter
+// header timeout. an upstream behind a proxy that buffers SSE never sends the
+// headers, and the sdk would hold Connect, and the manager loop with it, for
+// the full ResponseHeaderTimeout. a listen that times out is non-fatal, like a
+// rejected one, and polling covers freshness.
+type listenRouter struct {
+	base, listen http.RoundTripper
+}
+
+func (l *listenRouter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Mcp-Method") == "subscriptions/listen" {
+		return l.listen.RoundTrip(req)
+	}
+	return l.base.RoundTrip(req)
 }
 
 // tokenInvalidator drops the cached token source when the upstream rejects the
@@ -534,6 +556,14 @@ func (up *MCPServer) IsEnabled() bool {
 
 // ProtocolInfo returns the initialize result with the protocol information stored in it
 func (up *MCPServer) ProtocolInfo() *mcp.InitializeResult {
+	return up.initResult()
+}
+
+// initResult snapshots the initialize result under the lock: Connect replaces
+// it on every reconnect while broker request goroutines read it.
+func (up *MCPServer) initResult() *mcp.InitializeResult {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
 	return up.init
 }
 
@@ -548,13 +578,12 @@ func (up *MCPServer) GetName() string {
 }
 
 // SupportsToolsListChanged validates the mcp server supports tools/list_changed notifications.
-// safe to read up.init without clientMu: init is written once during Connect() which
-// happens-before any capability check (manager calls Connect then registers tools).
 func (up *MCPServer) SupportsToolsListChanged() bool {
-	if up.init == nil || up.init.Capabilities == nil || up.init.Capabilities.Tools == nil {
+	init := up.initResult()
+	if init == nil || init.Capabilities == nil || init.Capabilities.Tools == nil {
 		return false
 	}
-	return up.init.Capabilities.Tools.ListChanged
+	return init.Capabilities.Tools.ListChanged
 }
 
 // Connect establishes a connection to the upstream MCP server using the
@@ -653,16 +682,19 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 		return fmt.Errorf("failed to connect client for upstream %s : %w", up.ID(), err)
 	}
 
-	done := make(chan struct{})
-	go func() { _ = session.Wait(); close(done) }()
+	// only sessions without an ID: OnConnectionLost owns the rest, and a
+	// second observer would race it into closing the replacement session
+	var done chan struct{}
+	if session.ID() == "" {
+		done = make(chan struct{})
+		go func() { _ = session.Wait(); close(done) }()
+	}
 
 	up.clientMu.Lock()
 	up.session = session
 	up.sessionDone = done
-	up.clientMu.Unlock()
-
-	// store the initialize result
 	up.init = session.InitializeResult()
+	up.clientMu.Unlock()
 
 	negotiated := up.init.ProtocolVersion
 	up.dc.SetConnected()
@@ -814,14 +846,15 @@ func (up *MCPServer) OnConnectionLost(handler func(err error)) {
 // earlier 2025 revision and runs the streamable-HTTP transport in stateless
 // mode. Returns false when not connected: nothing to classify yet.
 func (up *MCPServer) UsesStatelessProtocol() bool {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
 	if up.init == nil {
 		return false
 	}
 	if up.init.ProtocolVersion >= protocol.Version2026 {
 		return true
 	}
-	session := up.currentSession()
-	return session != nil && session.ID() == ""
+	return up.session != nil && up.session.ID() == ""
 }
 
 // resolveSupportedVersions determines the protocol versions the broker treats
@@ -901,18 +934,20 @@ func (up *MCPServer) SetCacheMetadataForTesting(toolsMeta, promptsMeta CacheMeta
 
 // SupportsPrompts checks if the upstream server declared prompt capabilities
 func (up *MCPServer) SupportsPrompts() bool {
-	if up.init == nil || up.init.Capabilities == nil {
+	init := up.initResult()
+	if init == nil || init.Capabilities == nil {
 		return false
 	}
-	return up.init.Capabilities.Prompts != nil
+	return init.Capabilities.Prompts != nil
 }
 
 // SupportsPromptsListChanged validates the mcp server supports prompts/list_changed notifications
 func (up *MCPServer) SupportsPromptsListChanged() bool {
-	if up.init == nil || up.init.Capabilities == nil || up.init.Capabilities.Prompts == nil {
+	init := up.initResult()
+	if init == nil || init.Capabilities == nil || init.Capabilities.Prompts == nil {
 		return false
 	}
-	return up.init.Capabilities.Prompts.ListChanged
+	return init.Capabilities.Prompts.ListChanged
 }
 
 // MaxListPages bounds the pagination loop over paginated upstream list
