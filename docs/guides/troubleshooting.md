@@ -168,7 +168,7 @@ kubectl get gateway <gateway-name> -n <gateway-namespace> \
   -o jsonpath='{range .spec.listeners[*]}{.name}{"\t"}{.hostname}{"\t"}{.port}{"\t"}{.protocol}{"\n"}{end}'
 
 # Router errors from the private host hairpin
-kubectl logs -n <mcpgatewayextension-namespace> deploy/mcp-gateway | grep "failed to get remote session"
+kubectl logs -n <mcpgatewayextension-namespace> deploy/mcp-gateway --all-pods=true | grep "failed to get remote session"
 
 # Private host the router uses, and the Gateway's Services
 kubectl get deploy mcp-gateway -n <mcpgatewayextension-namespace> -o yaml | grep private-host
@@ -190,7 +190,7 @@ kubectl get svc -n <gateway-namespace>
 
 **Solutions**:
 - Separate HTTPS listener: use a single HTTPS listener with a wildcard hostname for both the gateway and your servers, and attach each server's HTTPRoute to it with a matching hostname. See [HTTPS listener count](./how-to-install-and-configure.md#https-listener-count) and [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
-- Wrong private host: compare the `--mcp-gateway-private-host` value with the Gateway's Service from `kubectl get svc`. It should be `<service-name>.<gateway-namespace>.svc.cluster.local:<listener-port>`, with `https://` for HTTPS listeners. If you set `spec.privateHost` on the MCPGatewayExtension, fix it or remove it to use the default. See [What the Controller Configures](./how-to-install-and-configure.md#what-the-controller-configures).
+- Wrong private host: compare the `--mcp-gateway-private-host` value with the Gateway's Service from `kubectl get svc`. It should be `<service-name>.<gateway-namespace>.svc.<cluster-domain>:<listener-port>`, with `https://` for HTTPS listeners. The default uses `cluster.local`. If your cluster uses a different DNS domain, set `spec.privateHost` on the MCPGatewayExtension to the Service address using that domain. Otherwise, fix an incorrect `spec.privateHost` override or remove it to use the default. See [What the Controller Configures](./how-to-install-and-configure.md#what-the-controller-configures).
 
 ## MCPGatewayExtension Issues
 

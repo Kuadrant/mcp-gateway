@@ -76,7 +76,9 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 
 > **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`.
 >
-> If the Gateway already references a ConfigMap through `parametersRef`, add `spec.type: ClusterIP` to its `service` configuration, preserving its other settings, instead of running the following commands:
+> If the Gateway already references a ConfigMap through `parametersRef`, add `spec.type: ClusterIP` to its `service` configuration, preserving its other settings, instead of running the following commands.
+>
+> Check that `gateway-options` is unused in the Gateway's namespace. If it exists, choose an unused name and replace `gateway-options` in both commands:
 >
 > ```bash
 > kubectl apply -f - <<EOF
@@ -165,6 +167,8 @@ If you need to customize the HTTPRoute (e.g. add CORS headers), see [Configure G
 ## Verify the Installation
 
 After registering at least one MCP server (see [Register MCP Servers](./register-mcp-servers.md)), check that the gateway serves tool calls end to end.
+
+This procedure requires a server that supports the 2025 protocol family. Servers supporting only `2026-07-28` are not visible to this `2025-11-25` session. See [Multi Protocol Support](./multi-protocol-support.md) for protocol negotiation and tool visibility.
 
 Set `MCP_URL` to your Gateway listener's scheme, public hostname and port:
 
