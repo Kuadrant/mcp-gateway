@@ -16,6 +16,7 @@
     - [MCP Server Configuration](./register-mcp-servers.md)
     - [Virtual MCP Servers](./virtual-mcp-servers.md)
     - [External MCP Servers](./external-mcp-server.md)
+    - [Upstream OAuth Authentication](./upstream-oauth.md)
     - [User-Specific Tool Lists](./user-specific-tools.md)
     - [Custom CA Certificates](./custom-ca-certificates.md)
 - [Authentication](./authentication.md)

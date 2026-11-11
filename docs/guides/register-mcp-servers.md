@@ -125,6 +125,8 @@ EOF
 
 > **Note:** An exact-duplicate `prefix` across two registrations sharing a gateway is rejected at registration time. A prefix that's itself a prefix of another (e.g. `app_` and `app_admin_`) is not rejected; resource URI lookups resolve it via longest-prefix match, and the shorter-prefix server's colliding resource becomes unreachable via `resources/read`. Choose prefixes that aren't prefixes of one another.
 
+If the upstream requires OAuth access tokens for broker discovery, configure [upstream OAuth authentication](./upstream-oauth.md). Use `oauth2ClientCredentials` instead of `credentialRef` to let the broker obtain and renew its own tokens.
+
 ## Step 4: Verify Registration
 
 Wait for the MCPServerRegistration to become ready (Ready means the config has been written to the gateway config secret; the broker discovers tools asynchronously after that):
