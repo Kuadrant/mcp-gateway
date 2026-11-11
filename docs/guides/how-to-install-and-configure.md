@@ -74,7 +74,9 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 - **ServiceAccount** - For the broker/router pods
 - **Configuration Secret** - `mcp-gateway-config` containing server configuration
 
-> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`:
+> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`.
+>
+> If the Gateway already references a ConfigMap through `parametersRef`, add `spec.type: ClusterIP` to its `service` configuration, preserving its other settings, instead of running the following commands:
 >
 > ```bash
 > kubectl apply -f - <<EOF
@@ -170,15 +172,19 @@ Set `MCP_URL` to your Gateway listener's scheme, public hostname and port:
 MCP_URL="http://your-hostname.example.com:8080/mcp"
 ```
 
+If authentication is enabled, include the credentials required by your policy in every `curl` request. For bearer tokens, set `ACCESS_TOKEN` to a valid token and add `-H "Authorization: Bearer $ACCESS_TOKEN"`. See [Authentication Configuration](./authentication.md).
+
 1. Initialize a session with protocol version `2025-11-25` and save the session ID:
 
    ```bash
-   curl -s -D /tmp/mcp_headers -X POST "$MCP_URL" \
+   MCP_HEADERS=$(mktemp)
+   curl -s -D "$MCP_HEADERS" -X POST "$MCP_URL" \
      -H "Content-Type: application/json" \
      -H "Accept: application/json, text/event-stream" \
      -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
 
-   SESSION_ID=$(grep -i "mcp-session-id:" /tmp/mcp_headers | cut -d' ' -f2 | tr -d '\r')
+   SESSION_ID=$(grep -i "mcp-session-id:" "$MCP_HEADERS" | cut -d' ' -f2 | tr -d '\r')
+   rm -f "$MCP_HEADERS"
    ```
 
 2. Check that your MCPServerRegistration is ready:

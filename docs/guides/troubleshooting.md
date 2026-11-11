@@ -168,10 +168,10 @@ kubectl get gateway <gateway-name> -n <gateway-namespace> \
   -o jsonpath='{range .spec.listeners[*]}{.name}{"\t"}{.hostname}{"\t"}{.port}{"\t"}{.protocol}{"\n"}{end}'
 
 # Router errors from the private host hairpin
-kubectl logs -n mcp-system deploy/mcp-gateway | grep "failed to get remote session"
+kubectl logs -n <mcpgatewayextension-namespace> deploy/mcp-gateway | grep "failed to get remote session"
 
 # Private host the router uses, and the Gateway's Services
-kubectl get deploy mcp-gateway -n mcp-system -o yaml | grep private-host
+kubectl get deploy mcp-gateway -n <mcpgatewayextension-namespace> -o yaml | grep private-host
 kubectl get svc -n <gateway-namespace>
 ```
 

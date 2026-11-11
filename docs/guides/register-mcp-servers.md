@@ -17,7 +17,7 @@ To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that rou
 ## Prerequisites
 
 - You installed and configured the MCP Gateway
-- Your Gateway has both the `mcp` and `mcps` listeners configured (see [Configure MCP Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md))
+- Your Gateway has the appropriate HTTP or HTTPS listeners configured (see [Configure MCP Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md))
 - An MCP server is running in your cluster
 
 ## Procedure
@@ -75,7 +75,9 @@ kubectl wait --for=condition=Ready mcpgatewayextension/mcp-extension -n mcp-test
 
 ## Step 2: Create an HTTPRoute
 
-Create an `HTTPRoute` that routes to your MCP server. The hostname must match the wildcard on the `mcps` listener of your Gateway (e.g. `*.mcp.local`). This is an internal-only hostname used for routing through the gateway and does not need to be publicly resolvable.
+Create an `HTTPRoute` that routes to your MCP server. For HTTP, the hostname must match the wildcard on the `mcps` listener of your Gateway (e.g. `*.mcp.local`). This is an internal-only hostname used for routing through the gateway and does not need to be publicly resolvable.
+
+For HTTPS, attach the route to the same wildcard HTTPS listener that receives client traffic. Replace `sectionName: mcps` below with that listener's name (e.g. `mcp-tls`) and use a hostname matching its wildcard. A separate HTTPS listener makes the server's route unreachable for tool calls. See [HTTPS (single listener)](./configure-mcp-gateway-listener-and-router.md#https-single-listener).
 
 ```bash
 kubectl apply -f - <<EOF
@@ -90,7 +92,7 @@ spec:
       namespace: gateway-system
       sectionName: mcps
   hostnames:
-    - 'my-mcp-server.mcp.local'  # must match the mcps listener wildcard
+    - 'my-mcp-server.mcp.local'  # must match the selected listener's wildcard
   rules:
     - matches:
         - path:
