@@ -706,8 +706,13 @@ func (up *MCPServer) Connect(ctx context.Context, onConnection func()) error {
 			captured = c
 		}
 	}
-	up.supportedVersions = resolveSupportedVersions(up.SupportedProtocolVersions, captured, negotiated)
-	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", up.supportedVersions, "uses-stateless", up.UsesStatelessProtocol())
+	versions := resolveSupportedVersions(up.SupportedProtocolVersions, captured, negotiated)
+	// published under the lock: other upstreams' manager loops rebuild the
+	// routing table, reading these, while this one reconnects
+	up.clientMu.Lock()
+	up.supportedVersions = versions
+	up.clientMu.Unlock()
+	up.logger.Debug("upstream connected", "upstream", up.ID(), "negotiated-protocol", negotiated, "supported-versions", versions, "uses-stateless", up.UsesStatelessProtocol())
 
 	// session-ful 2025 upstreams use the custom GET SSE notificationWatcher for
 	// push notifications. 2026 upstreams push over the sdk's subscriptions/listen
@@ -880,6 +885,8 @@ func resolveSupportedVersions(override, captured []string, negotiated string) []
 // SupportedVersions returns the list of protocol versions this upstream supports.
 // Returns nil if not yet connected (init is nil).
 func (up *MCPServer) SupportedVersions() []string {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
 	if len(up.supportedVersions) == 0 {
 		return nil
 	}
@@ -891,6 +898,8 @@ func (up *MCPServer) SupportedVersions() []string {
 
 // SupportsVersion returns true if this upstream supports the given protocol version.
 func (up *MCPServer) SupportsVersion(v string) bool {
+	up.clientMu.RLock()
+	defer up.clientMu.RUnlock()
 	return slices.Contains(up.supportedVersions, v)
 }
 

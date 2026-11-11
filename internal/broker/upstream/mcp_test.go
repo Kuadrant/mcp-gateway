@@ -1747,3 +1747,36 @@ func TestCacheMetadata_ToolsAndPromptsIndependent(t *testing.T) {
 	require.Equal(t, 10000, pmeta.TTLMs)
 	require.Equal(t, "private", pmeta.CacheScope)
 }
+
+// regression: Connect republishes supportedVersions on every reconnect while
+// the broker rebuilds the routing table from other upstreams' manager loops.
+func TestSupportedVersions_ReadDuringReconnect(t *testing.T) {
+	ts := newSessionlessUpstreamServer(t)
+	up := NewUpstreamMCP(&config.MCPServer{Name: "stateless", URL: ts.URL}, "", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	require.NoError(t, up.Connect(ctx, func() {}))
+	defer func() { _ = up.Disconnect() }()
+
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = up.SupportsVersion(protocol.Version2026)
+				_ = up.SupportedVersions()
+			}
+		}
+	}()
+	for range 3 {
+		require.NoError(t, up.Disconnect())
+		require.NoError(t, up.Connect(ctx, func() {}))
+	}
+	close(stop)
+	<-readerDone
+	require.NotEmpty(t, up.SupportedVersions())
+}
