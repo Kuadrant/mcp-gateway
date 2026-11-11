@@ -568,6 +568,7 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 ### [Broker2026] upstream tool change propagates to broker and triggers client notification
 
 - A 2026 client connects with a notification handler. The test calls `sl_add_tool` through the gateway to dynamically add a tool on the upstream. The broker receives `tools/list_changed` via `subscriptions/listen`, re-lists tools, and updates the gateway server. The client receives a `tools/list_changed` notification and sees the new tool on the next `tools/list` call. Verifies the full chain: upstream → SDK subscriptions/listen → broker manager → gateway server → client notification.
+- The test runs two rounds back to back, each adding a uniquely named tool and allowing 20s for the notification and the new tool. The broker polls a 2026 upstream at most once a minute, so a poll can serve at most one round; the test fails if push is broken. A notification left over from the initial tool load or the previous round is drained before each round.
 
 ### [A2A] A2A passthrough sets and strips protocol-metadata headers
 
