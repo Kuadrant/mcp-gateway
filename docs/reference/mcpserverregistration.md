@@ -49,6 +49,7 @@
 |-----------|----------|:------------:|-----------------|
 | `name` | String | Yes | Name of the Secret resource |
 | `key` | String | No | Key within the Secret that contains the credential value. Default: `token` |
+
 ## OAuth2ClientCredentialsConfig
 
 | **Field** | **Type** | **Required** | **Description** |
