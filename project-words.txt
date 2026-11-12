@@ -249,6 +249,7 @@ mcpvs
 mediatype
 metallb
 metav
+metricdata
 metricsserver
 mext
 mfridman
@@ -350,6 +351,7 @@ sagikazarmark
 sailoperator
 scorecard
 sdklog
+sdkmetric
 secrettoken
 sectionName
 semconv

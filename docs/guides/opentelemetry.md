@@ -179,6 +179,19 @@ The MCP Broker emits spans for request handling, capability filtering, resource 
 
 The router propagates W3C trace context on forwarded requests. The broker extracts that context, so router and broker work can be correlated in one trace. Broker filtering spans are children of `mcp-broker.handle-request`, not direct children of router route spans.
 
+#### Guardrails spans
+
+When guardrails apply to a `tools/call`, the router emits one `mcp-guardrails.nemo.check` client span for each request sent to the NeMo Guardrails `/v1/checks` endpoint. The span covers request translation, the HTTP round trip, and response parsing. Request checks are children of `mcp-router.tool-call`. Response checks are children of `mcp-router.process`.
+
+| Attribute | Values |
+|-----------|--------|
+| `guardrails.phase` | `request` or `response` |
+| `guardrails.outcome` | `allowed`, `blocked`, `modified`, or `error` |
+| `http.response.status_code` | Status returned by the guardrails server; absent when no response was received |
+| `error.type` | Set on failures: `translation`, `timeout`, `canceled`, `transport`, `http_status`, `body_limit`, or `parse` |
+
+A check that fails and falls back to the configured fail mode records `guardrails.outcome=error` and an error status, even when `failMode: allow` lets the tool call proceed. `canceled` means the caller abandoned the request, for example because the client disconnected, rather than a guardrails server failure.
+
 #### Error attributes
 
 Error recording is component-specific. An error span does not automatically contain every error attribute:
@@ -187,6 +200,7 @@ Error recording is component-specific. An error span does not automatically cont
 - Broker handler errors record `error.type` and `error_source=broker`.
 - Backend connection or discovery errors recorded by `mcp-broker.upstream-manage` record `error.type`, `error_source=backend`, and `mcp.server`.
 - Router route errors can set span status and `error.type`. The resulting HTTP status is recorded on `mcp-router.process` when response headers are processed.
+- Guardrails check failures record a fixed `error.type` on `mcp-guardrails.nemo.check`. See [Guardrails spans](#guardrails-spans) for details.
 
 ### Logs
 
@@ -234,6 +248,22 @@ The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated po
 | `mcp_broker_tools_list_response_bytes` | Gauge | Serialized size of the validated tool list per upstream server. Proxy for LLM context overhead |
 
 `mcp_broker_discovery_total` uses `server_name` and `status` labels. All other metrics use only `server_name`. Label values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (for example, `<namespace>/my-server`). No high-cardinality labels (session IDs, tool names, or call IDs) are used.
+
+### Guardrails metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_guardrails_checks_total` | Counter | Guardrails checks, labeled by `phase` and `outcome` |
+| `mcp_guardrails_check_duration_seconds` | Histogram | Duration of each check, including translation and response parsing, labeled by `phase` |
+| `mcp_guardrails_check_failures_total` | Counter | Failed checks, labeled by `phase` and `failure_type` |
+
+Labels use only fixed values:
+
+- `phase` is `request` or `response`.
+- `outcome` is `allowed`, `blocked`, `modified`, or `error`.
+- `failure_type` is `translation`, `timeout`, `canceled`, `transport`, `http_status`, `body_limit`, or `parse`.
+
+A failed check counts as `outcome="error"` and as a failure, even when `failMode: allow` lets the tool call proceed. `failure_type="canceled"` counts requests the caller abandoned, so exclude it when alerting on guardrails server health.
 
 ### Scraping the metrics endpoint
 
@@ -329,6 +359,16 @@ histogram_quantile(0.99, sum(rate(mcp_broker_discovery_duration_seconds_bucket[5
 
 # Total tools/list context footprint across all servers
 sum(mcp_broker_tools_list_response_bytes)
+
+# Guardrails failure rate by phase and failure type, excluding caller cancellation
+sum(rate(mcp_guardrails_check_failures_total{failure_type!="canceled"}[5m])) by (phase, failure_type)
+
+# Share of guardrails checks that blocked the tool call
+sum(rate(mcp_guardrails_checks_total{outcome="blocked"}[5m])) by (phase)
+  / sum(rate(mcp_guardrails_checks_total[5m])) by (phase)
+
+# p99 guardrails check latency by phase
+histogram_quantile(0.99, sum(rate(mcp_guardrails_check_duration_seconds_bucket[5m])) by (phase, le))
 ```
 
 ### Istio gateway metrics (built-in)

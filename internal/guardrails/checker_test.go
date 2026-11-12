@@ -21,12 +21,19 @@ func newTestCheckerWithMaxBodyBytes(t *testing.T, handler http.HandlerFunc, fail
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	return NewChecker(&Config{
+	return mustNewChecker(t, &Config{
 		URL:       server.URL,
 		Model:     "meta/llama-3.1-8b-instruct",
 		ConfigIDs: []string{"global-1"},
 		FailMode:  failMode,
-	}, nil, 0, maxBodyBytes)
+	}, maxBodyBytes)
+}
+
+func mustNewChecker(t *testing.T, cfg *Config, maxBodyBytes int64) Checker {
+	t.Helper()
+	checker, err := NewChecker(cfg, nil, 0, maxBodyBytes)
+	require.NoError(t, err)
+	return checker
 }
 
 func TestNeMoChecker_CheckRequest(t *testing.T) {
@@ -121,11 +128,11 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 	})
 
 	t.Run("unreachable guardrails server applies failMode", func(t *testing.T) {
-		checker := NewChecker(&Config{
+		checker := mustNewChecker(t, &Config{
 			URL:      "http://127.0.0.1:1",
 			Model:    "meta/llama-3.1-8b-instruct",
 			FailMode: FailModeAllow,
-		}, nil, 0, 0)
+		}, 0)
 
 		decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{}`), nil)
 		require.NoError(t, err)
@@ -143,11 +150,11 @@ func TestNeMoChecker_CheckRequest(t *testing.T) {
 			{FailModeDeny, StatusBlocked, "guardrails check failed"},
 		} {
 			t.Run(tc.failMode, func(t *testing.T) {
-				checker := NewChecker(&Config{
+				checker := mustNewChecker(t, &Config{
 					URL:      "http://[",
 					Model:    "meta/llama-3.1-8b-instruct",
 					FailMode: tc.failMode,
-				}, nil, 0, 0)
+				}, 0)
 
 				decision, err := checker.CheckRequest(context.Background(), "execute_sql", json.RawMessage(`{}`), nil)
 				require.NoError(t, err)
