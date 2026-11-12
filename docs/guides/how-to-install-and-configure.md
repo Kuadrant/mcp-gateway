@@ -74,6 +74,34 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 - **ServiceAccount** - For the broker/router pods
 - **Configuration Secret** - `mcp-gateway-config` containing server configuration
 
+> **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`.
+>
+> If the Gateway already references a ConfigMap through `parametersRef`, preserve its configuration instead of running the following commands. If other Gateways share that ConfigMap, copy its data into a new ConfigMap with an unused name and point only this Gateway's `parametersRef` to the copy. Then add `spec.type: ClusterIP` to the selected ConfigMap's `service` configuration, preserving its other settings.
+>
+> Check that `gateway-options` is unused in the Gateway's namespace. If it exists, choose an unused name and replace `gateway-options` in both commands:
+>
+> ```bash
+> kubectl apply -f - <<EOF
+> apiVersion: v1
+> kind: ConfigMap
+> metadata:
+>   name: gateway-options
+>   namespace: gateway-system
+> data:
+>   service: |
+>     spec:
+>       type: ClusterIP
+> EOF
+> kubectl patch gateway your-gateway -n gateway-system --type merge \
+>   -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"gateway-options"}}}}'
+> ```
+>
+> Then reach the gateway with `kubectl port-forward` or your own ingress. For example, for an HTTP listener on port `8080`, run the following and use `MCP_URL="http://localhost:8080/mcp"` in [Verify the Installation](#verify-the-installation):
+>
+> ```bash
+> kubectl port-forward -n gateway-system svc/your-gateway-istio 8080:8080
+> ```
+
 ### What the Controller Configures
 
 The controller reads the targeted Gateway listener (identified by `sectionName`) and uses it to configure the broker/router deployment. The following flags are set automatically based on the listener:
@@ -81,7 +109,7 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 | Flag | Value | Source |
 |------|-------|--------|
 | `--mcp-broker-public-address` | `0.0.0.0:8080` | Fixed |
-| `--mcp-gateway-private-host` | `<gateway>-istio.<namespace>.svc.cluster.local:<listener-port>` | Listener port + Gateway name/namespace |
+| `--mcp-gateway-private-host` | `<gateway>-<gatewayClassName>.<gateway-namespace>.svc.cluster.local:<listener-port>` (with `https://` for HTTPS listeners) | Gateway name, namespace, `gatewayClassName`, listener port and protocol |
 | `--mcp-gateway-public-host` | Listener hostname (wildcards like `*.example.com` become `mcp.example.com`) | Listener hostname |
 | `--mcp-gateway-config` | `/config/config.yaml` | Fixed |
 
@@ -89,9 +117,11 @@ The controller reads the targeted Gateway listener (identified by `sectionName`)
 
 The `--mcp-gateway-private-host` flag enables hair-pinning for **2025-11-25** protocol `tools/call`: the router sends an `initialize` request back through the gateway to establish a backend session. The port in this address matches the listener port from the Gateway spec. **2026-07-28** calls do not hairpin.
 
+This address is the Service the Gateway controller creates for your Gateway, for example `mcp-gateway-istio.gateway-system.svc.cluster.local:8080` for a Gateway named `mcp-gateway` in `gateway-system` with class `istio` and listener port `8080`. Setting `spec.privateHost` on the MCPGatewayExtension overrides it exactly as written, so add `https://` yourself for HTTPS listeners.
+
 #### HTTPS Listeners and `caCertBundleRef`
 
-When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. For **2025-11-25** protocol `tools/call`, the router hairpins an `initialize` request back through that listener and verifies the TLS certificate against the public hostname (`--mcp-gateway-public-host`).
+When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. For **2025-11-25** protocol `tools/call`, the router hairpins an `initialize` request back through that listener and verifies the TLS certificate against the target server's HTTPRoute hostname. The listener certificate must cover those hostnames as well as the public endpoint; see [HTTPS listener setup](./configure-mcp-gateway-listener-and-router.md#https-single-listener).
 
 For listeners using a **private CA** (e.g. cert-manager with a self-signed CA), include that CA in `MCPGatewayExtension.spec.caCertBundleRef`. The same bundle is the broker's base trust pool for upstream MCP servers. If the gateway listener CA and upstream CAs differ, concatenate both PEMs in the Secret. See [Custom CA Certificates](./custom-ca-certificates.md).
 
@@ -133,6 +163,67 @@ After installation, the controller automatically creates the HTTPRoute for gatew
 2. **[Connect to External MCP Servers](./external-mcp-server.md)** - Connect to external APIs
 
 If you need to customize the HTTPRoute (e.g. add CORS headers), see [Configure Gateway Listener and Route](./configure-mcp-gateway-listener-and-router.md).
+
+## Verify the Installation
+
+After registering at least one MCP server (see [Register MCP Servers](./register-mcp-servers.md)), check that the gateway serves tool calls end to end.
+
+This procedure requires a server that supports the 2025 protocol family. Servers supporting only `2026-07-28` are not visible to this `2025-11-25` session. See [Multi Protocol Support](./multi-protocol-support.md) for protocol negotiation and tool visibility.
+
+Set `MCP_URL` to your Gateway listener's scheme, public hostname and port:
+
+```bash
+MCP_URL="http://your-hostname.example.com:8080/mcp"
+```
+
+If authentication is enabled, include the credentials required by your policy in every `curl` request. For bearer tokens, set `ACCESS_TOKEN` to a valid token and add `-H "Authorization: Bearer $ACCESS_TOKEN"`. See [Authentication Configuration](./authentication.md).
+
+1. Initialize a session with protocol version `2025-11-25` and save the session ID:
+
+   ```bash
+   MCP_HEADERS=$(mktemp)
+   curl -s -D "$MCP_HEADERS" -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
+
+   SESSION_ID=$(grep -i "mcp-session-id:" "$MCP_HEADERS" | cut -d' ' -f2 | tr -d '\r')
+   rm -f "$MCP_HEADERS"
+   ```
+
+2. Check that your MCPServerRegistration is ready:
+
+   ```bash
+   kubectl get mcpsr -A
+   ```
+
+   The `READY` column should show `True`.
+
+3. List tools:
+
+   ```bash
+   curl -s -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "mcp-session-id: $SESSION_ID" \
+     -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
+   ```
+
+   The response should include your server's tools, prefixed with the `prefix` from its MCPServerRegistration.
+
+4. Call one of those tools. Replace `<tool-name>` and `arguments` with a prefixed tool from the `tools/list` response and its input (not `discover_tools` or `select_tools`, which the gateway answers itself):
+
+   ```bash
+   curl -s -w '\nHTTP %{http_code}\n' -X POST "$MCP_URL" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "mcp-session-id: $SESSION_ID" \
+     -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "<tool-name>", "arguments": {}}}'
+   ```
+
+   The response should contain a `result` without `"isError": true`, and end with `HTTP 200`. Depending on the server, the body comes back as plain JSON or as a `data:` line in an event stream. If the call fails, note the HTTP status and see [tools/list Works but tools/call Fails](./troubleshooting.md#toolslist-works-but-toolscall-fails).
+
+> **Note:** Don't stop at `tools/list`. The broker answers `initialize` and `tools/list` itself, so both succeed even when the Gateway listener layout or the private host is wrong. `tools/call` (like `prompts/get` and `resources/read`) is routed through your server's HTTPRoute, and for `2025-11-25` sessions the router first hairpins an `initialize` request through the private host. That's why this check uses `2025-11-25`: with `2026-07-28` there is no hairpin, so a wrong private host would go unnoticed.
 
 ## API Reference
 

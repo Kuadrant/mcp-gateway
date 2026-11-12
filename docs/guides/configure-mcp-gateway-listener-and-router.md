@@ -61,6 +61,10 @@ You should see both `mcp` and `mcps` in the output.
 
 With HTTPS, use a **single listener** for both client traffic and backend server routing. Envoy uses TLS SNI to select filter chains, and each HTTPS listener gets its own isolated filter chain with its own route table. When the router handles a `tools/call`, it re-routes the request to the backend by changing the `:authority` header — but this can only reach routes within the same filter chain. A backend HTTPRoute on a separate HTTPS listener is unreachable from the client's filter chain.
 
+Before applying the patch, create the `mcp-gateway-tls-cert` TLS Secret in the Gateway's namespace. Its certificate must cover the public endpoint and, for `2025-11-25` hairpin requests, each registered server's HTTPRoute hostname. A certificate for `*.mcp-gateway.example.com` covers both `mcp.mcp-gateway.example.com` and `server1.mcp-gateway.example.com` in this example.
+
+For `2025-11-25`, if the listener CA is not trusted by the gateway's system roots, configure the extension's `spec.caCertBundleRef` as described in [Gateway Listener CA](./custom-ca-certificates.md#gateway-listener-ca-2025-11-25-hairpin). This configures gateway hairpin trust; `curl --cacert` configures only the client making that request.
+
 ```bash
 kubectl patch gateway your-gateway-name -n your-gateway-namespace --type merge -p '
 spec:
@@ -92,11 +96,35 @@ kubectl get gateway your-gateway-name -n your-gateway-namespace -o jsonpath='{.s
 
 You should see `mcp-tls` in the output.
 
-> **Important:** If you installed MCP Gateway using Helm, ensure the `gateway.publicHost` value in your Helm values matches the hostname above. For example:
-> ```bash
-> helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
->   --set gateway.publicHost=mcp.127-0-0-1.sslip.io
-> ```
+Configure the MCPGatewayExtension to target `mcp-tls` and use `mcp.mcp-gateway.example.com` as its public hostname. This keeps the generated `mcp-gateway-route` hostname within the listener's wildcard. Update an existing extension when switching from HTTP to HTTPS.
+
+For a Helm-managed extension, set `MCP_GATEWAY_VERSION` to the installed chart version shown by `helm list -A`. Replace the release name and namespace if yours differ; `--reuse-values` preserves your other settings:
+
+```bash
+helm upgrade mcp-gateway oci://ghcr.io/kuadrant/charts/mcp-gateway \
+  --version "${MCP_GATEWAY_VERSION}" \
+  --namespace mcp-system \
+  --reuse-values \
+  --set mcpGatewayExtension.gatewayRef.sectionName=mcp-tls \
+  --set gateway.publicHost=mcp.mcp-gateway.example.com
+```
+
+For an existing standalone extension, find its name and namespace, then update both fields:
+
+```bash
+kubectl get mcpgatewayextension -A
+kubectl patch mcpgatewayextension your-extension-name -n your-extension-namespace \
+  --type merge -p '{"spec":{"targetRef":{"sectionName":"mcp-tls"},"publicHost":"mcp.mcp-gateway.example.com"}}'
+```
+
+If you need to create a standalone extension, use [Step 1 of Register MCP Servers](./register-mcp-servers.md#step-1-ensure-mcpgatewayextension-exists) with `sectionName: mcp-tls`. Without a `spec.publicHost` override, the controller derives `mcp.mcp-gateway.example.com` from this listener's wildcard.
+
+Confirm that the extension is Ready before registering servers:
+
+```bash
+kubectl wait --for=condition=Ready mcpgatewayextension/your-extension-name \
+  -n your-extension-namespace --timeout=60s
+```
 
 ## Step 2: HTTPRoute (Automatic)
 

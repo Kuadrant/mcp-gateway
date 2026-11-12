@@ -156,6 +156,15 @@ kubectl get deployment mcp-gateway -n mcp-system
 > [Isolated Gateway Deployment](./isolated-gateway-deployment.md) and
 > [Configure MCP Gateway Listener and Router](./configure-mcp-gateway-listener-and-router.md).
 
+## Step 4: Verify end to end
+
+After registering at least one MCP server (see [Register MCP Servers](./register-mcp-servers.md)),
+follow [Verify the Installation](./how-to-install-and-configure.md#verify-the-installation):
+initialize a `2025-11-25` session, check that the MCPServerRegistration is ready, then run
+`tools/list` and `tools/call`. Don't stop at `tools/list`: it succeeds even when the Gateway
+listener layout or the [private host](../reference/mcpgatewayextension.md#mcpgatewayextensionspec)
+is wrong. `tools/call` catches both.
+
 ## Uninstall
 
 Removing MCP Gateway means removing your `MCPGatewayExtension` resources (which the Kuadrant
