@@ -56,7 +56,7 @@ if [ "$INSTALL_RHCL" = "true" ]; then
 
   echo "Waiting for RHCL Operator 1.5.0 or newer..."
   while :; do
-    RHCL_CSV="$(oc get subscription/rhcl-operator -n kuadrant-system \
+    RHCL_CSV="$(oc get subscriptions.operators.coreos.com/rhcl-operator -n kuadrant-system \
       -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
     if [ -n "$RHCL_CSV" ] &&
       [ "$(oc get csv "$RHCL_CSV" -n kuadrant-system \
