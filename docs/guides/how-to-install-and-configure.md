@@ -76,7 +76,7 @@ When the MCPGatewayExtension becomes ready, the controller automatically creates
 
 > **Note:** Istio creates the Gateway's Service as type `LoadBalancer`. On clusters without a load balancer, its external address stays pending. To use `ClusterIP` instead (Istio 1.26 or later), create a ConfigMap in the Gateway's namespace and reference it from the Gateway's `spec.infrastructure.parametersRef`.
 >
-> If the Gateway already references a ConfigMap through `parametersRef`, add `spec.type: ClusterIP` to its `service` configuration, preserving its other settings, instead of running the following commands.
+> If the Gateway already references a ConfigMap through `parametersRef`, preserve its configuration instead of running the following commands. If other Gateways share that ConfigMap, copy its data into a new ConfigMap with an unused name and point only this Gateway's `parametersRef` to the copy. Then add `spec.type: ClusterIP` to the selected ConfigMap's `service` configuration, preserving its other settings.
 >
 > Check that `gateway-options` is unused in the Gateway's namespace. If it exists, choose an unused name and replace `gateway-options` in both commands:
 >
@@ -121,7 +121,7 @@ This address is the Service the Gateway controller creates for your Gateway, for
 
 #### HTTPS Listeners and `caCertBundleRef`
 
-When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. For **2025-11-25** protocol `tools/call`, the router hairpins an `initialize` request back through that listener and verifies the TLS certificate against the public hostname (`--mcp-gateway-public-host`).
+When the targeted Gateway listener uses HTTPS, the controller automatically prepends `https://` to the private host. For **2025-11-25** protocol `tools/call`, the router hairpins an `initialize` request back through that listener and verifies the TLS certificate against the target server's HTTPRoute hostname. The listener certificate must cover those hostnames as well as the public endpoint; see [HTTPS listener setup](./configure-mcp-gateway-listener-and-router.md#https-single-listener).
 
 For listeners using a **private CA** (e.g. cert-manager with a self-signed CA), include that CA in `MCPGatewayExtension.spec.caCertBundleRef`. The same bundle is the broker's base trust pool for upstream MCP servers. If the gateway listener CA and upstream CAs differ, concatenate both PEMs in the Secret. See [Custom CA Certificates](./custom-ca-certificates.md).
 

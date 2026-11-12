@@ -26,7 +26,7 @@ To connect an MCP server to MCP Gateway, you must create an `HTTPRoute` that rou
 
 An MCPGatewayExtension tells the controller which Gateway this MCP Gateway instance serves. Without it, MCPServerRegistration resources will remain in NotReady status.
 
-> **Note:** Only one MCPGatewayExtension is allowed per namespace. The `sectionName` field selects which listener on the Gateway to use, but each namespace can only have one MCPGatewayExtension. If you followed the [quick start](./quick-start.md) or [install guide](./how-to-install-and-configure.md), an MCPGatewayExtension already exists. Check with `kubectl get mcpgatewayextension -A`. If one is already present and Ready, skip to Step 2.
+> **Note:** Only one MCPGatewayExtension is allowed per namespace. The `sectionName` field selects which listener on the Gateway to use, but each namespace can only have one MCPGatewayExtension. If you followed the [quick start](./quick-start.md) or [install guide](./how-to-install-and-configure.md), an MCPGatewayExtension already exists. Check with `kubectl get mcpgatewayextension -A`. For HTTPS, follow [HTTPS listener setup](./configure-mcp-gateway-listener-and-router.md#https-single-listener) to update its listener target, public hostname and TLS trust. Once the existing extension targets the correct listener and is Ready, skip to Step 2.
 
 If you need to create one, set `spec.targetRef.sectionName` to your client-facing listener's name. For the [HTTPS configuration](./configure-mcp-gateway-listener-and-router.md#https-single-listener), replace `sectionName: mcp` below with `sectionName: mcp-tls`:
 
@@ -162,7 +162,7 @@ kubectl describe mcpsr my-mcp-server -n mcp-test
 
 Verify that your MCP server tools are available through the gateway by using the following commands:
 
-The commands in Steps 5–9 use an HTTP example endpoint. For HTTPS, replace `http://mcp.127-0-0-1.sslip.io:8001/mcp` in every command with your HTTPS endpoint, using the public hostname covered by the listener's certificate (for example, `https://mcp.mcp-gateway.example.com/mcp`). If the certificate uses a private CA, add `--cacert /path/to/ca.crt` to each `curl` request.
+The commands in Steps 5–9 use an HTTP example endpoint. For HTTPS, complete [HTTPS listener setup](./configure-mcp-gateway-listener-and-router.md#https-single-listener), then replace `http://mcp.127-0-0-1.sslip.io:8001/mcp` in every command with your HTTPS endpoint (for example, `https://mcp.mcp-gateway.example.com/mcp`). If the certificate uses a private CA, add `--cacert /path/to/ca.crt` to each `curl` request.
 
 ```bash
 # Step 1: Initialize MCP session and capture session ID
