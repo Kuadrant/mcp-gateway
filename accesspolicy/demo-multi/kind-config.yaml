@@ -1,0 +1,9 @@
+# Kind cluster configuration for accesspolicy-controller quickstart demo
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: accesspolicy-demo
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.32.0
+  - role: worker
+    image: kindest/node:v1.32.0
