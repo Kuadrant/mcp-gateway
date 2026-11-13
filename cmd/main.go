@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -151,6 +152,21 @@ func main() {
 		MCPExtNamespaceLister: mcpExtFinderValidator,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
+	}
+
+	// cluster-wide protocol version usage for telemetry; "0" disables
+	telemetryInterval, err := time.ParseDuration(goenv.GetDefault("PROTOCOL_TELEMETRY_INTERVAL", "5m"))
+	if err != nil {
+		panic("invalid PROTOCOL_TELEMETRY_INTERVAL: " + err.Error())
+	}
+	if telemetryInterval > 0 {
+		if err := mgr.Add(&controller.ProtocolTelemetryCollector{
+			Reader:   mgr.GetAPIReader(),
+			Logger:   slogger.With("component", "protocol-telemetry"),
+			Interval: telemetryInterval,
+		}); err != nil {
+			panic("unable to start manager : " + err.Error())
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -478,3 +478,10 @@ limitador
 linkset
 unpoliced
 rebindable
+baselined
+ctrlmetrics
+dedupe
+expfmt
+metricdata
+sdkmetric
+testutil

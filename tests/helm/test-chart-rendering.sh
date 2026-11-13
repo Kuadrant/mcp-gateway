@@ -104,4 +104,28 @@ explicit_private_host=$(render test-release \
     | "$YQ" eval 'select(.kind == "MCPGatewayExtension") | .spec.privateHost' -)
 assert_eq "$explicit_private_host" "https://custom-gateway:443" "explicit privateHost override is preserved"
 
+telemetry_interval=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "PROTOCOL_TELEMETRY_INTERVAL") | .value' -)
+assert_eq "$telemetry_interval" "5m" "controller gets the default telemetry interval"
+
+monitors=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "ServiceMonitor" or .kind == "PrometheusRule") | .kind' - | grep -c . || true)
+assert_eq "$monitors" "0" "platform monitoring is off by default"
+
+monitoring=$(render test-release --namespace source-one --set telemetry.openshiftPlatformMonitoring.enabled=true)
+recording_rules=$(printf '%s\n' "$monitoring" | "$YQ" eval 'select(.kind == "PrometheusRule") | .spec.groups[0].rules[].record' - | tr '\n' ' ')
+assert_eq "$recording_rules" "cluster:mcp_gateway_client_requests:increase24h cluster:mcp_gateway_upstream_servers:sum " "telemetry recording rules"
+prom_subject=$(printf '%s\n' "$monitoring" | "$YQ" eval 'select(.kind == "RoleBinding") | .subjects[0].namespace + "/" + .subjects[0].name' -)
+assert_eq "$prom_subject" "openshift-monitoring/prometheus-k8s" "platform Prometheus can discover the controller"
+svc_selector=$(printf '%s\n' "$monitoring" | "$YQ" eval 'select(.kind == "ServiceMonitor") | .spec.selector.matchLabels.component' -)
+assert_eq "$svc_selector" "controller" "ServiceMonitor selects the controller metrics Service"
+
+split=$(render test-release --namespace source-one \
+    --set telemetry.openshiftPlatformMonitoring.enabled=true \
+    --set telemetry.openshiftPlatformMonitoring.namespace=mcp-telemetry)
+split_ns=$(printf '%s\n' "$split" | "$YQ" eval 'select(.kind == "ServiceMonitor" or .kind == "PrometheusRule") | .metadata.namespace' - | grep -v '^---$' | sort -u | tr '\n' ' ')
+assert_eq "$split_ns" "mcp-telemetry " "monitors and rules go to the telemetry namespace"
+split_target=$(printf '%s\n' "$split" | "$YQ" eval 'select(.kind == "ServiceMonitor") | .spec.namespaceSelector.matchNames[0]' -)
+assert_eq "$split_target" "source-one" "ServiceMonitor targets the release namespace"
+split_svc=$(printf '%s\n' "$split" | "$YQ" eval 'select(.kind == "Service" or .kind == "Role") | .metadata.namespace' - | grep -v '^---$' | sort -u | tr '\n' ' ')
+assert_eq "$split_svc" "source-one " "Service and prometheus-k8s Role stay in the release namespace"
+
 echo "PASS: chart and CRD rendering checks passed"

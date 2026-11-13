@@ -605,6 +605,10 @@ Optional infra in `config/test-servers/nemo-guardrails/` (`llm-d-inference-sim` 
 - `guardrails-config-ids: e2e-unknown-config` makes NeMo return 422, so with `failMode: deny` the call must be HTTP 503 "guardrails check unavailable". That only happens if the per-server ID reached the router. Raw HTTP, since the SDK drops a 503 body.
 - **Nightly / on-demand only** (`[Full]` tag).
 
+### [Happy] Broker reports MCP protocol version telemetry
+
+- A stateful (2025) client and a stateless (2026-07-28) client each list tools through the gateway. The broker metrics endpoint (pod port 9090) must show `mcp_router_client_requests_total` growing for a stateful label (`2025-11-25` or `older`) and for `2026-07-28`. Counters are shared with parallel specs, so only growth is asserted. `mcp_broker_upstream_servers` must report at least one upstream and a point for every bounded label, including `unknown`.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

@@ -1,0 +1,97 @@
+{{- if and .Values.controller.enabled .Values.telemetry.openshiftPlatformMonitoring.enabled }}
+{{- $monNs := .Values.telemetry.openshiftPlatformMonitoring.namespace | default .Release.Namespace }}
+# OpenShift platform monitoring for MCP protocol version telemetry. Platform
+# Prometheus only loads monitors and rules from namespaces labelled
+# openshift.io/cluster-monitoring=true.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    component: controller
+spec:
+  selector:
+    {{- include "mcp-gateway.controllerSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 8082
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-controller
+  namespace: {{ $monNs }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "mcp-gateway.selectorLabels" . | nindent 6 }}
+      component: controller
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
+      scheme: http
+      metricRelabelings:
+        # only the telemetry series are needed in platform Prometheus
+        - sourceLabels: [__name__]
+          regex: mcp_gateway_.*
+          action: keep
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-telemetry
+  namespace: {{ $monNs }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: mcp-gateway-telemetry
+      rules:
+        # cluster-wide client requests in the last 24h by declared MCP protocol version
+        - record: cluster:mcp_gateway_client_requests:increase24h
+          expr: sum by (protocol_version) (increase(mcp_gateway_client_requests_total[24h])) > 0
+        # cluster-wide upstream MCP servers by newest supported protocol version
+        - record: cluster:mcp_gateway_upstream_servers:sum
+          expr: sum by (protocol_version) (mcp_gateway_upstream_servers) > 0
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-prometheus-k8s
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-prometheus-k8s
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "mcp-gateway.fullname" . }}-prometheus-k8s
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-k8s
+    namespace: openshift-monitoring
+{{- end }}
