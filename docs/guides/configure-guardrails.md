@@ -95,7 +95,7 @@ kubectl get mcpgatewayextension $MCP_GATEWAY_EXT -n $MCP_GATEWAY_NS \
 
 `status` should be `True` and `reason` should be `GuardrailsSecretResolved`. `Ready` stays `True` when the rest of the extension is valid.
 
-> **Note:** If the Secret is missing or lacks the `mcp.kuadrant.io/secret: "true"` label, both `Ready` and `GuardrailsResolved` become `False` with reason `GuardrailsSecretNotFound`. A labeled Secret with the wrong type or a bad `config.yaml` uses reason `GuardrailsSecretInvalid`. While either reason is set, every `MCPServerRegistration` on the gateway is `NotReady` with reason `GatewayGuardrailsNotConfigured` and removed from the gateway config, so no tools are served unchecked.
+> **Note:** If the Secret is missing, both `Ready` and `GuardrailsResolved` become `False` with reason `GuardrailsSecretNotFound`. A Secret with the wrong label, type, or a bad `config.yaml` uses reason `GuardrailsSecretInvalid`. While either reason is set, every `MCPServerRegistration` on the gateway is `NotReady` with reason `GatewayGuardrailsNotConfigured` and removed from the gateway config, so no tools are served unchecked.
 
 ### Step 3: Test a tool call request
 
