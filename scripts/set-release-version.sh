@@ -54,7 +54,7 @@ done
 # Update config/mcp-system deployment images
 CONTROLLER_DEPLOY="$REPO_ROOT/config/mcp-system/deployment-controller.yaml"
 if [ -f "$CONTROLLER_DEPLOY" ]; then
-    sed -i.bak -E "s|image: ghcr.io/kuadrant/mcp-controller:.+|image: ghcr.io/kuadrant/mcp-controller:v$VERSION|" "$CONTROLLER_DEPLOY"
+    sed -i.bak -E "s#image: (ghcr\.io|quay\.io)/kuadrant/mcp-controller:.+#image: quay.io/kuadrant/mcp-controller:v$VERSION#" "$CONTROLLER_DEPLOY"
     rm -f "$CONTROLLER_DEPLOY.bak"
     echo "Updated: $CONTROLLER_DEPLOY"
 else
@@ -63,7 +63,7 @@ fi
 
 BROKER_DEPLOY="$REPO_ROOT/config/mcp-system/deployment-broker.yaml"
 if [ -f "$BROKER_DEPLOY" ]; then
-    sed -i.bak -E "s|image: ghcr.io/kuadrant/mcp-gateway:.+|image: ghcr.io/kuadrant/mcp-gateway:v$VERSION|" "$BROKER_DEPLOY"
+    sed -i.bak -E "s#image: (ghcr\.io|quay\.io)/kuadrant/mcp-gateway:.+#image: quay.io/kuadrant/mcp-gateway:v$VERSION#" "$BROKER_DEPLOY"
     rm -f "$BROKER_DEPLOY.bak"
     echo "Updated: $BROKER_DEPLOY"
 else

@@ -29,7 +29,7 @@ const (
 	tokensHTTPRouteName  = "mcp-gateway-tokens-route" //nolint:gosec // not a credential
 
 	// DefaultBrokerRouterImage is the default image for the broker-router deployment
-	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"
+	DefaultBrokerRouterImage = "quay.io/kuadrant/mcp-gateway:latest"
 
 	// broker-router ports
 	brokerHTTPPort    = 8080

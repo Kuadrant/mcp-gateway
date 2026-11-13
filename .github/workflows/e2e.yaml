@@ -132,7 +132,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: ghcr.io/kuadrant/mcp-gateway:latest
+          tags: quay.io/kuadrant/mcp-gateway:latest
           build-args: |
             LDFLAGS=${{ steps.ldflags.outputs.ldflags }}
           cache-from: type=gha,scope=gateway-image
@@ -144,7 +144,7 @@ jobs:
           context: .
           file: Dockerfile.controller
           load: true
-          tags: ghcr.io/kuadrant/mcp-controller:latest
+          tags: quay.io/kuadrant/mcp-controller:latest
           cache-from: type=gha,scope=controller-image
           cache-to: type=gha,mode=max,scope=controller-image
 

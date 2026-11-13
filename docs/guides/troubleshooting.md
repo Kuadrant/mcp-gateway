@@ -58,7 +58,7 @@ kubectl logs -n mcp-system <pod-name>
 ```
 
 **Common Causes**:
-- **ImagePullBackOff**: Check image repository access and credentials
+- **ImagePullBackOff**: Check access to `quay.io`, which hosts the `mcp-gateway` and `mcp-controller` container images, and verify the image name, tag, and credentials. Helm charts are hosted separately on `ghcr.io`.
 - **CrashLoopBackOff**: Check logs for application errors
 - **Pending**: Check resource availability and node capacity
 - **Init Container Failures**: Check RBAC permissions
