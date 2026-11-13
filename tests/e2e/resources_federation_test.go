@@ -36,6 +36,12 @@ var _ = Describe("Resources Federation", Ordered, func() {
 	)
 
 	BeforeAll(func() {
+		DeferCleanup(func() {
+			if resourcesFedExt != nil {
+				resourcesFedExt.TearDown(ctx)
+			}
+		})
+
 		By("Creating resources-federation namespace")
 		ns := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -72,12 +78,6 @@ var _ = Describe("Resources Federation", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 
 		resourcesFedURL = ResourcesFederationGatewayURL
-	})
-
-	AfterAll(func() {
-		if resourcesFedExt != nil {
-			resourcesFedExt.TearDown(ctx)
-		}
 	})
 
 	AfterEach(func() {

@@ -41,7 +41,7 @@ ci-setup: tools kind-create-cluster ci-gateway-images gateway-api-install ci-ins
 	# gateway HTTPS cert (mcp-gateway-tls-cert) and the TLS test server cert.
 	# Must run before deploy-gateway so the mcp-tls listener has its cert ready.
 	"$(MAKE)" deploy-tls-test-server
-	# Deploy standard mcp-gateway (includes mcp-tls HTTPS listener)
+	# Deploy standard mcp-gateway
 	"$(MAKE)" deploy-gateway
 	# Deploy e2e gateways (gateway-1, gateway-2)
 	"$(MAKE)" deploy-e2e-gateways
