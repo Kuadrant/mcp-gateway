@@ -35,6 +35,12 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 	)
 
 	BeforeAll(func() {
+		DeferCleanup(func() {
+			if toolDiscExt != nil {
+				toolDiscExt.TearDown(ctx)
+			}
+		})
+
 		By("Creating tool-discovery namespace")
 		ns := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -69,12 +75,6 @@ var _ = Describe("Tool Discovery", Ordered, func() {
 			err := WaitForDeploymentReady(ctx, toolDiscNamespace, "mcp-gateway")
 			g.Expect(err).NotTo(HaveOccurred())
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
-	})
-
-	AfterAll(func() {
-		if toolDiscExt != nil {
-			toolDiscExt.TearDown(ctx)
-		}
 	})
 
 	newGatewayClient := func() {
