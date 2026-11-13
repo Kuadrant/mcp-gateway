@@ -42,6 +42,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: RELATED_IMAGE_ROUTER_BROKER
               value: {{ include "mcp-gateway.image" . }}
+            - name: PROTOCOL_TELEMETRY_INTERVAL
+              value: {{ .Values.telemetry.interval | quote }}
           ports:
             - name: health
               containerPort: 8081

@@ -25,6 +25,9 @@ spec:
           protocol: TCP
         - port: 6443
           protocol: TCP
+        # broker metrics, scraped for protocol version telemetry
+        - port: 9090
+          protocol: TCP
         - port: 53
           protocol: TCP
         - port: 53
