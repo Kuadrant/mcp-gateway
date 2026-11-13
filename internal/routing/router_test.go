@@ -210,7 +210,7 @@ func TestMCPRequestValid(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "initialize",
-				Params:  map[string]any{},
+				Params:  &Params{},
 				ID:      ptr.To(2),
 			},
 			ExpectErr: nil,
@@ -220,7 +220,7 @@ func TestMCPRequestValid(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "notifications/initialize",
-				Params:  map[string]any{},
+				Params:  &Params{},
 			},
 			ExpectErr: nil,
 		},
@@ -229,7 +229,7 @@ func TestMCPRequestValid(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "1.0",
 				Method:  "initialize",
-				Params:  map[string]any{},
+				Params:  &Params{},
 				ID:      ptr.To(2),
 			},
 			ExpectErr: ErrInvalidRequest,
@@ -239,7 +239,7 @@ func TestMCPRequestValid(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "",
-				Params:  map[string]any{},
+				Params:  &Params{},
 				ID:      ptr.To(2),
 			},
 			ExpectErr: ErrInvalidRequest,
@@ -249,7 +249,7 @@ func TestMCPRequestValid(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params:  map[string]any{},
+				Params:  &Params{},
 			},
 			ExpectErr: ErrInvalidRequest,
 		},
@@ -286,8 +286,8 @@ func TestMCPRequestToolName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params: map[string]any{
-					"name": "test_tool",
+				Params: &Params{
+					Name: "test_tool",
 				},
 			},
 			ExpectTool: "test_tool",
@@ -297,8 +297,8 @@ func TestMCPRequestToolName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params: map[string]any{
-					"name": "",
+				Params: &Params{
+					Name: "",
 				},
 			},
 			ExpectTool: "",
@@ -308,8 +308,8 @@ func TestMCPRequestToolName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "initialise",
-				Params: map[string]any{
-					"name": "test",
+				Params: &Params{
+					Name: "test",
 				},
 			},
 			ExpectTool: "",
@@ -319,9 +319,16 @@ func TestMCPRequestToolName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "initialise",
-				Params: map[string]any{
-					"name": 2,
-				},
+				Params:  rawParams(`{"name":2}`),
+			},
+			ExpectTool: "",
+		},
+		{
+			Name: "test with numeric tool name",
+			Input: &MCPRequest{
+				JSONRPC: "2.0",
+				Method:  "tools/call",
+				Params:  rawParams(`{"name":2}`),
 			},
 			ExpectTool: "",
 		},
@@ -398,9 +405,9 @@ func TestHandleRequestBody(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params: map[string]any{
-			"name":  "s_mytool",
-			"other": "other",
+		Params: &Params{
+			Name:  "s_mytool",
+			Extra: map[string]json.RawMessage{"other": json.RawMessage(`"other"`)},
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -699,7 +706,7 @@ func TestRouteRequest_PrefixFallback(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "gh_user_specific_tool"},
+		Params:  &Params{Name: "gh_user_specific_tool"},
 		Headers: map[string]string{"mcp-session-id": validToken},
 	}
 
@@ -713,19 +720,77 @@ func TestRouteRequest_PrefixFallback(t *testing.T) {
 	require.Contains(t, decision.UnsetHeaders, "x-mcp-authorized")
 }
 
+// upstreamParams decodes the params object of a rewritten upstream body,
+// keeping each value as raw JSON so tests can compare it byte-for-byte.
+func upstreamParams(t *testing.T, body []byte) map[string]json.RawMessage {
+	t.Helper()
+	var msg struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	require.NoError(t, json.Unmarshal(body, &msg))
+	require.NotEmpty(t, msg.Params)
+	return msg.Params
+}
+
+// rawParams decodes params through Params.UnmarshalJSON, the real input path.
+func rawParams(s string) *Params {
+	var p Params
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		panic(err)
+	}
+	return &p
+}
+
+// TestRouter202511_ToolCallPreservesParams verifies the re-marshaled upstream
+// body keeps every params key, not only the ones the router reads.
+func TestRouter202511_ToolCallPreservesParams(t *testing.T) {
+	serverConfigs := []*config.MCPServer{
+		{
+			Name:     "dummy",
+			URL:      "http://localhost:8080/mcp",
+			Prefix:   "s_",
+			State:    "Enabled",
+			Hostname: "localhost",
+		},
+	}
+	router, validToken := newTestRouter(t, serverConfigs, map[string]string{"s_mytool": "dummy"}, map[string]string{})
+	_, err := router.SessionCache.AddSession(context.Background(), validToken, "dummy", "upstream-session-123", 0)
+	require.NoError(t, err)
+
+	var req MCPRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+		"name":"s_mytool",
+		"arguments":{"city":"Dublin","id":12345678901234567890},
+		"_meta":{"progressToken":"tok-1"},
+		"x-custom":{"a":1}
+	}}`), &req))
+	req.Headers = map[string]string{"mcp-session-id": validToken}
+
+	decision := router.RouteRequest(context.Background(), &Request{Parsed: &req})
+	require.Nil(t, decision.Error)
+
+	params := upstreamParams(t, decision.BodyMutation)
+	require.Len(t, params, 4)
+	require.JSONEq(t, `"mytool"`, string(params["name"]))
+	// byte compare: JSONEq decodes numbers to float64 and would hide corruption
+	require.Equal(t, `{"city":"Dublin","id":12345678901234567890}`, string(params["arguments"]))
+	require.JSONEq(t, `{"progressToken":"tok-1"}`, string(params["_meta"]))
+	require.JSONEq(t, `{"a":1}`, string(params["x-custom"]))
+}
+
 func TestMCPRequest_ReWriteToolName(t *testing.T) {
 	req := &MCPRequest{
-		Params: map[string]any{
-			"name":      "prefix_original_tool",
-			"arguments": map[string]any{"key": "value"},
+		Params: &Params{
+			Name:      "prefix_original_tool",
+			Arguments: json.RawMessage(`{"key":"value"}`),
 		},
 	}
 
 	req.ReWriteToolName("original_tool")
 
-	require.Equal(t, "original_tool", req.Params["name"])
+	require.Equal(t, "original_tool", req.Params.Name)
 	// other params should be unchanged
-	require.Equal(t, map[string]any{"key": "value"}, req.Params["arguments"])
+	require.Equal(t, `{"key":"value"}`, string(req.Params.Arguments))
 }
 
 func TestMCPRequest_ToBytes(t *testing.T) {
@@ -733,8 +798,8 @@ func TestMCPRequest_ToBytes(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "test_tool",
+		Params: &Params{
+			Name: "test_tool",
 		},
 	}
 
@@ -1324,9 +1389,9 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 			ID:      ptr.To(0),
 			JSONRPC: "2.0",
 			Method:  MethodToolCall,
-			Params: map[string]any{
-				"name":      "s_mytool",
-				"arguments": map[string]any{"query": "SELECT 1"},
+			Params: &Params{
+				Name:      "s_mytool",
+				Arguments: json.RawMessage(`{"query":"SELECT 1"}`),
 			},
 			Headers: map[string]string{"mcp-session-id": validToken},
 		}
@@ -1365,8 +1430,8 @@ func TestRouteToolCall_Guardrails(t *testing.T) {
 		require.Equal(t, "localhost", decision.Authority)
 		var restored MCPRequest
 		require.NoError(t, json.Unmarshal(decision.BodyMutation, &restored))
-		require.Equal(t, "mytool", restored.Params["name"])
-		require.Equal(t, map[string]any{"query": "SELECT [redacted]"}, restored.Params["arguments"])
+		require.Equal(t, "mytool", restored.Params.Name)
+		require.JSONEq(t, `{"query":"SELECT [redacted]"}`, string(restored.Params.Arguments))
 	})
 
 	t.Run("empty merged config IDs skip the check", func(t *testing.T) {
@@ -1578,7 +1643,7 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "s_mytool"},
+		Params:  &Params{Name: "s_mytool"},
 		Headers: map[string]string{
 			"mcp-session-id":      validToken,
 			"mcp-init-host":       "attacker.example.com",
@@ -1687,7 +1752,7 @@ func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 				ID:      ptr.To(0),
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params:  map[string]any{"name": "s_mytool"},
+				Params:  &Params{Name: "s_mytool"},
 				Headers: map[string]string{
 					"mcp-session-id": validToken,
 					"authorization":  "Bearer client-token",
@@ -1714,8 +1779,8 @@ func TestMCPRequest_PromptName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "prompts/get",
-				Params: map[string]any{
-					"name": "test_prompt",
+				Params: &Params{
+					Name: "test_prompt",
 				},
 			},
 			ExpectPrompt: "test_prompt",
@@ -1725,8 +1790,8 @@ func TestMCPRequest_PromptName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params: map[string]any{
-					"name": "test",
+				Params: &Params{
+					Name: "test",
 				},
 			},
 			ExpectPrompt: "",
@@ -1736,7 +1801,7 @@ func TestMCPRequest_PromptName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "prompts/get",
-				Params:  map[string]any{},
+				Params:  &Params{},
 			},
 			ExpectPrompt: "",
 		},
@@ -1745,9 +1810,7 @@ func TestMCPRequest_PromptName(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "prompts/get",
-				Params: map[string]any{
-					"name": 42,
-				},
+				Params:  rawParams(`{"name":42}`),
 			},
 			ExpectPrompt: "",
 		},
@@ -1806,8 +1869,8 @@ func TestHandlePromptGet(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "prompts/get",
-		Params: map[string]any{
-			"name": "s_myprompt",
+		Params: &Params{
+			Name: "s_myprompt",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -1837,7 +1900,7 @@ func TestMCPRequest_ResourceURI(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "resources/read",
-				Params:  map[string]any{"uri": "ui://s_template.html"},
+				Params:  &Params{URI: "ui://s_template.html"},
 			},
 			ExpectURI: "ui://s_template.html",
 		},
@@ -1846,7 +1909,7 @@ func TestMCPRequest_ResourceURI(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "tools/call",
-				Params:  map[string]any{"uri": "ui://s_template.html"},
+				Params:  &Params{URI: "ui://s_template.html"},
 			},
 			ExpectURI: "",
 		},
@@ -1855,7 +1918,7 @@ func TestMCPRequest_ResourceURI(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "resources/read",
-				Params:  map[string]any{},
+				Params:  &Params{},
 			},
 			ExpectURI: "",
 		},
@@ -1864,7 +1927,7 @@ func TestMCPRequest_ResourceURI(t *testing.T) {
 			Input: &MCPRequest{
 				JSONRPC: "2.0",
 				Method:  "resources/read",
-				Params:  map[string]any{"uri": 42},
+				Params:  rawParams(`{"uri":42}`),
 			},
 			ExpectURI: "",
 		},
@@ -1933,8 +1996,8 @@ func TestHandleResourceRead(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://s_template.html",
+		Params: &Params{
+			URI: "ui://s_template.html",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2007,7 +2070,7 @@ func TestHandleResourceRead_LiveHairpinInit(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params:  map[string]any{"uri": "ui://s_template.html"},
+		Params:  &Params{URI: "ui://s_template.html"},
 		Headers: map[string]string{"mcp-session-id": validToken},
 	}
 
@@ -2032,7 +2095,7 @@ func TestHandleResourceRead_MissingURI(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params:  map[string]any{},
+		Params:  &Params{},
 	}
 
 	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
@@ -2061,8 +2124,8 @@ func TestHandleResourceRead_UnrecognizedPrefix(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://unknown_template.html",
+		Params: &Params{
+			URI: "ui://unknown_template.html",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2083,8 +2146,8 @@ func TestHandleResourceRead_EmptyURI(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "",
+		Params: &Params{
+			URI: "",
 		},
 	}
 
@@ -2111,8 +2174,8 @@ func TestHandleResourceRead_MalformedURI(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "s_no_scheme_here",
+		Params: &Params{
+			URI: "s_no_scheme_here",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2154,8 +2217,8 @@ func TestHandleResourceRead_URIWithQueryParams(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://s_template.html?version=1&name=test",
+		Params: &Params{
+			URI: "ui://s_template.html?version=1&name=test",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2196,8 +2259,8 @@ func TestHandleResourceRead_EmptyPrefix(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://template.html",
+		Params: &Params{
+			URI: "ui://template.html",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2256,8 +2319,8 @@ func TestHandleResourceRead_OverlappingPrefixes(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://app_admin_dashboard.html",
+		Params: &Params{
+			URI: "ui://app_admin_dashboard.html",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2304,8 +2367,8 @@ func TestHandleResourceRead_SingleCharPrefix(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": brokerPrefixedURI,
+		Params: &Params{
+			URI: brokerPrefixedURI,
 		},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
@@ -2347,8 +2410,8 @@ func TestHandleResourceRead_MissingSession(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://s_template.html",
+		Params: &Params{
+			URI: "ui://s_template.html",
 		},
 		Headers: map[string]string{},
 	}
@@ -2365,8 +2428,8 @@ func TestHandleResourceRead_InvalidSessionID(t *testing.T) {
 		ID:      ptr.To(0),
 		JSONRPC: "2.0",
 		Method:  "resources/read",
-		Params: map[string]any{
-			"uri": "ui://s_template.html",
+		Params: &Params{
+			URI: "ui://s_template.html",
 		},
 		Headers: map[string]string{
 			"mcp-session-id": "invalid.token.here",
@@ -2422,7 +2485,7 @@ func TestResolveUpstreamToken_NoElicitationConfig(t *testing.T) {
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "p_tool"},
+		Params: &Params{Name: "p_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 		},
@@ -2450,7 +2513,7 @@ func TestResolveUpstreamToken_CachedTokenInjected(t *testing.T) {
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 		},
@@ -2477,7 +2540,7 @@ func TestResolveUpstreamToken_CacheMiss_ElicitationTriggered(t *testing.T) {
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 			"authorization":  testBearerJWT("user456"),
@@ -2512,7 +2575,7 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 	// client does NOT support elicitation (default)
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 		},
@@ -2537,7 +2600,7 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 	// JWT present but no sub claim → misconfigured OIDC → error
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 			"authorization":  testBearerJWTNoSub(),
@@ -2564,7 +2627,7 @@ func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 		},
@@ -2590,7 +2653,7 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 
 	req := &MCPRequest{
 		ID: ptr.To(1), JSONRPC: "2.0", Method: "tools/call",
-		Params: map[string]any{"name": "gh_tool"},
+		Params: &Params{Name: "gh_tool"},
 		Headers: map[string]string{
 			"mcp-session-id": validToken,
 			"authorization":  testBearerJWT("user123"),
@@ -2725,7 +2788,7 @@ func TestRouter202511_StatelessOnlyToolRejected(t *testing.T) {
 		ID:      ptr.To(1),
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params:  map[string]any{"name": "mytool"},
+		Params:  &Params{Name: "mytool"},
 		Headers: map[string]string{"mcp-session-id": validToken},
 	}
 
@@ -2756,7 +2819,7 @@ func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
 		ID:      ptr.To(2),
 		JSONRPC: "2.0",
 		Method:  "prompts/get",
-		Params:  map[string]any{"name": "myprompt"},
+		Params:  &Params{Name: "myprompt"},
 		Headers: map[string]string{"mcp-session-id": validToken},
 	}
 
