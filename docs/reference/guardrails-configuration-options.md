@@ -83,8 +83,8 @@ HTTPS checks use the system trust store plus the gateway CA bundle from `caCertB
 | **Resource** | **Condition** | **Reason** | **Meaning** |
 |--------------|---------------|------------|-------------|
 | MCPGatewayExtension | `GuardrailsResolved` = `True` | `GuardrailsSecretResolved` | The Secret is valid. Tool calls are checked only when at least one config ID is in effect; if the global `configIDs` and a server's per-server IDs are both empty, that server's calls are not checked |
-| MCPGatewayExtension | `Ready`, `GuardrailsResolved` = `False` | `GuardrailsSecretNotFound` | The referenced Secret does not exist or lacks the `mcp.kuadrant.io/secret: "true"` label |
-| MCPGatewayExtension | `Ready`, `GuardrailsResolved` = `False` | `GuardrailsSecretInvalid` | The Secret has the wrong type or an invalid `config.yaml` |
+| MCPGatewayExtension | `Ready`, `GuardrailsResolved` = `False` | `GuardrailsSecretNotFound` | The referenced Secret does not exist |
+| MCPGatewayExtension | `Ready`, `GuardrailsResolved` = `False` | `GuardrailsSecretInvalid` | The Secret lacks the `mcp.kuadrant.io/secret: "true"` label, has the wrong type, or has an invalid `config.yaml` |
 | MCPServerRegistration | `Ready` = `False` | `GatewayGuardrailsNotConfigured` | The gateway's guardrails Secret is missing or invalid, the server's `mcp.kuadrant.io/guardrails-config-ids` contains no IDs, or the server sets that annotation without `mcp.kuadrant.io/guardrails-ref` on the MCPGatewayExtension. The server is removed from the gateway config |
 
 When `mcp.kuadrant.io/guardrails-ref` is removed or set to an empty value, the controller clears the guardrails config and removes `GuardrailsResolved`.

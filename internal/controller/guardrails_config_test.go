@@ -102,12 +102,13 @@ model: meta/llama-3.1-8b-instruct
 			for i := range tt.secrets {
 				objs[i] = &tt.secrets[i]
 			}
-			fc := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+			apiReader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+			cached := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			writer := &capturingConfigWriter{}
 			r := &MCPGatewayExtensionReconciler{
-				Client:              fc,
-				DirectAPIReader:     fc,
+				Client:              cached,
+				DirectAPIReader:     apiReader,
 				ConfigWriterDeleter: writer,
 			}
 

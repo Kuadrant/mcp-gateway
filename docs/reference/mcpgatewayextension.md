@@ -109,8 +109,8 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | `SecretNotFound` | A referenced secret is missing (trusted headers, session store, or CA cert bundle) |
 | `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle) |
 | `GuardrailsSecretResolved` | The guardrails Secret is valid (`GuardrailsResolved` only) |
-| `GuardrailsSecretNotFound` | The Secret referenced by `mcp.kuadrant.io/guardrails-ref` does not exist or lacks the `mcp.kuadrant.io/secret: "true"` label |
-| `GuardrailsSecretInvalid` | The guardrails Secret has the wrong type or an invalid `config.yaml` |
+| `GuardrailsSecretNotFound` | The Secret referenced by `mcp.kuadrant.io/guardrails-ref` does not exist |
+| `GuardrailsSecretInvalid` | The guardrails Secret lacks the `mcp.kuadrant.io/secret: "true"` label, has the wrong type or an invalid `config.yaml` |
 
 ## Managed NetworkPolicy
 
