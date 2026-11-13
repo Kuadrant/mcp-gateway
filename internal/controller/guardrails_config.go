@@ -24,7 +24,7 @@ func (r *MCPGatewayExtensionReconciler) resolveGuardrails(ctx context.Context, m
 	}
 
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: guardrailsSecretRef, Namespace: mcpExt.Namespace}, secret); err != nil {
+	if err := r.DirectAPIReader.Get(ctx, client.ObjectKey{Name: guardrailsSecretRef, Namespace: mcpExt.Namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, newValidationError(mcpv1.GuardrailsSecretNotFound,
 				fmt.Sprintf("guardrails secret %s not found", guardrailsSecretRef))
