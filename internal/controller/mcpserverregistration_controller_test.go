@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"reflect"
 	"strings"
@@ -269,7 +270,10 @@ func TestDesiredRouteParents(t *testing.T) {
 					snapshot[i] = *tt.parents[i].DeepCopy()
 				}
 			}
-			got := desiredRouteParents(tt.parents, "routes", tt.generation, now, tt.mcpRefs)
+			got, skipped := desiredRouteParents(tt.parents, "routes", tt.generation, now, tt.mcpRefs)
+			if skipped != 0 {
+				t.Errorf("desiredRouteParents() skipped %d entries, want 0", skipped)
+			}
 			if !reflect.DeepEqual(tt.parents, snapshot) {
 				t.Errorf("input mutated: got %#v, want %#v", tt.parents, snapshot)
 			}
@@ -284,8 +288,69 @@ func TestDesiredRouteParents(t *testing.T) {
 					t.Errorf("parent %d has empty conditions", i)
 				}
 			}
-			if again := desiredRouteParents(got, "routes", tt.generation, metav1.NewTime(now.Add(time.Hour)), tt.mcpRefs); !reflect.DeepEqual(again, got) {
+			if again, _ := desiredRouteParents(got, "routes", tt.generation, metav1.NewTime(now.Add(time.Hour)), tt.mcpRefs); !reflect.DeepEqual(again, got) {
 				t.Errorf("repeat call changed output: got %#v, want %#v", again, got)
+			}
+		})
+	}
+}
+
+func TestDesiredRouteParentsParentLimit(t *testing.T) {
+	now := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	accepted := metav1.Condition{Type: "Accepted", Status: metav1.ConditionTrue, Reason: "Accepted", LastTransitionTime: now}
+	foreignEntries := func(n int) ([]gatewayv1.RouteParentStatus, []gatewayv1.ParentReference) {
+		parents := make([]gatewayv1.RouteParentStatus, 0, n)
+		refs := make([]gatewayv1.ParentReference, 0, n)
+		for i := range n {
+			ref := gatewayv1.ParentReference{Name: gatewayv1.ObjectName(fmt.Sprintf("gateway-%d", i))}
+			parents = append(parents, gatewayv1.RouteParentStatus{
+				ParentRef: ref, ControllerName: "istio.io/gateway-controller", Conditions: []metav1.Condition{accepted},
+			})
+			refs = append(refs, ref)
+		}
+		return parents, refs
+	}
+	countMCP := func(parents []gatewayv1.RouteParentStatus) int {
+		n := 0
+		for i := range parents {
+			if parents[i].ControllerName == MCPControllerName {
+				n++
+			}
+		}
+		return n
+	}
+
+	tests := []struct {
+		name        string
+		foreign     int
+		wantLen     int
+		wantMCP     int
+		wantSkipped int
+	}{
+		{name: "fits under the limit", foreign: 10, wantLen: 20, wantMCP: 10, wantSkipped: 0},
+		{name: "exactly reaches the limit", foreign: 16, wantLen: 32, wantMCP: 16, wantSkipped: 0},
+		{name: "stops at the limit", foreign: 20, wantLen: 32, wantMCP: 12, wantSkipped: 8},
+		{name: "route already full", foreign: 32, wantLen: 32, wantMCP: 0, wantSkipped: 32},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parents, refs := foreignEntries(tt.foreign)
+			got, skipped := desiredRouteParents(parents, "routes", 1, now, refs)
+			if len(got) != tt.wantLen {
+				t.Errorf("len(parents) = %d, want %d", len(got), tt.wantLen)
+			}
+			if len(got) > maxRouteParents {
+				t.Errorf("len(parents) = %d exceeds limit %d", len(got), maxRouteParents)
+			}
+			if n := countMCP(got); n != tt.wantMCP {
+				t.Errorf("MCP entries = %d, want %d", n, tt.wantMCP)
+			}
+			if skipped != tt.wantSkipped {
+				t.Errorf("skipped = %d, want %d", skipped, tt.wantSkipped)
+			}
+			again, _ := desiredRouteParents(got, "routes", 1, now, refs)
+			if !reflect.DeepEqual(again, got) {
+				t.Errorf("repeat call changed output")
 			}
 		})
 	}
