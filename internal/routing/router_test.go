@@ -2634,6 +2634,40 @@ func TestBuildSSEToolError(t *testing.T) {
 	require.Equal(t, "something went wrong", envelope.Result.Content[0].Text)
 }
 
+func TestBuildJSONToolResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "2025 error",
+			got:  BuildJSONToolError("req-1", "boom"),
+			want: `{"jsonrpc":"2.0","id":"req-1","result":{"content":[{"type":"text","text":"boom"}],"isError":true}}`,
+		},
+		{
+			name: "2025 result",
+			got:  BuildJSONToolResult(7, "ok"),
+			want: `{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"ok"}]}}`,
+		},
+		{
+			name: "2026 error",
+			got:  Build202607ToolError("req-1", "boom"),
+			want: `{"jsonrpc":"2.0","id":"req-1","result":{"content":[{"type":"text","text":"boom"}],"isError":true,"resultType":"complete"}}`,
+		},
+		{
+			name: "2026 result",
+			got:  Build202607ToolResult(7, "ok"),
+			want: `{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"ok"}],"resultType":"complete"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.JSONEq(t, tc.want, tc.got)
+		})
+	}
+}
+
 func extractSSEData(t *testing.T, sse string) string {
 	t.Helper()
 	const prefix = "data: "

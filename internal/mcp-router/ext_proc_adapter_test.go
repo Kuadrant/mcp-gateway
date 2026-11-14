@@ -1525,8 +1525,8 @@ func TestProcess202607_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
 	// blockAllChecker blocks every response; adapter must send this replacement,
-	// framed as plain JSON (not an SSE event) for the 2026-07-28 protocol.
-	blockedBody := []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))
+	// framed as plain JSON (not an SSE event) with resultType for 2026-07-28.
+	blockedBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"blocked by guardrails"}],"isError":true,"resultType":"complete"}}`)
 
 	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, blockedBody, "application/json")...)
@@ -1559,7 +1559,7 @@ func TestProcess202607_GuardrailsBlocked_MissingContentTypeUsesJSON(t *testing.T
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
-	blockedBody := []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.Build202607ToolError(1, "blocked by guardrails"))
 
 	for _, tc := range []struct {
 		name        string
@@ -1608,13 +1608,13 @@ func TestProcess202607_GuardrailsModified_ReplacementBody(t *testing.T) {
 		{
 			name:       "success",
 			toolResult: `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`,
-			want:       routing.BuildJSONToolResult(1, "redacted"),
+			want:       `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"redacted"}],"resultType":"complete"}}`,
 		},
 		{
 			// redacting a failed call must not make it look successful
 			name:       "isError",
 			toolResult: `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}],"isError":true}}`,
-			want:       `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"redacted"}],"isError":true}}`,
+			want:       `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"redacted"}],"isError":true,"resultType":"complete"}}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

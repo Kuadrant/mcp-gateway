@@ -580,7 +580,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				if guardrailsActive {
 					buildToolError, buildToolResult := routing.BuildSSEToolError, routing.BuildSSEToolResult
-					if responseIsJSON {
+					switch {
+					case effectiveVersion == protocol.Version2026:
+						buildToolError, buildToolResult = routing.Build202607ToolError, routing.Build202607ToolResult
+					case responseIsJSON:
 						buildToolError, buildToolResult = routing.BuildJSONToolError, routing.BuildJSONToolResult
 					}
 					toolName := mcpRequest.ToolName()
