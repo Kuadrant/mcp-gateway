@@ -304,21 +304,10 @@ func BuildSSEToolResult(requestID any, text string) string {
 }
 
 // BuildJSONToolError constructs a plain JSON-RPC error response for a tool
-// call. Used for 2026-07-28 responses, and for 2025-11-25 responses whose
-// Content-Type is application/json rather than text/event-stream.
+// call. Used for 2025-11-25 responses whose Content-Type is application/json
+// rather than text/event-stream. 2026-07-28 responses use Build202607ToolError.
 func BuildJSONToolError(requestID any, message string) string {
-	var b strings.Builder
-	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
-	idBytes, err := json.Marshal(requestID)
-	if err != nil {
-		b.WriteString("null")
-	} else {
-		b.Write(idBytes)
-	}
-	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-	b.WriteString(jsonQuote(message))
-	b.WriteString("}],\"isError\":true}}")
-	return b.String()
+	return buildJSONToolResponse(requestID, message, true, false)
 }
 
 // BuildJSONToolResult constructs a successful plain JSON-RPC tool result.
@@ -326,6 +315,22 @@ func BuildJSONToolError(requestID any, message string) string {
 // the redacted text is a valid result, not an error. Counterpart to
 // BuildSSEToolResult for application/json responses.
 func BuildJSONToolResult(requestID any, text string) string {
+	return buildJSONToolResponse(requestID, text, false, false)
+}
+
+// Build202607ToolError is BuildJSONToolError for 2026-07-28, which requires
+// resultType on every result.
+func Build202607ToolError(requestID any, message string) string {
+	return buildJSONToolResponse(requestID, message, true, true)
+}
+
+// Build202607ToolResult is BuildJSONToolResult for 2026-07-28, which requires
+// resultType on every result.
+func Build202607ToolResult(requestID any, text string) string {
+	return buildJSONToolResponse(requestID, text, false, true)
+}
+
+func buildJSONToolResponse(requestID any, text string, isError, withResultType bool) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
 	idBytes, err := json.Marshal(requestID)
@@ -336,7 +341,14 @@ func BuildJSONToolResult(requestID any, text string) string {
 	}
 	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
 	b.WriteString(jsonQuote(text))
-	b.WriteString("}]}}")
+	b.WriteString("}]")
+	if isError {
+		b.WriteString(",\"isError\":true")
+	}
+	if withResultType {
+		b.WriteString(",\"resultType\":\"complete\"")
+	}
+	b.WriteString("}}")
 	return b.String()
 }
 
