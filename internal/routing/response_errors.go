@@ -9,7 +9,7 @@ import (
 // ── Tool-level errors ───────────────────────────────────────────────────
 // These build a JSON-RPC *result* with isError:true. The HTTP request was
 // valid and the gateway understood it, but the tool execution could not be
-// fulfilled (e.g. tool not found, token resolution failed).
+// fulfilled (e.g. token resolution failure for non-elicitation clients).
 
 // BuildSSEToolExecutionError constructs an SSE JSON-RPC result indicating
 // tool execution failure for the 2025-11-25 (SSE/streamable-HTTP) protocol.
@@ -40,7 +40,8 @@ func BuildJSONToolExecutionError(requestID any, message string) string {
 
 // ── Protocol-level rejections ───────────────────────────────────────────
 // These build a JSON-RPC *error* object. The request is rejected before it
-// reaches any upstream server (e.g. invalid method, unknown prompt).
+// reaches any upstream server (e.g. unknown tool -32602, unknown prompt
+// -32602, missing resource -32002).
 
 // BuildSSEProtocolRejection constructs an SSE JSON-RPC error response for
 // the 2025-11-25 (SSE/streamable-HTTP) protocol. code is the JSON-RPC

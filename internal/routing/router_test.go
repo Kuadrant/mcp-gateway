@@ -2041,9 +2041,8 @@ func TestHandleResourceRead_MissingURI(t *testing.T) {
 }
 
 // TestHandleResourceRead_UnrecognizedPrefix confirms an unrouteable resource
-// URI returns a routing error in the same shape as an unknown tool name
-// (a 200 JSON-RPC error, not an HTTP error), per the design's parity with
-// tools/call error handling.
+// URI returns a 200 JSON-RPC protocol error with code -32002 (MCP resource
+// not found), not an HTTP error or isError tool result.
 func TestHandleResourceRead_UnrecognizedPrefix(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{
@@ -2073,6 +2072,9 @@ func TestHandleResourceRead_UnrecognizedPrefix(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "Resource not found")
+	require.Contains(t, decision.Error.JSONRPCErr, "-32002")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 // TestHandleResourceRead_EmptyURI verifies that missing/empty URI param is rejected.
@@ -2521,8 +2523,7 @@ func TestResolveUpstreamToken_CacheMiss_NoElicitationSupport(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "does not support elicitation")
-	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
@@ -2548,8 +2549,7 @@ func TestResolveUpstreamToken_JWTWithoutSub(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "missing sub claim")
-	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestResolveUpstreamToken_ExternalURL(t *testing.T) {
@@ -2634,6 +2634,47 @@ func TestBuildSSEToolExecutionError(t *testing.T) {
 	require.Len(t, envelope.Result.Content, 1)
 	require.Equal(t, "text", envelope.Result.Content[0].Type)
 	require.Equal(t, "something went wrong", envelope.Result.Content[0].Text)
+}
+
+func TestBuildSSEProtocolRejection(t *testing.T) {
+	result := BuildSSEProtocolRejection("req-2", -32002, "Resource not found")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      string `json:"id"`
+		Error   *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Result any `json:"result"`
+	}
+	data := extractSSEData(t, result)
+	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, "req-2", envelope.ID)
+	require.NotNil(t, envelope.Error)
+	require.Equal(t, -32002, envelope.Error.Code)
+	require.Equal(t, "Resource not found", envelope.Error.Message)
+	require.Nil(t, envelope.Result)
+}
+
+func TestBuildJSONProtocolRejection(t *testing.T) {
+	result := BuildJSONProtocolRejection("req-3", -32602, "Tool not found")
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      string `json:"id"`
+		Error   *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Result any `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(result), &envelope))
+	require.Equal(t, "2.0", envelope.JSONRPC)
+	require.Equal(t, "req-3", envelope.ID)
+	require.NotNil(t, envelope.Error)
+	require.Equal(t, -32602, envelope.Error.Code)
+	require.Equal(t, "Tool not found", envelope.Error.Message)
+	require.Nil(t, envelope.Result)
 }
 
 func extractSSEData(t *testing.T, sse string) string {
@@ -2736,6 +2777,8 @@ func TestRouter202511_StatelessOnlyToolRejected(t *testing.T) {
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
@@ -2767,4 +2810,6 @@ func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }

@@ -206,7 +206,7 @@ func (r *Router202511) routeToolCall(ctx context.Context, table RoutingTable, mc
 				return &Decision{
 					Error: &Error{
 						StatusCode: 200,
-						JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32000, tokenErr.Error()),
+						JSONRPCErr: BuildSSEToolExecutionError(mcpReq.ID, tokenErr.Error()),
 					},
 					SetHeaders: map[string]string{
 						SessionHeader: mcpReq.GetSessionID(),
@@ -345,7 +345,7 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32602, "Resource not found"),
+				JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32002, "Resource not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),
@@ -358,7 +358,7 @@ func (r *Router202511) routeResourceRead(ctx context.Context, table RoutingTable
 		return &Decision{
 			Error: &Error{
 				StatusCode: 200,
-				JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32602, "Resource not found"),
+				JSONRPCErr: BuildSSEProtocolRejection(mcpReq.ID, -32002, "Resource not found"),
 			},
 			SetHeaders: map[string]string{
 				SessionHeader: mcpReq.GetSessionID(),

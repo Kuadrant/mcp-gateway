@@ -180,7 +180,8 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "HeaderMismatch")
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.NotContains(t, decision.Error.JSONRPCErr, `"error":{`)
 }
 
 func TestRouter202607_PromptGet(t *testing.T) {
@@ -459,6 +460,8 @@ func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
 	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-1"`)
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
@@ -489,6 +492,8 @@ func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
 	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-2"`)
+	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
 }
 
 func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {

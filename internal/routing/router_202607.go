@@ -318,7 +318,7 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 		span.SetAttributes(attribute.String("error.type", "header_mismatch"))
 		return nil, &Error{
 			StatusCode:  200,
-			JSONRPCErr:  BuildJSONProtocolRejection(req.Parsed.ID, -32602, "HeaderMismatch: Mcp-Name header does not match body"),
+			JSONRPCErr:  BuildJSONToolExecutionError(req.Parsed.ID, "MCP error -32602: HeaderMismatch: Mcp-Name header does not match body"),
 			ContentType: "application/json",
 		}
 	}
