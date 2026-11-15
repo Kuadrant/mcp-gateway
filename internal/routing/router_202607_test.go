@@ -222,6 +222,9 @@ func TestRouter202607_PromptGet(t *testing.T) {
 	require.Contains(t, string(decision.BodyMutation), `"name":"myprompt"`)
 }
 
+// Unknown tools are not rejected in-router: they pass to the broker so the
+// MCP SDK server returns JSON-RPC -32602 ("unknown tool …"). See
+// broker.TestUnknownToolCallReturnsInvalidParams for the end-to-end code.
 func TestRouter202607_UnknownTool(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{

@@ -5,11 +5,13 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -573,6 +575,9 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unknown tool"))
+			var rpcErr *jsonrpc.Error
+			Expect(errors.As(err, &rpcErr)).To(BeTrue(), "expected JSON-RPC protocol error")
+			Expect(rpcErr.Code).To(BeNumerically("==", jsonrpc.CodeInvalidParams), "expected -32602 for unknown tool")
 		})
 	})
 

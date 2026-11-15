@@ -511,7 +511,7 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 ### [Protocol2026] unknown tool error
 
-- A 2026 client calls a non-existent tool. The gateway returns an error containing `unknown tool`.
+- A 2026 client calls a non-existent tool. The gateway returns a JSON-RPC protocol error with code -32602 (Invalid params) and a message containing `unknown tool` (2026 router forwards to the broker; the broker MCP server emits the error).
 
 ### [Happy,Protocol2026] prompt listing and get via stateless gateway
 
