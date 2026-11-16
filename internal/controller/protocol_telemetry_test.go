@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -148,5 +149,138 @@ func TestCollect(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(upstreamServersByVersion.WithLabelValues(protocol.LabelUnknown)); got != 0 {
 		t.Errorf("unknown upstreams: got %v, want 0", got)
+	}
+}
+
+func TestCollectScrapeRecoveryKeepsCounterBaseline(t *testing.T) {
+	tests := []struct {
+		name    string
+		started time.Time
+		want    float64
+	}{
+		{name: "existing pod", started: time.Now().Add(-time.Hour), want: 20},
+		{name: "new pod", started: time.Now().Add(time.Minute), want: 120},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, setValue, setFailure := telemetryCollectorForOnePod(t, tt.started)
+			before := clientCount()
+			setValue(100)
+			c.collect(context.Background())
+			setValue(110)
+			c.collect(context.Background())
+			setFailure(true)
+			c.collect(context.Background())
+			setFailure(false)
+			setValue(120)
+			c.collect(context.Background())
+			if got := clientCount() - before; got != tt.want {
+				t.Errorf("requests counted across failure: got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectUsesOneCompleteReplicaSnapshot(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&mcpv1.MCPGatewayExtension{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "team"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "broker-a", Namespace: "team", UID: "a", Labels: brokerRouterLabels()}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "broker-b", Namespace: "team", UID: "b", Labels: brokerRouterLabels()}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.2"}},
+	).Build()
+	for _, label := range protocol.MetricLabels() {
+		upstreamServersByVersion.WithLabelValues(label).Set(0)
+	}
+	c := &ProtocolTelemetryCollector{
+		Reader:     reader,
+		Logger:     slog.New(slog.DiscardHandler),
+		startTime:  time.Now(),
+		lastClient: map[types.UID]map[string]float64{},
+		scrape: func(_ context.Context, addr string) (*brokerSample, error) {
+			if strings.HasSuffix(addr, "10.0.0.1:9090") {
+				return &brokerSample{upstreamServers: map[string]float64{protocol.Version2026: 1}}, nil
+			}
+			return &brokerSample{upstreamServers: map[string]float64{protocol.LabelUnknown: 1}}, nil
+		},
+	}
+	c.collect(context.Background())
+	total := 0.0
+	for _, label := range protocol.MetricLabels() {
+		total += testutil.ToFloat64(upstreamServersByVersion.WithLabelValues(label))
+	}
+	if total != 1 {
+		t.Errorf("upstream total across disagreeing replicas: got %v, want 1", total)
+	}
+}
+
+func TestCollectRetainsUpstreamGaugeWhenScrapesFail(t *testing.T) {
+	started := time.Now().Add(-time.Hour)
+	c, _, setFailure := telemetryCollectorForOnePod(t, started)
+	for _, label := range protocol.MetricLabels() {
+		upstreamServersByVersion.WithLabelValues(label).Set(0)
+	}
+	c.collect(context.Background())
+	setFailure(true)
+	c.collect(context.Background())
+	if got := testutil.ToFloat64(upstreamServersByVersion.WithLabelValues(protocol.Version2025)); got != 1 {
+		t.Errorf("upstream gauge after failed scrape: got %v, want retained value 1", got)
+	}
+}
+
+func telemetryCollectorForOnePod(t *testing.T, started time.Time) (*ProtocolTelemetryCollector, func(float64), func(bool)) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&mcpv1.MCPGatewayExtension{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "team"}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "broker", Namespace: "team", UID: "broker", Labels: brokerRouterLabels(), CreationTimestamp: metav1.NewTime(started)},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1"},
+		},
+	).Build()
+	value := 0.0
+	failed := false
+	c := &ProtocolTelemetryCollector{
+		Reader:     reader,
+		Logger:     slog.New(slog.DiscardHandler),
+		startTime:  time.Now(),
+		lastClient: map[types.UID]map[string]float64{},
+		scrape: func(context.Context, string) (*brokerSample, error) {
+			if failed {
+				return nil, fmt.Errorf("temporary scrape failure")
+			}
+			return &brokerSample{
+				clientRequests:  map[string]float64{protocol.Version2025: value},
+				upstreamServers: map[string]float64{protocol.Version2025: 1},
+			}, nil
+		},
+	}
+	return c, func(v float64) { value = v }, func(v bool) { failed = v }
+}
+
+func TestStartBaselinesCountersFromExistingBrokerPods(t *testing.T) {
+	c, setValue, _ := telemetryCollectorForOnePod(t, time.Now().Add(-time.Hour))
+	c.startTime = time.Time{}
+	setValue(100)
+	before := clientCount()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if got := clientCount() - before; got != 0 {
+		t.Errorf("initial scrape counted historical requests: got %v, want 0", got)
 	}
 }

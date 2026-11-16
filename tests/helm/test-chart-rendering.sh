@@ -62,6 +62,9 @@ assert_eq "$private_host" "" "privateHost is omitted by default"
 
 deployment_security=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsNonRoot' -)
 assert_eq "$deployment_security" "true" "controller runs as non-root"
+
+controller_strategy=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.strategy.type' -)
+assert_eq "$controller_strategy" "Recreate" "controller updates do not overlap telemetry collectors"
 run_as_user=$(printf '%s\n' "$rendered" | "$YQ" eval 'select(.kind == "Deployment") | .spec.template.spec.securityContext.runAsUser' -)
 assert_eq "$run_as_user" "null" "controller leaves UID assignment to the platform"
 

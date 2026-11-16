@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -92,6 +93,8 @@ type ProtocolTelemetryCollector struct {
 	startTime time.Time
 	// last client request counter values per pod, for delta accounting
 	lastClient map[types.UID]map[string]float64
+	// last complete upstream snapshot per namespace, retained during scrape failures
+	upstreamByNamespace map[string]map[string]float64
 }
 
 var _ manager.Runnable = &ProtocolTelemetryCollector{}
@@ -113,6 +116,7 @@ func (c *ProtocolTelemetryCollector) Start(ctx context.Context) error {
 	}
 	c.startTime = time.Now()
 	c.lastClient = map[types.UID]map[string]float64{}
+	c.upstreamByNamespace = map[string]map[string]float64{}
 	c.Logger.Info("starting protocol version telemetry collector", "interval", c.Interval)
 
 	ticker := time.NewTicker(c.Interval)
@@ -128,44 +132,57 @@ func (c *ProtocolTelemetryCollector) Start(ctx context.Context) error {
 }
 
 func (c *ProtocolTelemetryCollector) collect(ctx context.Context) {
-	targets, err := c.targets(ctx)
+	targets, namespaces, err := c.targets(ctx)
 	if err != nil {
 		c.Logger.Error("protocol telemetry: failed to list broker pods", "error", err)
 		return
 	}
 
-	// upstreams: replicas in a namespace share one config, so take the max per
-	// namespace then sum across namespaces
-	perNamespace := map[string]map[string]float64{}
-	seen := make(map[types.UID]bool, len(targets))
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].namespace == targets[j].namespace {
+			return targets[i].uid < targets[j].uid
+		}
+		return targets[i].namespace < targets[j].namespace
+	})
+	if c.lastClient == nil {
+		c.lastClient = map[types.UID]map[string]float64{}
+	}
+	if c.upstreamByNamespace == nil {
+		c.upstreamByNamespace = map[string]map[string]float64{}
+	}
+
+	present := make(map[types.UID]struct{}, len(targets))
+	sampled := make(map[string]struct{}, len(namespaces))
+	scraped := 0
 	for i := range targets {
 		t := &targets[i]
+		present[t.uid] = struct{}{}
 		sample, err := c.scrape(ctx, t.addr)
 		if err != nil {
 			telemetryScrapeErrors.Inc()
 			c.Logger.Debug("protocol telemetry: scrape failed", "namespace", t.namespace, "addr", t.addr, "error", err)
 			continue
 		}
-		seen[t.uid] = true
+		scraped++
 		c.addClientDeltas(t, sample.clientRequests)
-
-		ns := perNamespace[t.namespace]
-		if ns == nil {
-			ns = map[string]float64{}
-			perNamespace[t.namespace] = ns
-		}
-		for l, v := range sample.upstreamServers {
-			ns[l] = max(ns[l], v)
+		if _, ok := sampled[t.namespace]; !ok {
+			c.upstreamByNamespace[t.namespace] = cloneMetricValues(sample.upstreamServers)
+			sampled[t.namespace] = struct{}{}
 		}
 	}
 	for uid := range c.lastClient {
-		if !seen[uid] {
+		if _, ok := present[uid]; !ok {
 			delete(c.lastClient, uid)
+		}
+	}
+	for namespace := range c.upstreamByNamespace {
+		if _, ok := namespaces[namespace]; !ok {
+			delete(c.upstreamByNamespace, namespace)
 		}
 	}
 
 	totals := map[string]float64{}
-	for _, ns := range perNamespace {
+	for _, ns := range c.upstreamByNamespace {
 		for l, v := range ns {
 			totals[l] += v
 		}
@@ -173,7 +190,15 @@ func (c *ProtocolTelemetryCollector) collect(ctx context.Context) {
 	for _, l := range protocol.MetricLabels() {
 		upstreamServersByVersion.WithLabelValues(l).Set(totals[l])
 	}
-	c.Logger.Debug("protocol telemetry: collected", "targets", len(targets), "scraped", len(seen))
+	c.Logger.Debug("protocol telemetry: collected", "targets", len(targets), "scraped", scraped)
+}
+
+func cloneMetricValues(values map[string]float64) map[string]float64 {
+	cloned := make(map[string]float64, len(values))
+	for label, value := range values {
+		cloned[label] = value
+	}
+	return cloned
 }
 
 // addClientDeltas adds the increase of each pod counter since the last scrape.
@@ -199,20 +224,20 @@ func (c *ProtocolTelemetryCollector) addClientDeltas(t *podTarget, current map[s
 }
 
 // targets lists running broker pods in namespaces that have an MCPGatewayExtension.
-func (c *ProtocolTelemetryCollector) targets(ctx context.Context) ([]podTarget, error) {
+func (c *ProtocolTelemetryCollector) targets(ctx context.Context) ([]podTarget, map[string]struct{}, error) {
 	var exts mcpv1.MCPGatewayExtensionList
 	if err := c.Reader.List(ctx, &exts); err != nil {
-		return nil, fmt.Errorf("list MCPGatewayExtensions: %w", err)
+		return nil, nil, fmt.Errorf("list MCPGatewayExtensions: %w", err)
 	}
-	namespaces := map[string]bool{}
+	namespaces := map[string]struct{}{}
 	for i := range exts.Items {
-		namespaces[exts.Items[i].Namespace] = true
+		namespaces[exts.Items[i].Namespace] = struct{}{}
 	}
 	var out []podTarget
 	for ns := range namespaces {
 		var pods corev1.PodList
 		if err := c.Reader.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels(brokerRouterLabels())); err != nil {
-			return nil, fmt.Errorf("list broker pods in %s: %w", ns, err)
+			return nil, nil, fmt.Errorf("list broker pods in %s: %w", ns, err)
 		}
 		for i := range pods.Items {
 			p := &pods.Items[i]
@@ -231,7 +256,7 @@ func (c *ProtocolTelemetryCollector) targets(ctx context.Context) ([]podTarget, 
 			})
 		}
 	}
-	return out, nil
+	return out, namespaces, nil
 }
 
 func (c *ProtocolTelemetryCollector) scrapeBroker(ctx context.Context, addr string) (*brokerSample, error) {
