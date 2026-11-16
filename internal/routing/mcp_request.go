@@ -307,7 +307,7 @@ func BuildSSEToolResult(requestID any, text string) string {
 // call. Used for 2025-11-25 responses whose Content-Type is application/json
 // rather than text/event-stream. 2026-07-28 responses use Build202607ToolError.
 func BuildJSONToolError(requestID any, message string) string {
-	return buildJSONToolResponse(requestID, message, true, false)
+	return buildJSONToolResponse(requestID, message, isErrorField)
 }
 
 // BuildJSONToolResult constructs a successful plain JSON-RPC tool result.
@@ -315,22 +315,29 @@ func BuildJSONToolError(requestID any, message string) string {
 // the redacted text is a valid result, not an error. Counterpart to
 // BuildSSEToolResult for application/json responses.
 func BuildJSONToolResult(requestID any, text string) string {
-	return buildJSONToolResponse(requestID, text, false, false)
+	return buildJSONToolResponse(requestID, text, "")
 }
 
 // Build202607ToolError is BuildJSONToolError for 2026-07-28, which requires
 // resultType on every result.
 func Build202607ToolError(requestID any, message string) string {
-	return buildJSONToolResponse(requestID, message, true, true)
+	return buildJSONToolResponse(requestID, message, isErrorField+resultTypeCompleteField)
 }
 
 // Build202607ToolResult is BuildJSONToolResult for 2026-07-28, which requires
 // resultType on every result.
 func Build202607ToolResult(requestID any, text string) string {
-	return buildJSONToolResponse(requestID, text, false, true)
+	return buildJSONToolResponse(requestID, text, resultTypeCompleteField)
 }
 
-func buildJSONToolResponse(requestID any, text string, isError, withResultType bool) string {
+const (
+	isErrorField            = `,"isError":true`
+	resultTypeCompleteField = `,"resultType":"complete"`
+)
+
+// buildJSONToolResponse builds a single-text tool result. extraFields is
+// appended to the result object after content.
+func buildJSONToolResponse(requestID any, text, extraFields string) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
 	idBytes, err := json.Marshal(requestID)
@@ -342,12 +349,7 @@ func buildJSONToolResponse(requestID any, text string, isError, withResultType b
 	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
 	b.WriteString(jsonQuote(text))
 	b.WriteString("}]")
-	if isError {
-		b.WriteString(",\"isError\":true")
-	}
-	if withResultType {
-		b.WriteString(",\"resultType\":\"complete\"")
-	}
+	b.WriteString(extraFields)
 	b.WriteString("}}")
 	return b.String()
 }

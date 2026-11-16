@@ -1559,7 +1559,7 @@ func TestProcess202607_GuardrailsBlocked_MissingContentTypeUsesJSON(t *testing.T
 
 	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}]}}`)
-	blockedBody := []byte(routing.Build202607ToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"blocked by guardrails"}],"isError":true,"resultType":"complete"}}`)
 
 	for _, tc := range []struct {
 		name        string

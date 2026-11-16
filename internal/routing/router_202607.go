@@ -102,7 +102,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  Build202607ToolError(req.RequestID, "MCP error -32602: Tool not found"),
+				JSONRPCErr:  Build202607ToolError(req.jsonRPCID(), "MCP error -32602: Tool not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -213,7 +213,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  Build202607ToolError(req.RequestID, "MCP error -32602: Prompt not found"),
+				JSONRPCErr:  Build202607ToolError(req.jsonRPCID(), "MCP error -32602: Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -226,7 +226,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  Build202607ToolError(req.RequestID, "MCP error -32602: Prompt not found"),
+				JSONRPCErr:  Build202607ToolError(req.jsonRPCID(), "MCP error -32602: Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
