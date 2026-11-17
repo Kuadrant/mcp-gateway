@@ -104,6 +104,7 @@ spec:
     port: 8081 #internal routing domain with matching listener port
     protocol: HTTP
 
+---
 #HTTPRoute(s) Spec
 metadata:
   name: team-a-external
@@ -130,8 +131,7 @@ spec:
     name: mcp-gateway
     namespace: gateway-system
     sectionName: team-a
----
-... same for team-b different host and section  name
+# same for team-b with different host and section name
 ---
 #MCPGatewayExtension
 metadata:

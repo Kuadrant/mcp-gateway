@@ -26,9 +26,9 @@ sequenceDiagram
         MCPBroker-->>MCPServer: POST /mcp tools/list
         MCPBroker-->>MCPBroker: cache tools/list
         MCPBroker-->>MCPServer: GET /mcp notifications 
-        MCPServerRegistration-->>MCPBroker: notification/tools/list/changed
+        MCPServer-->>MCPBroker: notifications/tools/list_changed
         note right of MCPBroker: trigger tools/list 
-        MSPServer-->>MCPBroker: 404 response
+        MCPServer-->>MCPBroker: 404 response
         note right of MCPBroker: triggers re-initialize
         
 ```
@@ -59,7 +59,7 @@ sequenceDiagram
         note right of Gateway: initialize is hairpinned back through the gateway<br/> this ensures specific auth is applied
         Gateway-->>MCPServer: Initialize (client auth)
         Note right of Gateway: AuthPolicy Applied for MCP route. Allows for any token exchange to be done
-        MCPServerRegistration-->>Gateway: mcp-session-id
+        MCPServer-->>Gateway: mcp-session-id
         Gateway-->>MCPRouter: mcp-session-id
         MCPRouter-->>Cache: store session mapping
         MCPRouter-->>Gateway: routing (mcp-session-id set)
