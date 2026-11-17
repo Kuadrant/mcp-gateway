@@ -127,9 +127,11 @@ Successful output will list the tools discovered from your external server (e.g.
 Update your `mcpServers` configuration:
 
 ```json
-"mcpServers": {
-  "netedge": {
-    "httpUrl": "https://mcp.apps.your-cluster-domain.com/mcp"
+{
+  "mcpServers": {
+    "netedge": {
+      "httpUrl": "https://mcp.apps.your-cluster-domain.com/mcp"
+    }
   }
 }
 ```

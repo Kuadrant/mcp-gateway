@@ -86,10 +86,9 @@ Your Kind cluster is now ready with Gateway API and Istio installed!
 
 ## Next Steps
 
-Now that you have a cluster with the prerequisites, choose your installation method:
+Now that you have a cluster with the prerequisites, install MCP Gateway:
 
-- **[Install MCP Gateway via Helm](./how-to-install-and-configure.md#method-1-helm-recommended)** - Recommended approach
-- **[Install MCP Gateway via Kustomize](./how-to-install-and-configure.md#method-2-kustomize)** - Alternative method
+- **[Install MCP Gateway via Helm](./how-to-install-and-configure.md#installation)**
 
 After installation, continue with configuration:
 

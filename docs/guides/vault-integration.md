@@ -49,7 +49,8 @@ curl -H "X-Vault-Token: $VAULT_TOKEN" -H 'Content-Type: application/json' -X POS
     "user_claim": "sub",
     "policies": ["authorino"],
     "ttl": "1h"
-  }'
+  }' \
+  http://localhost:8200/v1/auth/jwt/role/authorino
 ```
 </details>
 
@@ -145,7 +146,7 @@ spec:
             plain:
               expression: |
                 "Bearer " + auth.metadata.vault.data.data.test_server2_pat
-      ---
+---
 apiVersion: v1
 kind: Secret
 metadata:
