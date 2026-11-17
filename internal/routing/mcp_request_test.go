@@ -95,6 +95,7 @@ func TestStripAuthorityPrefix(t *testing.T) {
 	}
 }
 
+// TestParamsJSONRoundTrip verifies typed fields and opaque JSON values survive a params round trip.
 func TestParamsJSONRoundTrip(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -140,6 +141,7 @@ func TestParamsJSONRoundTrip(t *testing.T) {
 	}
 }
 
+// TestParamsNameEncoding checks escaped, non-ASCII and invalid UTF-8 names against encoding/json.
 func TestParamsNameEncoding(t *testing.T) {
 	tests := []struct {
 		name string
@@ -166,6 +168,7 @@ func TestParamsNameEncoding(t *testing.T) {
 	}
 }
 
+// TestParamsRewriteName checks typed names override raw names while preserving other params.
 func TestParamsRewriteName(t *testing.T) {
 	tests := []struct {
 		name string
@@ -193,6 +196,7 @@ func TestParamsRewriteName(t *testing.T) {
 	}
 }
 
+// TestMCPRequest_ClientSupportsElicitation requires elicitation to be declared in initialize capabilities.
 func TestMCPRequest_ClientSupportsElicitation(t *testing.T) {
 	tests := []struct {
 		name string

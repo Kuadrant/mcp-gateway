@@ -113,6 +113,8 @@ var largeArgsPayload = func() []byte {
 	return b
 }()
 
+// BenchmarkMCPRequestParseAndRoute_LargeArgs measures parsing, validation,
+// tool-name rewriting and serialization with large arguments.
 func BenchmarkMCPRequestParseAndRoute_LargeArgs(b *testing.B) {
 	// 2025-11-25 tools/call path: unmarshal + validate + rewrite tool name + serialise
 	b.ReportAllocs()

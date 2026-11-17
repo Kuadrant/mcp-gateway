@@ -198,6 +198,7 @@ func newTestRouterWithSession(t *testing.T, serverConfigs []*config.MCPServer, s
 	return router, validToken
 }
 
+// TestMCPRequestValid checks JSON-RPC version, method and ID validation for requests and notifications.
 func TestMCPRequestValid(t *testing.T) {
 
 	testCases := []struct {
@@ -275,6 +276,7 @@ func TestMCPRequestValid(t *testing.T) {
 	}
 }
 
+// TestMCPRequestToolName extracts string names only from tools/call requests.
 func TestMCPRequestToolName(t *testing.T) {
 	testCases := []struct {
 		Name       string
@@ -1352,6 +1354,7 @@ func TestHandleElicitationResponse_Guardrails_ConcurrentReload(t *testing.T) {
 	require.Positive(t, checkerV1.calls.Load()+checkerV2.calls.Load(), "test must exercise the guardrails check")
 }
 
+// TestRouteToolCall_Guardrails covers allowed, blocked and modified tool calls, and skipped guardrails.
 func TestRouteToolCall_Guardrails(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{
@@ -1680,6 +1683,8 @@ func TestInitializeMCPServerSession_PassThroughHeaders(t *testing.T) {
 	require.Equal(t, "mcp-router", captured["user-agent"])
 }
 
+// TestInitializeMCPServerSession_UpstreamErrorPropagation checks initialization
+// forwards 4xx status codes and maps other failures to 500.
 func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -1767,6 +1772,8 @@ func TestInitializeMCPServerSession_UpstreamErrorPropagation(t *testing.T) {
 	}
 }
 
+// TestMCPRequest_PromptName extracts string names only from prompts/get requests.
+//
 //nolint:dupl
 func TestMCPRequest_PromptName(t *testing.T) {
 	testCases := []struct {
@@ -1888,6 +1895,8 @@ func TestHandlePromptGet(t *testing.T) {
 	require.NotContains(t, string(decision.BodyMutation), `"name":"s_myprompt"`)
 }
 
+// TestMCPRequest_ResourceURI extracts string URIs only from resources/read requests.
+//
 //nolint:dupl
 func TestMCPRequest_ResourceURI(t *testing.T) {
 	testCases := []struct {

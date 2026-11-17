@@ -307,6 +307,8 @@ func jsonRPCErrorDecision(status int, requestID any, message string, build guard
 	}
 }
 
+// applyModifiedArguments validates and stores guardrails-modified tool arguments.
+// Invalid JSON returns a blocking decision; nil requests are ignored.
 func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil {
 		return nil
@@ -323,6 +325,8 @@ func (g *guardrailsCheck) applyModifiedArguments(ctx context.Context, mcpReq *MC
 	return nil
 }
 
+// applyModifiedElicitation replaces elicitation content while preserving its action.
+// Invalid JSON returns a blocking decision; nil requests are ignored.
 func (g *guardrailsCheck) applyModifiedElicitation(ctx context.Context, mcpReq *MCPRequest, modified string, requestID any) *Decision {
 	if mcpReq == nil {
 		return nil
