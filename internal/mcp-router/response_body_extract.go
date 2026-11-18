@@ -9,7 +9,9 @@ import (
 // extractToolResponseText pulls out and joins all the text from a tool
 // call's result, whether it's plain JSON or an SSE stream. isError reports
 // whether the upstream marked the result as a failed call, so a redacted
-// replacement can keep that outcome. ok is false when
+// replacement can keep that outcome. An input_required result counts as
+// failed too: the replacement only carries text, so it can't hand the
+// client back a usable inputRequests/requestState. ok is false when
 // the body could not be reliably parsed as a JSON-RPC response - callers
 // must treat that as "guardrails could not evaluate this", never as
 // "nothing to check", since silently forwarding undecodable content would
@@ -103,8 +105,9 @@ type toolResultContent struct {
 }
 
 type toolCallResultPayload struct {
-	Content []toolResultContent `json:"content"`
-	IsError bool                `json:"isError"`
+	Content    []toolResultContent `json:"content"`
+	IsError    bool                `json:"isError"`
+	ResultType string              `json:"resultType"`
 }
 
 // extractTextFromResultJSON extracts text content from a JSON-RPC response's
@@ -135,5 +138,5 @@ func extractTextFromResultJSON(data []byte) (texts []string, isError, ok bool) {
 			texts = append(texts, payload.Content[i].Text)
 		}
 	}
-	return texts, payload.IsError, true
+	return texts, payload.IsError || payload.ResultType == "input_required", true
 }

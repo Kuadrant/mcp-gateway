@@ -193,3 +193,13 @@ func TestExtractToolResponseText_SuccessIsNotError(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, isError)
 }
+
+func TestExtractToolResponseText_InputRequiredIsError(t *testing.T) {
+	// a redacted input_required result can't keep its inputRequests, so it
+	// must come back as failed rather than complete
+	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"need more info"}],"inputRequests":{"a":{"method":"elicitation/create"}},"requestState":"s1","resultType":"input_required"}}`)
+	got, isError, ok := extractToolResponseText(body)
+	require.True(t, ok)
+	require.True(t, isError)
+	require.Equal(t, "need more info", string(got))
+}
