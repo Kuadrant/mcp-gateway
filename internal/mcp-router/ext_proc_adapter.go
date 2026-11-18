@@ -3,7 +3,6 @@ package mcprouter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -406,7 +405,8 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				continue
 			}
-			if err := json.Unmarshal(body, &mcpRequest); err != nil {
+			parsed, err := routing.ParseMCPRequest(body)
+			if err != nil {
 				s.Logger.ErrorContext(ctx, "error unmarshalling request body", "error", err)
 				recordError(span, err, 400)
 				resp := responseBuilder.WithImmediateResponse(400, "invalid request body").Build()
@@ -418,6 +418,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				continue
 			}
+			mcpRequest = parsed
 			if _, err := mcpRequest.Validate(); err != nil {
 				s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
 				recordError(span, err, 400)

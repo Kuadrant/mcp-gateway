@@ -24,8 +24,8 @@ var (
 func BenchmarkMCPRequestParse_ToolCall(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(toolCallPayload, &req); err != nil {
+		req, err := ParseMCPRequest(toolCallPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -35,8 +35,8 @@ func BenchmarkMCPRequestParse_ToolCall(b *testing.B) {
 func BenchmarkMCPRequestParse_Initialize(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(initPayload, &req); err != nil {
+		req, err := ParseMCPRequest(initPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -76,8 +76,8 @@ func BenchmarkMCPRequestParseAndRoute(b *testing.B) {
 	// full hot path: unmarshal + validate + extract tool name + serialise
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(toolCallPayload, &req); err != nil {
+		req, err := ParseMCPRequest(toolCallPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -119,8 +119,8 @@ func BenchmarkMCPRequestParseAndRoute_LargeArgs(b *testing.B) {
 	// 2025-11-25 tools/call path: unmarshal + validate + rewrite tool name + serialise
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(largeArgsPayload, &req); err != nil {
+		req, err := ParseMCPRequest(largeArgsPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders

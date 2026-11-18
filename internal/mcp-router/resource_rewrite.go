@@ -115,10 +115,14 @@ func (r *resourceURIRewriter) maybeRewriteLine(ctx context.Context, line []byte)
 // so only the resourceUri value itself is touched - all other fields, including
 // unrelated _meta keys, pass through exactly as received.
 func (r *resourceURIRewriter) rewriteToolResultJSON(ctx context.Context, jsonData []byte) (rewritten []byte, changed bool) {
-	var msg jsonRPCMessage
-	if err := json.Unmarshal(jsonData, &msg); err != nil {
+	var wire struct {
+		jsonRPCMessage
+		ID *json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(jsonData, &wire); err != nil {
 		return jsonData, false
 	}
+	msg := &wire.jsonRPCMessage
 	if msg.Method != "" || len(msg.Result) == 0 {
 		return jsonData, false // not a tool call result (requests/notifications have Method; errors have no Result)
 	}
@@ -184,8 +188,11 @@ func (r *resourceURIRewriter) rewriteToolResultJSON(ctx context.Context, jsonDat
 		return jsonData, false
 	}
 	msg.Result = resultBytes
+	if wire.ID != nil {
+		msg.ID = wire.ID
+	}
 
-	out, err := json.Marshal(&msg)
+	out, err := json.Marshal(msg)
 	if err != nil {
 		r.logger.ErrorContext(ctx, "failed to marshal rewritten tool result", "error", err)
 		return jsonData, false

@@ -144,7 +144,7 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 	headers[MCPServerNameHeader] = serverInfo.Name
 	headers["mcp-name"] = upstreamToolName
 
-	bodyMutation, routerErr := r.validateAndRewriteBody(ctx, span, req, toolName, serverInfo.Prefix, upstreamToolName, true)
+	renamed, routerErr := r.validateAndRewriteName(ctx, span, req, toolName, serverInfo.Prefix, upstreamToolName, true)
 	if routerErr != nil {
 		return &Decision{Error: routerErr}
 	}
@@ -154,15 +154,9 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 	if blocked != nil {
 		return blocked
 	}
-	if modified && req.Parsed != nil {
-		rewritten, err := req.Parsed.ToBytes()
-		if err != nil {
-			r.Logger.ErrorContext(ctx, "failed to marshal body to bytes", "error", err)
-			span.SetStatus(codes.Error, "body marshal failed")
-			span.SetAttributes(attribute.String("error.type", "marshal_error"))
-			return &Decision{Error: &Error{StatusCode: 500, Message: "internal error"}}
-		}
-		bodyMutation = rewritten
+	bodyMutation, routerErr := r.marshalRewrittenBody(ctx, span, req.Parsed, renamed || modified)
+	if routerErr != nil {
+		return &Decision{Error: routerErr}
 	}
 
 	if bodyMutation != nil {
@@ -245,7 +239,11 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 	headers[MCPServerNameHeader] = serverInfo.Name
 	headers["mcp-name"] = upstreamPromptName
 
-	bodyMutation, routerErr := r.validateAndRewriteBody(ctx, span, req, promptName, serverInfo.Prefix, upstreamPromptName, false)
+	renamed, routerErr := r.validateAndRewriteName(ctx, span, req, promptName, serverInfo.Prefix, upstreamPromptName, false)
+	if routerErr != nil {
+		return &Decision{Error: routerErr}
+	}
+	bodyMutation, routerErr := r.marshalRewrittenBody(ctx, span, req.Parsed, renamed)
 	if routerErr != nil {
 		return &Decision{Error: routerErr}
 	}
@@ -300,9 +298,9 @@ func (r *Router202607) routeBrokerPassthrough(ctx context.Context, req *Request)
 	}
 }
 
-func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Span, req *Request, headerName, prefix, upstreamName string, isTool bool) ([]byte, *Error) {
+func (r *Router202607) validateAndRewriteName(ctx context.Context, span trace.Span, req *Request, headerName, prefix, upstreamName string, isTool bool) (bool, *Error) {
 	if req.Parsed == nil {
-		return nil, nil
+		return false, nil
 	}
 
 	var bodyName string
@@ -316,7 +314,7 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 		r.Logger.ErrorContext(ctx, "header-body mismatch", "headerName", headerName, "bodyName", bodyName)
 		span.SetStatus(codes.Error, "header-body mismatch")
 		span.SetAttributes(attribute.String("error.type", "header_mismatch"))
-		return nil, &Error{
+		return false, &Error{
 			StatusCode:  200,
 			JSONRPCErr:  BuildJSONToolError(req.Parsed.ID, "MCP error -32602: HeaderMismatch: Mcp-Name header does not match body"),
 			ContentType: "application/json",
@@ -324,7 +322,7 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 	}
 
 	if prefix == "" {
-		return nil, nil
+		return false, nil
 	}
 
 	if isTool {
@@ -332,8 +330,14 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 	} else {
 		req.Parsed.ReWritePromptName(upstreamName)
 	}
+	return true, nil
+}
 
-	bytes, err := req.Parsed.ToBytes()
+func (r *Router202607) marshalRewrittenBody(ctx context.Context, span trace.Span, req *MCPRequest, changed bool) ([]byte, *Error) {
+	if !changed || req == nil {
+		return nil, nil
+	}
+	body, err := req.ToBytes()
 	if err != nil {
 		r.Logger.ErrorContext(ctx, "failed to marshal body to bytes", "error", err)
 		span.SetStatus(codes.Error, "body marshal failed")
@@ -341,5 +345,5 @@ func (r *Router202607) validateAndRewriteBody(ctx context.Context, span trace.Sp
 		return nil, &Error{StatusCode: 500, Message: "internal error"}
 	}
 
-	return bytes, nil
+	return body, nil
 }
