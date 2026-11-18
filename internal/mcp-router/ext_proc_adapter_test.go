@@ -1635,6 +1635,38 @@ func TestProcess202607_GuardrailsModified_ReplacementBody(t *testing.T) {
 	}
 }
 
+// 2025-11-25 has no MRTR, so a stray resultType from a 2025 upstream must not
+// turn a redacted success into a failure.
+func TestProcess_GuardrailsModified_IgnoresResultTypeOn2025(t *testing.T) {
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	cfg := &config.MCPServersConfig{}
+	cfg.ApplyReload([]*config.MCPServer{{
+		Name:                "s1",
+		GuardrailsConfigIDs: []string{"cfg-1"},
+	}}, nil, "", 0, nil, &modifyAllChecker{content: "redacted"})
+
+	srv := &ExtProcServer{
+		Logger:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		SessionCache:    cache,
+		Router:          &stubRouterGuardrails{configIDs: []string{"cfg-1"}, serverPrefix: "s1_"},
+		ResponseHandler: &bufferedResponseHandler{},
+	}
+	srv.RoutingConfig.Store(cfg)
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	toolResult := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}],"resultType":"input_required"}}`)
+	want := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"redacted"}]}}`)
+
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep()},
+		guardrailsResponseSteps(toolCallBody, toolResult, want, "application/json")...)
+	mock := makeMockProcessServer(t, steps)
+
+	require.NoError(t, srv.Process(mock))
+	mock.verifyAllResponsesConsumed()
+}
+
 // the size-limit and unparseable-body replacements go through the same
 // builder switch as blocked/modified ones, so check them for 2026 as well.
 func TestProcess202607_GuardrailsFailClosedReplacementBody(t *testing.T) {

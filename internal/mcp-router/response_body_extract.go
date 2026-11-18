@@ -9,23 +9,23 @@ import (
 // extractToolResponseText pulls out and joins all the text from a tool
 // call's result, whether it's plain JSON or an SSE stream. isError reports
 // whether the upstream marked the result as a failed call, so a redacted
-// replacement can keep that outcome. An input_required result counts as
-// failed too: the replacement only carries text, so it can't hand the
-// client back a usable inputRequests/requestState. ok is false when
+// replacement can keep that outcome. inputRequired reports a 2026-07-28
+// input_required result; the caller decides what that means for its
+// protocol version. ok is false when
 // the body could not be reliably parsed as a JSON-RPC response - callers
 // must treat that as "guardrails could not evaluate this", never as
 // "nothing to check", since silently forwarding undecodable content would
 // let a malformed or adversarial upstream bypass guardrails. When ok is
 // true, a nil text means the result was decoded but genuinely carries no
 // text content (e.g. image-only), which is safe to pass through unchanged.
-func extractToolResponseText(body []byte) (text []byte, isError, ok bool) {
+func extractToolResponseText(body []byte) (text []byte, isError, inputRequired, ok bool) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) > 0 && trimmed[0] == '{' {
-		texts, isError, ok := extractTextFromResultJSON(trimmed)
-		return joinTexts(texts), isError, ok
+		texts, isError, inputRequired, ok := extractTextFromResultJSON(trimmed)
+		return joinTexts(texts), isError, inputRequired, ok
 	}
-	texts, isError, ok := extractSSETexts(body)
-	return joinTexts(texts), isError, ok
+	texts, isError, inputRequired, ok := extractSSETexts(body)
+	return joinTexts(texts), isError, inputRequired, ok
 }
 
 // extractSSETexts splits body into SSE events (separated by blank lines)
@@ -34,7 +34,7 @@ func extractToolResponseText(body []byte) (text []byte, isError, ok bool) {
 // CRLF and lone CR line endings are normalized to LF first, per the SSE
 // spec. isError is true if any event is an isError result. ok is false if
 // any event failed to decode - see extractTextFromResultJSON.
-func extractSSETexts(body []byte) (texts []string, isError, ok bool) {
+func extractSSETexts(body []byte) (texts []string, isError, inputRequired, ok bool) {
 	body = normalizeLineEndings(body)
 	ok = true
 	var eventBytes []byte
@@ -59,19 +59,21 @@ func extractSSETexts(body []byte) (texts []string, isError, ok bool) {
 		// blank line: the event assembled so far is complete
 		event := append(eventBytes, line...)
 		eventBytes = nil
-		eventTexts, eventIsError, eventOK := extractSSEEventTexts(event)
+		eventTexts, eventIsError, eventInputRequired, eventOK := extractSSEEventTexts(event)
 		texts = append(texts, eventTexts...)
 		isError = isError || eventIsError
+		inputRequired = inputRequired || eventInputRequired
 		ok = ok && eventOK
 	}
 	// a trailing event with no terminating blank line (e.g. a truncated body)
 	if len(eventBytes) > 0 {
-		eventTexts, eventIsError, eventOK := extractSSEEventTexts(eventBytes)
+		eventTexts, eventIsError, eventInputRequired, eventOK := extractSSEEventTexts(eventBytes)
 		texts = append(texts, eventTexts...)
 		isError = isError || eventIsError
+		inputRequired = inputRequired || eventInputRequired
 		ok = ok && eventOK
 	}
-	return texts, isError, ok
+	return texts, isError, inputRequired, ok
 }
 
 // normalizeLineEndings rewrites CRLF and lone CR line endings to LF so the
@@ -84,10 +86,10 @@ func normalizeLineEndings(b []byte) []byte {
 
 // extractSSEEventTexts decodes one complete SSE event's reassembled data:
 // field as a tools/call result JSON document.
-func extractSSEEventTexts(event []byte) (texts []string, isError, ok bool) {
+func extractSSEEventTexts(event []byte) (texts []string, isError, inputRequired, ok bool) {
 	data := sseEventData(event)
 	if len(data) == 0 {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	return extractTextFromResultJSON(data)
 }
@@ -105,10 +107,13 @@ type toolResultContent struct {
 }
 
 type toolCallResultPayload struct {
-	Content    []toolResultContent `json:"content"`
-	IsError    bool                `json:"isError"`
-	ResultType string              `json:"resultType"`
+	Content []toolResultContent `json:"content"`
+	IsError bool                `json:"isError"`
+	// raw so an odd value from a 2025 upstream can't fail the decode
+	ResultType json.RawMessage `json:"resultType"`
 }
+
+var inputRequiredResultType = []byte(`"input_required"`)
 
 // extractTextFromResultJSON extracts text content from a JSON-RPC response's
 // result. ok is false when data can't be reliably parsed as a JSON-RPC
@@ -117,26 +122,26 @@ type toolCallResultPayload struct {
 // guardrails unchecked. An error response has no tool result content to
 // check either way, so it's ok=true with nil text, same as a result with no
 // text items.
-func extractTextFromResultJSON(data []byte) (texts []string, isError, ok bool) {
+func extractTextFromResultJSON(data []byte) (texts []string, isError, inputRequired, ok bool) {
 	// reuse jsonRPCMessage from elicitation.go
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	if len(msg.Result) == 0 {
 		// an error response has no tool result content to check either way;
 		// neither result nor error present means this isn't a decodable
 		// JSON-RPC response at all.
-		return nil, false, len(msg.Error) != 0
+		return nil, false, false, len(msg.Error) != 0
 	}
 	var payload toolCallResultPayload
 	if err := json.Unmarshal(msg.Result, &payload); err != nil {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	for i := range payload.Content {
 		if payload.Content[i].Type == "text" && payload.Content[i].Text != "" {
 			texts = append(texts, payload.Content[i].Text)
 		}
 	}
-	return texts, payload.IsError || payload.ResultType == "input_required", true
+	return texts, payload.IsError, bytes.Equal(payload.ResultType, inputRequiredResultType), true
 }
