@@ -677,18 +677,23 @@ func TestRouter202607_Guardrails(t *testing.T) {
 		cfg.SetGuardrailsChecker(fc)
 		router.RoutingConfig.Store(cfg)
 
-		var parsed MCPRequest
-		require.NoError(t, json.Unmarshal([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-			"name":"mytool","arguments":{"query":"SELECT 1","query":"\u0044ROP TABLE x"}}}`), &parsed))
+		parsed, err := ParseMCPRequest([]byte(`{"jsonrpc":"2.0","id":9007199254740993,"method":"tools/call","params":{
+			"name":"mytool","arguments":{"query":"SELECT 1","query":"\u0044ROP TABLE x"}}}`))
+		require.NoError(t, err)
 		decision := router.RouteRequest(context.Background(), &Request{
 			MCPMethod: MethodToolCall,
 			MCPName:   "mytool",
 			RequestID: "req-1",
-			Parsed:    &parsed,
+			Parsed:    parsed,
 		})
 		require.Nil(t, decision.Error)
 		require.Equal(t, `{"query":"DROP TABLE x"}`, string(fc.lastArguments))
 		require.Equal(t, string(fc.lastArguments), string(upstreamParams(t, decision.BodyMutation)["arguments"]))
+		var outbound struct {
+			ID json.RawMessage `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(decision.BodyMutation, &outbound))
+		require.Equal(t, "9007199254740993", string(outbound.ID))
 	})
 
 	t.Run("stamps server identity onto the parsed request", func(t *testing.T) {

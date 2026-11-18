@@ -100,6 +100,31 @@ type MCPRequest struct {
 	GuardrailsConfigIDs []string          `json:"-"` // per-server IDs for response guardrails check
 }
 
+// ParseMCPRequest decodes a request without rounding numeric JSON-RPC IDs.
+func ParseMCPRequest(data []byte) (*MCPRequest, error) {
+	var wire struct {
+		MCPRequest
+		ID requestID `json:"id"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, err
+	}
+	wire.MCPRequest.ID = wire.ID.value
+	return &wire.MCPRequest, nil
+}
+
+type requestID struct {
+	value any
+}
+
+func (id *requestID) UnmarshalJSON(data []byte) error {
+	if c := data[0]; c == '-' || c >= '0' && c <= '9' {
+		id.value = json.Number(data)
+		return nil
+	}
+	return json.Unmarshal(data, &id.value)
+}
+
 // Params is a json-rpc params object. Name and URI are set only when the key
 // holds a non-empty string; arguments and capabilities stay raw. Every other
 // key is kept as received in Extra so re-marshaling loses nothing.
