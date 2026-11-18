@@ -113,7 +113,12 @@ type toolCallResultPayload struct {
 	ResultType json.RawMessage `json:"resultType"`
 }
 
-var inputRequiredResultType = []byte(`"input_required"`)
+// isInputRequired decodes the raw value rather than comparing bytes, so an
+// escaped form like "\u0069nput_required" still counts. non-strings are false.
+func isInputRequired(raw json.RawMessage) bool {
+	var rt string
+	return len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &rt) == nil && rt == "input_required"
+}
 
 // extractTextFromResultJSON extracts text content from a JSON-RPC response's
 // result. ok is false when data can't be reliably parsed as a JSON-RPC
@@ -143,5 +148,5 @@ func extractTextFromResultJSON(data []byte) (texts []string, isError, inputRequi
 			texts = append(texts, payload.Content[i].Text)
 		}
 	}
-	return texts, payload.IsError, bytes.Equal(payload.ResultType, inputRequiredResultType), true
+	return texts, payload.IsError, isInputRequired(payload.ResultType), true
 }

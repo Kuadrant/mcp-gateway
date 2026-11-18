@@ -212,3 +212,10 @@ func TestExtractToolResponseText_NonStringResultType(t *testing.T) {
 	require.False(t, inputRequired)
 	require.Equal(t, "ok", string(got))
 }
+
+func TestExtractToolResponseText_EscapedInputRequired(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"x"}],"resultType":"\u0069nput_required"}}`)
+	_, _, inputRequired, ok := extractToolResponseText(body)
+	require.True(t, ok)
+	require.True(t, inputRequired)
+}
