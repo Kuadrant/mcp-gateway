@@ -6,13 +6,7 @@ import (
 	"strings"
 )
 
-// ── Tool-level errors ───────────────────────────────────────────────────
-// These build a JSON-RPC *result* with isError:true. The HTTP request was
-// valid and the gateway understood it, but the tool execution could not be
-// fulfilled (e.g. token resolution failure for non-elicitation clients).
-
-// BuildSSEToolExecutionError constructs an SSE JSON-RPC result indicating
-// tool execution failure for the 2025-11-25 (SSE/streamable-HTTP) protocol.
+// BuildSSEToolExecutionError builds an SSE tool result with isError:true.
 func BuildSSEToolExecutionError(requestID any, message string) string {
 	return SseJSONRPC(requestID, func(b *strings.Builder) {
 		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
@@ -21,8 +15,8 @@ func BuildSSEToolExecutionError(requestID any, message string) string {
 	})
 }
 
-// BuildJSONToolExecutionError constructs a plain JSON-RPC result indicating
-// tool execution failure for the 2026-07-28 (HTTP-only) protocol.
+// BuildJSONToolExecutionError builds a plain JSON tool result with isError:true.
+// Both protocol versions can return application/json responses.
 func BuildJSONToolExecutionError(requestID any, message string) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
@@ -38,23 +32,14 @@ func BuildJSONToolExecutionError(requestID any, message string) string {
 	return b.String()
 }
 
-// ── Protocol-level rejections ───────────────────────────────────────────
-// These build a JSON-RPC *error* object. The request is rejected before it
-// reaches any upstream server (e.g. unknown tool -32602, unknown prompt
-// -32602, missing resource -32002).
-
-// BuildSSEProtocolRejection constructs an SSE JSON-RPC error response for
-// the 2025-11-25 (SSE/streamable-HTTP) protocol. code is the JSON-RPC
-// error code (e.g. -32602 for "Invalid params").
+// BuildSSEProtocolRejection builds an SSE JSON-RPC error with the given code.
 func BuildSSEProtocolRejection(requestID any, code int, message string) string {
 	return SseJSONRPC(requestID, func(b *strings.Builder) {
 		fmt.Fprintf(b, ",\"error\":{\"code\":%d,\"message\":%s}}", code, jsonQuote(message))
 	})
 }
 
-// BuildJSONProtocolRejection constructs a plain JSON-RPC error response
-// for the 2026-07-28 (HTTP-only) protocol. code is the JSON-RPC error
-// code (e.g. -32602 for "Invalid params").
+// BuildJSONProtocolRejection builds a plain JSON-RPC error with the given code.
 func BuildJSONProtocolRejection(requestID any, code int, message string) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
@@ -68,9 +53,7 @@ func BuildJSONProtocolRejection(requestID any, code int, message string) string 
 	return b.String()
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-// SseJSONRPC constructs sse json-rpc event with custom body
+// SseJSONRPC builds an SSE message event; writeBody must close the JSON object.
 func SseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
 	var b strings.Builder
 	b.WriteString("\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":")

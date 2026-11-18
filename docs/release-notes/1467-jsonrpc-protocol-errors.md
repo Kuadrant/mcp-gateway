@@ -2,18 +2,21 @@
 
 ## What changed
 
-The MCP Gateway router now returns standard JSON-RPC **protocol errors** (top-level
-`error` object) for these cases, instead of a successful `result` with
-`isError: true`:
+The MCP Gateway router now uses a top-level JSON-RPC `error` object for unknown
+tools, prompts, and resource routes. Branches that previously returned a tool
+`result` with `isError: true` now return these protocol errors:
 
 | Case | Method | Code | Message (typical) |
 | --- | --- | --- | --- |
-| Unknown tool | `tools/call` | `-32602` | `Tool not found` (2025 router) or `unknown tool "…"` (2026 via broker) |
+| Unknown tool | `tools/call` | `-32602` | `Tool not found` |
 | Unknown prompt | `prompts/get` | `-32602` | `Prompt not found` |
-| Missing resource | `resources/read` | `-32002` | `Resource not found` |
+| Missing resource route (2025-11-25) | `resources/read` | `-32002` | `Resource not found` |
 
-2025-11-25 responses are SSE JSON-RPC events; 2026-07-28 responses are plain JSON.
-The HTTP status remains `200` with a JSON-RPC error body.
+These router rejections retain HTTP `200`, using SSE for 2025-11-25 and plain
+JSON for 2026-07-28. Unknown 2026-07-28 tools without a matching route continue
+to pass to the broker, which returns HTTP `400` with JSON-RPC code `-32602` and
+an `unknown tool` message. Clients must read JSON-RPC error bodies on both HTTP
+statuses. This PR does not change broker or upstream error handling.
 
 Token-resolution failures for non-elicitation clients and 2026 header/body
 mismatches are unchanged: they still use a tool `result` with `isError: true`.

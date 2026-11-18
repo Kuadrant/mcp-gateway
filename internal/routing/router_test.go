@@ -2071,10 +2071,8 @@ func TestHandleResourceRead_UnrecognizedPrefix(t *testing.T) {
 	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
-	require.Contains(t, decision.Error.JSONRPCErr, "Resource not found")
-	require.Contains(t, decision.Error.JSONRPCErr, "-32002")
-	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
+	require.JSONEq(t, `{"jsonrpc":"2.0","id":0,"error":{"code":-32002,"message":"Resource not found"}}`, extractSSEData(t, decision.Error.JSONRPCErr))
+	require.Equal(t, validToken, decision.SetHeaders[SessionHeader])
 }
 
 // TestHandleResourceRead_EmptyURI verifies that missing/empty URI param is rejected.
@@ -2613,68 +2611,29 @@ func TestResolveUpstreamToken_SubExtractedAndStored(t *testing.T) {
 	require.Equal(t, validToken, entry.SessionID)
 }
 
-func TestBuildSSEToolExecutionError(t *testing.T) {
-	result := BuildSSEToolExecutionError("req-1", "something went wrong")
-	var envelope struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      string `json:"id"`
-		Result  struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
+func TestRouter202511_UnknownToolAndPrompt(t *testing.T) {
+	router, token := newTestRouter(t, nil, nil, nil)
+	for _, tc := range []struct {
+		method string
+		body   string
+	}{
+		{MethodToolCall, `{"jsonrpc":"2.0","id":"missing","error":{"code":-32602,"message":"Tool not found"}}`},
+		{MethodPromptGet, `{"jsonrpc":"2.0","id":"missing","error":{"code":-32602,"message":"Prompt not found"}}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			decision := router.RouteRequest(context.Background(), &Request{Parsed: &MCPRequest{
+				ID:      "missing",
+				JSONRPC: "2.0",
+				Method:  tc.method,
+				Params:  map[string]any{"name": "no_such_name"},
+				Headers: map[string]string{SessionHeader: token},
+			}})
+			require.NotNil(t, decision.Error)
+			require.Equal(t, 200, decision.Error.StatusCode)
+			require.JSONEq(t, tc.body, extractSSEData(t, decision.Error.JSONRPCErr))
+			require.Equal(t, token, decision.SetHeaders[SessionHeader])
+		})
 	}
-	data := extractSSEData(t, result)
-	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
-	require.Equal(t, "2.0", envelope.JSONRPC)
-	require.Equal(t, "req-1", envelope.ID)
-	require.True(t, envelope.Result.IsError)
-	require.Len(t, envelope.Result.Content, 1)
-	require.Equal(t, "text", envelope.Result.Content[0].Type)
-	require.Equal(t, "something went wrong", envelope.Result.Content[0].Text)
-}
-
-func TestBuildSSEProtocolRejection(t *testing.T) {
-	result := BuildSSEProtocolRejection("req-2", -32002, "Resource not found")
-	var envelope struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      string `json:"id"`
-		Error   *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-		Result any `json:"result"`
-	}
-	data := extractSSEData(t, result)
-	require.NoError(t, json.Unmarshal([]byte(data), &envelope))
-	require.Equal(t, "2.0", envelope.JSONRPC)
-	require.Equal(t, "req-2", envelope.ID)
-	require.NotNil(t, envelope.Error)
-	require.Equal(t, -32002, envelope.Error.Code)
-	require.Equal(t, "Resource not found", envelope.Error.Message)
-	require.Nil(t, envelope.Result)
-}
-
-func TestBuildJSONProtocolRejection(t *testing.T) {
-	result := BuildJSONProtocolRejection("req-3", -32602, "Tool not found")
-	var envelope struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      string `json:"id"`
-		Error   *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-		Result any `json:"result"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(result), &envelope))
-	require.Equal(t, "2.0", envelope.JSONRPC)
-	require.Equal(t, "req-3", envelope.ID)
-	require.NotNil(t, envelope.Error)
-	require.Equal(t, -32602, envelope.Error.Code)
-	require.Equal(t, "Tool not found", envelope.Error.Message)
-	require.Nil(t, envelope.Result)
 }
 
 func extractSSEData(t *testing.T, sse string) string {
@@ -2775,10 +2734,8 @@ func TestRouter202511_StatelessOnlyToolRejected(t *testing.T) {
 	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
-	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
+	require.JSONEq(t, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Tool not found"}}`, extractSSEData(t, decision.Error.JSONRPCErr))
+	require.Equal(t, validToken, decision.SetHeaders[SessionHeader])
 }
 
 func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
@@ -2808,8 +2765,6 @@ func TestRouter202511_StatelessOnlyPromptRejected(t *testing.T) {
 	decision := router.RouteRequest(context.Background(), &Request{Parsed: data})
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
-	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"error"`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "isError")
+	require.JSONEq(t, `{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Prompt not found"}}`, extractSSEData(t, decision.Error.JSONRPCErr))
+	require.Equal(t, validToken, decision.SetHeaders[SessionHeader])
 }

@@ -1306,7 +1306,7 @@ func TestProcess_GuardrailsMalformedSSE(t *testing.T) {
 			name:         "event truncated mid-JSON",
 			contentType:  "text/event-stream",
 			responseBody: []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"res"),
-			wantBody:     routing.GuardrailsExtractionFailed(1, routing.BuildSSEToolError),
+			wantBody:     routing.GuardrailsExtractionFailed(1, routing.BuildSSEToolExecutionError),
 		},
 	}
 
