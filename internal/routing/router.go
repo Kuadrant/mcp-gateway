@@ -24,6 +24,15 @@ type Request struct {
 	RawHeaders map[string]string
 }
 
+// jsonRPCID returns the id from the client's JSON-RPC body, or nil if the body
+// was not parsed.
+func (r *Request) jsonRPCID() any {
+	if r.Parsed == nil {
+		return nil
+	}
+	return r.Parsed.ID
+}
+
 // Decision is the output of a routing decision.
 type Decision struct {
 	Authority    string            // :authority header value (backend HTTPRoute hostname)

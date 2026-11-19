@@ -284,6 +284,23 @@ func BuildSSEToolResult(requestID any, text string) string {
 // the redacted text is a valid result, not an error. Counterpart to
 // BuildSSEToolResult for application/json responses.
 func BuildJSONToolResult(requestID any, text string) string {
+	return buildJSONToolResponse(requestID, text, "")
+}
+
+// Build202607ToolResult is BuildJSONToolResult for 2026-07-28, which requires
+// resultType on every result.
+func Build202607ToolResult(requestID any, text string) string {
+	return buildJSONToolResponse(requestID, text, resultTypeCompleteField)
+}
+
+const (
+	isErrorField            = `,"isError":true`
+	resultTypeCompleteField = `,"resultType":"complete"`
+)
+
+// buildJSONToolResponse builds a single-text tool result. extraFields is
+// appended to the result object after content.
+func buildJSONToolResponse(requestID any, text, extraFields string) string {
 	var b strings.Builder
 	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
 	idBytes, err := json.Marshal(requestID)
@@ -294,7 +311,9 @@ func BuildJSONToolResult(requestID any, text string) string {
 	}
 	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
 	b.WriteString(jsonQuote(text))
-	b.WriteString("}]}}")
+	b.WriteString("}]")
+	b.WriteString(extraFields)
+	b.WriteString("}}")
 	return b.String()
 }
 

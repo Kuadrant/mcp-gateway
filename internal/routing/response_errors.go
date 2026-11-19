@@ -15,21 +15,14 @@ func BuildSSEToolExecutionError(requestID any, message string) string {
 	})
 }
 
-// BuildJSONToolExecutionError builds a plain JSON tool result with isError:true.
-// Both protocol versions can return application/json responses.
+// BuildJSONToolExecutionError builds a plain JSON tool error for 2025-11-25.
 func BuildJSONToolExecutionError(requestID any, message string) string {
-	var b strings.Builder
-	b.WriteString("{\"jsonrpc\":\"2.0\",\"id\":")
-	idBytes, err := json.Marshal(requestID)
-	if err != nil {
-		b.WriteString("null")
-	} else {
-		b.Write(idBytes)
-	}
-	b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-	b.WriteString(jsonQuote(message))
-	b.WriteString("}],\"isError\":true}}")
-	return b.String()
+	return buildJSONToolResponse(requestID, message, isErrorField)
+}
+
+// Build202607ToolExecutionError builds a tool error with the required resultType.
+func Build202607ToolExecutionError(requestID any, message string) string {
+	return buildJSONToolResponse(requestID, message, isErrorField+resultTypeCompleteField)
 }
 
 // BuildSSEProtocolRejection builds an SSE JSON-RPC error with the given code.

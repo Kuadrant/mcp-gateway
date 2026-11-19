@@ -580,7 +580,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				if guardrailsActive {
 					buildToolError, buildToolResult := routing.BuildSSEToolExecutionError, routing.BuildSSEToolResult
-					if responseIsJSON {
+					switch {
+					case effectiveVersion == protocol.Version2026:
+						buildToolError, buildToolResult = routing.Build202607ToolExecutionError, routing.Build202607ToolResult
+					case responseIsJSON:
 						buildToolError, buildToolResult = routing.BuildJSONToolExecutionError, routing.BuildJSONToolResult
 					}
 					toolName := mcpRequest.ToolName()
@@ -592,7 +595,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 					// from the request size check above.
 					oversizedBody := []byte(buildToolError(reqID, "response body exceeds configured size limit"))
 					guardrailsBuf = newGuardrailsResponseBuffer(!responseIsJSON, reqID, func(checkCtx context.Context, unit []byte) []byte {
-						text, isError, ok := extractToolResponseText(unit)
+						text, isError, inputRequired, ok := extractToolResponseText(unit)
 						if !ok {
 							// undecodable/ambiguous body: fail closed rather than
 							// forward it unchecked - see extractToolResponseText.
@@ -601,8 +604,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 						}
 						// a redacted failed call must stay failed: the error
 						// builders produce the same result shape with isError set.
+						// a 2026 input_required result is reported as failed too,
+						// since the replacement drops inputRequests/requestState.
 						buildRedacted := buildToolResult
-						if isError {
+						if isError || (inputRequired && effectiveVersion == protocol.Version2026) {
 							buildRedacted = buildToolError
 						}
 						return routing.CheckToolResponseGuardrails(

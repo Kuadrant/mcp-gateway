@@ -19,3 +19,4 @@
 <!-- do we want non-OCP setup in the docs at this stage? -->
 - [Vault Integration](./vault-integration.md)
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
+- [Configure guardrails](./configure-guardrails.md) - Protect MCP servers by configuring guardrails checks

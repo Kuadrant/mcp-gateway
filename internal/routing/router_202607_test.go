@@ -180,7 +180,9 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "HeaderMismatch")
-	require.Contains(t, decision.Error.JSONRPCErr, "isError")
+	require.Contains(t, decision.Error.JSONRPCErr, `"isError":true`)
+	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.NotContains(t, decision.Error.JSONRPCErr, `"error":{`)
 }
 
