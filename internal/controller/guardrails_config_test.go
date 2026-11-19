@@ -33,6 +33,7 @@ model: meta/llama-3.1-8b-instruct
 		annotations map[string]string
 		secrets     []corev1.Secret
 		wantErr     bool
+		wantReason  string
 		errContains string
 		wantConfig  *config.GuardrailsConfig
 	}{
@@ -45,7 +46,8 @@ model: meta/llama-3.1-8b-instruct
 			name:        "secret not found",
 			annotations: map[string]string{labelGuardrailsReference: "missing"},
 			wantErr:     true,
-			errContains: "not found",
+			wantReason:  mcpv1.GuardrailsSecretNotFound,
+			errContains: "guardrails secret missing not found",
 		},
 		{
 			name:        "missing label",
@@ -56,7 +58,8 @@ model: meta/llama-3.1-8b-instruct
 				Data:       map[string][]byte{"config.yaml": []byte(validConfigYAML)},
 			}},
 			wantErr:     true,
-			errContains: "missing required label",
+			wantReason:  mcpv1.GuardrailsSecretInvalid,
+			errContains: "guardrails secret no-label missing required label " + ManagedSecretLabel + "=" + ManagedSecretValue,
 		},
 		{
 			name:        "invalid config data",
@@ -70,6 +73,7 @@ model: meta/llama-3.1-8b-instruct
 				Data: map[string][]byte{"config.yaml": []byte("model: only-model")},
 			}},
 			wantErr:     true,
+			wantReason:  mcpv1.GuardrailsSecretInvalid,
 			errContains: "is invalid",
 		},
 		{
@@ -98,11 +102,13 @@ model: meta/llama-3.1-8b-instruct
 			for i := range tt.secrets {
 				objs[i] = &tt.secrets[i]
 			}
-			fc := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+			apiReader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+			cached := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			writer := &capturingConfigWriter{}
 			r := &MCPGatewayExtensionReconciler{
-				Client:              fc,
+				Client:              cached,
+				DirectAPIReader:     apiReader,
 				ConfigWriterDeleter: writer,
 			}
 
@@ -115,15 +121,15 @@ model: meta/llama-3.1-8b-instruct
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tt.errContains != "" {
-					msg := err.Error()
-					var valErr *validationError
-					if errors.As(err, &valErr) {
-						msg = valErr.message
-					}
-					if !strings.Contains(msg, tt.errContains) {
-						t.Fatalf("error %q does not contain %q", msg, tt.errContains)
-					}
+				var valErr *validationError
+				if !errors.As(err, &valErr) {
+					t.Fatalf("expected *validationError, got %T: %v", err, err)
+				}
+				if valErr.reason != tt.wantReason {
+					t.Fatalf("reason = %q, want %q", valErr.reason, tt.wantReason)
+				}
+				if !strings.Contains(valErr.message, tt.errContains) {
+					t.Fatalf("message %q does not contain %q", valErr.message, tt.errContains)
 				}
 				return
 			}

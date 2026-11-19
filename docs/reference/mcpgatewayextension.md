@@ -32,6 +32,7 @@
 | `urlElicitation` | String | No | Controls URL-based token elicitation. `Enabled`: creates a separate `/tokens` HTTPRoute and passes `--enable-url-elicitation` to the broker. `Disabled` (default): no `/tokens` route is created |
 | `caCertBundleRef` | [CACertBundleReference](#cacertbundlereference) | No | References a Secret containing a PEM-encoded CA certificate bundle. Used as the base trust pool for broker connections to all upstream MCP servers, and for 2025-11-25 protocol hairpin requests to the gateway HTTPS listener. 2026-07-28 MCP calls do not hairpin. Per-server `caCertSecretRef` on MCPServerRegistration appends to this pool for upstreams. If the gateway listener CA differs from upstream CAs, include both PEMs in the Secret. The Secret must have the label `mcp.kuadrant.io/secret: "true"` and must not exceed 256 KiB |
 | `oauthProtectedResource` | [OAuthProtectedResource](#oauthprotectedresource) | No | Configures the OAuth protected resource metadata served at `/.well-known/oauth-protected-resource`. When set, the controller injects `OAUTH_*` env vars into the broker-router deployment |
+| `maxBodyBytes` | Integer | No | Maximum bytes the router buffers for streamed body accumulation (request or response). Applies to guardrails inspection and any other per-request body processing. Default: 5242880 (5 MiB). Oversized requests are rejected with 413 regardless of `failMode`. Oversized `tools/call` responses checked by guardrails become an `isError` tool result with `response body exceeds configured size limit`. The controller sets the gateway listener's `per_connection_buffer_limit_bytes` to the same value |
 
 
 ## MCPGatewayExtensionTargetReference
@@ -78,6 +79,12 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | `bearerMethodsSupported` | []String | No | Supported bearer token methods. Defaults to `["header"]`. Injected as `OAUTH_BEARER_METHODS_SUPPORTED` (comma-separated) |
 | `scopesSupported` | []String | No | Supported OAuth scopes. Defaults to `["basic"]`. Injected as `OAUTH_SCOPES_SUPPORTED` (comma-separated) |
 
+## Annotations
+
+| **Annotation** | **Description** |
+|----------------|-----------------|
+| `mcp.kuadrant.io/guardrails-ref` | Name of a Secret in the same namespace containing NeMo Guardrails configuration. Validated at reconcile time, not admission. See [Guardrails Configuration Options](./guardrails-configuration-options.md) for the Secret format and the [Guardrails guide](../guides/configure-guardrails.md) for setup |
+
 ## MCPGatewayExtensionStatus
 
 | **Field** | **Type** | **Description** |
@@ -89,6 +96,7 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | **Type** | **Description** |
 |----------|-----------------|
 | `Ready` | Indicates whether the MCPGatewayExtension is fully configured: the broker-router deployment is running, the EnvoyFilter has been applied, and trusted headers (if configured) are valid |
+| `GuardrailsResolved` | Set when `mcp.kuadrant.io/guardrails-ref` has a non-empty value. An empty value is treated as unset. `True` when the referenced Secret is valid. `False` when it is missing or invalid, in which case `Ready` is also `False` and all MCPServerRegistrations on the gateway are set to `NotReady` until the Secret is fixed or the annotation is removed. Removed when the annotation is removed |
 
 ### Condition Reasons
 
@@ -100,6 +108,9 @@ Trust pool hierarchy: system roots, then gateway CA bundle (if set), then per-se
 | `DeploymentNotReady` | The broker-router deployment is not ready |
 | `SecretNotFound` | A referenced secret is missing (trusted headers, session store, or CA cert bundle) |
 | `SecretInvalid` | A referenced secret lacks the required data entry (`key` for trusted headers, `CACHE_CONNECTION_STRING` for session store), lacks the required label, or contains invalid PEM data (CA cert bundle) |
+| `GuardrailsSecretResolved` | The guardrails Secret is valid (`GuardrailsResolved` only) |
+| `GuardrailsSecretNotFound` | The Secret referenced by `mcp.kuadrant.io/guardrails-ref` does not exist |
+| `GuardrailsSecretInvalid` | The guardrails Secret lacks the `mcp.kuadrant.io/secret: "true"` label, has the wrong type or an invalid `config.yaml` |
 
 ## Managed NetworkPolicy
 
