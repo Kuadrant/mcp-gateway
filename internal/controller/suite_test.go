@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -91,6 +92,8 @@ var _ = BeforeSuite(func() {
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // disable metrics
 		},
+		// same cache filters as cmd/main.go
+		Cache: cache.Options{ByObject: CacheByObject()},
 	})
 	Expect(err).NotTo(HaveOccurred())
 

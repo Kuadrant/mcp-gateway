@@ -492,8 +492,10 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		return false, fmt.Errorf("failed to set controller reference on network policy: %w", err)
 	}
 
+	// read uncached: the cache only holds labelled policies, so one whose
+	// labels were edited would look missing and the create would fail
 	existingNetworkPolicy := &networkingv1.NetworkPolicy{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
+	if err := r.DirectAPIReader.Get(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router network policy", "namespace", mcpExt.Namespace)
 			if err := r.Create(ctx, networkPolicy); err != nil {

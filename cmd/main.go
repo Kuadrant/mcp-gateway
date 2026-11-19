@@ -29,14 +29,11 @@ import (
 
 	goenv "github.com/caitlinelfring/go-env-default"
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
-	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -85,13 +82,7 @@ func main() {
 		LeaderElection:         false,
 		HealthProbeBindAddress: ":8081",
 		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Secret{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						controller.ManagedSecretLabel: controller.ManagedSecretValue,
-					}),
-				},
-			},
+			ByObject: controller.CacheByObject(),
 		},
 	})
 	if err != nil {

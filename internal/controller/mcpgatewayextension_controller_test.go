@@ -888,6 +888,98 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 		})
 	})
 
+	Context("When caching network policies", func() {
+		const resourceName = "test-netpol-cache-resource"
+		const gatewayName = "test-netpol-cache-gateway"
+		const unrelatedName = "test-unrelated-netpol"
+
+		ctx := context.Background()
+
+		mcpExtNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+		managedNP := types.NamespacedName{Name: brokerRouterName, Namespace: "default"}
+		unrelatedNP := types.NamespacedName{Name: unrelatedName, Namespace: "default"}
+
+		BeforeEach(func() {
+			gw := createTestGateway(gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, gw)).To(Succeed())
+			ext := createTestMCPGatewayExtension(resourceName, "default", gatewayName, "default")
+			Expect(testK8sClient.Create(ctx, ext)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			_ = testK8sClient.Delete(ctx, &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: unrelatedName, Namespace: "default"},
+			})
+			forceDeleteTestMCPGatewayExtension(ctx, resourceName, "default")
+			deleteTestGateway(ctx, gatewayName, "default")
+		})
+
+		It("should not cache network policies it doesn't manage", func() {
+			unrelated := &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      unrelatedName,
+					Namespace: "default",
+					Labels:    map[string]string{"app": "something-else"},
+				},
+			}
+			Expect(testK8sClient.Create(ctx, unrelated)).To(Succeed())
+
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			// the managed policy showing up in the cache means the informer has synced
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(testIndexedClient.Get(ctx, managedNP, &networkingv1.NetworkPolicy{})).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Expect(testK8sClient.Get(ctx, unrelatedNP, &networkingv1.NetworkPolicy{})).To(Succeed())
+			err := testIndexedClient.Get(ctx, unrelatedNP, &networkingv1.NetworkPolicy{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "expected unrelated policy to be absent from the cache, got %v", err)
+
+			cachedList := &networkingv1.NetworkPolicyList{}
+			Expect(testIndexedClient.List(ctx, cachedList, client.InNamespace("default"))).To(Succeed())
+			for i := range cachedList.Items {
+				Expect(cachedList.Items[i].Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			}
+		})
+
+		It("should repair a managed network policy whose labels were removed", func() {
+			reconciler := newTestReconciler()
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(testIndexedClient.Get(ctx, managedNP, &networkingv1.NetworkPolicy{})).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			// strip the labels so the policy drops out of the filtered cache
+			Eventually(func(g Gomega) {
+				np := &networkingv1.NetworkPolicy{}
+				g.Expect(testK8sClient.Get(ctx, managedNP, np)).To(Succeed())
+				np.Labels = nil
+				g.Expect(testK8sClient.Update(ctx, np)).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			Eventually(func(g Gomega) {
+				err := testIndexedClient.Get(ctx, managedNP, &networkingv1.NetworkPolicy{})
+				g.Expect(errors.IsNotFound(err)).To(BeTrue())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
+				g.Expect(err).NotTo(HaveOccurred())
+				np := &networkingv1.NetworkPolicy{}
+				g.Expect(testK8sClient.Get(ctx, managedNP, np)).To(Succeed())
+				g.Expect(np.Labels).To(Equal(brokerRouterLabels()))
+			}, testTimeout, testRetryInterval).Should(Succeed())
+		})
+	})
+
 	Context("When reconciling EnvoyFilter for cross-namespace Gateway", func() {
 		const resourceName = "test-envoyfilter-resource"
 		const gatewayName = "test-envoyfilter-gateway"
