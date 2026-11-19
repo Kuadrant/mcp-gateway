@@ -175,9 +175,35 @@ Stop the port-forward with Ctrl+C when finished.
 
 The broker caches access tokens and obtains a new token through the client credentials grant when a request needs one near or after expiry. No refresh token or manual bearer-token replacement is required. An upstream HTTP 401 response discards the cached token so a subsequent request can obtain a new one; it does not guarantee that the failed request succeeds immediately.
 
-Before rotating credentials, restart the port-forward from [Step 3](#step-3-verifying-authenticated-discovery) if you stopped it. Record the current `lastValidated` value from `/status`. Update `clientID` or `clientSecret` in the same labeled Secret using your Secret management workflow, or reapply the Secret from Step 1 with the new values. The controller reconciles registrations that reference the Secret, and the broker reloads the configuration and reconnects using the updated credentials without a pod restart.
+Before rotating credentials, stop any existing port-forward and list the broker-router pods in the MCPGatewayExtension namespace.
 
-After the Secret update, wait for two new entries for your registration in the [broker logs](#troubleshooting-authentication-failures). `Server Config Changed removing manager` appears first, followed by `Starting manager for`. Then run the Step 3 status query and confirm that `lastValidated` has advanced and `ready` is `true`. If the new credentials are invalid, `/status` reports `ready: false` and `failed to obtain access token`. Broker logs include an OAuth error code such as `invalid_client`.
+```bash
+kubectl get pods -n mcp-system -l app.kubernetes.io/name=mcp-gateway
+```
+
+Choose a ready pod and replace `mcp-gateway-example` with its name in the port-forward and log commands.
+
+```bash
+kubectl port-forward -n mcp-system pod/mcp-gateway-example 18080:8080
+```
+
+In another terminal, run the [Step 3 status query](#step-3-verifying-authenticated-discovery) and record the current `lastValidated` value. In that terminal, capture the UTC time immediately before updating the Secret.
+
+```bash
+rotation_start=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+```
+
+Update `clientID` or `clientSecret` in the same labeled Secret using your Secret management workflow, or reapply the Secret from Step 1 with the new values. The controller reconciles registrations that reference the Secret, and the broker reloads the configuration and reconnects using the updated credentials without a pod restart.
+
+After the Secret update, check the same pod's logs using the recorded time as the cutoff.
+
+```bash
+kubectl logs -n mcp-system pod/mcp-gateway-example --since-time="$rotation_start"
+```
+
+For your registration, wait for `Server Config Changed removing manager` and then `Starting manager for`. Rerun the Step 3 status query and confirm that `lastValidated` has advanced and `ready` is `true`. If the new credentials are invalid, `/status` reports `ready: false` and `failed to obtain access token`. Broker logs include an OAuth error code such as `invalid_client`.
+
+To verify rotation across multiple replicas, record each pod's `lastValidated` before the Secret update, then verify each pod using the same log cutoff.
 
 ## Troubleshooting authentication failures
 
