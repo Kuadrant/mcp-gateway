@@ -99,10 +99,14 @@ func (r *Router202607) routeToolCall(ctx context.Context, table RoutingTable, re
 		r.Logger.DebugContext(ctx, "stateful-only backend, rejecting from 2026 router", "toolName", toolName, "server", route.Name)
 		span.SetStatus(codes.Error, "tool not available for stateless protocol")
 		span.SetAttributes(attribute.String("error.type", "protocol_mismatch"))
+		var requestID any
+		if req.Parsed != nil {
+			requestID = req.Parsed.ID
+		}
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONProtocolRejection(req.RequestID, -32602, "Tool not found"),
+				JSONRPCErr:  BuildJSONProtocolRejection(requestID, -32602, "Tool not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -204,6 +208,10 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{Error: &Error{StatusCode: 400, Message: "no prompt name set"}}
 	}
 
+	var requestID any
+	if req.Parsed != nil {
+		requestID = req.Parsed.ID
+	}
 	headers := make(map[string]string)
 	route, ok := table.LookupPrompt(promptName)
 	if !ok {
@@ -213,7 +221,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONProtocolRejection(req.RequestID, -32602, "Prompt not found"),
+				JSONRPCErr:  BuildJSONProtocolRejection(requestID, -32602, "Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
@@ -226,7 +234,7 @@ func (r *Router202607) routePromptGet(ctx context.Context, table RoutingTable, r
 		return &Decision{
 			Error: &Error{
 				StatusCode:  200,
-				JSONRPCErr:  BuildJSONProtocolRejection(req.RequestID, -32602, "Prompt not found"),
+				JSONRPCErr:  BuildJSONProtocolRejection(requestID, -32602, "Prompt not found"),
 				ContentType: "application/json",
 			},
 		}
