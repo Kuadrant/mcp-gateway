@@ -181,6 +181,7 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "HeaderMismatch")
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
 }
 
 func TestRouter202607_PromptGet(t *testing.T) {
@@ -451,6 +452,7 @@ func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
 		MCPMethod: MethodToolCall,
 		MCPName:   "mytool",
 		RequestID: "req-1",
+		Parsed:    &MCPRequest{ID: ptr.To(7), JSONRPC: "2.0", Method: "tools/call", Params: map[string]any{"name": "mytool"}},
 	}
 
 	decision := router.RouteRequest(context.Background(), req)
@@ -458,7 +460,9 @@ func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-1"`)
+	require.Contains(t, decision.Error.JSONRPCErr, `"id":7`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "req-1", "x-request-id must not be echoed as the JSON-RPC id")
+	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
 }
 
 func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
@@ -481,6 +485,7 @@ func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
 		MCPMethod: MethodPromptGet,
 		MCPName:   "myprompt",
 		RequestID: "req-2",
+		Parsed:    &MCPRequest{ID: ptr.To(7), JSONRPC: "2.0", Method: "prompts/get", Params: map[string]any{"name": "myprompt"}},
 	}
 
 	decision := router.RouteRequest(context.Background(), req)
@@ -488,7 +493,9 @@ func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
 	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"id":"req-2"`)
+	require.Contains(t, decision.Error.JSONRPCErr, `"id":7`)
+	require.NotContains(t, decision.Error.JSONRPCErr, "req-2", "x-request-id must not be echoed as the JSON-RPC id")
+	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
 }
 
 func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {
