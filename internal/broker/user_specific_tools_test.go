@@ -1147,3 +1147,49 @@ func TestFetchUserSpecificTools_NormalizesSchemaDialects(t *testing.T) {
 		})
 	}
 }
+
+func TestFetchUserSpecificTools_PreservesCachedSchemaDialects(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "schema-cache-test", Version: "1.0"}, nil)
+	server.AddTool(&mcp.Tool{
+		Name:         "tool",
+		InputSchema:  map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+		OutputSchema: map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if tools, ok := result.(*mcp.ListToolsResult); ok {
+				tools.TTLMs = 60000
+			}
+			return result, err
+		}
+	})
+	ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, &mcp.StreamableHTTPOptions{Stateless: true}))
+	t.Cleanup(ts.Close)
+	b := &mcpBrokerImpl{logger: slog.Default(), userSpecificFetchTimeout: 10 * time.Second}
+	t.Cleanup(b.drainUserSessionPool)
+	srv := userSpecificServer{id: "schema-server", name: "schema-server", url: ts.URL, prefix: "us_"}
+	ctx := context.Background()
+	session, err := b.getOrCreateUserSession(ctx, srv, nil, "gateway-session")
+	require.NoError(t, err)
+	cached, err := session.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, cached.Tools, 1)
+	again, err := session.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.Same(t, cached, again, "test must exercise the SDK TTL cache")
+
+	for range 2 {
+		tools, err := b.fetchToolsStateful(ctx, srv, nil, "gateway-session")
+		require.NoError(t, err)
+		require.Len(t, tools, 1)
+		assert.NotContains(t, tools[0].InputSchema, "$schema")
+		assert.NotContains(t, tools[0].OutputSchema, "$schema")
+		assert.Contains(t, cached.Tools[0].InputSchema, "$schema", "SDK-cached input schema must stay unchanged")
+		assert.Contains(t, cached.Tools[0].OutputSchema, "$schema", "SDK-cached output schema must stay unchanged")
+	}
+}

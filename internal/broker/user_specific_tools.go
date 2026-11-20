@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -225,7 +226,16 @@ func (broker *mcpBrokerImpl) doFetchTools(ctx context.Context, srv userSpecificS
 	valueTools := make([]mcp.Tool, 0, len(toolsResult.Tools))
 	for _, t := range toolsResult.Tools {
 		if t != nil {
-			valueTools = append(valueTools, *t)
+			tool := *t
+			// the SDK can share cached schema maps across requests; validation
+			// only changes root keys, so shallow copies isolate those writes.
+			if schema, ok := tool.InputSchema.(map[string]any); ok {
+				tool.InputSchema = maps.Clone(schema)
+			}
+			if schema, ok := tool.OutputSchema.(map[string]any); ok {
+				tool.OutputSchema = maps.Clone(schema)
+			}
+			valueTools = append(valueTools, tool)
 		}
 	}
 
