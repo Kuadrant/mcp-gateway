@@ -314,8 +314,6 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 	}
 
 	serverOpts := &mcp.ServerOptions{
-		HasPrompts:   true,
-		HasResources: true,
 		// mark3labs never paginated list results; a page size no client can
 		// reach keeps every list a single page with no nextCursor.
 		PageSize:     unpaginatedPageSize,
@@ -329,7 +327,9 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 			}()
 		},
 		Capabilities: &mcp.ServerCapabilities{
-			Tools: &mcp.ToolCapabilities{ListChanged: true},
+			Prompts:   &mcp.PromptCapabilities{ListChanged: true},
+			Resources: &mcp.ResourceCapabilities{ListChanged: true},
+			Tools:     &mcp.ToolCapabilities{ListChanged: true},
 		},
 	}
 	if mcpBkr.discovery.enabled {

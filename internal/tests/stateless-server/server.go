@@ -20,7 +20,7 @@ import (
 
 const (
 	userAToken = "bearer user-a-token"
-	userBToken = "bearer user-b-token" //nolint:gosec // test credentials
+	userBToken = "bearer user-b-token"
 )
 
 var perUserTools = map[string][]string{
