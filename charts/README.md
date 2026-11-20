@@ -52,9 +52,9 @@ The chart uses sensible defaults and requires minimal configuration. The configu
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `image.repository` | Broker-router image repository | `ghcr.io/kuadrant/mcp-gateway` |
+| `image.repository` | Broker-router image repository | `quay.io/kuadrant/mcp-gateway` |
 | `image.tag` | Broker-router image tag | Chart appVersion |
-| `imageController.repository` | Controller image repository | `ghcr.io/kuadrant/mcp-controller` |
+| `imageController.repository` | Controller image repository | `quay.io/kuadrant/mcp-controller` |
 | `imageController.tag` | Controller image tag | Chart appVersion |
 | `controller.enabled` | Enable controller deployment | `true` |
 | `broker.pollInterval` | How often broker pings upstream MCP servers | `60` |

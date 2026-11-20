@@ -16,9 +16,9 @@ components:
 # override image tags so CI uses locally-built images (tagged 'latest')
 # rather than the release version hardcoded in the base manifests
 images:
-  - name: ghcr.io/kuadrant/mcp-controller
+  - name: quay.io/kuadrant/mcp-controller
     newTag: latest
-  - name: ghcr.io/kuadrant/mcp-gateway
+  - name: quay.io/kuadrant/mcp-gateway
     newTag: latest
 
 patches:
@@ -55,6 +55,6 @@ patches:
                   - --log-level=-4
                 env:
                   - name: RELATED_IMAGE_ROUTER_BROKER
-                    value: ghcr.io/kuadrant/mcp-gateway:latest
+                    value: quay.io/kuadrant/mcp-gateway:latest
                   - name: BROKER_ROUTER_LOG_LEVEL
                     value: "-4"

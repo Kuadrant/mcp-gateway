@@ -9,9 +9,9 @@ resources:
   - ../mcp-system
 
 images:
-  - name: ghcr.io/kuadrant/mcp-controller
+  - name: quay.io/kuadrant/mcp-controller
     newTag: latest
-  - name: ghcr.io/kuadrant/mcp-gateway
+  - name: quay.io/kuadrant/mcp-gateway
     newTag: latest
 
 patches:
@@ -34,4 +34,4 @@ patches:
               - name: mcp-controller
                 env:
                   - name: RELATED_IMAGE_ROUTER_BROKER
-                    value: ghcr.io/kuadrant/mcp-gateway:latest
+                    value: quay.io/kuadrant/mcp-gateway:latest
