@@ -95,17 +95,29 @@ linters:
           - staticcheck
         text: "dot.imports|ST1001"
       # gosec false-positives in e2e test code: G101 test-only EC signing
-      # key, G109/G115 trusted int conversions in builders, G204 kubectl
-      # shell-outs with controlled inputs, G402 self-signed Kind certs.
-      # Other gosec rules still apply.
+      # key, G109/G115 trusted int conversions in builders, G118 intentional
+      # suite-level context, G204 kubectl shell-outs with controlled inputs,
+      # G402 self-signed Kind certs. Other gosec rules still apply.
       - path: 'tests/e2e/.*\.go$'
         linters:
           - gosec
-        text: "G(101|109|115|204|402):"
+        text: "G(101|109|115|118|204|402):"
       # Suite-level context for the entire Ginkgo run is intentional.
       - path: 'tests/e2e/suite_test\.go$'
         linters:
           - fatcontext
+      # gosec/noctx false-positives in test code: G101 test credentials,
+      # G124 test cookies, G706 test servers logging user input, noctx in tests.
+      - path: '_test\.go$'
+        linters:
+          - gosec
+          - noctx
+        text: "G(101|124|706):|httptest.NewRequest"
+      # G101/G706 false-positives in test servers (internal/tests)
+      - path: 'internal/tests/.*\.go$'
+        linters:
+          - gosec
+        text: "G(101|706):"
 
 issues:
   max-issues-per-linter: 0
