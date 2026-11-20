@@ -1112,3 +1112,38 @@ func TestFetchUserSpecificTools_PageLimitKeepsReplacementSession(t *testing.T) {
 	assert.Equal(t, listCallsAfterFirst+int32(upstream.MaxListPages), listCalls.Load(),
 		"the second fetch must reuse the replacement session for another bounded walk")
 }
+
+func TestFetchUserSpecificTools_NormalizesSchemaDialects(t *testing.T) {
+	for _, stateless := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stateless=%t", stateless), func(t *testing.T) {
+			server := mcp.NewServer(&mcp.Implementation{Name: "schema-test", Version: "1.0"}, nil)
+			server.AddTool(&mcp.Tool{
+				Name:         "tool",
+				InputSchema:  map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+				OutputSchema: map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+			}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			})
+			ts := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+				return server
+			}, &mcp.StreamableHTTPOptions{Stateless: stateless}))
+			t.Cleanup(ts.Close)
+			b := &mcpBrokerImpl{logger: slog.Default(), userSpecificFetchTimeout: 10 * time.Second}
+			t.Cleanup(b.drainUserSessionPool)
+			srv := userSpecificServer{id: "schema-server", name: "schema-server", url: ts.URL, prefix: "us_"}
+
+			var tools []mcp.Tool
+			var err error
+			if stateless {
+				tools, err = b.fetchToolsStateless(context.Background(), srv, nil)
+			} else {
+				tools, err = b.fetchToolsStateful(context.Background(), srv, nil, "gateway-session")
+			}
+			require.NoError(t, err)
+			require.Len(t, tools, 1)
+			assert.Equal(t, "us_tool", tools[0].Name)
+			assert.Equal(t, map[string]any{"type": "object"}, tools[0].InputSchema)
+			assert.Equal(t, map[string]any{"type": "object"}, tools[0].OutputSchema)
+		})
+	}
+}

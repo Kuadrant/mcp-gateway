@@ -554,3 +554,97 @@ func TestInvalidToolPolicyConstants(t *testing.T) {
 	assert.Equal(t, InvalidToolPolicy("FilterOut"), InvalidToolPolicyFilterOut)
 	assert.Equal(t, InvalidToolPolicy("RejectServer"), InvalidToolPolicyRejectServer)
 }
+
+func TestValidateTools_StripsDraft07SchemaDialect(t *testing.T) {
+	tools := []mcp.Tool{{
+		Name: "draft07_tool",
+		InputSchema: map[string]any{
+			"$schema": "http://json-schema.org/draft-07/schema#",
+			"type":    "object",
+		},
+	}}
+
+	valid, invalid := ValidateTools(tools)
+	require.Empty(t, invalid)
+	require.Len(t, valid, 1)
+	assert.NotContains(t, valid[0].InputSchema, "$schema")
+}
+
+func TestValidateTools_SchemaDialects(t *testing.T) {
+	type testCase struct {
+		name    string
+		dialect any
+		strip   bool
+	}
+	tests := []testCase{
+		{name: "absent"},
+		{name: "2020-12", dialect: "https://json-schema.org/draft/2020-12/schema"},
+		{name: "custom", dialect: "https://example.com/custom-schema"},
+		{name: "unknown draft", dialect: "https://json-schema.org/draft-99/schema#"},
+		{name: "custom fragment", dialect: "http://json-schema.org/draft-07/schema#custom"},
+		{name: "non-string", dialect: 7},
+	}
+	for _, draft := range []string{"draft-04", "draft-06", "draft-07", "draft/2019-09"} {
+		for _, scheme := range []string{"http", "https"} {
+			for _, fragment := range []string{"", "#"} {
+				dialect := scheme + "://json-schema.org/" + draft + "/schema" + fragment
+				tests = append(tests, testCase{name: dialect, dialect: dialect, strip: true})
+			}
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newSchema := func() map[string]any {
+				schema := map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"$schema": map[string]any{"type": "string"},
+						"name":    map[string]any{"type": "string", "minLength": 1},
+					},
+					"required":             []string{"name"},
+					"additionalProperties": false,
+					"$defs": map[string]any{"nested": map[string]any{
+						"$schema": "http://json-schema.org/draft-07/schema#",
+						"type":    "object",
+					}},
+				}
+				if tt.dialect != nil {
+					schema["$schema"] = tt.dialect
+				}
+				return schema
+			}
+			want := newSchema()
+			if tt.strip {
+				delete(want, "$schema")
+			}
+			tools := []mcp.Tool{{
+				Name: "tool", Description: "unchanged",
+				InputSchema: newSchema(), OutputSchema: newSchema(),
+			}}
+			valid, invalid := ValidateTools(tools)
+			require.Empty(t, invalid)
+			require.Len(t, valid, 1)
+			assert.Equal(t, "tool", valid[0].Name)
+			assert.Equal(t, "unchanged", valid[0].Description)
+			assert.Equal(t, want, valid[0].InputSchema)
+			assert.Equal(t, want, valid[0].OutputSchema)
+			assert.Equal(t, want, tools[0].InputSchema, "caller's maps are normalized too")
+			assert.Equal(t, want, tools[0].OutputSchema)
+		})
+	}
+}
+
+func TestValidateTools_SchemaDialectInvalidTool(t *testing.T) {
+	input := map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "string"}
+	valid, invalid := ValidateTools([]mcp.Tool{
+		{Name: "invalid", InputSchema: input},
+		{Name: "valid", InputSchema: map[string]any{"type": "object"}},
+	})
+	require.Len(t, valid, 1)
+	assert.Equal(t, "valid", valid[0].Name)
+	require.Len(t, invalid, 1)
+	assert.Equal(t, ValidateTool(mcp.Tool{Name: "invalid", InputSchema: input}), invalid[0])
+	assert.Contains(t, input, "$schema", "invalid tools are not normalized")
+	assert.Nil(t, valid[0].OutputSchema)
+}
