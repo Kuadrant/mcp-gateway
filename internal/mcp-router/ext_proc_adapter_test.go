@@ -1822,16 +1822,11 @@ func TestProcess202607_RealRouterStampsPrefixAndRewritesResource(t *testing.T) {
 	router.RoutingConfig = &srv.RoutingConfig
 	respHandler.RoutingConfig = &srv.RoutingConfig
 
-	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
-	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"_meta":{"ui":{"resourceUri":"ui://doc"}}}}`)
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":9007199254740993,"method":"tools/call","params":{"name":"s1_echo","arguments":{ "city": "Dublin" }}}`)
+	toolResultBody := []byte(`{"jsonrpc":"2.0","id":9007199254740993,"result":{"content":[{"type":"text","text":"ok"}],"_meta":{"ui":{"resourceUri":"ui://doc"}}}}`)
 
-	var parsed routing.MCPRequest
-	require.NoError(t, json.Unmarshal(toolCallBody, &parsed))
-	parsed.ReWriteToolName("echo")
-	wantReqBody, err := parsed.ToBytes()
-	require.NoError(t, err)
-
-	wantRespBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"_meta":{"ui":{"resourceUri":"ui://s1_doc"}},"content":[{"type":"text","text":"ok"}]}}`)
+	wantReqBody := []byte(`{"id":9007199254740993,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"city":"Dublin"},"name":"echo"}}`)
+	wantRespBody := []byte(`{"jsonrpc":"2.0","id":9007199254740993,"result":{"_meta":{"ui":{"resourceUri":"ui://s1_doc"}},"content":[{"type":"text","text":"ok"}]}}`)
 
 	reqBodyStep := mockProcessServerMessageAndErr{
 		msg: &extProcV3.ProcessingRequest{
