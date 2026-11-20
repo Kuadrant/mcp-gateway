@@ -2268,3 +2268,35 @@ func labelsMatch(attrs attribute.Set, want map[string]string) bool {
 	}
 	return true
 }
+
+func TestMCPManager_manage_NormalizesSchemaDialects(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid_tool=%t", mixed), func(t *testing.T) {
+			mock := newMockMCP("test-server", "test_")
+			mock.hasToolsCap = false
+			mock.tools = []mcp.Tool{{
+				Name:         "tool",
+				InputSchema:  map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+				OutputSchema: map[string]any{"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"},
+			}}
+			if mixed {
+				mock.tools = append(mock.tools, mcp.Tool{Name: "invalid", InputSchema: map[string]any{"type": "int"}})
+			}
+			gateway := newMockToolsAdderDeleter()
+			manager, err := NewUpstreamMCPManager(mock, gateway, nil, slog.Default(), 0, InvalidToolPolicyFilterOut)
+			require.NoError(t, err)
+
+			manager.manage(context.Background(), eventTypeTimer)
+
+			require.Len(t, gateway.tools, 1)
+			require.Contains(t, gateway.tools, "test_tool")
+			served := gateway.tools["test_tool"].Tool
+			assert.Equal(t, map[string]any{"type": "object"}, served.InputSchema)
+			assert.Equal(t, map[string]any{"type": "object"}, served.OutputSchema)
+			managed := manager.GetManagedTools()
+			require.Len(t, managed, 1)
+			assert.Equal(t, served.InputSchema, managed[0].InputSchema)
+			assert.Equal(t, served.OutputSchema, managed[0].OutputSchema)
+		})
+	}
+}

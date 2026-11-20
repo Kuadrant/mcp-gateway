@@ -3,6 +3,7 @@ package upstream
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -182,7 +183,25 @@ func ValidatePrompts(prompts []mcp.Prompt) ([]mcp.Prompt, []InvalidPromptInfo) {
 	return valid, invalid
 }
 
+// stripLegacySchemaDialect removes only recognized pre-2020-12 dialect labels.
+// This is a client compatibility workaround, not a schema dialect conversion.
+func stripLegacySchemaDialect(schema any) {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+	dialect, _ := m["$schema"].(string)
+	switch strings.TrimSuffix(dialect, "#") {
+	case "http://json-schema.org/draft-04/schema", "https://json-schema.org/draft-04/schema",
+		"http://json-schema.org/draft-06/schema", "https://json-schema.org/draft-06/schema",
+		"http://json-schema.org/draft-07/schema", "https://json-schema.org/draft-07/schema",
+		"http://json-schema.org/draft/2019-09/schema", "https://json-schema.org/draft/2019-09/schema":
+		delete(m, "$schema")
+	}
+}
+
 // ValidateTools validates a list of tools and returns the valid tools and info about invalid ones.
+// Accepted tools' schema maps are normalized in place before registration or serving.
 func ValidateTools(tools []mcp.Tool) ([]mcp.Tool, []InvalidToolInfo) {
 	var valid []mcp.Tool
 	var invalid []InvalidToolInfo
@@ -192,6 +211,10 @@ func ValidateTools(tools []mcp.Tool) ([]mcp.Tool, []InvalidToolInfo) {
 		if len(info.Errors) > 0 {
 			invalid = append(invalid, info)
 		} else {
+			// mutate the shared maps so managed discovery's fetched slice sees
+			// normalization even when no invalid tools need filtering.
+			stripLegacySchemaDialect(tool.InputSchema)
+			stripLegacySchemaDialect(tool.OutputSchema)
 			valid = append(valid, tool)
 		}
 	}
