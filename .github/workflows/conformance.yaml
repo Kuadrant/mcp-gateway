@@ -28,6 +28,7 @@ concurrency:
 env:
   CONFORMANCE_VERSION: "0.1.16"
   MCP_URL: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
+  GOTOOLCHAIN: go1.27.3
 
 jobs:
   conformance-tests:

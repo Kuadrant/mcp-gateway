@@ -27,6 +27,8 @@ jobs:
   controller-integration-tests:
     name: Controller Integration Tests
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.27.3
     defaults:
       run:
         shell: bash

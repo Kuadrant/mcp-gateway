@@ -39,7 +39,7 @@ $(KUSTOMIZE):
 kustomize: $(KUSTOMIZE) # Download kustomize locally if necessary.
 
 GOLANGCI_LINT = bin/golangci-lint
-GOLANGCI_LINT_VERSION = v2.4.0
+GOLANGCI_LINT_VERSION = v2.15.0
 $(GOLANGCI_LINT):
 	GOBIN=$(PWD)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 

@@ -28,6 +28,8 @@ concurrency:
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.27.3
     timeout-minutes: 45
     # packages: read lets the baked CI node image probe see GITHUB_TOKEN-
     # published ghcr packages, which default to private; pull-requests: read

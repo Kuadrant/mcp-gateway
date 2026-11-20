@@ -1,4 +1,5 @@
-FROM golang:1.26 AS builder
+FROM registry.access.redhat.com/ubi10/go-toolset:1.27 AS builder
+ENV GOTOOLCHAIN=go1.27.3
 
 WORKDIR /workspace
 
