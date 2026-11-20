@@ -106,3 +106,20 @@ mcpGatewayExtension:
 # 50051 only from the target Gateway's namespace, so it is not templated here.
 networkPolicy:
   enabled: false
+
+# MCP protocol version telemetry. The controller periodically scrapes each broker
+# pod and publishes cluster-wide totals on its metrics port (8082):
+# mcp_gateway_client_requests_total and mcp_gateway_upstream_servers.
+telemetry:
+  # how often the controller scrapes broker pods; "0" disables collection
+  interval: 5m
+  # OpenShift platform monitoring. Creates a metrics Service, ServiceMonitor,
+  # PrometheusRule recording rules and RBAC for openshift-monitoring's Prometheus.
+  # The namespace holding the ServiceMonitor and PrometheusRule must carry the
+  # label openshift.io/cluster-monitoring=true for platform Prometheus to load them.
+  openshiftPlatformMonitoring:
+    enabled: false
+    # Namespace for the ServiceMonitor and PrometheusRule. Defaults to the release
+    # namespace. Set it to a separate labelled namespace to keep the release
+    # namespace unlabelled, so user workload monitoring keeps watching it.
+    namespace: ""

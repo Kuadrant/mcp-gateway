@@ -9,6 +9,8 @@ metadata:
     component: controller
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "mcp-gateway.controllerSelectorLabels" . | nindent 6 }}
@@ -42,6 +44,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: RELATED_IMAGE_ROUTER_BROKER
               value: {{ include "mcp-gateway.image" . }}
+            - name: PROTOCOL_TELEMETRY_INTERVAL
+              value: {{ .Values.telemetry.interval | quote }}
           ports:
             - name: health
               containerPort: 8081

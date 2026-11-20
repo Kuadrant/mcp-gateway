@@ -246,8 +246,53 @@ The broker exposes a Prometheus-compatible `/metrics` endpoint on a dedicated po
 | `mcp_broker_tools_discovered` | Gauge | Cached tool count per upstream server. Cached values survive transient connection or ping failures and reach zero after three consecutive connection or ping failures |
 | `mcp_broker_upstream_connection_failures_total` | Counter | Connection failures per upstream server |
 | `mcp_broker_tools_list_response_bytes` | Gauge | Serialized size of the validated tool list per upstream server. Proxy for LLM context overhead |
+| `mcp_broker_upstream_servers` | Gauge | Enabled upstream servers by the newest MCP protocol version each one supports |
+| `mcp_router_client_requests_total` | Counter | Client MCP requests by the protocol version the client declares |
 
-`mcp_broker_discovery_total` uses `server_name` and `status` labels. All other metrics use only `server_name`. Label values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (for example, `<namespace>/my-server`). No high-cardinality labels (session IDs, tool names, or call IDs) are used.
+`mcp_broker_discovery_total` uses `server_name` and `status` labels. `mcp_broker_upstream_servers` and `mcp_router_client_requests_total` use only `protocol_version`. All other metrics use only `server_name`. `server_name` values are formatted as `namespace/name`, matching the namespace and name of the `MCPServerRegistration` resource (for example, `<namespace>/my-server`). No high-cardinality labels (session IDs, tool names, or call IDs) are used.
+
+`protocol_version` is one of:
+
+| Value | Meaning |
+|-------|---------|
+| `2026-07-28` | Stateless protocol |
+| `2025-11-25` | Newest stateful protocol |
+| `older` | Older stateful protocols (`2025-06-18`, `2025-03-26`, `2024-11-05`) |
+| `unknown` | A version the gateway does not support, or an upstream server with no known version yet |
+
+A client's version is taken from the `MCP-Protocol-Version` header, or from `params.protocolVersion` on an `initialize` request. A client that declares no version is counted as `older`, because the gateway assumes `2025-03-26` for it.
+
+### Controller metrics
+
+The controller scrapes every broker pod every 5 minutes and publishes cluster-wide totals on its own metrics endpoint (port `8082`):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_gateway_client_requests_total` | Counter | Client MCP requests across all gateways, by `protocol_version` |
+| `mcp_gateway_upstream_servers` | Gauge | Enabled upstream servers across all gateways, by `protocol_version`. Broker replicas in the same namespace are counted once |
+| `mcp_gateway_telemetry_scrape_errors_total` | Counter | Failed scrapes of broker metrics endpoints |
+
+Change the collection interval with the `PROTOCOL_TELEMETRY_INTERVAL` environment variable on the controller deployment. Set it to `0` to disable collection:
+
+```bash
+kubectl set env deployment/mcp-gateway-controller -n <controller-namespace> PROTOCOL_TELEMETRY_INTERVAL=1m
+```
+
+The controller needs network access to port `9090` on broker pods. When installed with Helm and `networkPolicy.enabled=true`, the controller `NetworkPolicy` allows this egress.
+
+On OpenShift, setting the Helm value `telemetry.openshiftPlatformMonitoring.enabled=true` creates a `ServiceMonitor`, `PrometheusRule` and RBAC so that platform monitoring scrapes these metrics. The rule records `cluster:mcp_gateway_client_requests:increase24h` and `cluster:mcp_gateway_upstream_servers:sum`.
+
+Platform monitoring only loads `ServiceMonitor` and `PrometheusRule` objects from namespaces labeled `openshift.io/cluster-monitoring=true`, and user workload monitoring ignores labeled namespaces. To keep the controller's namespace under user workload monitoring, set `telemetry.openshiftPlatformMonitoring.namespace` to a separate namespace that carries the label. The `ServiceMonitor` and `PrometheusRule` are created there, and the `ServiceMonitor` scrapes the controller's metrics `Service` in the release namespace:
+
+```bash
+kubectl create namespace mcp-telemetry
+kubectl label namespace mcp-telemetry openshift.io/cluster-monitoring=true
+helm upgrade --install mcp-gateway charts/mcp-gateway -n mcp-system \
+  --set telemetry.openshiftPlatformMonitoring.enabled=true \
+  --set telemetry.openshiftPlatformMonitoring.namespace=mcp-telemetry
+```
+
+If the namespace is left empty, the objects are created in the release namespace, which then needs the label.
 
 ### Guardrails metrics
 

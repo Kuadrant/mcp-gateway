@@ -136,35 +136,9 @@ func GetBrokerLogs(ctx context.Context, namespace string) (string, error) {
 // is OS-assigned: the suite runs under --procs and a fixed port would collide
 // across workers.
 func GetBrokerStatus(ctx context.Context) (*broker.StatusResponse, []byte, error) {
-	port, err := freeLocalPort(ctx)
+	body, err := portForwardGet(ctx, "deployment/mcp-gateway", 8080, "/status")
 	if err != nil {
 		return nil, nil, err
-	}
-
-	pfCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(pfCtx, "kubectl", "port-forward", "-n", SystemNamespace,
-		"deployment/mcp-gateway", fmt.Sprintf("%d:8080", port))
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, nil, fmt.Errorf("failed to start port-forward to broker: %w", err)
-	}
-	defer func() {
-		cancel()
-		_ = cmd.Wait()
-	}()
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/status", port)
-	// the forward needs a moment to bind before the first request lands
-	var body []byte
-	var lastErr error
-	for range 40 {
-		if body, lastErr = httpGetBody(pfCtx, url); lastErr == nil {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if lastErr != nil {
-		return nil, nil, fmt.Errorf("failed to read broker /status: %w", lastErr)
 	}
 
 	status := &broker.StatusResponse{}
@@ -172,6 +146,45 @@ func GetBrokerStatus(ctx context.Context) (*broker.StatusResponse, []byte, error
 		return nil, body, fmt.Errorf("failed to parse broker /status: %w", err)
 	}
 	return status, body, nil
+}
+
+// GetBrokerMetrics returns the broker's Prometheus metrics from the pod-local
+// port 9090, which no Service exposes.
+func GetBrokerMetrics(ctx context.Context) ([]byte, error) {
+	return portForwardGet(ctx, "deployment/mcp-gateway", 9090, "/metrics")
+}
+
+// portForwardGet port-forwards to target in SystemNamespace and GETs path. the
+// local port is OS-assigned so parallel workers do not collide.
+func portForwardGet(ctx context.Context, target string, remotePort int, path string) ([]byte, error) {
+	port, err := freeLocalPort(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	pfCtx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(pfCtx, "kubectl", "port-forward", "-n", SystemNamespace,
+		target, fmt.Sprintf("%d:%d", port, remotePort))
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to start port-forward to %s: %w", target, err)
+	}
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
+	// the forward needs a moment to bind before the first request lands
+	var body []byte
+	var lastErr error
+	for range 40 {
+		if body, lastErr = httpGetBody(pfCtx, url); lastErr == nil {
+			return body, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("failed to read %s from %s: %w", path, target, lastErr)
 }
 
 func httpGetBody(ctx context.Context, url string) ([]byte, error) {

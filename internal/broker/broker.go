@@ -171,6 +171,9 @@ type mcpBrokerImpl struct {
 	// serverVersions maps upstream server ID to supported protocol versions
 	serverVersions sync.Map // map[config.UpstreamMCPID][]string
 
+	// upstreamVersionMetrics registers the upstream protocol version gauge
+	upstreamVersionMetrics bool
+
 	// statefulTools and statelessTools cache pre-filtered tool sets and their
 	// contributing server IDs for each protocol version
 	statefulTools  atomic.Pointer[protocolCacheEntry[*mcp.Tool]]
@@ -360,6 +363,12 @@ func NewBroker(logger *slog.Logger, opts ...Option) MCPBroker {
 
 	if mcpBkr.discovery.enabled {
 		mcpBkr.registerDiscoveryTools()
+	}
+
+	if mcpBkr.upstreamVersionMetrics {
+		if err := mcpBkr.registerUpstreamVersionMetrics(); err != nil {
+			logger.Error("failed to register upstream version metrics", "error", err)
+		}
 	}
 
 	return mcpBkr

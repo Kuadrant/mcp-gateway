@@ -432,6 +432,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 			mcpRequest.Headers = headerMapToMap(localRequestHeaders.Headers)
 			span.SetAttributes(spanAttributes(mcpRequest)...)
+			recordClientRequest(ctx, protocolVersion, mcpRequest.Headers["mcp-init-host"], mcpRequest)
 
 			routingReq := &routing.Request{
 				MCPMethod:       mcpRequest.Method,
