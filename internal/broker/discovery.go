@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
+	"github.com/Kuadrant/mcp-gateway/internal/config"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
@@ -166,9 +167,8 @@ func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req *mcp.CallTo
 
 	headers := headersFromRequest(req)
 
-	m.mcpLock.RLock()
-	resp := m.buildDiscoverResponse(headers, categoryFilter)
-	m.mcpLock.RUnlock()
+	tools := m.visibleToolsForRequest(ctx, headers)
+	resp := m.buildDiscoverResponse(tools, categoryFilter)
 
 	slices.SortFunc(resp.Servers, func(a, b serverInfo) int {
 		return cmp.Compare(a.Name, b.Name)
@@ -182,9 +182,15 @@ func (m *mcpBrokerImpl) handleDiscoverTools(ctx context.Context, req *mcp.CallTo
 }
 
 // buildDiscoverResponse collects server info for visible tools, optionally filtered by category.
-// caller must hold mcpLock.
-func (m *mcpBrokerImpl) buildDiscoverResponse(headers http.Header, categoryFilter string) discoverToolsResponse {
-	visible := m.getVisibleToolNames(headers)
+func (m *mcpBrokerImpl) buildDiscoverResponse(tools []*mcp.Tool, categoryFilter string) discoverToolsResponse {
+	toolsByServer := make(map[config.UpstreamMCPID][]string)
+	for _, tool := range tools {
+		if id, ok := tool.Meta["kuadrant/id"].(string); ok {
+			toolsByServer[config.UpstreamMCPID(id)] = append(toolsByServer[config.UpstreamMCPID(id)], tool.Name)
+		}
+	}
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
 	resp := discoverToolsResponse{Servers: []serverInfo{}}
 
 	for _, manager := range m.mcpServers {
@@ -193,7 +199,7 @@ func (m *mcpBrokerImpl) buildDiscoverResponse(headers http.Header, categoryFilte
 			continue
 		}
 
-		toolNames := m.visibleToolNames(cfg.Prefix, manager, visible)
+		toolNames := toolsByServer[cfg.ID()]
 		if len(toolNames) == 0 {
 			continue
 		}
@@ -270,12 +276,10 @@ func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req *mcp.CallTool
 		return m.marshalToolResult(m.selectResponse("scope reset to all tools", nil)), nil
 	}
 
-	m.mcpLock.RLock()
-	valErr := m.validateToolSelectionLocked(toolNames, headers, sessionID)
+	valErr := m.validateToolSelection(ctx, toolNames, headers, sessionID)
 	if valErr == nil {
 		m.scopeStore.setScope(sessionID, toolNames)
 	}
-	m.mcpLock.RUnlock()
 
 	if valErr != nil {
 		return upstream.NewToolResultError("tool not available"), nil
@@ -291,10 +295,12 @@ func (m *mcpBrokerImpl) handleSelectTools(ctx context.Context, req *mcp.CallTool
 	return m.marshalToolResult(m.selectResponse(status, toolNames)), nil
 }
 
-// validateToolSelectionLocked checks that every requested tool is visible and not a broker meta-tool.
-// caller must hold mcpLock.
-func (m *mcpBrokerImpl) validateToolSelectionLocked(toolNames []string, headers http.Header, sessionID string) error {
-	visible := m.getVisibleToolNames(headers)
+// validateToolSelection checks that every requested tool is visible and not a broker meta-tool.
+func (m *mcpBrokerImpl) validateToolSelection(ctx context.Context, toolNames []string, headers http.Header, sessionID string) error {
+	visible := make(map[string]struct{})
+	for _, tool := range m.visibleToolsForRequest(ctx, headers) {
+		visible[tool.Name] = struct{}{}
+	}
 
 	for _, name := range toolNames {
 		if isBrokerToolName(name) {
@@ -325,6 +331,15 @@ func (m *mcpBrokerImpl) selectResponse(status string, tools []string) map[string
 // be reported in the select_tools response.
 func (m *mcpBrokerImpl) sendToolsListChanged(sessionID string) {
 	m.gatewayServer.TriggerToolsListChanged(sessionID)
+}
+
+// visibleToolsForRequest uses the same caller-specific inventory as tools/list,
+// before session scope and threshold filtering. Discovery must still expose tools
+// outside the current scope so clients can change their selection.
+func (m *mcpBrokerImpl) visibleToolsForRequest(ctx context.Context, headers http.Header) []*mcp.Tool {
+	tools := m.toolsForRequest(ctx, headers)
+	tools = m.applyAuthorizedCapabilitiesFilter(headers, tools)
+	return m.applyVirtualServerFilter(headers, tools)
 }
 
 // getVisibleToolNames returns a set of tool names visible to the current request,
