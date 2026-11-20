@@ -4,7 +4,7 @@ Use OAuth 2.0 client credentials when an upstream MCP server requires an access 
 
 This configures **broker-to-upstream authentication only**. It does not authenticate clients to the gateway or supply credentials for client `tools/call` requests. Configure [client authentication](./authentication.md) and upstream tool-call authorization separately. This is a client credentials grant, not an exchange of a user token.
 
-Note: The broker-to-upstream authentication is only available from `v1.1` onwards, not in previous versions (i.e. v1.0.2)
+> **Note:** `oauth2ClientCredentials` is available from v1.1 onwards. Earlier versions, such as v1.0.2, support broker-to-upstream authentication only through a static `credentialRef`.
 
 ## Prerequisites
 
@@ -223,7 +223,8 @@ kubectl logs -n mcp-system deployment/mcp-gateway --since=10m
 |---------|-------|
 | The API rejects the registration | Use an HTTPS `tokenURL`, a nonempty `secretRef.name`, and at most 10 nonempty scope entries. Remove `credentialRef` when configuring OAuth. |
 | The registration is not Ready | Verify that the Secret exists in the registration namespace, has the managed-secret label, and contains nonempty `clientID` and `clientSecret` keys. Also check the HTTPRoute and MCPGatewayExtension conditions. |
-| Broker status reports `failed to obtain access token` or `context deadline exceeded` | Check the broker logs for `token request failed` to confirm a token acquisition error. Token endpoint HTTP status and OAuth error codes such as `invalid_client` or `invalid_scope` help distinguish bad credentials from invalid scopes. Check DNS, network egress, TLS trust, the endpoint URL, and the 10-second timeout. Redirects are rejected. |
+| Broker status reports `failed to obtain access token` | Check the broker logs for `token request failed`. Token endpoint HTTP status and OAuth error codes such as `invalid_client` or `invalid_scope` help distinguish bad credentials from invalid scopes. Check DNS, network egress, TLS trust, and the endpoint URL. Redirects are rejected. |
+| Broker status reports `context deadline exceeded` | A connection or discovery request to the upstream timed out. If the broker logs show `token request failed` with `Client.Timeout exceeded`, the token endpoint did not respond within its 10-second timeout; check that it is reachable from the broker and responding. Otherwise, check that the upstream MCP endpoint is reachable from the broker and responding. |
 | Token acquisition succeeds but the upstream returns 401 or 403 | Verify that the upstream accepts tokens issued to this client, with the required audience, scopes, and permissions. There is no dedicated audience parameter in `oauth2ClientCredentials`; configure the provider to issue a token acceptable to the upstream. |
 | Discovery works but a client tool call fails | Configure authentication and authorization for that client-to-upstream request. Broker credentials are not used for client tool calls. |
 
