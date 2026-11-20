@@ -26,7 +26,7 @@ const (
 	// broker-router deployment constants
 	brokerRouterName     = "mcp-gateway"
 	gatewayHTTPRouteName = "mcp-gateway-route"
-	tokensHTTPRouteName  = "mcp-gateway-tokens-route" //nolint:gosec // not a credential
+	tokensHTTPRouteName  = "mcp-gateway-tokens-route"
 
 	// DefaultBrokerRouterImage is the default image for the broker-router deployment
 	DefaultBrokerRouterImage = "ghcr.io/kuadrant/mcp-gateway:latest"

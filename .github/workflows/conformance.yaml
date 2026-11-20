@@ -28,6 +28,7 @@ concurrency:
 env:
   CONFORMANCE_VERSION: "0.1.16"
   MCP_URL: "http://mcp.127-0-0-1.sslip.io:8001/mcp"
+  GOTOOLCHAIN: go1.27.3
 
 jobs:
   conformance-tests:
@@ -44,7 +45,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # ratchet:actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # ratchet:actions/setup-node@v4
