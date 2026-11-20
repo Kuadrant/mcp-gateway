@@ -81,6 +81,7 @@ func (h *TokenHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	//nolint:gosec // G124 false positive: cookie has HttpOnly, conditional Secure, and SameSite
 	http.SetCookie(w, &http.Cookie{
 		Name:     "csrf",
 		Value:    csrf,
