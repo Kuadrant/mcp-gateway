@@ -180,8 +180,10 @@ func TestRouter202607_HeaderBodyMismatch(t *testing.T) {
 	require.NotNil(t, decision.Error)
 	require.Equal(t, 200, decision.Error.StatusCode)
 	require.Contains(t, decision.Error.JSONRPCErr, "HeaderMismatch")
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.Contains(t, decision.Error.JSONRPCErr, `"isError":true`)
 	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
+	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
+	require.NotContains(t, decision.Error.JSONRPCErr, `"error":{`)
 }
 
 func TestRouter202607_PromptGet(t *testing.T) {
@@ -222,6 +224,7 @@ func TestRouter202607_PromptGet(t *testing.T) {
 	require.Contains(t, string(decision.BodyMutation), `"name":"myprompt"`)
 }
 
+// the broker HTTP regression is TestUnknownToolCallReturnsInvalidParams.
 func TestRouter202607_UnknownTool(t *testing.T) {
 	serverConfigs := []*config.MCPServer{
 		{
@@ -244,6 +247,39 @@ func TestRouter202607_UnknownTool(t *testing.T) {
 	require.Nil(t, decision.Error, "unknown tools route to broker, not rejected by router")
 	require.True(t, decision.BrokerPass, "unknown tools should pass through to broker")
 	require.Equal(t, "mcpBroker", decision.SetHeaders[MCPServerNameHeader])
+}
+
+func TestRouter202607_UnknownPrompt(t *testing.T) {
+	router := newTestRouter202607(t, nil, nil, nil)
+	assertProtocolRejectionIDs(t, router, MethodPromptGet, "no_such_prompt", "Prompt not found")
+}
+
+func assertProtocolRejectionIDs(t *testing.T, router Router, method, name, message string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name   string
+		parsed *MCPRequest
+		wantID string
+	}{
+		{"numeric ID", &MCPRequest{ID: 42}, `42`},
+		{"zero ID", &MCPRequest{ID: 0}, `0`},
+		{"string ID", &MCPRequest{ID: "rpc-1"}, `"rpc-1"`},
+		{"null ID", &MCPRequest{}, `null`},
+		{"no parsed request", nil, `null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := router.RouteRequest(context.Background(), &Request{
+				MCPMethod: method,
+				MCPName:   name,
+				RequestID: "trace-7",
+				Parsed:    tc.parsed,
+			})
+			require.NotNil(t, decision.Error)
+			require.Equal(t, 200, decision.Error.StatusCode)
+			require.Equal(t, "application/json", decision.Error.ContentType)
+			require.JSONEq(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32602,"message":%q}}`, tc.wantID, message), decision.Error.JSONRPCErr)
+		})
+	}
 }
 
 func TestRouter202607_BrokerMetaTool(t *testing.T) {
@@ -448,21 +484,7 @@ func TestRouter202607_StatefulOnlyToolRejected(t *testing.T) {
 		map[string]*testRouteOpts{"stateful-backend": {stateless: false}},
 	)
 
-	req := &Request{
-		MCPMethod: MethodToolCall,
-		MCPName:   "mytool",
-		RequestID: "req-1",
-		Parsed:    &MCPRequest{ID: ptr.To(7), JSONRPC: "2.0", Method: "tools/call", Params: map[string]any{"name": "mytool"}},
-	}
-
-	decision := router.RouteRequest(context.Background(), req)
-	require.NotNil(t, decision.Error)
-	require.Equal(t, 200, decision.Error.StatusCode)
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
-	require.Contains(t, decision.Error.JSONRPCErr, "Tool not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"id":7`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "req-1", "x-request-id must not be echoed as the JSON-RPC id")
-	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
+	assertProtocolRejectionIDs(t, router, MethodToolCall, "mytool", "Tool not found")
 }
 
 func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
@@ -481,21 +503,7 @@ func TestRouter202607_StatefulOnlyPromptRejected(t *testing.T) {
 		map[string]*testRouteOpts{"stateful-backend": {stateless: false}},
 	)
 
-	req := &Request{
-		MCPMethod: MethodPromptGet,
-		MCPName:   "myprompt",
-		RequestID: "req-2",
-		Parsed:    &MCPRequest{ID: ptr.To(7), JSONRPC: "2.0", Method: "prompts/get", Params: map[string]any{"name": "myprompt"}},
-	}
-
-	decision := router.RouteRequest(context.Background(), req)
-	require.NotNil(t, decision.Error)
-	require.Equal(t, 200, decision.Error.StatusCode)
-	require.Contains(t, decision.Error.JSONRPCErr, "-32602")
-	require.Contains(t, decision.Error.JSONRPCErr, "Prompt not found")
-	require.Contains(t, decision.Error.JSONRPCErr, `"id":7`)
-	require.NotContains(t, decision.Error.JSONRPCErr, "req-2", "x-request-id must not be echoed as the JSON-RPC id")
-	require.Contains(t, decision.Error.JSONRPCErr, `"resultType":"complete"`)
+	assertProtocolRejectionIDs(t, router, MethodPromptGet, "myprompt", "Prompt not found")
 }
 
 func TestRouter202607_BrokerPassthroughReInjectsInternalHeaders(t *testing.T) {
