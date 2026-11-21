@@ -216,6 +216,67 @@ func (up *MCPServer) buildHTTPClient(ctx context.Context) (*http.Client, error) 
 	}, nil
 }
 
+// ListToolsLegacy lists the upstream's tools over a throwaway session pinned
+// to the 2025 (stateful) protocol family, the same handshake Router202511 uses
+// for a 2025 client's tools/call (server/discover is short-circuited, so the
+// client falls back to a legacy initialize). A dual-version upstream may
+// advertise different tool definitions per protocol version: github-mcp-server
+// v2 omits outputSchema (and structuredContent) on 2025 sessions. it uses the
+// same TLS, header and oauth2 setup as the discovery client but neither
+// touches up.dc nor harvests tool hints.
+func (up *MCPServer) ListToolsLegacy(ctx context.Context) (*mcp.ListToolsResult, error) {
+	base, err := up.newTransport()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build HTTP transport: %w", err)
+	}
+	var inner http.RoundTripper = base
+	if up.OAuth2 != nil {
+		if _, err := up.tokenSource(ctx); err != nil {
+			return nil, err
+		}
+		inner = &tokenInvalidator{base: &oauth2.Transport{Source: dynamicTokenSource{up: up, ctx: ctx}, Base: inner}, up: up}
+	}
+	httpC := &http.Client{
+		Transport: &transport.DiscoverShortCircuit{
+			Base: &transport.HeaderRoundTripper{Base: inner, Headers: up.headers},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("upstream %s returned a redirect", up.Name)
+		},
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcp-broker", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             up.URL,
+		HTTPClient:           httpC,
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("legacy connect: %w", err)
+	}
+	defer func() { _ = session.Close() }()
+	if v := session.InitializeResult().ProtocolVersion; v >= protocol.Version2026 {
+		return nil, fmt.Errorf("legacy session negotiated %s, not a 2025 revision", v)
+	}
+	var result mcp.ListToolsResult
+	for page := 0; ; page++ {
+		if page >= MaxListPages {
+			return nil, fmt.Errorf("%w: legacy tools/list from upstream %q exceeded %d pages", ErrPageLimitExceeded, up.Name, MaxListPages)
+		}
+		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: result.NextCursor})
+		if err != nil {
+			return nil, err
+		}
+		if res == nil {
+			return &result, nil
+		}
+		result.Tools = append(result.Tools, res.Tools...)
+		result.NextCursor = res.NextCursor
+		if res.NextCursor == "" {
+			return &result, nil
+		}
+	}
+}
+
 // listenRouter sends subscriptions/listen over a transport with a shorter
 // header timeout. an upstream behind a proxy that buffers SSE never sends the
 // headers, and the sdk would hold Connect, and the manager loop with it, for

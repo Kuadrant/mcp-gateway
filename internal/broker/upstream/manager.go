@@ -228,6 +228,12 @@ type MCPManager struct {
 	tools          []mcp.Tool
 	toolsMap       map[string]*mcp.Tool
 	servedToolsMap map[string]*mcp.Tool
+	// statefulOutputSchemas maps served tool names to the outputSchema the
+	// upstream advertises on a 2025 session (nil value: listed without one).
+	// only populated for upstreams whose discovery session negotiated
+	// 2026-07-28 or later but which also serve the stateful (2025) route; a
+	// nil map means unknown.
+	statefulOutputSchemas map[string]any
 
 	promptsServer PromptsAdderDeleter
 	// serverPrompts is an internal copy with prefixed names
@@ -467,6 +473,21 @@ func (a *activeMCP) ListResources(ctx context.Context) (*mcp.ListResourcesResult
 	return a.manager.ListResources(ctx)
 }
 
+// StatefulOutputSchema exposes the upstream's 2025-session outputSchema for a
+// served tool (see MCPManager.StatefulOutputSchema).
+func (a *activeMCP) StatefulOutputSchema(served string) (any, bool) {
+	return a.manager.StatefulOutputSchema(served)
+}
+
+// NegotiatedProtocolVersion returns the protocol version negotiated by the
+// discovery session, or "" before the first successful connect.
+func (a *activeMCP) NegotiatedProtocolVersion() string {
+	if info := a.manager.mcp.ProtocolInfo(); info != nil {
+		return info.ProtocolVersion
+	}
+	return ""
+}
+
 func (man *MCPManager) registerCallbacks() func() {
 	man.logger.Debug("registering callbacks", "upstream mcp server", man.mcp.ID())
 	// the notification handler registers before Connect so it is wired into
@@ -602,7 +623,19 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.recordBackendError(span, toolErr)
 					man.logger.ErrorContext(ctx, "tool conflict detected", "upstream mcp server", man.mcp.ID(), "error", toolErr)
 				} else {
+					needsLegacy := man.needsLegacyListing()
+					refreshLegacy := needsLegacy && (len(toAdd) > 0 || len(toRemove) > 0 || man.statefulOutputSchemas == nil)
+					var legacySchemas map[string]any
+					if refreshLegacy {
+						legacySchemas = man.fetchStatefulOutputSchemas(ctx)
+					}
 					man.toolsLock.Lock()
+					switch {
+					case !needsLegacy:
+						man.statefulOutputSchemas = nil
+					case refreshLegacy:
+						man.statefulOutputSchemas = legacySchemas
+					}
 					man.tools = fetched
 					numberOfTools = len(fetched)
 					man.toolsMap = make(map[string]*mcp.Tool, len(fetched))
@@ -636,7 +669,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					// rebuilds freshFetchServers.
 					if len(toAdd) == 0 && len(toRemove) == 0 {
 						metaAfter := man.mcp.ToolsCacheMetadata()
-						if metaBefore.TTLMs != metaAfter.TTLMs || metaBefore.CacheScope != metaAfter.CacheScope {
+						// a legacy listing that only now succeeded also changes
+						// what the stateful protocol cache should serve
+						if metaBefore.TTLMs != metaAfter.TTLMs || metaBefore.CacheScope != metaAfter.CacheScope ||
+							(refreshLegacy && legacySchemas != nil) {
 							man.gatewayServer.NotifyMetadataChanged()
 						}
 					}
@@ -899,6 +935,66 @@ func (man *MCPManager) findToolConflicts(mcpTools []GatewayTool) error {
 	}
 
 	return nil
+}
+
+// legacyToolLister is the optional MCP capability to list tools over a 2025
+// session (see MCPServer.ListToolsLegacy).
+type legacyToolLister interface {
+	ListToolsLegacy(ctx context.Context) (*mcp.ListToolsResult, error)
+}
+
+// legacyListTimeout bounds the extra 2025 listing so a slow upstream cannot
+// stall the manage loop.
+const legacyListTimeout = 30 * time.Second
+
+// needsLegacyListing reports whether the upstream's catalog was listed over a
+// 2026-07-28 (or later) session while it also serves the stateful (2025)
+// route, so 2025 clients need the tool definitions of a 2025 session.
+func (man *MCPManager) needsLegacyListing() bool {
+	if _, ok := man.mcp.(legacyToolLister); !ok {
+		return false
+	}
+	info := man.mcp.ProtocolInfo()
+	if info == nil || info.ProtocolVersion < protocol.Version2026 {
+		return false
+	}
+	return slices.ContainsFunc(man.mcp.SupportedVersions(), func(v string) bool {
+		return v < protocol.Version2026
+	})
+}
+
+// fetchStatefulOutputSchemas lists the upstream over a 2025 session and maps
+// each served tool name to its 2025 outputSchema. Returns nil on failure, so
+// the broker falls back to dropping outputSchema for these tools.
+func (man *MCPManager) fetchStatefulOutputSchemas(ctx context.Context) map[string]any {
+	ctx, cancel := context.WithTimeout(ctx, legacyListTimeout)
+	defer cancel()
+	res, err := man.mcp.(legacyToolLister).ListToolsLegacy(ctx)
+	if err != nil {
+		man.logger.WarnContext(ctx, "failed to list tools over a 2025 session; 2025 clients get no outputSchema for this upstream",
+			"upstream mcp server", man.mcp.ID(), "error", err)
+		return nil
+	}
+	schemas := make(map[string]any, len(res.Tools))
+	for _, t := range res.Tools {
+		if t != nil {
+			schemas[prefixedName(man.mcp.GetPrefix(), t.Name)] = t.OutputSchema
+		}
+	}
+	return schemas
+}
+
+// StatefulOutputSchema returns the outputSchema the upstream advertises for a
+// served tool on a 2025 session. known is false when no 2025 listing is
+// available for this upstream (or the tool is absent from it).
+func (man *MCPManager) StatefulOutputSchema(served string) (schema any, known bool) {
+	man.toolsLock.RLock()
+	defer man.toolsLock.RUnlock()
+	if man.statefulOutputSchemas == nil {
+		return nil, false
+	}
+	schema, known = man.statefulOutputSchemas[served]
+	return schema, known
 }
 
 // getTools return the existing, and new tools. Must only be called from the Start() event loop.

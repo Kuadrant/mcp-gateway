@@ -175,7 +175,7 @@ func (m *mcpBrokerImpl) rebuildProtocolCaches() {
 		}
 
 		if m.serverServesOnStatefulRoute(serverID) {
-			statefulT.items = append(statefulT.items, tool)
+			statefulT.items = append(statefulT.items, m.statefulRouteTool(serverID, tool))
 			if !statefulServersSeen[serverID] {
 				statefulServersSeen[serverID] = true
 				statefulT.serverIDs = append(statefulT.serverIDs, serverID)
@@ -256,6 +256,52 @@ func (m *mcpBrokerImpl) promptsForProtocol(isStateless bool) []*mcp.Prompt {
 		return prompts
 	}
 	return nil
+}
+
+// negotiatedVersioner is an optional ActiveMCPServer capability reporting the
+// protocol version the broker's discovery session negotiated with the upstream.
+// it is read via a type assertion so the core interface (and its mocks) stay
+// unchanged.
+type negotiatedVersioner interface {
+	NegotiatedProtocolVersion() string
+}
+
+// listedOverStatelessProtocol reports whether the upstream's tool catalog was
+// fetched over a 2026-07-28 (or later) session.
+func (m *mcpBrokerImpl) listedOverStatelessProtocol(id config.UpstreamMCPID) bool {
+	nv, ok := m.mcpServers[id].(negotiatedVersioner)
+	return ok && nv.NegotiatedProtocolVersion() >= protocol.Version2026
+}
+
+// statefulSchemaSource is an optional ActiveMCPServer capability exposing the
+// outputSchema an upstream advertises on a 2025 session.
+type statefulSchemaSource interface {
+	StatefulOutputSchema(served string) (any, bool)
+}
+
+// statefulRouteTool returns the tool as served to pre-2026 clients. a 2025
+// client's tools/call always reaches the upstream over a 2025 session
+// (Router202511), so when the catalog was listed over a 2026 session the
+// advertised outputSchema must be the one the upstream advertises on 2025: an
+// upstream can legitimately omit structuredContent there (github-mcp-server v2
+// does), and strict clients (the TS and Python SDKs) then fail every call with
+// "has an output schema but did not return structured content". when no 2025
+// listing is available the outputSchema is dropped, which never breaks a
+// client since it is optional. the shared tool is copied, leaving the
+// stateless (2026) cache untouched.
+func (m *mcpBrokerImpl) statefulRouteTool(id config.UpstreamMCPID, tool *mcp.Tool) *mcp.Tool {
+	if tool.OutputSchema == nil || !m.listedOverStatelessProtocol(id) {
+		return tool
+	}
+	var schema any
+	if src, ok := m.mcpServers[id].(statefulSchemaSource); ok {
+		if s, known := src.StatefulOutputSchema(tool.Name); known {
+			schema = s
+		}
+	}
+	stateful := *tool
+	stateful.OutputSchema = schema
+	return &stateful
 }
 
 // toolsAndFreshFetchServersForProtocol loads one cache entry so the returned
