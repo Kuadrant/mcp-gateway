@@ -68,11 +68,12 @@ func GetDeploymentGeneration(ctx context.Context, namespace, name string) (strin
 // has actually started (generation changes) then wait for it to complete.
 func WaitForDeploymentReplicas(ctx context.Context, namespace, name string, replicas int, prevGeneration string) error {
 	// wait for generation to change (confirming the spec mutation was picked up)
-	Eventually(func() string {
-		gen, _ := GetDeploymentGeneration(ctx, namespace, name)
-		return gen
-	}, "30s", "1s").ShouldNot(Equal(prevGeneration),
-		fmt.Sprintf("deployment %s generation did not change from %s", name, prevGeneration))
+	Eventually(func(g Gomega) {
+		gen, err := GetDeploymentGeneration(ctx, namespace, name)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(gen).NotTo(Equal(prevGeneration),
+			fmt.Sprintf("deployment %s generation did not change from %s", name, prevGeneration))
+	}, "30s", "1s").Should(Succeed())
 
 	// now rollout status will correctly block on the new rollout
 	cmd := exec.CommandContext(ctx, "kubectl", "rollout", "status", "deployment", name,
