@@ -955,6 +955,7 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Eventually(func(g Gomega) {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: mcpExtNamespacedName})
 				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(testK8sClient.Get(ctx, managedNP, &networkingv1.NetworkPolicy{})).To(Succeed())
 				g.Expect(testIndexedClient.Get(ctx, managedNP, &networkingv1.NetworkPolicy{})).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 
