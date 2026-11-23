@@ -642,7 +642,7 @@ golangci-lint:
 		"$(MAKE)" golangci-lint-bin && bin/golangci-lint run ./...; \
 	fi
 
-KUBE_API_LINTER_VERSION ?= v0.0.0-20260320123815-c9b9b51b278a
+KUBE_API_LINTER_VERSION ?= v0.0.0-20261030144752-d90122c89087
 
 ##@ Linting
 

@@ -5,14 +5,14 @@
 # Build:  docker build -f Dockerfile.k6 -t ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest .
 # Push:   docker push ghcr.io/kuadrant/mcp-gateway/k6-mcp:latest
 
-FROM registry.access.redhat.com/ubi10/go-toolset:1.27 AS builder
+FROM golang:1.24-alpine AS builder
 
 # Allow the Go toolchain to auto-download a newer version if a dependency
 # requires one (e.g. xk6 >= v1.4 requires Go 1.25+).
 # cspell:ignore GOTOOLCHAIN
 ENV GOTOOLCHAIN=auto
 
-RUN microdnf install -y git && microdnf clean all
+RUN apk add --no-cache git
 
 # Install xk6 – the k6 extension builder
 RUN go install go.k6.io/xk6/cmd/xk6@v1.4.3
