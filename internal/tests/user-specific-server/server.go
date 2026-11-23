@@ -22,7 +22,7 @@ type ShutdownFunc func() error
 
 const (
 	userAToken = "bearer user-a-token"
-	userBToken = "bearer user-b-token" //nolint:gosec // test credentials
+	userBToken = "bearer user-b-token"
 )
 
 // tool sets keyed by normalized bearer token

@@ -259,7 +259,7 @@ func (r *MCPGatewayExtensionReconciler) buildBrokerRouterDeployment(mcpExt *mcpv
 						{
 							Name: "config-volume",
 							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
+								Secret: &corev1.SecretVolumeSource{ //nolint:gosec // G101 false positive: not a credential, just a resource name
 									SecretName:  "mcp-gateway-config",
 									DefaultMode: ptr.To(int32(420)), // 0644 octal
 								},
