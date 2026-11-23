@@ -58,3 +58,6 @@ patches:
                     value: ghcr.io/kuadrant/mcp-gateway:latest
                   - name: BROKER_ROUTER_LOG_LEVEL
                     value: "-4"
+                  # e2e asserts on usedProtocolVersions, so read brokers often
+                  - name: PROTOCOL_USAGE_INTERVAL
+                    value: "5s"

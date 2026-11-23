@@ -460,6 +460,9 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			span.SetAttributes(attribute.String("mcp.router", routerName))
 			s.Logger.DebugContext(ctx, "routing request", "router", routerName, "protocol-version", effectiveVersion, "mcp-method", routingReq.MCPMethod, "mcp-name", routingReq.MCPName)
 			decision := router.RouteRequest(ctx, routingReq)
+			if decision.Error == nil {
+				recordServerUse(mcpRequest.ServerName, protocolVersion, mcpRequest.Headers["mcp-init-host"], mcpRequest)
+			}
 			if decision.Error != nil && mcpRequest.IsToolCall() {
 				authSub, _ := internaljwt.ExtractSubClaim(mcpRequest.Headers[routing.AuthorizationHeader])
 				s.Logger.InfoContext(ctx, "tool call",

@@ -140,3 +140,6 @@ spec:
 | **Field** | **Type** | **Description** |
 |-----------|----------|-----------------|
 | `conditions` | [][Kubernetes meta/v1.Condition](https://pkg.go.dev/k8s.io/apimachinery/pkg/apis/meta/v1#Condition) | List of conditions that define the status of the resource |
+| `usedProtocolVersions` | []String | MCP protocol versions clients have used with this server through any gateway, for example `2025-11-25` or `2026-07-28`. A client that declares no version is recorded as `2025-03-26`. Versions are only added, every `PROTOCOL_USAGE_INTERVAL` (default `1h`) |
+
+The controller reads `usedProtocolVersions` from each broker pod on port `9090` (the metrics port). If a NetworkPolicy in a gateway namespace blocks ingress to that port from the controller's namespace, the field is not updated. Recreating a registration with the same name and namespace can show versions used with the previous one until the brokers restart.

@@ -35,3 +35,6 @@ patches:
                 env:
                   - name: RELATED_IMAGE_ROUTER_BROKER
                     value: ghcr.io/kuadrant/mcp-gateway:latest
+                  # e2e asserts on usedProtocolVersions, so read brokers often
+                  - name: PROTOCOL_USAGE_INTERVAL
+                    value: "5s"

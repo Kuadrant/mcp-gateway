@@ -106,3 +106,9 @@ mcpGatewayExtension:
 # 50051 only from the target Gateway's namespace, so it is not templated here.
 networkPolicy:
   enabled: false
+
+# MCP protocol version usage. The controller periodically reads each broker
+# and adds the protocol versions clients used with each upstream server to that
+# MCPServerRegistration's status.usedProtocolVersions. "0" disables it.
+protocolUsage:
+  interval: 1h
