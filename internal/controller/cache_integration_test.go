@@ -49,6 +49,9 @@ var _ = ginkgo.DescribeTable("Controller cache membership", func(ctx ginkgo.Spec
 			},
 		},
 	}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
+	ginkgo.Entry("only caches labeled Services", &corev1.Service{
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
+	}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 	ginkgo.Entry("only caches labeled ServiceAccounts", &corev1.ServiceAccount{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 	ginkgo.Entry("only caches labeled NetworkPolicies", &networking.NetworkPolicy{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 )

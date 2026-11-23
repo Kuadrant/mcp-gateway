@@ -566,8 +566,12 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	if err := r.Get(ctx, client.ObjectKeyFromObject(service), existingService); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router service", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, service); err != nil {
+			requeue, err := r.createOrRestoreManagedLabel(ctx, service, existingService)
+			if err != nil {
 				return false, fmt.Errorf("failed to create service: %w", err)
+			}
+			if requeue {
+				return false, nil
 			}
 		} else {
 			return false, fmt.Errorf("failed to get service: %w", err)

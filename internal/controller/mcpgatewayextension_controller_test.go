@@ -834,16 +834,16 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(service.Spec.Ports).To(HaveLen(2))
 		})
 
-		It("should restore the managed-by label on the broker-router deployment", func() {
+		DescribeTable("should restore the managed-by label on the broker-router", func(resource client.Object) {
 			reconciler := newTestReconciler()
 			request := reconcile.Request{NamespacedName: mcpExtNamespacedName}
-			deploymentKey := types.NamespacedName{Name: brokerRouterName, Namespace: "default"}
+			key := types.NamespacedName{Name: brokerRouterName, Namespace: "default"}
 			waitForCacheSync(ctx, mcpExtNamespacedName)
 
 			Eventually(func(g Gomega) {
 				_, err := reconciler.Reconcile(ctx, request)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(testK8sClient.Get(ctx, deploymentKey, &appsv1.Deployment{})).To(Succeed())
+				g.Expect(testK8sClient.Get(ctx, key, &appsv1.Deployment{})).To(Succeed())
 			}, testTimeout, testRetryInterval).Should(Succeed())
 			setDeploymentStatus(ctx, "default", 1, 1)
 			setGatewayListenerStatus(ctx, gatewayName, "default", "http")
@@ -863,14 +863,17 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}
 			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
 
-			deployment := &appsv1.Deployment{}
-			Expect(testK8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(deployment.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
-			uid, generation := deployment.UID, deployment.Generation
-			delete(deployment.Labels, labelManagedBy)
-			Expect(testK8sClient.Update(ctx, deployment)).To(Succeed())
 			Eventually(func() error {
-				return testIndexedClient.Get(ctx, deploymentKey, &appsv1.Deployment{})
+				return testIndexedClient.Get(ctx, key, resource)
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			labels := resource.GetLabels()
+			Expect(labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			uid, generation := resource.GetUID(), resource.GetGeneration()
+			delete(labels, labelManagedBy)
+			resource.SetLabels(labels)
+			Expect(testK8sClient.Update(ctx, resource)).To(Succeed())
+			Eventually(func() error {
+				return testIndexedClient.Get(ctx, key, resource)
 			}, testTimeout, testRetryInterval).Should(MatchError(errors.IsNotFound, "IsNotFound"))
 
 			result, err := reconciler.Reconcile(ctx, request)
@@ -878,12 +881,14 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
 
-			restored := &appsv1.Deployment{}
-			Expect(testK8sClient.Get(ctx, deploymentKey, restored)).To(Succeed())
-			Expect(restored.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
-			Expect(restored.UID).To(Equal(uid))
-			Expect(restored.Generation).To(Equal(generation))
-		})
+			Expect(testK8sClient.Get(ctx, key, resource)).To(Succeed())
+			Expect(resource.GetLabels()).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			Expect(resource.GetUID()).To(Equal(uid))
+			Expect(resource.GetGeneration()).To(Equal(generation))
+		},
+			Entry("deployment", &appsv1.Deployment{}),
+			Entry("service", &corev1.Service{}),
+		)
 
 		It("should set owner reference on deployment and service", func() {
 			reconciler := newTestReconciler()

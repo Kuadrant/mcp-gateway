@@ -797,7 +797,7 @@ func (r *MCPReconciler) buildServerInfoFromHTTPRoute(ctx context.Context, httpRo
 
 	} else if route.IsServiceBackend() {
 		service := &corev1.Service{}
-		if err := r.Get(ctx, types.NamespacedName{
+		if err := r.DirectAPIReader.Get(ctx, types.NamespacedName{
 			Name:      route.BackendName(),
 			Namespace: route.BackendNamespace(),
 		}, service); err != nil {

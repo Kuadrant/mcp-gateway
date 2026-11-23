@@ -15,6 +15,7 @@ func CacheOptions() cache.Options {
 	return cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
 			&appsv1.Deployment{}:        {Label: managedBy},
+			&corev1.Service{}:           {Label: managedBy},
 			&corev1.ServiceAccount{}:    {Label: managedBy},
 			&networking.NetworkPolicy{}: {Label: managedBy},
 			&corev1.Secret{}: {
