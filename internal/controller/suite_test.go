@@ -88,6 +88,7 @@ var _ = BeforeSuite(func() {
 	// create a manager to set up field indexes
 	testMgr, err = ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		Cache:  CacheOptions(),
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // disable metrics
 		},
