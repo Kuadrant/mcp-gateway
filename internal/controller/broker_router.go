@@ -471,8 +471,12 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	if err := r.Get(ctx, client.ObjectKeyFromObject(serviceAccount), existingServiceAccount); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router service account", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, serviceAccount); err != nil {
+			requeue, err := r.createOrRestoreManagedLabel(ctx, serviceAccount, existingServiceAccount)
+			if err != nil {
 				return false, fmt.Errorf("failed to create service account: %w", err)
+			}
+			if requeue {
+				return false, nil
 			}
 		} else {
 			return false, fmt.Errorf("failed to get service account: %w", err)
@@ -496,8 +500,12 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	if err := r.Get(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router network policy", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, networkPolicy); err != nil {
+			requeue, err := r.createOrRestoreManagedLabel(ctx, networkPolicy, existingNetworkPolicy)
+			if err != nil {
 				return false, fmt.Errorf("failed to create network policy: %w", err)
+			}
+			if requeue {
+				return false, nil
 			}
 		} else {
 			return false, fmt.Errorf("failed to get network policy: %w", err)
@@ -521,10 +529,10 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	if err := r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router deployment", "namespace", mcpExt.Namespace)
-			if err := r.Create(ctx, deployment); err != nil {
+			if _, err := r.createOrRestoreManagedLabel(ctx, deployment, existingDeployment); err != nil {
 				return false, fmt.Errorf("failed to create deployment: %w", err)
 			}
-			return false, nil // deployment just created, not ready yet
+			return false, nil // requeue to read the deployment from the cache
 		}
 		return false, fmt.Errorf("failed to get deployment: %w", err)
 	}
@@ -613,6 +621,30 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
 
 	return deploymentReady, nil
+}
+
+func (r *MCPGatewayExtensionReconciler) createOrRestoreManagedLabel(ctx context.Context, desired, existing client.Object) (requeue bool, err error) {
+	if err := r.Create(ctx, desired); !apierrors.IsAlreadyExists(err) {
+		return false, err
+	}
+
+	if err := r.DirectAPIReader.Get(ctx, client.ObjectKeyFromObject(desired), existing); err != nil {
+		return false, fmt.Errorf("failed to read existing object: %w", err)
+	}
+
+	labels := existing.GetLabels()
+	if labels[labelManagedBy] == labelManagedByValue {
+		return true, nil // the cache hasn't seen the labeled object yet
+	}
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[labelManagedBy] = labelManagedByValue
+	existing.SetLabels(labels)
+	if err := r.Update(ctx, existing); err != nil {
+		return false, fmt.Errorf("failed to restore managed-by label: %w", err)
+	}
+	return true, nil
 }
 
 // serviceNeedsUpdate checks if the service needs to be updated

@@ -5,7 +5,9 @@ package controller
 import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networking "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,4 +40,15 @@ var _ = ginkgo.DescribeTable("Controller cache membership", func(ctx ginkgo.Spec
 	gomega.Expect(c.Get(ctx, client.ObjectKeyFromObject(unlabeled), unlabeled)).To(gomega.MatchError(errors.IsNotFound, "IsNotFound"))
 },
 	ginkgo.Entry("only caches labeled Secrets", &corev1.Secret{}, ManagedSecretLabel, ManagedSecretValue, ginkgo.SpecTimeout(testTimeout)),
+	ginkgo.Entry("only caches labeled Deployments", &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "cache-membership"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "cache-membership"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "test", Image: "test-image"}}},
+			},
+		},
+	}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
+	ginkgo.Entry("only caches labeled ServiceAccounts", &corev1.ServiceAccount{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
+	ginkgo.Entry("only caches labeled NetworkPolicies", &networking.NetworkPolicy{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 )

@@ -834,6 +834,57 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			Expect(service.Spec.Ports).To(HaveLen(2))
 		})
 
+		It("should restore the managed-by label on the broker-router deployment", func() {
+			reconciler := newTestReconciler()
+			request := reconcile.Request{NamespacedName: mcpExtNamespacedName}
+			deploymentKey := types.NamespacedName{Name: brokerRouterName, Namespace: "default"}
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, request)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(testK8sClient.Get(ctx, deploymentKey, &appsv1.Deployment{})).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			setDeploymentStatus(ctx, "default", 1, 1)
+			setGatewayListenerStatus(ctx, gatewayName, "default", "http")
+
+			expectReady := func(g Gomega) {
+				result, err := reconciler.Reconcile(ctx, request)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result).To(Equal(reconcile.Result{}))
+
+				extension := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, extension)).To(Succeed())
+				g.Expect(meta.IsStatusConditionTrue(extension.Status.Conditions, mcpv1.ConditionTypeReady)).To(BeTrue())
+
+				cached := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(extension.ResourceVersion))
+			}
+			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
+
+			deployment := &appsv1.Deployment{}
+			Expect(testK8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(deployment.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			uid, generation := deployment.UID, deployment.Generation
+			delete(deployment.Labels, labelManagedBy)
+			Expect(testK8sClient.Update(ctx, deployment)).To(Succeed())
+			Eventually(func() error {
+				return testIndexedClient.Get(ctx, deploymentKey, &appsv1.Deployment{})
+			}, testTimeout, testRetryInterval).Should(MatchError(errors.IsNotFound, "IsNotFound"))
+
+			result, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
+
+			restored := &appsv1.Deployment{}
+			Expect(testK8sClient.Get(ctx, deploymentKey, restored)).To(Succeed())
+			Expect(restored.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			Expect(restored.UID).To(Equal(uid))
+			Expect(restored.Generation).To(Equal(generation))
+		})
+
 		It("should set owner reference on deployment and service", func() {
 			reconciler := newTestReconciler()
 			waitForCacheSync(ctx, mcpExtNamespacedName)
