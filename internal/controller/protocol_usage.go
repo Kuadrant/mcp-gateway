@@ -36,10 +36,12 @@ const (
 
 var protocolVersionPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 
-// ProtocolUsageCollector periodically reads from broker pods which protocol
-// versions clients used with each upstream, and adds new ones to that
-// MCPServerRegistration's status.usedProtocolVersions. Versions are only
-// added, so each registration is written once per newly seen version.
+// ProtocolUsageCollector periodically reads protocol versions from broker pods
+// and records them in each MCPServerRegistration's status:
+// usedProtocolVersions, the versions clients used with the server, which are
+// only added to; and discoveredProtocolVersions, the versions the server
+// supports, which are replaced when they change. Each registration is only
+// written when one of them changes.
 type ProtocolUsageCollector struct {
 	client.Client
 	// Reader must be uncached: listing pods through the manager cache would
@@ -99,6 +101,7 @@ func (c *ProtocolUsageCollector) collect(ctx context.Context) {
 	}
 
 	used := map[string]map[string]struct{}{}
+	discovered := map[string]map[string]struct{}{}
 	for _, ns := range slices.Sorted(maps.Keys(namespaces)) {
 		addrs, err := c.brokerAddrs(ctx, ns)
 		if err != nil {
@@ -111,27 +114,42 @@ func (c *ProtocolUsageCollector) collect(ctx context.Context) {
 				c.Logger.Debug("protocol usage: failed to read broker", "namespace", ns, "addr", addr, "error", err)
 				continue
 			}
-			for server, versions := range usage.Servers {
-				set := used[server]
-				if set == nil {
-					set = map[string]struct{}{}
-					used[server] = set
-				}
-				for _, v := range versions {
-					set[v] = struct{}{}
-				}
-			}
+			addVersions(used, usage.Used)
+			addVersions(discovered, usage.Discovered)
 		}
 	}
-	for _, server := range slices.Sorted(maps.Keys(used)) {
-		if err := c.addUsedVersions(ctx, server, used[server]); err != nil {
-			c.Logger.Error("protocol usage: failed to update used protocol versions", "server", server, "error", err)
+	servers := map[string]struct{}{}
+	for s := range used {
+		servers[s] = struct{}{}
+	}
+	for s := range discovered {
+		servers[s] = struct{}{}
+	}
+	for _, server := range slices.Sorted(maps.Keys(servers)) {
+		if err := c.updateVersions(ctx, server, used[server], discovered[server]); err != nil {
+			c.Logger.Error("protocol usage: failed to update protocol versions", "server", server, "error", err)
 		}
 	}
 }
 
-// addUsedVersions adds versions not yet in the registration's status.
-func (c *ProtocolUsageCollector) addUsedVersions(ctx context.Context, server string, observed map[string]struct{}) error {
+// addVersions merges per-server version lists into sets.
+func addVersions(into map[string]map[string]struct{}, from map[string][]string) {
+	for server, versions := range from {
+		set := into[server]
+		if set == nil {
+			set = map[string]struct{}{}
+			into[server] = set
+		}
+		for _, v := range versions {
+			set[v] = struct{}{}
+		}
+	}
+}
+
+// updateVersions adds new used versions and, when any broker reported them,
+// replaces the discovered versions. a server no broker is connected to keeps
+// its previous discovered versions.
+func (c *ProtocolUsageCollector) updateVersions(ctx context.Context, server string, used, discovered map[string]struct{}) error {
 	ns, name, ok := strings.Cut(server, "/")
 	if !ok {
 		return nil
@@ -141,11 +159,18 @@ func (c *ProtocolUsageCollector) addUsedVersions(ctx context.Context, server str
 		if err := c.Reader.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, reg); err != nil {
 			return client.IgnoreNotFound(err)
 		}
-		merged := mergeVersions(reg.Status.UsedProtocolVersions, observed)
-		if slices.Equal(merged, reg.Status.UsedProtocolVersions) {
+		changed := false
+		if merged := mergeVersions(reg.Status.UsedProtocolVersions, used); !slices.Equal(merged, reg.Status.UsedProtocolVersions) {
+			reg.Status.UsedProtocolVersions = merged
+			changed = true
+		}
+		if replaced := mergeVersions(nil, discovered); len(replaced) > 0 && !slices.Equal(replaced, reg.Status.DiscoveredProtocolVersions) {
+			reg.Status.DiscoveredProtocolVersions = replaced
+			changed = true
+		}
+		if !changed {
 			return nil
 		}
-		reg.Status.UsedProtocolVersions = merged
 		return c.Status().Update(ctx, reg)
 	})
 }

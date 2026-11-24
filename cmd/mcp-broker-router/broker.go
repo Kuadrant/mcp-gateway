@@ -136,10 +136,13 @@ func traceContextMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// handleProtocolUsage serves the protocol versions used per upstream for the controller
+// handleProtocolUsage serves the protocol versions used and supported per upstream for the controller
 func (a *app) handleProtocolUsage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(protocol.Usage{Servers: mcpRouter.UsedProtocolVersions()}); err != nil {
+	if err := json.NewEncoder(w).Encode(protocol.Usage{
+		Used:       mcpRouter.UsedProtocolVersions(),
+		Discovered: a.mcpBroker.DiscoveredProtocolVersions(),
+	}); err != nil {
 		a.logger.Debug("failed to write protocol usage", "error", err)
 	}
 }

@@ -108,7 +108,8 @@ networkPolicy:
   enabled: false
 
 # MCP protocol version usage. The controller periodically reads each broker
-# and adds the protocol versions clients used with each upstream server to that
-# MCPServerRegistration's status.usedProtocolVersions. "0" disables it.
+# and records, in each MCPServerRegistration's status, the protocol versions
+# clients used with the server (usedProtocolVersions) and the versions the
+# server supports (discoveredProtocolVersions). "0" disables it.
 protocolUsage:
   interval: 1h

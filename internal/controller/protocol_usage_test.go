@@ -69,11 +69,21 @@ func TestCollect(t *testing.T) {
 		Build()
 
 	v26, v25 := protocol.Version2026, protocol.Version2025
+	both := []string{v25, v26}
 	responses := map[string]*protocol.Usage{
 		// two gateways and two replicas serving the same upstream
-		"10.0.0.1:9090": {Servers: map[string][]string{"servers/shared": {v25}}},
-		"10.0.0.2:9090": {Servers: map[string][]string{"servers/shared": {v25}, "servers/deleted": {v26}}},
-		"10.0.0.3:9090": {Servers: map[string][]string{"servers/shared": {v25}}},
+		"10.0.0.1:9090": {
+			Used:       map[string][]string{"servers/shared": {v25}},
+			Discovered: map[string][]string{"servers/shared": both},
+		},
+		"10.0.0.2:9090": {
+			Used:       map[string][]string{"servers/shared": {v25}, "servers/deleted": {v26}},
+			Discovered: map[string][]string{"servers/shared": both, "servers/quiet": {v25}},
+		},
+		"10.0.0.3:9090": {
+			Used:       map[string][]string{"servers/shared": {v25}},
+			Discovered: map[string][]string{"servers/shared": both},
+		},
 	}
 	c := &ProtocolUsageCollector{
 		Client: k8s,
@@ -87,35 +97,46 @@ func TestCollect(t *testing.T) {
 		},
 	}
 	c.init()
-	used := func(reg *mcpv1.MCPServerRegistration) []string {
+	status := func(reg *mcpv1.MCPServerRegistration) mcpv1.MCPServerRegistrationStatus {
 		got := &mcpv1.MCPServerRegistration{}
 		require.NoError(t, k8s.Get(t.Context(), client.ObjectKeyFromObject(reg), got))
-		return got.Status.UsedProtocolVersions
+		return got.Status
 	}
 
+	// both fields land in one write per registration
 	c.collect(t.Context())
-	require.Equal(t, []string{v25}, used(shared))
-	require.Empty(t, used(quiet))
+	require.Equal(t, []string{v25}, status(shared).UsedProtocolVersions)
+	require.Equal(t, both, status(shared).DiscoveredProtocolVersions)
+	require.Empty(t, status(quiet).UsedProtocolVersions, "supported but never used")
+	require.Equal(t, []string{v25}, status(quiet).DiscoveredProtocolVersions)
+	require.Equal(t, 1, statusWrites["shared"])
 
 	// nothing new: no write
 	c.collect(t.Context())
 	require.Equal(t, 1, statusWrites["shared"])
 
-	// a new version on any broker adds it once
-	responses["10.0.0.3:9090"].Servers["servers/shared"] = []string{v25, v26}
+	// a new used version on any broker adds it once
+	responses["10.0.0.3:9090"].Used["servers/shared"] = both
 	c.collect(t.Context())
 	c.collect(t.Context())
-	require.Equal(t, []string{v25, v26}, used(shared))
+	require.Equal(t, both, status(shared).UsedProtocolVersions)
 	require.Equal(t, 2, statusWrites["shared"])
 
-	// versions are kept after every broker restarts and forgets them
+	// an upgraded server replaces its discovered versions
+	responses["10.0.0.2:9090"].Discovered["servers/quiet"] = both
+	c.collect(t.Context())
+	require.Equal(t, both, status(quiet).DiscoveredProtocolVersions)
+
+	// after every broker restarts and forgets: used is kept, and so is
+	// discovered while no broker reports the server
 	for _, u := range responses {
-		u.Servers = map[string][]string{}
+		u.Used = map[string][]string{}
+		u.Discovered = map[string][]string{}
 	}
 	c.collect(t.Context())
-	require.Equal(t, []string{v25, v26}, used(shared))
+	require.Equal(t, both, status(shared).UsedProtocolVersions)
+	require.Equal(t, both, status(shared).DiscoveredProtocolVersions)
 	require.Equal(t, 2, statusWrites["shared"])
-	require.Zero(t, statusWrites["quiet"])
 }
 
 func TestFetchUsage(t *testing.T) {
@@ -124,12 +145,13 @@ func TestFetchUsage(t *testing.T) {
 
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, protocol.UsagePath, r.URL.Path)
-		_, _ = w.Write([]byte(`{"servers":{"ns/a":["2026-07-28"]}}`))
+		_, _ = w.Write([]byte(`{"used":{"ns/a":["2026-07-28"]},"discovered":{"ns/a":["2025-11-25","2026-07-28"]}}`))
 	}))
 	defer ok.Close()
 	usage, err := c.fetchUsage(t.Context(), strings.TrimPrefix(ok.URL, "http://"))
 	require.NoError(t, err)
-	require.Equal(t, map[string][]string{"ns/a": {"2026-07-28"}}, usage.Servers)
+	require.Equal(t, map[string][]string{"ns/a": {"2026-07-28"}}, usage.Used)
+	require.Equal(t, map[string][]string{"ns/a": {"2025-11-25", "2026-07-28"}}, usage.Discovered)
 
 	// a broker from before this feature has no endpoint: an error, so nothing is written
 	old := httptest.NewServer(http.NotFoundHandler())

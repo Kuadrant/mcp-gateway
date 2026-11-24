@@ -356,6 +356,17 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveredProtocolVersions:
+                description: |-
+                  discoveredProtocolVersions lists the MCP protocol versions the server
+                  supports, as last discovered by a broker serving it. It is replaced when
+                  the server's supported versions change.
+                items:
+                  pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: set
               usedProtocolVersions:
                 description: |-
                   usedProtocolVersions lists the MCP protocol versions clients have used

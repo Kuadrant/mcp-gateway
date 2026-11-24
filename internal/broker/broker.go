@@ -77,6 +77,10 @@ type MCPBroker interface {
 	// HandleStatusRequest handles HTTP status endpoint requests
 	HandleStatusRequest(w http.ResponseWriter, r *http.Request)
 
+	// DiscoveredProtocolVersions returns the protocol versions each enabled,
+	// connected upstream supports, keyed by server name (namespace/name)
+	DiscoveredProtocolVersions() map[string][]string
+
 	// MCPHandler returns the composed /mcp HTTP handler
 	MCPHandler() http.Handler
 
@@ -681,6 +685,21 @@ func (m *mcpBrokerImpl) RegisteredMCPServers() map[config.UpstreamMCPID]upstream
 	m.mcpLock.RLock()
 	defer m.mcpLock.RUnlock()
 	return m.mcpServers
+}
+
+func (m *mcpBrokerImpl) DiscoveredProtocolVersions() map[string][]string {
+	m.mcpLock.RLock()
+	defer m.mcpLock.RUnlock()
+	out := make(map[string][]string, len(m.mcpServers))
+	for _, srv := range m.mcpServers {
+		if !srv.IsEnabled() {
+			continue
+		}
+		if versions := srv.SupportedVersions(); len(versions) > 0 {
+			out[srv.Config().Name] = versions
+		}
+	}
+	return out
 }
 
 func (m *mcpBrokerImpl) GetVirtualServerByHeader(namespaceName string) (config.VirtualServer, error) {

@@ -284,6 +284,15 @@ type MCPServerRegistrationStatus struct {
 	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 	// +optional
 	UsedProtocolVersions []string `json:"usedProtocolVersions,omitempty"`
+
+	// discoveredProtocolVersions lists the MCP protocol versions the server
+	// supports, as last discovered by a broker serving it. It is replaced when
+	// the server's supported versions change.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	// +optional
+	DiscoveredProtocolVersions []string `json:"discoveredProtocolVersions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

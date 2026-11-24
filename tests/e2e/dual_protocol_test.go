@@ -239,7 +239,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 		})
 	})
 
-	It("[Happy,DualProtocol] records the protocol versions clients used per server", func() {
+	It("[Happy,DualProtocol] records the protocol versions used with and supported by each server", func() {
 		stateful := newStatefulClient()
 		defer func() { _ = stateful.Close() }()
 		waitForToolsWithPrefix(stateful, "sf_")
@@ -270,6 +270,17 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		// a 2026 client never reaches the 2025-only server
 		Expect(used(Default, server25)).NotTo(ContainElement("2026-07-28"))
+
+		discovered := func(g Gomega, reg *mcpv1.MCPServerRegistration) []string {
+			got := &mcpv1.MCPServerRegistration{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(reg), got)).To(Succeed())
+			return got.Status.DiscoveredProtocolVersions
+		}
+		Eventually(func(g Gomega) {
+			g.Expect(discovered(g, server25)).To(ContainElement("2025-11-25"))
+			g.Expect(discovered(g, server25)).NotTo(ContainElement("2026-07-28"))
+			g.Expect(discovered(g, server26)).To(ContainElements("2025-11-25", "2026-07-28"))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[DualProtocol] dual-version server tools visible to both clients", func() {

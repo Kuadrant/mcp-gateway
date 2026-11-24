@@ -154,7 +154,7 @@ func main() {
 		panic("unable to start manager : " + err.Error())
 	}
 
-	// protocol versions used per upstream, recorded in status for Red Hat Insights; "0" disables
+	// protocol versions used with and supported by each upstream, recorded in status for Red Hat Insights; "0" disables
 	usageInterval, err := time.ParseDuration(goenv.GetDefault("PROTOCOL_USAGE_INTERVAL", "1h"))
 	if err != nil {
 		panic("invalid PROTOCOL_USAGE_INTERVAL: " + err.Error())

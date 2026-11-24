@@ -99,3 +99,25 @@ func (m *mockActiveServer) ListResources(context.Context) (*mcp.ListResourcesRes
 	}
 	return &mcp.ListResourcesResult{}, nil
 }
+
+type namedMockServer struct {
+	mockActiveServer
+	name    string
+	enabled bool
+}
+
+func (m *namedMockServer) Config() config.MCPServer { return config.MCPServer{Name: m.name} }
+func (m *namedMockServer) IsEnabled() bool          { return m.enabled }
+
+func TestDiscoveredProtocolVersions(t *testing.T) {
+	broker := &mcpBrokerImpl{mcpServers: map[config.UpstreamMCPID]upstream.ActiveMCPServer{
+		"a": &namedMockServer{mockActiveServer: mockActiveServer{supportedVersions: []string{"2025-11-25", "2026-07-28"}}, name: "ns/a", enabled: true},
+		// not yet connected: no versions known
+		"b": &namedMockServer{name: "ns/b", enabled: true},
+		"c": &namedMockServer{mockActiveServer: mockActiveServer{supportedVersions: []string{"2025-11-25"}}, name: "ns/c", enabled: false},
+	}}
+	got := broker.DiscoveredProtocolVersions()
+	if len(got) != 1 || len(got["ns/a"]) != 2 {
+		t.Fatalf("DiscoveredProtocolVersions() = %v, want only ns/a with two versions", got)
+	}
+}
