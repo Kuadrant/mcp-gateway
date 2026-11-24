@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,3 +56,13 @@ var _ = ginkgo.DescribeTable("Controller cache membership", func(ctx ginkgo.Spec
 	ginkgo.Entry("only caches labeled ServiceAccounts", &corev1.ServiceAccount{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 	ginkgo.Entry("only caches labeled NetworkPolicies", &networking.NetworkPolicy{}, labelManagedBy, labelManagedByValue, ginkgo.SpecTimeout(testTimeout)),
 )
+
+var _ = ginkgo.It("only caches the EnvoyFilter CRD", func(ctx ginkgo.SpecContext) {
+	gatewayKey := client.ObjectKey{Name: "gateways.gateway.networking.k8s.io"}
+	gatewayCRD := &apiextensions.CustomResourceDefinition{}
+	gomega.Expect(testK8sClient.Get(ctx, gatewayKey, gatewayCRD)).To(gomega.Succeed())
+
+	c := testMgr.GetCache()
+	gomega.Expect(c.Get(ctx, client.ObjectKey{Name: envoyFilterCRDName}, &apiextensions.CustomResourceDefinition{})).To(gomega.Succeed())
+	gomega.Expect(c.Get(ctx, gatewayKey, gatewayCRD)).To(gomega.MatchError(errors.IsNotFound, "IsNotFound"))
+}, ginkgo.SpecTimeout(testTimeout))
