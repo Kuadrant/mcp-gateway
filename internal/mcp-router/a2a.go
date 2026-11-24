@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Kuadrant/mcp-gateway/internal/headers"
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
 const a2aPathPrefix = "/a2a/"
@@ -30,12 +31,16 @@ const (
 // JSON-RPC error codes for /a2a requests that fail closed rather than reaching the
 // agent without the metadata this phase records: a2aErrParse for a body that is not
 // valid JSON (or absent on a POST), a2aErrInvalidRequest for valid JSON that is not
-// a usable JSON-RPC request (no method to label). The gateway does not otherwise
-// validate the protocol version — the agent owns that.
+// a usable JSON-RPC request (no method to label, or a method or id given more than
+// once). The gateway does not otherwise validate the protocol version — the agent
+// owns that.
 const (
 	a2aErrParse          = -32700
 	a2aErrInvalidRequest = -32600
 )
+
+// a2aEnvelopeMembers are the envelope members parseA2AMethod reads.
+var a2aEnvelopeMembers = [][]byte{[]byte("method"), []byte("id")}
 
 // a2aInternalHeaders are the router-owned A2A headers. They are stripped from
 // every request before the router sets its own, so a client cannot pre-seed the
@@ -77,6 +82,11 @@ func parseA2AMethod(body []byte) (method string, id json.RawMessage, err error) 
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
 		return "", nil, err
+	}
+	// a case-variant duplicate ("method" + "METHOD") would let the client pick
+	// the label while the agent dispatches the other
+	if err := routing.CheckDuplicateMembers(body, a2aEnvelopeMembers); err != nil {
+		return "", env.ID, err
 	}
 	return env.Method, env.ID, nil
 }
