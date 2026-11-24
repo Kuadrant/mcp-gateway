@@ -28,6 +28,15 @@ type legacyMockMCP struct {
 
 func (m *legacyMockMCP) SupportedVersions() []string { return m.versions }
 
+// Connect only reports a new session when not already connected, like
+// MCPServer.Connect.
+func (m *legacyMockMCP) Connect(ctx context.Context, onConnected func()) error {
+	if m.connected.Load() {
+		return nil
+	}
+	return m.MockMCP.Connect(ctx, onConnected)
+}
+
 func (m *legacyMockMCP) ListToolsLegacy(context.Context) (*mcp.ListToolsResult, error) {
 	m.legacyCalls++
 	if m.legacyErr != nil {
@@ -83,21 +92,32 @@ func TestMCPManager_StatefulOutputSchemaFromLegacyListing(t *testing.T) {
 		assert.Equal(t, 1, m.legacyCalls)
 		assert.Equal(t, 0, gw.notified)
 
-		// list_changed with only the 2025 definition changed: re-listed
-		m.legacyTools = []mcp.Tool{{Name: "get_me", InputSchema: map[string]any{"type": "object"}}}
-		man.manage(context.Background(), eventTypeToolNotification)
+		// reconnected over 2026 with only the 2025 definition changed: re-listed
+		legacyOut2 := map[string]any{"type": "object", "properties": map[string]any{"y": map[string]any{"type": "string"}}}
+		m.legacyTools = []mcp.Tool{{Name: "get_me", InputSchema: map[string]any{"type": "object"}, OutputSchema: legacyOut2}}
+		_ = m.Disconnect()
+		man.manage(context.Background(), eventTypeTimer)
 		assert.Equal(t, 2, m.legacyCalls)
 		s, known = man.StatefulOutputSchema("gh_get_me")
 		assert.True(t, known)
-		assert.Nil(t, s, "2025 schema removed upstream")
+		assert.Equal(t, legacyOut2, s)
 		assert.Equal(t, 1, gw.notified)
+
+		// list_changed with only the 2025 definition changed: re-listed
+		m.legacyTools = []mcp.Tool{{Name: "get_me", InputSchema: map[string]any{"type": "object"}}}
+		man.manage(context.Background(), eventTypeToolNotification)
+		assert.Equal(t, 3, m.legacyCalls)
+		s, known = man.StatefulOutputSchema("gh_get_me")
+		assert.True(t, known)
+		assert.Nil(t, s, "2025 schema removed upstream")
+		assert.Equal(t, 2, gw.notified)
 
 		// reconnected over 2025: the 2025 schemas no longer apply
 		m.protocolVersion = "2025-11-25"
 		man.manage(context.Background(), eventTypeTimer)
 		_, known = man.StatefulOutputSchema("gh_get_me")
 		assert.False(t, known)
-		assert.Equal(t, 2, gw.notified, "stateful cache rebuilt for the 2025 definitions")
+		assert.Equal(t, 3, gw.notified, "stateful cache rebuilt for the 2025 definitions")
 	})
 
 	t.Run("reconnected over 2026 with the 2025 listing failing: stateful cache rebuilt", func(t *testing.T) {

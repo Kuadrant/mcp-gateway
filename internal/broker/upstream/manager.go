@@ -237,6 +237,10 @@ type MCPManager struct {
 	// legacyListed records whether the last tools fetch needed the 2025
 	// listing, so a change in either direction rebuilds the stateful cache.
 	legacyListed bool
+	// newSession is set when Connect opens a new upstream session, whose 2025
+	// definitions may differ from the last listing (e.g. an upgraded upstream).
+	// only touched from the manage loop.
+	newSession bool
 
 	promptsServer PromptsAdderDeleter
 	// serverPrompts is an internal copy with prefixed names
@@ -513,6 +517,7 @@ func (man *MCPManager) registerCallbacks() func() {
 		}
 	})
 	return func() {
+		man.newSession = true
 		man.mcp.OnConnectionLost(func(err error) {
 			man.logger.Warn("connection lost, clearing session for reconnect", "upstream mcp server", man.mcp.ID(), "error", err)
 			_ = man.mcp.Disconnect()
@@ -630,7 +635,8 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					// a list_changed may only change the 2025 definitions, which
 					// the 2026 diff cannot see
 					refreshLegacy := needsLegacy && (len(toAdd) > 0 || len(toRemove) > 0 ||
-						event == eventTypeToolNotification || man.statefulOutputSchemas == nil)
+						event == eventTypeToolNotification || man.newSession || man.statefulOutputSchemas == nil)
+					man.newSession = false
 					var legacySchemas map[string]any
 					if refreshLegacy {
 						legacySchemas = man.fetchStatefulOutputSchemas(ctx)
