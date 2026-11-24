@@ -607,7 +607,7 @@ Optional infra in `config/test-servers/nemo-guardrails/` (`llm-d-inference-sim` 
 
 ### [Happy,DualProtocol] Records the protocol versions clients used per server
 
-- A 2025 client calls `sf_greet` (2025-only server) and a 2026 client calls `sl_hello_world` (dual-protocol server). Each MCPServerRegistration's `status.usedProtocolVersions` must gain the version used with it: `2025-11-25` on the 2025-only server and `2026-07-28` on the dual-protocol server. The 2025-only server must never show `2026-07-28`, since 2026 clients are not routed to it. The e2e overlays set `PROTOCOL_USAGE_INTERVAL=5s`.
+- A 2025 client calls `sf_greet` (2025-only server) and a 2026 client calls `sl_hello_world` (dual-protocol server). Each MCPServerRegistration's `status.usedProtocolVersions` must gain the version used with it: `2025-03-26` on the 2025-only server (the e2e 2025 client strips `Mcp-Protocol-Version`, so its calls count as the spec default) and `2026-07-28` on the dual-protocol server. The 2025-only server must never show `2026-07-28`, since 2026 clients are not routed to it. The e2e overlays set `PROTOCOL_USAGE_INTERVAL=5s`.
 
 ## Common pitfalls
 

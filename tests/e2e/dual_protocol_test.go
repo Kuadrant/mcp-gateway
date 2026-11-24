@@ -262,8 +262,10 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(reg), got)).To(Succeed())
 			return got.Status.UsedProtocolVersions
 		}
+		// the e2e 2025 client strips Mcp-Protocol-Version from every request to
+		// force the legacy handshake, so its calls count as the spec default
 		Eventually(func(g Gomega) {
-			g.Expect(used(g, server25)).To(ContainElement("2025-11-25"))
+			g.Expect(used(g, server25)).To(ContainElement("2025-03-26"))
 			g.Expect(used(g, server26)).To(ContainElement("2026-07-28"))
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 		// a 2026 client never reaches the 2025-only server
