@@ -58,7 +58,7 @@ The MCP Broker is a backend service configured with other MCP servers that acts 
 - Creating the aggregated tools/list call
 - Validating discovered MCP Servers meet minimum requirements (protocol version and capabilities) before including their tools in the list
 - Handle notification requests from clients and MCP Servers (proxying from the MCP server notification to registered clients)
-- Dual-protocol support: partitions tools and prompts by protocol version (2025/2026) via a `ProtocolHandler` interface, so version-specific logic (cache aggregation, per-user fetching strategy, notification mechanism) is isolated and removable. See [broker-2026-07-28 design](broker-2026-07-28/broker-2026-07-28-design.md)
+- Dual-protocol support: partitions tools and prompts by protocol version (2025/2026) via a `ProtocolHandler` interface, so version-specific logic (cache aggregation, per-user fetching strategy, notification mechanism) is isolated and removable. See [broker-2026-07-28 design](https://github.com/Kuadrant/mcp-gateway/blob/main/docs/design/broker-2026-07-28/broker-2026-07-28-design.md)
 
 
 
