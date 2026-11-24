@@ -21,7 +21,7 @@ spec:
       serviceAccountName: mcp-controller
       containers:
         - name: mcp-controller
-          image: ghcr.io/kuadrant/mcp-controller:v1.1.0
+          image: ghcr.io/kuadrant/mcp-controller:v1.1.1
           imagePullPolicy: IfNotPresent
           command:
             - ./mcp_controller
@@ -45,7 +45,7 @@ spec:
               memory: '64Mi'
               cpu: '50m'
             limits:
-              memory: '256Mi'
+              memory: '512Mi'
               cpu: '200m'
           livenessProbe:
             httpGet:
