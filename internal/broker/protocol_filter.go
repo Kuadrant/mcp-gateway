@@ -290,7 +290,7 @@ type statefulSchemaSource interface {
 // client since it is optional. the shared tool is copied, leaving the
 // stateless (2026) cache untouched.
 func (m *mcpBrokerImpl) statefulRouteTool(id config.UpstreamMCPID, tool *mcp.Tool) *mcp.Tool {
-	if tool.OutputSchema == nil || !m.listedOverStatelessProtocol(id) {
+	if !m.listedOverStatelessProtocol(id) {
 		return tool
 	}
 	var schema any
@@ -298,6 +298,9 @@ func (m *mcpBrokerImpl) statefulRouteTool(id config.UpstreamMCPID, tool *mcp.Too
 		if s, known := src.StatefulOutputSchema(tool.Name); known {
 			schema = s
 		}
+	}
+	if schema == nil && tool.OutputSchema == nil {
+		return tool
 	}
 	stateful := *tool
 	stateful.OutputSchema = schema

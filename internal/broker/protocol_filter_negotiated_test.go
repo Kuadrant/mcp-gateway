@@ -52,10 +52,14 @@ func TestRebuildProtocolCaches_StatefulOutputSchemaFrom2025Listing(t *testing.T)
 		versions     []string
 		wantStateful any // expected outputSchema on the stateful copy
 		inStateless  bool
+		no2026Schema bool // the 2026 definition has no outputSchema
 	}{
 		{name: "listed over 2026, 2025 listing advertises a schema: use it",
 			server:   &negotiatedMockServer{mockActiveServer{supportedVersions: dual}, "2026-07-28", map[string]any{"get_me": out2025}},
 			versions: dual, wantStateful: out2025, inStateless: true},
+		{name: "listed over 2026 without a schema, 2025 listing advertises one: use it",
+			server:   &negotiatedMockServer{mockActiveServer{supportedVersions: dual}, "2026-07-28", map[string]any{"get_me": out2025}},
+			versions: dual, wantStateful: out2025, inStateless: true, no2026Schema: true},
 		{name: "listed over 2026, 2025 listing has no schema (github-mcp v2): dropped",
 			server:   &negotiatedMockServer{mockActiveServer{supportedVersions: dual}, "2026-07-28", map[string]any{"get_me": nil}},
 			versions: dual, wantStateful: nil, inStateless: true},
@@ -81,8 +85,12 @@ func TestRebuildProtocolCaches_StatefulOutputSchemaFrom2025Listing(t *testing.T)
 			id := config.UpstreamMCPID("server1")
 			b.serverVersions.Store(id, tt.versions)
 			b.mcpServers[id] = tt.server
+			var served2026 any = out2026
+			if tt.no2026Schema {
+				served2026 = nil
+			}
 			b.gatewayServer.AddTools(upstream.GatewayTool{
-				Tool:    mcp.Tool{Name: "get_me", InputSchema: objectSchema, OutputSchema: out2026, Meta: map[string]any{"kuadrant/id": "server1"}},
+				Tool:    mcp.Tool{Name: "get_me", InputSchema: objectSchema, OutputSchema: served2026, Meta: map[string]any{"kuadrant/id": "server1"}},
 				Handler: upstream.NoopToolHandler,
 			})
 			b.rebuildProtocolCaches()
@@ -106,7 +114,7 @@ func TestRebuildProtocolCaches_StatefulOutputSchemaFrom2025Listing(t *testing.T)
 			}
 			require.NotNil(t, stateless)
 			require.Len(t, stateless.items, 1)
-			assert.Equal(t, out2026, stateless.items[0].OutputSchema, "stateless (2026) cache keeps the 2026 schema")
+			assert.Equal(t, served2026, stateless.items[0].OutputSchema, "stateless (2026) cache keeps the 2026 schema")
 		})
 	}
 }

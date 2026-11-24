@@ -234,6 +234,9 @@ type MCPManager struct {
 	// 2026-07-28 or later but which also serve the stateful (2025) route; a
 	// nil map means unknown.
 	statefulOutputSchemas map[string]any
+	// legacyListed records whether the last tools fetch needed the 2025
+	// listing, so a change in either direction rebuilds the stateful cache.
+	legacyListed bool
 
 	promptsServer PromptsAdderDeleter
 	// serverPrompts is an internal copy with prefixed names
@@ -624,18 +627,25 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					man.logger.ErrorContext(ctx, "tool conflict detected", "upstream mcp server", man.mcp.ID(), "error", toolErr)
 				} else {
 					needsLegacy := man.needsLegacyListing()
-					refreshLegacy := needsLegacy && (len(toAdd) > 0 || len(toRemove) > 0 || man.statefulOutputSchemas == nil)
+					// a list_changed may only change the 2025 definitions, which
+					// the 2026 diff cannot see
+					refreshLegacy := needsLegacy && (len(toAdd) > 0 || len(toRemove) > 0 ||
+						event == eventTypeToolNotification || man.statefulOutputSchemas == nil)
 					var legacySchemas map[string]any
 					if refreshLegacy {
 						legacySchemas = man.fetchStatefulOutputSchemas(ctx)
 					}
 					man.toolsLock.Lock()
+					prevSchemas := man.statefulOutputSchemas
 					switch {
 					case !needsLegacy:
 						man.statefulOutputSchemas = nil
 					case refreshLegacy:
 						man.statefulOutputSchemas = legacySchemas
 					}
+					statefulChanged := needsLegacy != man.legacyListed ||
+						!reflect.DeepEqual(prevSchemas, man.statefulOutputSchemas)
+					man.legacyListed = needsLegacy
 					man.tools = fetched
 					numberOfTools = len(fetched)
 					man.toolsMap = make(map[string]*mcp.Tool, len(fetched))
@@ -669,10 +679,10 @@ func (man *MCPManager) manage(ctx context.Context, event eventType) {
 					// rebuilds freshFetchServers.
 					if len(toAdd) == 0 && len(toRemove) == 0 {
 						metaAfter := man.mcp.ToolsCacheMetadata()
-						// a legacy listing that only now succeeded also changes
-						// what the stateful protocol cache should serve
+						// so does a change in the 2025 definitions the stateful
+						// protocol cache serves
 						if metaBefore.TTLMs != metaAfter.TTLMs || metaBefore.CacheScope != metaAfter.CacheScope ||
-							(refreshLegacy && legacySchemas != nil) {
+							statefulChanged {
 							man.gatewayServer.NotifyMetadataChanged()
 						}
 					}

@@ -64,7 +64,8 @@ func TestMCPManager_StatefulOutputSchemaFromLegacyListing(t *testing.T) {
 	t.Run("dual-version listed over 2026: 2025 schemas recorded per served name", func(t *testing.T) {
 		m := newLegacyMock(dual, "2026-07-28")
 		m.legacyTools = []mcp.Tool{{Name: "get_me", InputSchema: map[string]any{"type": "object"}, OutputSchema: legacyOut}, {Name: "plain", InputSchema: map[string]any{"type": "object"}}}
-		man, err := NewUpstreamMCPManager(m, newMockToolsAdderDeleter(), nil, slog.Default(), 0, InvalidToolPolicyFilterOut)
+		gw := &notifyCounter{MockToolsAdderDeleter: newMockToolsAdderDeleter()}
+		man, err := NewUpstreamMCPManager(m, gw, nil, slog.Default(), 0, InvalidToolPolicyFilterOut)
 		require.NoError(t, err)
 		man.manage(context.Background(), eventTypeTimer)
 
@@ -80,12 +81,38 @@ func TestMCPManager_StatefulOutputSchemaFromLegacyListing(t *testing.T) {
 		// unchanged tool set: no re-list
 		man.manage(context.Background(), eventTypeTimer)
 		assert.Equal(t, 1, m.legacyCalls)
+		assert.Equal(t, 0, gw.notified)
+
+		// list_changed with only the 2025 definition changed: re-listed
+		m.legacyTools = []mcp.Tool{{Name: "get_me", InputSchema: map[string]any{"type": "object"}}}
+		man.manage(context.Background(), eventTypeToolNotification)
+		assert.Equal(t, 2, m.legacyCalls)
+		s, known = man.StatefulOutputSchema("gh_get_me")
+		assert.True(t, known)
+		assert.Nil(t, s, "2025 schema removed upstream")
+		assert.Equal(t, 1, gw.notified)
 
 		// reconnected over 2025: the 2025 schemas no longer apply
 		m.protocolVersion = "2025-11-25"
 		man.manage(context.Background(), eventTypeTimer)
 		_, known = man.StatefulOutputSchema("gh_get_me")
 		assert.False(t, known)
+		assert.Equal(t, 2, gw.notified, "stateful cache rebuilt for the 2025 definitions")
+	})
+
+	t.Run("reconnected over 2026 with the 2025 listing failing: stateful cache rebuilt", func(t *testing.T) {
+		m := newLegacyMock(dual, "2025-11-25")
+		gw := &notifyCounter{MockToolsAdderDeleter: newMockToolsAdderDeleter()}
+		man, err := NewUpstreamMCPManager(m, gw, nil, slog.Default(), 0, InvalidToolPolicyFilterOut)
+		require.NoError(t, err)
+		man.manage(context.Background(), eventTypeTimer)
+
+		m.protocolVersion = "2026-07-28"
+		m.legacyErr = errors.New("boom")
+		man.manage(context.Background(), eventTypeTimer)
+		_, known := man.StatefulOutputSchema("gh_get_me")
+		assert.False(t, known)
+		assert.Equal(t, 1, gw.notified)
 	})
 
 	t.Run("legacy listing failure: unknown, retried next cycle", func(t *testing.T) {
