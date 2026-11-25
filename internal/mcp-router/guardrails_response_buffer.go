@@ -261,7 +261,9 @@ func (g *guardrailsResponseBuffer) resolve(ctx context.Context, body []byte) []b
 // isTerminalResult reports whether event is the actual tool result (a
 // response), rather than a request or notification, and returns its id.
 // Even a missing or mismatched id doesn't skip the check, since this stream
-// only ever carries this one client's request.
+// only ever carries this one client's request. Data that isn't JSON-RPC
+// can't be ruled out as the result, so it is treated as one and the check
+// fails it closed.
 func (g *guardrailsResponseBuffer) isTerminalResult(event []byte) (id any, ok bool) {
 	data := sseEventData(event)
 	if len(data) == 0 {
@@ -269,7 +271,7 @@ func (g *guardrailsResponseBuffer) isTerminalResult(event []byte) (id any, ok bo
 	}
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		return nil, false
+		return nil, true
 	}
 	// a result or error makes this the response, even if the upstream also
 	// sent a (spoofed or malformed) method - gating on method's absence let
@@ -288,12 +290,12 @@ func (g *guardrailsResponseBuffer) normalizeID(ctx context.Context, event []byte
 	if idsEqual(id, g.requestID) {
 		return event
 	}
-	g.logRepair(ctx, "guardrails: replaced upstream JSON-RPC id with the client request id", id)
 	data := sseEventData(event)
 	var msg jsonRPCMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		return event // unreachable: isTerminalResult already parsed this event
+		return event // not JSON-RPC: left as is for the check to fail closed
 	}
+	g.logRepair(ctx, "guardrails: replaced upstream JSON-RPC id with the client request id", id)
 	msg.ID = g.requestID
 	rewritten, err := json.Marshal(&msg)
 	if err != nil {

@@ -1796,6 +1796,14 @@ func TestProcess202607_GuardrailsSSE_ReplacementBody(t *testing.T) {
 			want:         "\n" + sseEvent(`{"content":[{"type":"text","text":"response body exceeds configured size limit"}],"isError":true,"resultType":"complete"}`),
 		},
 		{
+			// complete event, but not JSON-RPC: checked and failed closed, not forwarded
+			name:        "undecodable event",
+			contentType: "text/event-stream",
+			checker:     &allowAllChecker{},
+			toolResult:  "event: message\ndata: secret data\n\n",
+			want:        string(routing.GuardrailsExtractionFailed(1, routing.BuildSSE202607ToolError)),
+		},
+		{
 			name:        "extraction failed",
 			contentType: "text/event-stream",
 			checker:     &allowAllChecker{},
