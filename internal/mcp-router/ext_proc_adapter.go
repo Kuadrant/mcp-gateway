@@ -179,7 +179,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 		resourceRewriter    *resourceURIRewriter      // nil until a tool call response with resources arrives
 		guardrailsActive    = false                   // true when response body must be checked by guardrails
 		guardrailsBuf       *guardrailsResponseBuffer // nil until a tool call response needing guardrails arrives
-		responseIsJSON      bool                      // response Content-Type is application/json, not text/event-stream; always assigned before use
+		responseIsJSON      bool                      // response is framed as JSON, not SSE (see response headers); always assigned before use
 	)
 	span := trace.SpanFromContext(ctx)
 	defer func() { span.End() }()
@@ -512,9 +512,11 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 			}
 
 			statusCode := getSingleValueHeader(r.ResponseHeaders.Headers, ":status")
-			// 2026 is always JSON-RPC; missing Content-Type must not default to SSE.
-			responseIsJSON = effectiveVersion == protocol.Version2026 ||
-				isJSONContentType(getSingleValueHeader(r.ResponseHeaders.Headers, "content-type"))
+			// 2026 upstreams may answer with SSE, but a missing or non-standard
+			// Content-Type must not default to SSE there.
+			contentType := getSingleValueHeader(r.ResponseHeaders.Headers, "content-type")
+			responseIsJSON = isJSONContentType(contentType) ||
+				(effectiveVersion == protocol.Version2026 && !isSSEContentType(contentType))
 			span.SetAttributes(
 				attribute.String("http.status_code", statusCode),
 				attribute.String("mcp.response.protocol_version", protocolVersion),
@@ -581,8 +583,10 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				if guardrailsActive {
 					buildToolError, buildToolResult := routing.BuildSSEToolError, routing.BuildSSEToolResult
 					switch {
-					case effectiveVersion == protocol.Version2026:
+					case effectiveVersion == protocol.Version2026 && responseIsJSON:
 						buildToolError, buildToolResult = routing.Build202607ToolError, routing.Build202607ToolResult
+					case effectiveVersion == protocol.Version2026:
+						buildToolError, buildToolResult = routing.BuildSSE202607ToolError, routing.BuildSSE202607ToolResult
 					case responseIsJSON:
 						buildToolError, buildToolResult = routing.BuildJSONToolError, routing.BuildJSONToolResult
 					}

@@ -29,6 +29,13 @@ func isJSONContentType(contentType string) bool {
 	return strings.EqualFold(strings.TrimSpace(mediaType), "application/json")
 }
 
+// isSSEContentType reports whether contentType is text/event-stream, ignoring
+// parameters and case.
+func isSSEContentType(contentType string) bool {
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "text/event-stream")
+}
+
 // HeadersBuilder builds headers to add to the request or response
 type HeadersBuilder struct {
 	headers []*basepb.HeaderValueOption

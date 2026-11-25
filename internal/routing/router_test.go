@@ -2668,6 +2668,41 @@ func TestBuildJSONToolResponses(t *testing.T) {
 	}
 }
 
+// SSE replacements are compared byte for byte: clients parse the framing.
+func TestBuildSSEToolResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "2025 error",
+			got:  BuildSSEToolError("req-1", "boom"),
+			want: "\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"req-1\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"boom\"}],\"isError\":true}}\n\n",
+		},
+		{
+			name: "2025 result",
+			got:  BuildSSEToolResult(7, "ok"),
+			want: "\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}\n\n",
+		},
+		{
+			name: "2026 error",
+			got:  BuildSSE202607ToolError("req-1", "boom"),
+			want: "\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"req-1\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"boom\"}],\"isError\":true,\"resultType\":\"complete\"}}\n\n",
+		},
+		{
+			name: "2026 result",
+			got:  BuildSSE202607ToolResult(7, "ok"),
+			want: "\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"resultType\":\"complete\"}}\n\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, tc.got)
+		})
+	}
+}
+
 func extractSSEData(t *testing.T, sse string) string {
 	t.Helper()
 	const prefix = "data: "
