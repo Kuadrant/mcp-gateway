@@ -1490,7 +1490,6 @@ func TestProcess202607_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 	// a plain JSON-RPC tool result with text content
 	toolResultBody := []byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello world"}]}}`)
 
-	// 2026-07-28 responses are always application/json, never SSE.
 	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
 		guardrailsResponseSteps(toolCallBody, toolResultBody, toolResultBody, "application/json")...)
 	mock := makeMockProcessServer(t, steps)
@@ -1502,7 +1501,7 @@ func TestProcess202607_GuardrailsAllowed_BodyPassthrough(t *testing.T) {
 
 // TestProcess202607_GuardrailsBlocked_ReplacementBody mirrors
 // TestProcess_GuardrailsBlocked_ReplacementBody for the 2026-07-28 protocol:
-// the replacement is plain JSON, not an SSE event.
+// a JSON response gets a plain JSON replacement, not an SSE event.
 func TestProcess202607_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 	cache, err := session.NewCache()
 	require.NoError(t, err)
@@ -1718,6 +1717,182 @@ func TestProcess202607_GuardrailsFailClosedReplacementBody(t *testing.T) {
 			mock.verifyAllResponsesConsumed()
 		})
 	}
+}
+
+// 2026-07-28 upstreams may answer with text/event-stream; the replacement must
+// keep that framing or the client never sees a result (issue #1680). bodies are
+// literal so a builder mix-up fails here.
+func TestProcess202607_GuardrailsSSE_ReplacementBody(t *testing.T) {
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	sseEvent := func(result string) string {
+		return "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":" + result + "}\n\n"
+	}
+	secret := sseEvent(`{"content":[{"type":"text","text":"secret data"}],"resultType":"complete"}`)
+
+	for _, tc := range []struct {
+		name         string
+		contentType  string
+		checker      api.Checker
+		maxBodyBytes int64
+		toolResult   string
+		want         string
+	}{
+		{
+			name:        "allowed",
+			contentType: "text/event-stream",
+			checker:     &allowAllChecker{},
+			toolResult:  secret,
+			want:        secret,
+		},
+		{
+			name:        "blocked",
+			contentType: "text/event-stream",
+			checker:     &blockAllChecker{},
+			toolResult:  secret,
+			want:        "\n" + sseEvent(`{"content":[{"type":"text","text":"blocked by guardrails"}],"isError":true,"resultType":"complete"}`),
+		},
+		{
+			name:        "blocked with charset",
+			contentType: "Text/Event-Stream; charset=utf-8",
+			checker:     &blockAllChecker{},
+			toolResult:  secret,
+			want:        "\n" + sseEvent(`{"content":[{"type":"text","text":"blocked by guardrails"}],"isError":true,"resultType":"complete"}`),
+		},
+		{
+			// declared SSE but sent a bare JSON body: framed to match the header
+			name:        "allowed bare JSON body",
+			contentType: "text/event-stream",
+			checker:     &allowAllChecker{},
+			toolResult:  `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}],"resultType":"complete"}}`,
+			want:        secret,
+		},
+		{
+			name:        "blocked bare JSON body",
+			contentType: "text/event-stream",
+			checker:     &blockAllChecker{},
+			toolResult:  `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret data"}],"resultType":"complete"}}`,
+			want:        "\n" + sseEvent(`{"content":[{"type":"text","text":"blocked by guardrails"}],"isError":true,"resultType":"complete"}`),
+		},
+		{
+			name:        "modified",
+			contentType: "text/event-stream",
+			checker:     &modifyAllChecker{content: "redacted"},
+			toolResult:  secret,
+			want:        "\n" + sseEvent(`{"content":[{"type":"text","text":"redacted"}],"resultType":"complete"}`),
+		},
+		{
+			name:        "modified input_required",
+			contentType: "text/event-stream",
+			checker:     &modifyAllChecker{content: "redacted"},
+			toolResult:  sseEvent(`{"content":[{"type":"text","text":"secret data"}],"inputRequests":{"a":{"method":"elicitation/create"}},"requestState":"s1","resultType":"input_required"}`),
+			want:        "\n" + sseEvent(`{"content":[{"type":"text","text":"redacted"}],"isError":true,"resultType":"complete"}`),
+		},
+		{
+			name:         "oversized",
+			contentType:  "text/event-stream",
+			checker:      &allowAllChecker{},
+			maxBodyBytes: int64(len(toolCallBody)),
+			toolResult:   sseEvent(`{"content":[{"type":"text","text":"` + strings.Repeat("x", len(toolCallBody)) + `"}],"resultType":"complete"}`),
+			want:         "\n" + sseEvent(`{"content":[{"type":"text","text":"response body exceeds configured size limit"}],"isError":true,"resultType":"complete"}`),
+		},
+		{
+			// complete event, but not JSON-RPC: checked and failed closed, not forwarded
+			name:        "undecodable event",
+			contentType: "text/event-stream",
+			checker:     &allowAllChecker{},
+			toolResult:  "event: message\ndata: secret data\n\n",
+			want:        string(routing.GuardrailsExtractionFailed(1, routing.BuildSSE202607ToolError)),
+		},
+		{
+			name:        "extraction failed",
+			contentType: "text/event-stream",
+			checker:     &allowAllChecker{},
+			toolResult:  "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"res",
+			want:        string(routing.GuardrailsExtractionFailed(1, routing.BuildSSE202607ToolError)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache, err := session.NewCache()
+			require.NoError(t, err)
+
+			cfg := &config.MCPServersConfig{}
+			cfg.ApplyReload([]*config.MCPServer{{
+				Name:                "s1",
+				GuardrailsConfigIDs: []string{"cfg-1"},
+			}}, nil, "", tc.maxBodyBytes, nil, tc.checker)
+
+			srv := &ExtProcServer{
+				Logger:              slog.New(slog.NewTextHandler(os.Stdout, nil)),
+				SessionCache:        cache,
+				Router202607:        &stubRouterGuardrails{configIDs: []string{"cfg-1"}},
+				ResponseHandler2026: &bufferedResponseHandler{},
+			}
+			srv.RoutingConfig.Store(cfg)
+
+			steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
+				guardrailsResponseSteps(toolCallBody, []byte(tc.toolResult), []byte(tc.want), tc.contentType)...)
+			mock := makeMockProcessServer(t, steps)
+
+			require.NoError(t, srv.Process(mock))
+			mock.verifyAllResponsesConsumed()
+		})
+	}
+}
+
+// a 2026 SSE response is withheld per event: a progress notification reaches
+// the client before the result arrives, and only the result is replaced.
+func TestProcess202607_GuardrailsSSE_ForwardsEarlierEvents(t *testing.T) {
+	cache, err := session.NewCache()
+	require.NoError(t, err)
+
+	cfg := &config.MCPServersConfig{}
+	cfg.ApplyReload([]*config.MCPServer{{
+		Name:                "s1",
+		GuardrailsConfigIDs: []string{"cfg-1"},
+	}}, nil, "", 0, nil, &blockAllChecker{})
+
+	srv := &ExtProcServer{
+		Logger:              slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		SessionCache:        cache,
+		Router202607:        &stubRouterGuardrails{configIDs: []string{"cfg-1"}},
+		ResponseHandler2026: &bufferedResponseHandler{},
+	}
+	srv.RoutingConfig.Store(cfg)
+
+	toolCallBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"s1_echo","arguments":{}}}`)
+	progress := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"p1\",\"progress\":1}}\n\n")
+	result := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"secret\"}],\"resultType\":\"complete\"}}\n\n")
+	blocked := []byte(routing.BuildSSE202607ToolError(1, "blocked by guardrails"))
+
+	bodyStep := func(body []byte, eos bool, want []byte) mockProcessServerMessageAndErr {
+		return mockProcessServerMessageAndErr{
+			msg: &extProcV3.ProcessingRequest{
+				Request: &extProcV3.ProcessingRequest_ResponseBody{
+					ResponseBody: &extProcV3.HttpBody{Body: body, EndOfStream: eos},
+				},
+			},
+			resp: []*extProcV3.ProcessingResponse{{
+				Response: &extProcV3.ProcessingResponse_ResponseBody{
+					ResponseBody: &extProcV3.BodyResponse{
+						Response: &extProcV3.CommonResponse{
+							BodyMutation: &extProcV3.BodyMutation{
+								Mutation: &extProcV3.BodyMutation_Body{Body: want},
+							},
+						},
+					},
+				},
+			}},
+		}
+	}
+
+	// request body and response headers steps, then the body in two chunks
+	steps := append([]mockProcessServerMessageAndErr{requestHeadersStep202607()},
+		guardrailsResponseSteps(toolCallBody, nil, nil, "text/event-stream")[:2]...)
+	steps = append(steps, bodyStep(progress, false, progress), bodyStep(result, true, blocked))
+	mock := makeMockProcessServer(t, steps)
+
+	require.NoError(t, srv.Process(mock))
+	mock.verifyAllResponsesConsumed()
 }
 
 func TestProcess_StatefulPathOverrides2026Header_Uses2025Replacement(t *testing.T) {

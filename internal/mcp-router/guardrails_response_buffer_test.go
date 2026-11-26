@@ -221,6 +221,31 @@ func TestGuardrailsResponseBuffer_SSE_FlushTruncatedTrailerStillChecked(t *testi
 	require.Equal(t, 1, checked)
 }
 
+func TestGuardrailsResponseBuffer_SSE_UndecodableEventChecked(t *testing.T) {
+	// a complete event whose data isn't JSON-RPC can't be told apart from the
+	// result, so it must go through the check (which fails closed), not around it.
+	var checked [][]byte
+	buf := newGuardrailsResponseBuffer(true, 1, func(_ context.Context, body []byte) []byte {
+		checked = append(checked, body)
+		return []byte("replaced")
+	})
+
+	// events with no data (keep-alive comments, bare ids) are not responses
+	keepAlive := []byte(": ping\n\n")
+	require.Equal(t, string(keepAlive), string(buf.Process(context.Background(), keepAlive)))
+	require.Empty(t, checked)
+
+	undecodable := []byte("event: message\ndata: secret data\n\n")
+	require.Equal(t, "replaced", string(buf.Process(context.Background(), undecodable)))
+	require.Len(t, checked, 1)
+	require.Equal(t, string(undecodable), string(checked[0]))
+
+	// done: the result that follows is dropped, not forwarded unchecked
+	result := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n")
+	require.Empty(t, buf.Process(context.Background(), result))
+	require.Empty(t, buf.Flush(context.Background()))
+}
+
 func TestGuardrailsResponseBuffer_JSON_WithheldUntilFlush(t *testing.T) {
 	var checked int
 	buf := newGuardrailsResponseBuffer(false, 1, func(_ context.Context, _ []byte) []byte {

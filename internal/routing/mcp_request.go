@@ -285,22 +285,14 @@ func SseJSONRPC(requestID any, writeBody func(b *strings.Builder)) string {
 
 // BuildSSEToolError constructs sse error response for tool call
 func BuildSSEToolError(requestID any, message string) string {
-	return SseJSONRPC(requestID, func(b *strings.Builder) {
-		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-		b.WriteString(jsonQuote(message))
-		b.WriteString("}],\"isError\":true}}")
-	})
+	return buildSSEToolResponse(requestID, message, isErrorField)
 }
 
 // BuildSSEToolResult constructs a successful SSE tool result for 2025-11-25.
 // Used when guardrails modifies response content: the redacted text is a
 // valid result, not an error.
 func BuildSSEToolResult(requestID any, text string) string {
-	return SseJSONRPC(requestID, func(b *strings.Builder) {
-		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
-		b.WriteString(jsonQuote(text))
-		b.WriteString("}]}}")
-	})
+	return buildSSEToolResponse(requestID, text, "")
 }
 
 // BuildJSONToolError constructs a plain JSON-RPC error response for a tool
@@ -328,6 +320,28 @@ func Build202607ToolError(requestID any, message string) string {
 // resultType on every result.
 func Build202607ToolResult(requestID any, text string) string {
 	return buildJSONToolResponse(requestID, text, resultTypeCompleteField)
+}
+
+// BuildSSE202607ToolError is Build202607ToolError framed as an SSE event, for
+// 2026-07-28 upstreams that answer with text/event-stream.
+func BuildSSE202607ToolError(requestID any, message string) string {
+	return buildSSEToolResponse(requestID, message, isErrorField+resultTypeCompleteField)
+}
+
+// BuildSSE202607ToolResult is Build202607ToolResult framed as an SSE event.
+func BuildSSE202607ToolResult(requestID any, text string) string {
+	return buildSSEToolResponse(requestID, text, resultTypeCompleteField)
+}
+
+// buildSSEToolResponse is buildJSONToolResponse framed as an SSE event.
+func buildSSEToolResponse(requestID any, text, extraFields string) string {
+	return SseJSONRPC(requestID, func(b *strings.Builder) {
+		b.WriteString(",\"result\":{\"content\":[{\"type\":\"text\",\"text\":")
+		b.WriteString(jsonQuote(text))
+		b.WriteString("}]")
+		b.WriteString(extraFields)
+		b.WriteString("}}")
+	})
 }
 
 const (
