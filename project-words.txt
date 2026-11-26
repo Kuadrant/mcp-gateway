@@ -139,6 +139,7 @@ gopkg
 gosec
 gotenv
 gotool
+GOVERSION
 govulncheck
 grpcroute
 grpcroutes

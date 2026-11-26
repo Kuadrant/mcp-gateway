@@ -38,10 +38,40 @@ $(KUSTOMIZE):
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) # Download kustomize locally if necessary.
 
-GOLANGCI_LINT = bin/golangci-lint
+# Go-built linters are named after their version and the Go toolchain that
+# built them, so bumping either installs a fresh copy instead of reusing a
+# stale binary (golangci-lint refuses to run when built with an older Go).
+GO_VERSION := $(shell go env GOVERSION 2>/dev/null)
+
+# go-install-tool installs package $(2) at version $(3) as binary $(1).
+define go-install-tool
+@set -e; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+echo "Installing $(2)@$(3)"; \
+GOBIN=$$tmp go install $(2)@$(3); \
+mkdir -p bin; mv "$$tmp/$$(basename $(2))" $(1)
+endef
+
 GOLANGCI_LINT_VERSION = v2.15.0
+GOLANGCI_LINT = bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GO_VERSION)
 $(GOLANGCI_LINT):
-	GOBIN=$(PWD)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(call go-install-tool,$@,github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 .PHONY: golangci-lint-bin
 golangci-lint-bin: $(GOLANGCI_LINT) # Download golangci-lint locally if necessary.
+
+# keep in step with golang.org/x/tools in go.mod
+GOIMPORTS_VERSION = v0.52.0
+GOIMPORTS = bin/goimports-$(GOIMPORTS_VERSION)-$(GO_VERSION)
+$(GOIMPORTS):
+	$(call go-install-tool,$@,golang.org/x/tools/cmd/goimports,$(GOIMPORTS_VERSION))
+
+.PHONY: goimports-bin
+goimports-bin: $(GOIMPORTS) # Download goimports locally if necessary.
+
+KUBE_API_LINTER_VERSION ?= v0.0.0-20261030144752-d90122c89087
+KUBE_API_LINTER = bin/golangci-lint-kube-api-linter-$(KUBE_API_LINTER_VERSION)-$(GO_VERSION)
+$(KUBE_API_LINTER):
+	$(call go-install-tool,$@,sigs.k8s.io/kube-api-linter/cmd/golangci-lint-kube-api-linter,$(KUBE_API_LINTER_VERSION))
+
+.PHONY: kube-api-linter-bin
+kube-api-linter-bin: $(KUBE_API_LINTER) # Download kube-api-linter locally if necessary.

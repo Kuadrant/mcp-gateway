@@ -625,34 +625,22 @@ update:
 # Lint
 
 .PHONY: fmt
-fmt:
-	find . -name '*.go' ! -name '*deepcopy*.go' ! -path './vendor/*' -print0 | xargs -0 goimports -w
+fmt: goimports-bin
+	find . -name '*.go' ! -name '*deepcopy*.go' ! -path './vendor/*' -print0 | xargs -0 $(GOIMPORTS) -w
 
 .PHONY: vet
 vet:
 	go vet $$(go list ./... | grep -v /zz_generated)
 
 .PHONY: golangci-lint
-golangci-lint:
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	elif [ -f bin/golangci-lint ]; then \
-		bin/golangci-lint run ./...; \
-	else \
-		"$(MAKE)" golangci-lint-bin && bin/golangci-lint run ./...; \
-	fi
-
-KUBE_API_LINTER_VERSION ?= v0.0.0-20261030144752-d90122c89087
+golangci-lint: golangci-lint-bin
+	$(GOLANGCI_LINT) run ./...
 
 ##@ Linting
 
 .PHONY: kube-api-linter
-kube-api-linter: bin/golangci-lint-kube-api-linter ## Run kube-api-linter on API types
-	bin/golangci-lint-kube-api-linter run --config .golangci-kube-api-linter.yml ./api/...
-
-bin/golangci-lint-kube-api-linter:
-	@echo "Installing kube-api-linter $(KUBE_API_LINTER_VERSION)..."
-	GOBIN=$(shell pwd)/bin go install sigs.k8s.io/kube-api-linter/cmd/golangci-lint-kube-api-linter@$(KUBE_API_LINTER_VERSION)
+kube-api-linter: kube-api-linter-bin ## Run kube-api-linter on API types
+	$(KUBE_API_LINTER) run --config .golangci-kube-api-linter.yml ./api/...
 
 # To install cspell, do `npm install -g cspell@latest`.
 # If this reports "Unknown word" for valid spellings, do
@@ -685,11 +673,13 @@ check-gofmt:
 	fi
 
 .PHONY: check-goimports
-check-goimports:
+check-goimports: goimports-bin
 	@echo "Checking goimports..."
-	@if [ -n "$$(goimports -l . | grep -v '^vendor/' | grep -v '\.deepcopy\.go')" ]; then \
+	@out=$$($(GOIMPORTS) -l .) || exit 1; \
+	files=$$(printf '%s\n' "$$out" | grep -v '^vendor/' | grep -v '\.deepcopy\.go' || true); \
+	if [ -n "$$files" ]; then \
 		echo "Files need goimports:"; \
-		goimports -l . | grep -v '^vendor/' | grep -v '\.deepcopy\.go'; \
+		echo "$$files"; \
 		echo "Run 'make fmt' to fix."; \
 		exit 1; \
 	fi
