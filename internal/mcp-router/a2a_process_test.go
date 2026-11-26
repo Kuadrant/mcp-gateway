@@ -147,6 +147,18 @@ func TestProcess_A2APassthrough_FailsClosedOnEmptyMethod(t *testing.T) {
 	mock.verifyAllResponsesConsumed()
 }
 
+// a method repeated under another case would let the client choose the
+// x-a2a-method label while a case-sensitive agent dispatches the other
+func TestProcess_A2APassthrough_FailsClosedOnCaseVariantMethod(t *testing.T) {
+	srv := newA2ATestServer(t)
+	mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+		a2aHeadersStep(),
+		a2aBodyStep(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{},"METHOD":"GetTask"}`, a2aImmediateJSON(a2aErrInvalidRequest)),
+	})
+	require.NoError(t, srv.Process(mock))
+	mock.verifyAllResponsesConsumed()
+}
+
 // a POST with no body (EndOfStream on headers) has no request-body phase, so
 // x-a2a-method would never be set — it is rejected at the header phase.
 func TestProcess_A2APassthrough_FailsClosedOnBodylessPost(t *testing.T) {

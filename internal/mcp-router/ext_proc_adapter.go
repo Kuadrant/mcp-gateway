@@ -4,6 +4,7 @@ package mcprouter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -354,7 +355,7 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				// reaches the agent without the metadata this phase records.
 				if parseErr != nil || method == "" {
 					code := a2aErrParse
-					if parseErr == nil {
+					if parseErr == nil || errors.Is(parseErr, routing.ErrInvalidRequest) {
 						code = a2aErrInvalidRequest
 					}
 					s.Logger.DebugContext(ctx, "[ext_proc] Process: A2A body not a valid json-rpc request, failing closed", "request id", requestID, "error", parseErr)
@@ -418,7 +419,13 @@ func (s *ExtProcServer) Process(stream extProcV3.ExternalProcessor_ProcessServer
 				}
 				continue
 			}
-			if _, err := mcpRequest.Validate(); err != nil {
+			_, err := mcpRequest.Validate()
+			if err == nil {
+				// case-variant duplicates ("params" + "PARAMS") are merged by
+				// encoding/json but not by case-sensitive upstreams
+				err = routing.CheckMCPRequestMembers(body)
+			}
+			if err != nil {
 				s.Logger.ErrorContext(ctx, "Invalid MCPRequest", "error", err)
 				recordError(span, err, 400)
 				resp := responseBuilder.WithImmediateResponse(400, "invalid mcp request").Build()

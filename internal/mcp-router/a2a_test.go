@@ -2,7 +2,10 @@ package mcprouter
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
+
+	"github.com/Kuadrant/mcp-gateway/internal/routing"
 )
 
 func TestIsA2APath(t *testing.T) {
@@ -71,6 +74,18 @@ func TestParseA2AMethod(t *testing.T) {
 		}
 		if method != "SendMessage" {
 			t.Errorf("method = %q, want SendMessage", method)
+		}
+		if string(id) != "7" {
+			t.Errorf("id = %s, want 7", id)
+		}
+	})
+	t.Run("case-variant method is an invalid request", func(t *testing.T) {
+		method, id, err := parseA2AMethod([]byte(`{"jsonrpc":"2.0","id":7,"method":"SendMessage","METHOD":"GetTask"}`))
+		if !errors.Is(err, routing.ErrInvalidRequest) {
+			t.Fatalf("err = %v, want ErrInvalidRequest", err)
+		}
+		if method != "" {
+			t.Errorf("method = %q, want empty", method)
 		}
 		if string(id) != "7" {
 			t.Errorf("id = %s, want 7", id)

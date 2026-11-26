@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -101,6 +102,35 @@ func TestProcess_InvalidBody(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no response headers or request headers")
 	mock.verifyAllResponsesConsumed()
+}
+
+// a body repeating a JSON-RPC member under another case is rejected: the router
+// would read the merged value while a case-sensitive upstream reads the original
+func TestProcess_RejectsCaseVariantMembers(t *testing.T) {
+	// each would otherwise be passed to the broker as tools/list
+	bodies := []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{},"PARAMS":{"cursor":"x"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t"},"METHOD":"tools/list"}`,
+	}
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			srv := newTestServer(t)
+			mock := makeMockProcessServer(t, []mockProcessServerMessageAndErr{
+				requestHeadersStep(),
+				{
+					msg: &extProcV3.ProcessingRequest{
+						Request: &extProcV3.ProcessingRequest_RequestBody{
+							RequestBody: &extProcV3.HttpBody{Body: []byte(body), EndOfStream: true},
+						},
+					},
+					resp: []*extProcV3.ProcessingResponse{immediateResponse(400)},
+				},
+				{msgErr: io.EOF},
+			})
+			require.ErrorIs(t, srv.Process(mock), io.EOF)
+			mock.verifyAllResponsesConsumed()
+		})
+	}
 }
 
 func TestProcess_HappyPath(t *testing.T) {
