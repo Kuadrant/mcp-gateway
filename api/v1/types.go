@@ -231,8 +231,11 @@ type TargetReference struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name,omitempty"`
 
-	// namespace of the target resource (optional, defaults to same namespace).
+	// namespace of the target resource. The target HTTPRoute must live in the
+	// same namespace as the MCPServerRegistration; cross-namespace references
+	// are not supported, so this field must be left empty.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == \"\"",message="cross-namespace targetRef is not supported, the HTTPRoute must be in the MCPServerRegistration namespace"
 	Namespace string `json:"namespace,omitempty"`
 }
 
