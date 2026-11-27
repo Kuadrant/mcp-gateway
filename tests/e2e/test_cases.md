@@ -605,6 +605,11 @@ Optional infra in `config/test-servers/nemo-guardrails/` (`llm-d-inference-sim` 
 - `guardrails-config-ids: e2e-unknown-config` makes NeMo return 422, so with `failMode: deny` the call must be HTTP 503 "guardrails check unavailable". That only happens if the per-server ID reached the router. Raw HTTP, since the SDK drops a 503 body.
 - **Nightly / on-demand only** (`[Full]` tag).
 
+### [Happy,DualProtocol] Records the protocol versions used with and supported by each server
+
+- A 2025 client calls `sf_greet` (2025-only server) and a 2026 client calls `sl_hello_world` (dual-protocol server). Each MCPServerRegistration's `status.usedProtocolVersions` must gain the version used with it: `2025-03-26` on the 2025-only server (the e2e 2025 client strips `Mcp-Protocol-Version`, so its calls count as the spec default) and `2026-07-28` on the dual-protocol server. The 2025-only server must never show `2026-07-28` as used, since 2026 clients are not routed to it.
+- `status.discoveredProtocolVersions` must list what each server supports: `2025-11-25` but not `2026-07-28` on the 2025-only server, and both on the dual-protocol server. The e2e overlays set `PROTOCOL_USAGE_INTERVAL=5s`.
+
 ## Common pitfalls
 
 - MCPServerRegistrations with empty prefix: `strings.HasPrefix(name, "")` matches all tools, including broker meta-tools (discover_tools, select_tools). Always use a non-empty prefix in tests.

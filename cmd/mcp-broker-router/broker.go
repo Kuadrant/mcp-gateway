@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"github.com/Kuadrant/mcp-gateway/internal/broker"
 	"github.com/Kuadrant/mcp-gateway/internal/broker/upstream"
 	internaljwt "github.com/Kuadrant/mcp-gateway/internal/jwt"
+	mcpRouter "github.com/Kuadrant/mcp-gateway/internal/mcp-router"
+	"github.com/Kuadrant/mcp-gateway/internal/protocol"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -116,6 +119,7 @@ func (a *app) setUpMetricsServer() {
 			http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 		})
 	}
+	mux.HandleFunc(protocol.UsagePath, a.handleProtocolUsage)
 	a.metricsServer = &http.Server{
 		Addr:              a.brokerCfg.metricsAddr,
 		Handler:           mux,
@@ -130,4 +134,15 @@ func traceContextMiddleware(next http.Handler) http.Handler {
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// handleProtocolUsage serves the protocol versions used and supported per upstream for the controller
+func (a *app) handleProtocolUsage(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(protocol.Usage{
+		Used:       mcpRouter.UsedProtocolVersions(),
+		Discovered: a.mcpBroker.DiscoveredProtocolVersions(),
+	}); err != nil {
+		a.logger.Debug("failed to write protocol usage", "error", err)
+	}
 }

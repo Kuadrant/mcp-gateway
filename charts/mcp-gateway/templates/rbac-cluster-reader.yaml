@@ -1,0 +1,15 @@
+{{- if .Values.controller.enabled }}
+# read-only access to the MCP Gateway resources for the built-in cluster-reader
+# role, so cluster readers, including the OpenShift Insights gatherer, can see them
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mcp-gateway.fullname" . }}-cluster-reader
+  labels:
+    {{- include "mcp-gateway.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-cluster-reader: "true"
+rules:
+  - apiGroups: [mcp.kuadrant.io]
+    resources: [mcpgatewayextensions, mcpserverregistrations, mcpvirtualservers]
+    verbs: [get, list, watch]
+{{- end }}

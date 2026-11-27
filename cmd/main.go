@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -151,6 +152,22 @@ func main() {
 		MCPExtNamespaceLister: mcpExtFinderValidator,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		panic("unable to start manager : " + err.Error())
+	}
+
+	// protocol versions used with and supported by each upstream, recorded in status for Red Hat Insights; "0" disables
+	usageInterval, err := time.ParseDuration(goenv.GetDefault("PROTOCOL_USAGE_INTERVAL", "1h"))
+	if err != nil {
+		panic("invalid PROTOCOL_USAGE_INTERVAL: " + err.Error())
+	}
+	if usageInterval > 0 {
+		if err := mgr.Add(&controller.ProtocolUsageCollector{
+			Client:   mgr.GetClient(),
+			Reader:   mgr.GetAPIReader(),
+			Logger:   slogger.With("component", "protocol-usage"),
+			Interval: usageInterval,
+		}); err != nil {
+			panic("unable to start manager : " + err.Error())
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

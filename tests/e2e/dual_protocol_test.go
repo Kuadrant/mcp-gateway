@@ -16,6 +16,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	mcpv1 "github.com/Kuadrant/mcp-gateway/api/v1"
 )
 
 const (
@@ -33,6 +35,8 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 		testResources []client.Object
 		dpExt         *MCPGatewayExtensionSetup
 		dpURL         = Protocol2026GatewayURL
+		server25      *mcpv1.MCPServerRegistration
+		server26      *mcpv1.MCPServerRegistration
 	)
 
 	BeforeAll(func() {
@@ -80,7 +84,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			WithParentGateway(GatewayName, GatewayNamespace).
 			Build()
 		testResources = append(testResources, reg25.GetObjects()...)
-		server25 := reg25.Register(ctx)
+		server25 = reg25.Register(ctx)
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server25.Name, server25.Namespace)).To(Succeed())
@@ -97,7 +101,7 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			WithParentGateway(GatewayName, GatewayNamespace).
 			Build()
 		testResources = append(testResources, reg26.GetObjects()...)
-		server26 := reg26.Register(ctx)
+		server26 = reg26.Register(ctx)
 
 		Eventually(func(g Gomega) {
 			g.Expect(VerifyMCPServerRegistrationReady(ctx, k8sClient, server26.Name, server26.Namespace)).To(Succeed())
@@ -233,6 +237,50 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 				g.Expect(text.Text).To(ContainSubstring("Hello, dual-test!"))
 			}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
 		})
+	})
+
+	It("[Happy,DualProtocol] records the protocol versions used with and supported by each server", func() {
+		stateful := newStatefulClient()
+		defer func() { _ = stateful.Close() }()
+		waitForToolsWithPrefix(stateful, "sf_")
+		Eventually(func(g Gomega) {
+			_, err := stateful.CallTool(ctx, &mcp.CallToolParams{Name: "sf_greet", Arguments: map[string]any{"name": "usage"}})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		stateless := newStatelessClient()
+		defer func() { _ = stateless.Close() }()
+		waitForToolsWithPrefix(stateless, "sl_")
+		Eventually(func(g Gomega) {
+			_, err := stateless.CallTool(ctx, &mcp.CallToolParams{Name: "sl_hello_world", Arguments: map[string]any{"name": "usage"}})
+			g.Expect(err).NotTo(HaveOccurred())
+		}, TestTimeoutMedium, TestRetryInterval).Should(Succeed())
+
+		// the e2e overlays set PROTOCOL_USAGE_INTERVAL to a few seconds
+		used := func(g Gomega, reg *mcpv1.MCPServerRegistration) []string {
+			got := &mcpv1.MCPServerRegistration{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(reg), got)).To(Succeed())
+			return got.Status.UsedProtocolVersions
+		}
+		// the e2e 2025 client strips Mcp-Protocol-Version from every request to
+		// force the legacy handshake, so its calls count as the spec default
+		Eventually(func(g Gomega) {
+			g.Expect(used(g, server25)).To(ContainElement("2025-03-26"))
+			g.Expect(used(g, server26)).To(ContainElement("2026-07-28"))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
+		// a 2026 client never reaches the 2025-only server
+		Expect(used(Default, server25)).NotTo(ContainElement("2026-07-28"))
+
+		discovered := func(g Gomega, reg *mcpv1.MCPServerRegistration) []string {
+			got := &mcpv1.MCPServerRegistration{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(reg), got)).To(Succeed())
+			return got.Status.DiscoveredProtocolVersions
+		}
+		Eventually(func(g Gomega) {
+			g.Expect(discovered(g, server25)).To(ContainElement("2025-11-25"))
+			g.Expect(discovered(g, server25)).NotTo(ContainElement("2026-07-28"))
+			g.Expect(discovered(g, server26)).To(ContainElements("2025-11-25", "2026-07-28"))
+		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	})
 
 	It("[DualProtocol] dual-version server tools visible to both clients", func() {

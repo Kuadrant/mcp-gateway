@@ -275,6 +275,24 @@ type MCPServerRegistrationStatus struct {
 	// +patchMergeKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+
+	// usedProtocolVersions lists the MCP protocol versions clients have used
+	// with this server through the gateway. Versions are only added, so the
+	// list changes once per newly seen version.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	// +optional
+	UsedProtocolVersions []string `json:"usedProtocolVersions,omitempty"`
+
+	// discoveredProtocolVersions lists the MCP protocol versions the server
+	// supports, as last discovered by a broker serving it. It is replaced when
+	// the server's supported versions change.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	// +optional
+	DiscoveredProtocolVersions []string `json:"discoveredProtocolVersions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
