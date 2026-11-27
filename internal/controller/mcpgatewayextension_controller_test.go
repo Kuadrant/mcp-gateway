@@ -16,6 +16,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -833,6 +834,86 @@ var _ = Describe("MCPGatewayExtension Controller", func() {
 			}, service)).To(Succeed())
 			Expect(service.Spec.Ports).To(HaveLen(2))
 		})
+
+		DescribeTable("should restore the managed-by label on the broker-router without interrupting readiness", func(object client.Object, withQuota bool) {
+			reconciler := newTestReconciler()
+			request := reconcile.Request{NamespacedName: mcpExtNamespacedName}
+			key := types.NamespacedName{Name: brokerRouterName, Namespace: "default"}
+			waitForCacheSync(ctx, mcpExtNamespacedName)
+
+			Eventually(func(g Gomega) {
+				_, err := reconciler.Reconcile(ctx, request)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(testK8sClient.Get(ctx, key, &appsv1.Deployment{})).To(Succeed())
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			setDeploymentStatus(ctx, "default", 1, 1)
+			setGatewayListenerStatus(ctx, gatewayName, "default", "http")
+
+			expectReady := func(g Gomega) {
+				result, err := reconciler.Reconcile(ctx, request)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result).To(Equal(reconcile.Result{}))
+
+				extension := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, extension)).To(Succeed())
+				g.Expect(meta.IsStatusConditionTrue(extension.Status.Conditions, mcpv1.ConditionTypeReady)).To(BeTrue())
+
+				cached := &mcpv1.MCPGatewayExtension{}
+				g.Expect(testIndexedClient.Get(ctx, mcpExtNamespacedName, cached)).To(Succeed())
+				g.Expect(cached.ResourceVersion).To(Equal(extension.ResourceVersion))
+			}
+			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
+
+			Eventually(func() error {
+				return testIndexedClient.Get(ctx, key, object)
+			}, testTimeout, testRetryInterval).Should(Succeed())
+			if withQuota {
+				hard := corev1.ResourceList{"count/deployments.apps": resource.MustParse("1")}
+				quota := &corev1.ResourceQuota{
+					ObjectMeta: metav1.ObjectMeta{Name: "deployment-cap", Namespace: key.Namespace},
+					Spec:       corev1.ResourceQuotaSpec{Hard: hard},
+				}
+				Expect(testK8sClient.Create(ctx, quota)).To(Succeed())
+				DeferCleanup(testK8sClient.Delete, quota)
+				// envtest runs without the resource quota controller
+				quota.Status = corev1.ResourceQuotaStatus{Hard: hard, Used: hard.DeepCopy()}
+				Expect(testK8sClient.Status().Update(ctx, quota)).To(Succeed())
+
+				// wait until admission enforces the quota before exercising recovery
+				duplicate := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Spec:       *object.(*appsv1.Deployment).Spec.DeepCopy(),
+				}
+				Eventually(func() bool {
+					return errors.IsForbidden(testK8sClient.Create(ctx, duplicate.DeepCopy(), client.DryRunAll))
+				}, testTimeout, testRetryInterval).Should(BeTrue())
+			}
+			labels := object.GetLabels()
+			Expect(labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			uid, generation := object.GetUID(), object.GetGeneration()
+			delete(labels, labelManagedBy)
+			object.SetLabels(labels)
+			Expect(testK8sClient.Update(ctx, object)).To(Succeed())
+			Eventually(func() error {
+				return testIndexedClient.Get(ctx, key, object)
+			}, testTimeout, testRetryInterval).Should(MatchError(errors.IsNotFound, "IsNotFound"))
+
+			_, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			extension := &mcpv1.MCPGatewayExtension{}
+			Expect(testK8sClient.Get(ctx, mcpExtNamespacedName, extension)).To(Succeed())
+			Expect(meta.IsStatusConditionTrue(extension.Status.Conditions, mcpv1.ConditionTypeReady)).To(BeTrue(), "conditions after restoring the label: %v", extension.Status.Conditions)
+			Eventually(expectReady, testTimeout, testRetryInterval).Should(Succeed())
+
+			Expect(testK8sClient.Get(ctx, key, object)).To(Succeed())
+			Expect(object.GetLabels()).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			Expect(object.GetUID()).To(Equal(uid))
+			Expect(object.GetGeneration()).To(Equal(generation))
+		},
+			Entry("deployment", &appsv1.Deployment{}, false),
+			Entry("service", &corev1.Service{}, false),
+			Entry("deployment at its namespace quota", &appsv1.Deployment{}, true),
+		)
 
 		It("should set owner reference on deployment and service", func() {
 			reconciler := newTestReconciler()

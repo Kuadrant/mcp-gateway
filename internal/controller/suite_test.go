@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	istionetv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,6 +63,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	err = istionetv1alpha3.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = apiextensions.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
@@ -88,6 +91,7 @@ var _ = BeforeSuite(func() {
 	// create a manager to set up field indexes
 	testMgr, err = ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		Cache:  CacheOptions(),
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // disable metrics
 		},

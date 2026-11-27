@@ -468,7 +468,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	existingServiceAccount := &corev1.ServiceAccount{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(serviceAccount), existingServiceAccount); err != nil {
+	if err := r.getBrokerRouterResource(ctx, client.ObjectKeyFromObject(serviceAccount), existingServiceAccount); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router service account", "namespace", mcpExt.Namespace)
 			if err := r.Create(ctx, serviceAccount); err != nil {
@@ -493,7 +493,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	existingNetworkPolicy := &networkingv1.NetworkPolicy{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
+	if err := r.getBrokerRouterResource(ctx, client.ObjectKeyFromObject(networkPolicy), existingNetworkPolicy); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router network policy", "namespace", mcpExt.Namespace)
 			if err := r.Create(ctx, networkPolicy); err != nil {
@@ -518,7 +518,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	existingDeployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(deployment), existingDeployment); err != nil {
+	if err := r.getBrokerRouterResource(ctx, client.ObjectKeyFromObject(deployment), existingDeployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router deployment", "namespace", mcpExt.Namespace)
 			if err := r.Create(ctx, deployment); err != nil {
@@ -555,7 +555,7 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 	}
 
 	existingService := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(service), existingService); err != nil {
+	if err := r.getBrokerRouterResource(ctx, client.ObjectKeyFromObject(service), existingService); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.log.Info("creating broker-router service", "namespace", mcpExt.Namespace)
 			if err := r.Create(ctx, service); err != nil {
@@ -613,6 +613,31 @@ func (r *MCPGatewayExtensionReconciler) reconcileBrokerRouter(ctx context.Contex
 		existingDeployment.Status.ReadyReplicas == existingDeployment.Status.Replicas
 
 	return deploymentReady, nil
+}
+
+func (r *MCPGatewayExtensionReconciler) getBrokerRouterResource(ctx context.Context, key client.ObjectKey, existing client.Object) error {
+	if err := r.Get(ctx, key, existing); !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// an object without the managed-by label is invisible to the cache
+	if err := r.DirectAPIReader.Get(ctx, key, existing); err != nil {
+		return err
+	}
+
+	labels := existing.GetLabels()
+	if labels[labelManagedBy] == labelManagedByValue {
+		return nil
+	}
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[labelManagedBy] = labelManagedByValue
+	existing.SetLabels(labels)
+	if err := r.Update(ctx, existing); err != nil {
+		return fmt.Errorf("failed to restore managed-by label: %w", err)
+	}
+	return nil
 }
 
 // serviceNeedsUpdate checks if the service needs to be updated
