@@ -74,6 +74,13 @@ func TestDeploymentNeedsUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "automountServiceAccountToken changed",
+			modify: func(d *appsv1.Deployment) {
+				d.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(true)
+			},
+			expected: true,
+		},
+		{
 			name: "managed flag changed",
 			modify: func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.Containers[0].Command = []string{"./mcp_gateway", "--mcp-broker-public-address=0.0.0.0:9090", "--mcp-gateway-public-host=test.example.com"}
