@@ -1,0 +1,60 @@
+const http = require('http');
+
+const PORT = 8080;
+const TARGET_PORT = 8081;
+
+const server = http.createServer((req, res) => {
+  let body = [];
+  
+  req.on('data', chunk => {
+    body.push(chunk);
+  });
+  
+  req.on('end', () => {
+    const bodyData = Buffer.concat(body);
+    
+    const options = {
+      hostname: 'localhost',
+      port: TARGET_PORT,
+      path: req.url,
+      method: req.method,
+      headers: { ...req.headers }
+    };
+
+    // Parse tool name if it's a POST request
+    if (req.method === 'POST' && bodyData.length > 0) {
+      try {
+        const json = JSON.parse(bodyData.toString());
+        // For MCP tools/call
+        if (json.method === 'tools/call' && json.params && json.params.name) {
+          options.headers['x-mcp-toolname'] = json.params.name;
+          console.log(`[Proxy] Injected x-mcp-toolname: ${json.params.name}`);
+        }
+      } catch (e) {
+        // Ignore JSON parse errors
+      }
+    }
+    
+    // Remove host header to avoid routing issues
+    options.headers['host'] = `localhost:${TARGET_PORT}`;
+    
+    // Forward the request
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+    
+    proxyReq.on('error', (err) => {
+      console.error('[Proxy] Error:', err);
+      res.writeHead(502);
+      res.end('Bad Gateway');
+    });
+    
+    proxyReq.write(bodyData);
+    proxyReq.end();
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`[Proxy] Listening on ${PORT}, forwarding to ${TARGET_PORT}`);
+});
