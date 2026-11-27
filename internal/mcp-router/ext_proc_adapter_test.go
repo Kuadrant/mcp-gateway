@@ -1232,8 +1232,8 @@ func TestProcess_GuardrailsBlocked_ReplacementBody(t *testing.T) {
 		contentType string
 		blockedBody []byte
 	}{
-		{"SSE", "", []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))},
-		{"JSON", "application/json", []byte(routing.BuildJSONToolError(1, "blocked by guardrails"))},
+		{"SSE", "", []byte(routing.BuildSSEToolExecutionError(1, "blocked by guardrails"))},
+		{"JSON", "application/json", []byte(routing.BuildJSONToolExecutionError(1, "blocked by guardrails"))},
 	}
 
 	for _, tc := range tests {
@@ -1306,7 +1306,7 @@ func TestProcess_GuardrailsMalformedSSE(t *testing.T) {
 			name:         "event truncated mid-JSON",
 			contentType:  "text/event-stream",
 			responseBody: []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"res"),
-			wantBody:     routing.GuardrailsExtractionFailed(1, routing.BuildSSEToolError),
+			wantBody:     routing.GuardrailsExtractionFailed(1, routing.BuildSSEToolExecutionError),
 		},
 	}
 
@@ -1380,7 +1380,7 @@ data: {"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{}}
 data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"secret"}]}}
 
 `)
-	blockedBody := []byte(routing.BuildSSEToolError(1, "blocked by guardrails"))
+	blockedBody := []byte(routing.BuildSSEToolExecutionError(1, "blocked by guardrails"))
 
 	steps := []mockProcessServerMessageAndErr{
 		requestHeadersStep(),

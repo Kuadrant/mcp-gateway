@@ -5,11 +5,13 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -153,6 +155,29 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			})).To(BeTrue(), "tools with prefix %s should appear", prefix)
 		}, TestTimeoutLong, TestRetryInterval).Should(Succeed())
 	}
+
+	DescribeTable("2025 protocol rejections", func(method string, code int) {
+		c := newStatefulClient()
+		defer func() { _ = c.Close() }()
+
+		var err error
+		switch method {
+		case "tools/call":
+			_, err = c.CallTool(ctx, &mcp.CallToolParams{Name: "no_such_tool"})
+		case "prompts/get":
+			_, err = c.GetPrompt(ctx, &mcp.GetPromptParams{Name: "no_such_prompt"})
+		case "resources/read":
+			_, err = c.ReadResource(ctx, &mcp.ReadResourceParams{URI: "ui://no_such_server/resource"})
+		}
+		Expect(err).To(HaveOccurred())
+		var rpcErr *jsonrpc.Error
+		Expect(errors.As(err, &rpcErr)).To(BeTrue(), "expected JSON-RPC protocol error, got %v", err)
+		Expect(rpcErr.Code).To(BeNumerically("==", code))
+	},
+		Entry("[Negative,DualProtocol] unknown 2025 tool", "tools/call", -32602),
+		Entry("[Negative,DualProtocol] unknown 2025 prompt", "prompts/get", -32602),
+		Entry("[Negative,DualProtocol] missing 2025 resource route", "resources/read", -32002),
+	)
 
 	Context("protocol-filtered tools/list", func() {
 		It("[Happy,DualProtocol] 2026 client sees only 2026-capable backend tools", func() {
@@ -573,6 +598,9 @@ var _ = Describe("Dual Protocol Gateway", Ordered, func() {
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unknown tool"))
+			var rpcErr *jsonrpc.Error
+			Expect(errors.As(err, &rpcErr)).To(BeTrue(), "expected JSON-RPC protocol error")
+			Expect(rpcErr.Code).To(BeNumerically("==", jsonrpc.CodeInvalidParams), "expected -32602 for unknown tool")
 		})
 	})
 

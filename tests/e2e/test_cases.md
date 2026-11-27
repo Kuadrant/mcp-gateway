@@ -509,9 +509,13 @@ When a server advertises `cacheScope: "private"` and is registered with no prefi
 
 - A 2026 client sends a `tools/call` where the `mcp-name` header disagrees with the body `params.name` field. The gateway returns a JSON-RPC error containing `HeaderMismatch`.
 
+### [Negative,DualProtocol] unknown 2025 tool, prompt, or resource route
+
+- An initialized 2025-11-25 client calls an unknown tool or prompt, or reads a resource URI with no registered server prefix. The gateway returns a JSON-RPC protocol error with code -32602 for the tool or prompt and -32002 for the resource. The SDK exposes an error, rather than a successful result with `isError: true`.
+
 ### [Protocol2026] unknown tool error
 
-- A 2026 client calls a non-existent tool. The gateway returns an error containing `unknown tool`.
+- A 2026 client calls a non-existent tool. The gateway returns HTTP 400 with a JSON-RPC protocol error with code -32602 (Invalid params) and a message containing `unknown tool` (2026 router forwards to the broker; the broker MCP server emits the error).
 
 ### [Happy,Protocol2026] prompt listing and get via stateless gateway
 

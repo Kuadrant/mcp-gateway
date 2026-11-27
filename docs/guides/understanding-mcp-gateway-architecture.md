@@ -340,7 +340,7 @@ data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"Hi Pat
 
 **Symptoms:**
 ```json
-{"error": {"code": -32601, "message": "Tool not found"}}
+{"error": {"code": -32602, "message": "Tool not found"}}
 ```
 
 **Investigation:**
