@@ -24,8 +24,8 @@ var (
 func BenchmarkMCPRequestParse_ToolCall(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(toolCallPayload, &req); err != nil {
+		req, err := ParseMCPRequest(toolCallPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -35,8 +35,8 @@ func BenchmarkMCPRequestParse_ToolCall(b *testing.B) {
 func BenchmarkMCPRequestParse_Initialize(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(initPayload, &req); err != nil {
+		req, err := ParseMCPRequest(initPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -76,8 +76,8 @@ func BenchmarkMCPRequestParseAndRoute(b *testing.B) {
 	// full hot path: unmarshal + validate + extract tool name + serialise
 	b.ReportAllocs()
 	for b.Loop() {
-		var req MCPRequest
-		if err := json.Unmarshal(toolCallPayload, &req); err != nil {
+		req, err := ParseMCPRequest(toolCallPayload)
+		if err != nil {
 			b.Fatal(err)
 		}
 		req.Headers = benchHeaders
@@ -85,6 +85,49 @@ func BenchmarkMCPRequestParseAndRoute(b *testing.B) {
 			b.Fatal(err)
 		}
 		_ = req.ToolName()
+		if _, err := req.ToBytes(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// largeArgsPayload is a tools/call with ~9KB of nested arguments, the case
+// where decoding params into map[string]any costs the most.
+var largeArgsPayload = func() []byte {
+	rows := make([]map[string]any, 150)
+	for i := range rows {
+		rows[i] = map[string]any{"id": i, "name": fmt.Sprintf("item-%d", i), "tags": []string{"a", "b", "c"}, "price": 9.99}
+	}
+	b, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "server1_bulk-insert",
+			"arguments": map[string]any{"table": "orders", "rows": rows},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return b
+}()
+
+// BenchmarkMCPRequestParseAndRoute_LargeArgs measures parsing, validation,
+// tool-name rewriting and serialization with large arguments.
+func BenchmarkMCPRequestParseAndRoute_LargeArgs(b *testing.B) {
+	// 2025-11-25 tools/call path: unmarshal + validate + rewrite tool name + serialise
+	b.ReportAllocs()
+	for b.Loop() {
+		req, err := ParseMCPRequest(largeArgsPayload)
+		if err != nil {
+			b.Fatal(err)
+		}
+		req.Headers = benchHeaders
+		if _, err := req.Validate(); err != nil {
+			b.Fatal(err)
+		}
+		req.ReWriteToolName("bulk-insert")
 		if _, err := req.ToBytes(); err != nil {
 			b.Fatal(err)
 		}
